@@ -23,15 +23,30 @@ def test_every_bank_file_lives_inside_the_package():
     assert len(ymls) >= 6, ymls
 
 
-def test_the_version_is_a_single_source_of_truth():
-    import tomllib
-    root = Path(dbt_assay.__file__).parent.parent.parent
-    pj = root / "pyproject.toml"
+def _pyproject() -> dict | None:
+    """*** tomllib IS STDLIB ONLY FROM 3.11, AND assay SUPPORTS 3.10. ***
+
+    The first CI run failed on 3.10 for exactly this: the PACKAGE works there, my tests did not.
+    Skipping is right; raising the floor would be dropping real support to spare a test.
+    """
+    import pytest
+    tomllib = pytest.importorskip("tomllib",
+                                  reason="stdlib from 3.11; the package itself does not need it")
+    from pathlib import Path
+
+    import dbt_assay
+    pj = Path(dbt_assay.__file__).parent.parent.parent / "pyproject.toml"
     if not pj.exists():
-        return                      # installed as a wheel; nothing to compare against
+        return None                 # installed as a wheel; nothing to compare against
     with pj.open("rb") as fh:
-        declared = tomllib.load(fh)["project"]["version"]
-    assert declared == dbt_assay.__version__
+        return tomllib.load(fh)
+
+
+def test_the_version_is_a_single_source_of_truth():
+    data = _pyproject()
+    if data is None:
+        return
+    assert data["project"]["version"] == dbt_assay.__version__
 
 
 def test_every_choice_and_score_can_be_built_without_a_key():
