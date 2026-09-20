@@ -10,9 +10,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import __version__, relate
+from . import __version__, contracts, relate
 from .checks import run_all
+from .config import DEFAULT_YML, Config
 from .infer import Schema, derive_columns
+from .jev import BudgetExceeded, Client, NoProvider, decide
 from .manifest import Project
 from .parse import digest
 from .store import Store
@@ -201,3 +203,165 @@ def version():
 
 if __name__ == "__main__":
     app()
+
+
+@app.command()
+def init(force: bool = typer.Option(False, "--force", help="overwrite an existing audit.yml")):
+    """Write an audit.yml with the defaults. Asks nothing, enables no spend."""
+    p = Path("audit.yml")
+    if p.exists() and not force:
+        console.print(f"[yellow]{p} already exists.[/] Pass --force to overwrite.")
+        raise typer.Exit(1)
+    p.write_text(DEFAULT_YML)
+    console.print(f"wrote [bold]{p}[/]. Nothing in it enables spend; the judgment tier is opt-in.")
+
+
+def _grain_setup(target: str | None):
+    tdir = _find_target(target)
+    project, digests, _fail, schema, _sstats = _load(tdir)
+    declared = relate.declared_keys(project)
+    proposed = contracts.propose_all(project, digests, schema, declared)
+    return tdir, project, digests, schema, declared, proposed
+
+
+@app.command()
+def infer(
+    target: str = typer.Option(None, "--target", "-t"),
+    print_state: bool = typer.Option(False, "--print-state",
+                                     help="render exactly what would be sent, and send nothing"),
+    limit: int = typer.Option(0, "--limit", "-n", help="stop after N models (0 = all)"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config", help="directory holding audit.yml"),
+):
+    """Infer each model's grain. Code proposes the candidates; a judgment picks the key."""
+    cfg = Config.load(config_path)
+    _tdir, project, digests, schema, declared, proposed = _grain_setup(target)
+
+    # Only models with SURPLUS candidates need a judgment at all. A single-column candidate set has
+    # nothing to eliminate, so asking about it spends tokens to learn what code already knew.
+    work = [(uid, c) for uid, c in proposed.items() if len(c.columns) > 1]
+    if limit:
+        work = work[:limit]
+    console.print(f"[bold]{len(proposed)}[/] models have code-proposed candidates; "
+                  f"[bold]{len(work)}[/] have more than one column and need a judgment.")
+
+    if print_state:
+        for uid, cand in work[:3]:
+            st = contracts.build_state(uid, project, digests, schema, cand, declared, cfg.vocab)
+            qs = contracts.key_questions(cand)
+            console.print(f"\n[bold]{project.models[uid].name}[/]  via {cand.route}")
+            console.print(_json.dumps({"state": st, "questions": qs}, indent=1, default=str))
+        est = sum(len(_json.dumps(contracts.build_state(uid, project, digests, schema, c,
+                                                        declared, cfg.vocab), default=str))
+                  for uid, c in work) / 4
+        console.print(f"\n[dim]{len(work)} calls, ~{int(est):,} input tokens, "
+                      f"about ${est * 0.042 / 1_000_000:.4f}. Nothing was sent.[/]")
+        raise typer.Exit(0)
+
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        console.print("[yellow]no API key.[/] The structural checks need none: `assay check`.")
+        console.print("[dim]Set TYPESAFE_API_KEY (preferred) or OPENROUTER_API_KEY, or use "
+                      "--print-state to see exactly what would be sent.[/]")
+        raise typer.Exit(1)
+
+    store = Store(store_path)
+    judged, asked = {}, 0
+    for uid, cand in work:
+        state = contracts.build_state(uid, project, digests, schema, cand, declared, cfg.vocab)
+        try:
+            answers = decide(store, client, state, contracts.key_questions(cand),
+                             decision_key=uid, prompt_version=contracts.PROMPT_VERSION,
+                             caller="assay.infer")
+        except BudgetExceeded as e:
+            console.print(f"[yellow]stopped: {e}[/]")
+            break
+        except NoProvider as e:
+            console.print(f"[red]{e}[/]")
+            raise typer.Exit(1) from None
+        judged[uid] = contracts.key_from_answers(cand, answers)
+        asked += 1
+
+    console.print(f"\njudged [bold]{asked}[/] models   "
+                  f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}[/]")
+    narrowed = [(u, g) for u, g in judged.items() if g.dropped]
+    for uid, g in narrowed[:12]:
+        console.print(f"  [bold]{project.models[uid].name}[/]: key {g.columns}  "
+                      f"[dim]dropped {g.dropped}[/]")
+    store.close()
+
+
+@app.command()
+def calibrate(
+    target: str = typer.Option(None, "--target", "-t"),
+    limit: int = typer.Option(0, "--limit", "-n"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+):
+    """Measure the grain judgment against the keys this project already declares.
+
+    *** THE LABELLED SET IS FREE AND ALREADY IN THE REPO. ***
+    Every `unique` and `unique_combination_of_columns` test is a human statement of a model's key.
+    So the first thing this tier produces is a confusion matrix, not an impression -- which is the
+    only thing that ever earns a question the right to fail a build.
+    """
+    cfg = Config.load(config_path)
+    _tdir, project, digests, schema, declared, proposed = _grain_setup(target)
+    work = [(uid, c) for uid, c in proposed.items()
+            if uid in declared and len(c.columns) > 1]
+    if limit:
+        work = work[:limit]
+
+    code_exact = sum(1 for uid, c in work
+                     if sorted(x.lower() for x in c.columns) == sorted(declared[uid]))
+    console.print(f"[bold]{len(work)}[/] labelled models with surplus candidates "
+                  f"(code alone is exactly right on {code_exact})")
+
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        console.print("[yellow]no API key; cannot calibrate.[/] `assay infer --print-state` shows "
+                      "what would be sent.")
+        raise typer.Exit(1)
+
+    store = Store(store_path)
+    exact = over = under = wrong = 0
+    rows = []
+    for uid, cand in work:
+        state = contracts.build_state(uid, project, digests, schema, cand, declared, cfg.vocab)
+        try:
+            answers = decide(store, client, state, contracts.key_questions(cand),
+                             decision_key=uid, prompt_version=contracts.PROMPT_VERSION,
+                             caller="assay.calibrate")
+        except BudgetExceeded as e:
+            console.print(f"[yellow]stopped: {e}[/]")
+            break
+        g = contracts.key_from_answers(cand, answers)
+        got, want = {x.lower() for x in g.columns}, set(declared[uid])
+        verdict = ("exact" if got == want else
+                   "superset" if want < got else
+                   "subset" if got < want else "wrong")
+        if verdict == "exact":
+            exact += 1
+        elif verdict == "superset":
+            over += 1
+        elif verdict == "subset":
+            under += 1
+        else:
+            wrong += 1
+        rows.append((project.models[uid].name, verdict, sorted(got), sorted(want)))
+
+    n = max(exact + over + under + wrong, 1)
+    t = Table(title="\ngrain judgment vs the project's own declared keys", header_style="bold")
+    t.add_column("outcome"); t.add_column("n", justify="right"); t.add_column("%", justify="right")
+    for label, v in (("exact", exact), ("kept too many", over),
+                     ("dropped too many", under), ("disagrees", wrong)):
+        t.add_row(label, str(v), f"{100 * v // n}%")
+    console.print(t)
+    console.print(f"[dim]code alone was exact on {code_exact}/{len(work)}; "
+                  f"with judgment {exact}/{n}[/]")
+    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}[/]")
+    for name, v, got, want in [r for r in rows if r[1] != "exact"][:10]:
+        console.print(f"  [yellow]{v}[/] {name}: got {got}  declared {want}")
+    store.close()

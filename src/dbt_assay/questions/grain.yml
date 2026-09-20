@@ -1,0 +1,47 @@
+# The key-column family.
+#
+# *** SHIPPED AS YAML, IN THE SAME FORMAT A USER'S OWN BANK USES. ***
+# Anyone can read what assay asks, copy a question, reword it, or switch it off. There is no plugin
+# API and there should not be one: everything customisable being config is what keeps the
+# maintenance surface at zero.
+#
+# *** BUMP prompt_version WHENEVER instructions OR criteria CHANGE. ***
+# The cache is keyed on it. A reworded criterion is a different question, and serving the old answer
+# for it is how a cache starts lying. A terse rewrite of one criterion has flipped an answer before.
+version: 1
+
+column_is_part_of_the_key:
+  type: noul
+  prompt_version: "key.v1"
+  # Phrased so HIGH means "yes, it identifies", which is the positive form here. It gates on a HIGH
+  # value and the audit.yml default says so at the call site.
+  instructions:
+    question: >-
+      Considering `column` together with `candidate_columns`, is `column` part of the MINIMAL set
+      needed to identify one row of this model, or is it merely carried along because it is
+      determined by the others?
+    note: >-
+      Answer for this one column only. The other candidates are given so you can judge whether this
+      column adds identifying power beyond them.
+  criteria:
+    # QUOTED ON PURPOSE. YAML 1.1 reads bare `true:` and `false:` as BOOLEAN KEYS, so the criteria
+    # arrive as {True: .., False: ..} and every lookup by the string "true" raises. Quoting is the
+    # difference between a question that ships and one that dies at load.
+    "true":
+      what: >-
+        Removing this column would make the remaining columns no longer identify a single row. Two
+        different rows could share every other candidate value and differ only here.
+      examples:
+        - "`district_name`, where one section contains several districts"
+        - "`state`, where the same basin id repeats across state lines"
+        - "`party_ordinal`, where one structure has several parties"
+    "false":
+      what: >-
+        This column is determined by the others, or it is a descriptive label or a measured
+        quantity rather than part of the identity. Removing it changes nothing about which row is
+        which.
+      examples:
+        - "`district_type` and `subdistrict_name`, which follow from the district"
+        - "`basin_name`, a human label for an id already in the set"
+        - "`habitat_segments` and `listed_species`, which are counts, not identity"
+        - "`tax_year`, where the model already covers exactly one year"
