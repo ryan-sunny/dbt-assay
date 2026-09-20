@@ -333,6 +333,20 @@ three families is sixty verdicts and not twenty. Only verdicts marked `human` co
 be the thing that is wrong, and letting a project's own assertions authorise a gate over those
 assertions is circular.
 
+```bash
+assay config       # how far each question is from its floor, and which gate nothing
+```
+
+**Three of the twelve question families have a finding resting on them.** The other nine are worth
+asking -- their answers fill the inventory, the page and `trace` -- but no finding derives from
+them yet, so ruling on them records evidence and moves no gate. `assay config` marks them and
+`assay review -i` says so before the keypresses start, because an afternoon spent on a question
+that authorises nothing is an afternoon nobody gets back.
+
+This was a bug before it was a feature. Verdicts are recorded per question and the gate counted
+them per *finding*, so nine of ten families satisfied nothing, silently. The one that worked did so
+because its finding happened to share its question's name.
+
 Until then every judged finding is an annotation. That is the intended resting state, not a
 limitation to work around: a threshold set before anything was measured is a guess wearing a
 number.

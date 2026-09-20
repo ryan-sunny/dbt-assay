@@ -47,6 +47,7 @@ def grain_contradicts_declared_key(project, entries, declared) -> list[Finding]:
         conf = e.grain.confidence
         out.append(Finding(
             check="grain_contradicts_test",
+            rests_on="column_is_part_of_the_key",
             subject=e.uid, subject_name=e.name, file=e.path,
             summary=f"inferred grain {sorted(got)} differs from the declared key {sorted(want)}",
             detail=("A test in this project declares one row per "
@@ -99,6 +100,7 @@ def identifier_outside_the_grain(project, entries, digests=None) -> list[Finding
                 continue
             out.append(Finding(
                 check="identifier_outside_grain",
+                rests_on="column_role",
                 subject=e.uid, subject_name=e.name, file=e.path,
                 summary=f"`{c.name}` reads as an identifier but is not part of the grain",
                 detail=(f"The grain is {e.grain.value}, which does not include `{c.name}`. Either "
@@ -129,6 +131,7 @@ def measure_inside_the_grain(project, entries) -> list[Finding]:
                 continue
             out.append(Finding(
                 check="measure_inside_grain",
+                rests_on="column_role",
                 subject=e.uid, subject_name=e.name, file=e.path,
                 summary=f"`{c.name}` is a measure but sits inside the grain {e.grain.value}",
                 detail=("Grouping by a quantity splits one entity into a row per distinct value "
@@ -153,6 +156,7 @@ def unresolved_judgment(project, entries) -> list[Finding]:
         if e.grain and e.grain.resting_on:
             out.append(Finding(
                 check="grain_unresolved",
+                rests_on="column_is_part_of_the_key",
                 subject=e.uid, subject_name=e.name, file=e.path,
                 summary=f"grain is unresolved for {len(e.grain.resting_on)} column(s)",
                 detail=("The judgment could not tell whether these columns identify a row. They "
@@ -184,6 +188,7 @@ def description_contradicts_the_code(project, entries) -> list[Finding]:
             continue
         out.append(Finding(
             check="description_contradicts_the_code",
+            rests_on="description_contradicts_the_code",
             subject=e.uid, subject_name=e.name, file=e.path,
             summary="the description claims something the code does not do",
             detail=("A description is written once and the SQL changes around it. Nothing in a "
@@ -196,6 +201,22 @@ def description_contradicts_the_code(project, entries) -> list[Finding]:
         ))
     return out
 
+
+# *** QUESTIONS WORTH ASKING THAT NO FINDING RESTS ON YET. ***
+# Their answers reach the inventory, the HTML and `trace`, which is why they are asked at all. But
+# no finding is derived from them, so ruling on them moves no gate. Written down rather than left
+# to be discovered after an afternoon of keypresses, and a test asserts this set is exactly right.
+FAMILIES_WITHOUT_FINDINGS = frozenset({
+    "null_meaning",                        # reaches the inventory; no finding derives from it
+    "predicate_intent",                    # `semantics` reports it directly
+    "practice_exception",                  # applied in `practices`, which has its own path
+    "same_concept",                        # `align` reports pairs directly
+    "severity_fit",                        # adjudicates a finding rather than producing one
+    "field_matches_its_name",              # feeds tier: needs the probe
+    "units_are_what_the_column_claims",    # feeds tier: needs the probe
+    "row_explanation",                     # rows tier: needs warehouse rows
+    "row_is_internally_coherent",          # rows tier: needs warehouse rows
+})
 
 CHECKS = (measure_inside_the_grain, unresolved_judgment, description_contradicts_the_code)
 
@@ -240,8 +261,12 @@ def apply_policy(findings, cfg, store, project=None) -> tuple[list, list]:
 
         conf = f.evidence.get("confidence")
         judged_answer = {"kind": "noul", "answer": str(conf)} if conf is not None else None
+        # *** COUNT ON THE QUESTION, NOT ON THE FINDING. ***
+        # Verdicts are recorded per question family and a finding is not a question: several
+        # findings rest on one family, and a structural finding rests on none. Looking up
+        # `f.check` here meant nine of ten families could never satisfy the gate floor.
         act = q.action_for(judged_answer if q.act else None,
-                           counts.get(f.check, 0), cfg.min_adjudications)
+                           counts.get(f.rests_on or f.check, 0), cfg.min_adjudications)
         why = "audit.yml" if act else "default by severity"
         kept.append((f, act or ("queue" if f.base >= 3 else "annotate"), why))
     return kept, waived

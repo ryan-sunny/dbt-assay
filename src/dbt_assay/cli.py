@@ -499,9 +499,53 @@ def onboard(
     console.print(t)
 
 
+def _gate_progress(store_path: str, cfg) -> None:
+    """How far each question is from being allowed to fail a build.
+
+    *** "20 VERDICTS PER QUESTION" WAS UNREACHABLE WITHOUT A PROGRESS BAR. ***
+    The floor is real and correct, and there was no surface anywhere that said how many you had,
+    which question they counted for, or which questions counted for nothing at all. Ruling on a
+    question that gates nothing is work nobody gets back, so it is named here rather than
+    discovered afterwards.
+    """
+    from .contracts import load_all_banks
+    from .judged import FAMILIES_WITHOUT_FINDINGS
+    if not Path(store_path).exists():
+        console.print(f"\n[dim]no store at {store_path}, so no verdicts are recorded yet. "
+                      f"`assay columns` asks, `assay review -i` rules.[/]")
+        return
+    st = Store(store_path)
+    human = st.adjudication_counts("human")
+    labels = st.adjudication_counts("label")
+    banks = sorted(load_all_banks())
+    st.close()
+
+    if not human and not labels:
+        console.print("\n[dim]no verdicts recorded. `assay review -i` is one keypress each; "
+                      f"a question may fail a build at {cfg.min_adjudications} of them.[/]")
+
+    rows = [b for b in banks if human.get(b) or labels.get(b)] or banks
+    t = Table(title="\nverdicts", header_style="bold", title_justify="left")
+    t.add_column("question"); t.add_column("human", justify="right")
+    t.add_column("labels", justify="right"); t.add_column("may gate")
+    for b in rows:
+        n = human.get(b, 0)
+        if b in FAMILIES_WITHOUT_FINDINGS:
+            gate = "[dim]no finding rests on this[/]"
+        elif n >= cfg.min_adjudications:
+            gate = "[green]yes[/]"
+        else:
+            gate = f"[yellow]{cfg.min_adjudications - n} more[/]"
+        t.add_row(b, str(n), str(labels.get(b, 0)), gate)
+    console.print(t)
+    console.print("[dim]Labels come from your own tests and joins. They are evidence and never "
+                  "permission: the label can be the thing that is wrong.[/]")
+
+
 @app.command()
 def config(
     config_path: str = typer.Option(".", "--config", help="directory holding audit.yml"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
     check: bool = typer.Option(False, "--check",
                                help="also make one real call to prove the key works"),
 ):
@@ -545,6 +589,8 @@ def config(
         console.print(f"\n[dim]vocabulary: {len(cfg.vocab)} term(s), sent with every question[/]")
     if cfg.waivers:
         console.print(f"[dim]waivers: {sum(len(v) for v in cfg.waivers.values())}[/]")
+
+    _gate_progress(store_path, cfg)
 
     if not check:
         console.print("\n[dim]`assay config --check` makes one real call to prove the key "
@@ -2217,6 +2263,16 @@ def _review_loop(store, limit: int, target=None, dialect: str | None = None) -> 
     ctx = _review_context(target, dialect)
     if ctx is None and target:
         console.print("[yellow]could not read the project, so no evidence will be shown.[/]")
+    # *** SAY WHICH OF THESE WILL EVER AUTHORISE ANYTHING, BEFORE THE KEYPRESSES START. ***
+    # Nine of ten families have no finding resting on them. Their answers are still worth having,
+    # and someone sitting down to move a GATE should know which rows are not going to move it.
+    from .judged import FAMILIES_WITHOUT_FINDINGS
+    fams = Counter(_family_of(r[1]) for r in rows)
+    idle = sorted(f for f in fams if f in FAMILIES_WITHOUT_FINDINGS)
+    if idle:
+        n = sum(fams[f] for f in idle)
+        console.print(f"[dim]{n} of these are {', '.join(idle)}, which no finding rests on yet: "
+                      f"ruling on them records evidence and moves no gate.[/]")
     console.print(f"[bold]{len(rows)}[/] to rule on, least certain first.  "
                   "[dim]a agree · d disagree · u unclear · s skip · q quit[/]\n")
     done = 0
@@ -2252,7 +2308,8 @@ def _review_loop(store, limit: int, target=None, dialect: str | None = None) -> 
         t.add_row(fam, str(n),
                   f"{100 * a['agreement']:.0f}%" if a["agreement"] is not None else "-")
     console.print(t)
-    console.print(f"[dim]{done} recorded this round. A question may fail a build once it has "
+    console.print(f"[dim]{done} recorded this round. `assay config` shows how far each question "
+                  f"is from its floor. A question may fail a build once it has "
                   f"enough of these.[/]")
 
 

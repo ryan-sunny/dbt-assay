@@ -45,6 +45,14 @@ class Finding:
     summary: str
     detail: str
     base: int = 2                   # 1 low, 2 medium, 3 high; the graph scales it
+    # *** THE QUESTION WHOSE VERDICTS AUTHORISE THIS FINDING. ***
+    # Empty means the finding is structural: a parser decided it, there is no error rate to
+    # measure, and it may gate immediately. A JUDGED finding must name the family it rests on,
+    # because verdicts are recorded per QUESTION and a finding is not a question. Nine of ten
+    # families authorised nothing while this was inferred from `check` instead: you could rule on
+    # `column_role` all afternoon and no finding was ever named `column_role`, so the gate floor
+    # was never satisfied and nobody could see why.
+    rests_on: str = ""
     evidence: dict = field(default_factory=dict)
     descendants: int = 0
     marts: int = 0
