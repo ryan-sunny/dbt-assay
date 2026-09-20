@@ -60,7 +60,31 @@ def grain_contradicts_declared_key(project, entries, declared) -> list[Finding]:
     return out
 
 
-def identifier_outside_the_grain(project, entries) -> list[Finding]:
+def _derived_from_grain(entry, column, digests) -> bool:
+    """*** A NAMESPACED ALIAS OF THE KEY IS NOT A SECOND IDENTIFIER. ***
+
+    `parcel_pk` built as `'denver-' || schednum` beside `parcel_id` built as `schednum` identifies
+    exactly the same row. Reporting it as an identifier outside the grain is true and useless. If
+    the column's own expression mentions a grain column, it is the grain wearing a different name.
+    """
+    d = digests.get(entry.uid) if digests else None
+    if not d:
+        return False
+    expr = (d.output_exprs.get(column.name) or "").lower()
+    if not expr:
+        return False
+    grain = [g.lower() for g in (entry.grain.value or [])] if entry.grain else []
+    for g in grain:
+        if g and g in expr:
+            return True
+        # the grain column is itself an alias: compare what IT rests on
+        gexpr = (d.output_exprs.get(g) or "").lower()
+        if gexpr and len(gexpr) > 3 and gexpr in expr:
+            return True
+    return False
+
+
+def identifier_outside_the_grain(project, entries, digests=None) -> list[Finding]:
     """A column judged to name the row, that the grain does not include."""
     out = []
     for e in entries:
@@ -70,6 +94,8 @@ def identifier_outside_the_grain(project, entries) -> list[Finding]:
             if not c.role or c.role.value != "identifier" or c.in_key:
                 continue
             if (c.role.confidence or 0) < STRONG:
+                continue
+            if _derived_from_grain(e, c, digests):
                 continue
             out.append(Finding(
                 check="identifier_outside_grain",
@@ -140,11 +166,12 @@ def unresolved_judgment(project, entries) -> list[Finding]:
     return out
 
 
-CHECKS = (identifier_outside_the_grain, measure_inside_the_grain, unresolved_judgment)
+CHECKS = (measure_inside_the_grain, unresolved_judgment)
 
 
-def run_all(project, entries, declared) -> list[Finding]:
+def run_all(project, entries, declared, digests=None) -> list[Finding]:
     out = grain_contradicts_declared_key(project, entries, declared)
+    out += identifier_outside_the_grain(project, entries, digests)
     for fn in CHECKS:
         out.extend(fn(project, entries))
     return sorted((_weightless(f, project) for f in out), key=lambda f: -f.weight)

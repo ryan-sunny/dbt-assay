@@ -69,3 +69,21 @@ def test_severity_is_lifted_by_reach():
                [_col("years", "measure", 0.91, in_key=True)])
     f = judged.run_all(_Proj(), [e], {})[0]
     assert f.descendants == 3 and f.weight > f.base
+
+
+def test_a_namespaced_alias_of_the_key_is_not_a_second_identifier():
+    """`parcel_pk` as `'denver-' || schednum` beside `parcel_id` as `schednum` identifies exactly
+    the same row. Reporting it as an identifier outside the grain is true and useless."""
+    from types import SimpleNamespace
+
+    e = _entry(Fact(["parcel_id"], "declared"), [_col("parcel_pk", "identifier", 0.95)])
+    d = {"model.p.m": SimpleNamespace(output_exprs={
+        "parcel_pk": "'denver-' || CAST(p.schednum AS VARCHAR)",
+        "parcel_id": "CAST(p.schednum AS VARCHAR)"})}
+    assert not judged.run_all(_Proj(), [e], {}, d)
+
+    # a genuinely different entity still fires
+    e2 = _entry(Fact(["parcel_pk"], "declared"), [_col("section_id", "identifier", 0.94)])
+    d2 = {"model.p.m": SimpleNamespace(output_exprs={
+        "section_id": "s.section_id", "parcel_pk": "p.parcel_pk"})}
+    assert any(f.check == "identifier_outside_grain" for f in judged.run_all(_Proj(), [e2], {}, d2))

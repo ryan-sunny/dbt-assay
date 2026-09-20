@@ -173,7 +173,8 @@ def check(
         _s = Store(store_path)
         _obs = probe_mod.read(_s)
         _entries = inv_mod.build(project, digests, schema, _s, _obs)
-        findings += judged_mod.run_all(project, _entries, relate.declared_keys(project))
+        findings += judged_mod.run_all(project, _entries, relate.declared_keys(project),
+                                      digests)
         _s.close()
     findings.sort(key=lambda f: -f.weight)
     if check_name:

@@ -4,9 +4,13 @@
 # reworded criterion is a different question.
 version: 1
 
+# *** `attribute` WAS ADDED AFTER READING THE ANSWERS. ***
+# Sampling 18 judgments by hand found 18 defensible, with one weakness: `contact_phone` came back
+# as free_text at 0.81. A phone number is not prose -- it was the best fit in an option set that
+# had no room for a structured contact detail. The gap was in the criteria, not the judgment.
 column_role:
   type: choice
-  prompt_version: "role.v1"
+  prompt_version: "role.v2"
   instructions:
     question: >-
       What job does `column` do in this model? Judge the column named in `column`, using its
@@ -44,7 +48,13 @@ column_role:
       examples: ["is_active", "has_both_termini", "result"]
     free_text:
       what: "Prose meant for a human to read; not reliably groupable."
+      not_for: "A structured attribute that merely happens to be a string, which is `attribute`."
       examples: ["notes", "description", "a concatenated contact blob"]
+    attribute:
+      what: >-
+        A structured detail ABOUT the entity that you would display or reach it by, rather than
+        group, filter or sum. Not prose, and not an identifier of anything.
+      examples: ["contact_phone", "email", "a website url", "a mailing address"]
     geometry:
       what: "A spatial value: a point, line, polygon, or an encoding of one."
       examples: ["geom", "geom_json", "a lat/lon PAIR is two measures, not this"]
