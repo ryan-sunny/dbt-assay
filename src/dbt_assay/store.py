@@ -195,8 +195,8 @@ class Store:
                    who: str = "", source: str = "human") -> None:
         if verdict not in ("agree", "disagree", "unclear"):
             raise ValueError("verdict must be agree, disagree or unclear")
-        if source not in ("human", "label", "replay"):
-            raise ValueError("source must be human, label or replay")
+        if source not in ("human", "label", "replay", "agent"):
+            raise ValueError("source must be human, label, replay or agent")
         # *** NAME THE COLUMNS. ***
         # A positional insert assumes an order, and a migration appends new columns at the END, so
         # the two disagree the moment a store is upgraded -- writing "label" into a timestamp.
@@ -235,6 +235,31 @@ class Store:
                 "kind", "kind_conf", "citation", "status")
         return [dict(zip(cols, r, strict=True))
                 for r in self.con.execute(q + " order by subject_name, claim_id", args).fetchall()]
+
+    def agent_rulings(self, subject: str | None = None) -> list[dict]:
+        """What an agent has ruled, kept apart from what a person ruled.
+
+        *** AN AGENT RULING IS EVIDENCE. IT IS NEVER AUTHORITY. ***
+        It cannot gate a build, cannot satisfy `min_adjudications`, cannot anchor `regress`, and
+        cannot move the coverage number -- every one of those filters on `source = 'human'`.
+        That is deliberate and it is the point: the ruled-on figure is the only number in this
+        system nobody can game, and an agent able to raise it would destroy exactly the property
+        that makes it worth printing.
+
+        What it CAN do is triage. Sixty-nine models with a finding and none looked at is a wall;
+        six the agent believes are real is a place to start, and the person's ruling is still the
+        one that counts.
+        """
+        self.con.execute(DDL)
+        q = ("select subject, question, family, answered, verdict, note, decided_at "
+             "from adjudications where source = 'agent'")
+        args: list = []
+        if subject:
+            q += " and (subject = ? or subject like ?)"
+            args += [subject, subject + "::%"]
+        cols = ("subject", "question", "family", "answered", "verdict", "note", "decided_at")
+        return [dict(zip(cols, r, strict=True))
+                for r in self.con.execute(q + " order by decided_at desc", args).fetchall()]
 
     def ruled_subjects(self) -> set[str]:
         """Every subject a PERSON has ruled on, however they ruled.

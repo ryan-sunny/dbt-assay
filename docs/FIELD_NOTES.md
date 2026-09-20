@@ -612,3 +612,43 @@ property is what makes agent writes safe, and it exists today.
 Every one of those is a decision a person should be able to review afterwards, which is what
 `decided_by` and `source` already make possible. The read tools make an agent well-informed. These
 four make it useful.
+
+---
+
+## Ninth report: the read-only MCP was the thing in the way
+
+> "Everything else compounds on its own: more checks find more, better states judge better, the
+> warehouse accrues. Rulings don't compound, because the only thing that can produce them at scale
+> can't write them down."
+
+That is the argument, and it is right. `rule(subject, question, verdict, why)` is in the MCP
+surface now.
+
+**Filed as `agent`, and it cannot gate, cannot satisfy `min_adjudications`, cannot anchor
+`regress`, and cannot move the ruled-on number.** All four already filtered on `source = 'human'`,
+which is why this was safe to add at all — and it is the point rather than a limitation. The
+ruled-on figure is the one number here nobody can game, and an agent able to raise it would
+destroy exactly the property that makes it worth printing.
+
+What it does is triage, and the loop only closes because the ruling reaches the person:
+`assay review -i` opens with *"1 of these already have an agent's reading"* and prints the reason
+beside the finding. `assay check` reports the two numbers separately.
+
+A reason is required. A ruling nobody can check is not evidence, which is the thing this tool
+exists to object to.
+
+### And adding it broke the binary while the suite stayed green
+
+`mcp_server` reaching back into `cli` for one helper is a circular import. `assay` died on startup
+and **367 tests passed**, because pytest imports the modules separately and the entry point does
+not. There is a guard now that imports the console script in a fresh interpreter, proved by
+restoring the cycle and watching it fail.
+
+### The ceiling, stated once
+
+> "100% evaluated isn't a thing any of this delivers. What it delivers is that nothing you've
+> looked at can silently change, and that the list of what you haven't looked at is itself a number
+> in the warehouse."
+
+That is the honest description of the whole tool, and it is better than anything in the docs. 69
+models with a finding, 0 ruled on. Ugly, accurate, and visible.

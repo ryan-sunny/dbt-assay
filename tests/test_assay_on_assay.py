@@ -109,3 +109,18 @@ def test_no_document_names_a_version_that_is_not_this_one(doc):
         pytest.skip("installed as a wheel")
     named = set(re.findall(r"dbt-assay@v(\d+\.\d+\.\d+)", p.read_text()))
     assert named <= {dbt_assay.__version__}, (doc, named, dbt_assay.__version__)
+
+
+def test_the_console_script_imports_in_a_fresh_interpreter():
+    """*** pytest IMPORTS IN A DIFFERENT ORDER THAN THE BINARY DOES. ***
+
+    A circular import between `cli` and `mcp_server` killed `assay` outright while the whole suite
+    stayed green, because the tests had already imported the modules separately. The entry point
+    is the thing users run; it has to be checked the way they run it.
+    """
+    import subprocess
+    import sys
+
+    r = subprocess.run([sys.executable, "-c", "from dbt_assay.cli import main; main"],
+                       capture_output=True, text=True, check=False)
+    assert r.returncode == 0, r.stderr[-800:]

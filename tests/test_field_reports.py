@@ -720,3 +720,50 @@ def test_the_mcp_extra_instruction_survives_rich():
         server_class()
     except RuntimeError as e:
         assert "dbt-assay[mcp]" in str(e), "the extra must be in the instruction"
+
+
+def test_an_agent_can_rule_and_the_ruling_is_evidence_not_authority():
+    """*** RULINGS ARE THE ONLY THING IN THIS SYSTEM THAT DO NOT COMPOUND. ***
+
+    More checks find more, better states judge better, the warehouse accrues -- and none of it
+    raises the number that says whether anything was UNDERSTOOD, because the only thing that could
+    produce a ruling at scale had no way to write one down.
+
+    So an agent can, filed apart. The ruled-on figure is the one number here nobody can game, and
+    an agent able to raise it would destroy the property that makes it worth printing.
+    """
+    from dbt_assay.store import Store
+
+    s = Store(":memory:")
+    s.adjudicate("m::a", "role__x", "column_role", "measure", "agree",
+                 note="read it", source="agent")
+    s.adjudicate("m::b", "role__y", "column_role", "measure", "agree",
+                 note="", source="human")
+    try:
+        assert len(s.agent_rulings()) == 1
+        # none of the four authority paths can see it
+        assert s.ruled_subjects() == {"m::b"}, "coverage must stay human-only"
+        assert s.adjudication_counts() == {"column_role": 1}, "gating must stay human-only"
+        assert [r["subject"] for r in s.confirmed()] == ["m::b"], "regress must anchor on a person"
+    finally:
+        s.close()
+
+
+def test_an_agent_ruling_requires_a_reason():
+    """A ruling nobody can check is not evidence, which is the thing this tool exists to object
+    to. Waivers have required one since the beginning."""
+    import inspect
+
+    from dbt_assay.mcp_server import Backend
+    src = inspect.getsource(Backend.rule)
+    assert "a reason is required" in src
+    assert 'source="agent"' in src, "it must not be able to write a human verdict"
+
+
+def test_the_reviewer_sees_what_an_agent_already_concluded():
+    """Otherwise the ruling is a log. Its only value is triaging what a person reads first."""
+    import inspect
+
+    from dbt_assay.cli import _review_coverage, _review_loop
+    assert "an agent read this and said" in inspect.getsource(_review_loop)
+    assert "an agent's reading" in inspect.getsource(_review_coverage)

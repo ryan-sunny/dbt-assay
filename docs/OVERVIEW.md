@@ -553,6 +553,22 @@ prints would have shown it. Eight rulings on record did. Run `assay regress` aft
 after editing a question, and after changing `vocab`. Unchanged states are cached and cost nothing;
 it exits non-zero when something moved.
 
+### An agent can rule. It cannot rule with authority.
+
+`rule()` lets an agent record what it concluded after reading a finding and its SQL. That matters
+because **rulings are the only thing in this system that do not compound**: more checks find more,
+better states judge better, the warehouse accrues — and none of it raises the number that says
+whether anything was *understood*.
+
+An agent ruling is filed as `agent` and **cannot** gate a build, satisfy `min_adjudications`,
+anchor `assay regress`, or move the ruled-on figure. All four filter on `source = 'human'`, and
+that is the point: the ruled-on number is the one nobody can game, and an agent able to raise it
+would destroy exactly the property worth printing.
+
+What it does is triage. Sixty-nine models with a finding and none read is a wall; six an agent
+believes are real is a place to start. `assay review -i` shows its reason beside the finding, and
+your keypress is still the only one that counts.
+
 **A verdict is a regression test for the question, before it is ever a licence to gate.** Reported
 from the field: after rewriting a question's criteria, 8 of 8 recorded verdicts still agreed — the
 first time that session could change a question and know immediately what it had *not* broken. That
@@ -582,7 +598,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.10.3
+- uses: ryan-sunny/dbt-assay@v0.11.0
   with:
     target: target-head
     baseline: base/target
@@ -633,6 +649,7 @@ everything needed to write it, and everything needed **not to break something el
 | `evidence` | the exact construct — the window's partition and sort keys, the predicate, the columns. Not a description of it |
 | `downstream`, `marts` | how carefully to tread. A leaf is not a model 19 marts read |
 | `detail` | why it is wrong, and what shape the fix takes |
+| `rule()` | **record what the agent concluded after reading.** Filed apart from a person's verdict: it triages what to read first and gates nothing |
 | `violations()` | **what would actually fail a build**, under your own `audit.yml`, using the same policy CI applies |
 | **`must_stay_true`** | **the claims this project makes that the code currently supports, and the verdicts a person recorded** |
 

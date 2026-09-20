@@ -176,6 +176,59 @@ class Backend:
             {"model": n, "grain_a_test_should_cover": cols, "grain_source": src, "marts": m}
             for n, cols, src, m in patches[:40]]}
 
+    def rule(self, subject: str, question: str, verdict: str, why: str,
+             correction: str = "") -> dict:
+        """*** RULINGS ARE THE ONLY THING IN THIS SYSTEM THAT DO NOT COMPOUND. ***
+
+        More checks find more. Better states judge better. The warehouse accrues. None of that
+        raises the number that says whether anything was UNDERSTOOD, because the only thing that
+        can produce a ruling at scale could not, until now, write one down.
+
+        So an agent can. And it is filed as `agent`, apart from what a person ruled, because the
+        ruled-on figure is the one number here nobody can game -- an agent able to raise it would
+        destroy the property that makes it worth printing. This gates nothing, satisfies no
+        `min_adjudications`, and anchors no `regress`. It triages.
+
+        A reason is required, exactly as it is for a waiver. A ruling with no reason is one nobody
+        can check, which is the thing this whole tool exists to object to.
+        """
+        if verdict not in ("agree", "disagree", "unclear"):
+            return {"error": "verdict must be agree, disagree or unclear"}
+        if not (why or "").strip():
+            return {"error": "a reason is required. A ruling nobody can check is not evidence."}
+        st = self._open_store()
+        if st is None:
+            return {"error": "no store to write to. Run any judged command once to create one."}
+        try:
+            answered = ""
+            row = st.con.execute(
+                "select answer from model_decisions where decision_key = ? and question = ? "
+                "order by decided_at desc limit 1", [subject, question]).fetchone()
+            if row:
+                answered = row[0]
+            # `contracts.family_of` and not `cli._family_of`: cli imports this module, so
+            # reaching back into it is a circular import that kills the binary while the test
+            # suite -- which imports in a different order -- stays green.
+            from .contracts import family_of
+            st.adjudicate(subject, question, family_of(question) or question.split("__")[0],
+                          answered, verdict,
+                          correction=correction, note=why.strip(), who="agent", source="agent")
+            human = len(st.ruled_subjects())
+            mine = len(st.agent_rulings())
+        finally:
+            st.close()
+        return {
+            "recorded": True, "subject": subject, "verdict": verdict,
+            "agent_rulings_now": mine, "models_a_person_has_ruled_on": human,
+            "what_this_does": ("It puts this in front of whoever reviews next, ranked above what "
+                               "nobody has read. `assay review -i` shows your reason beside the "
+                               "finding."),
+            "what_this_does_not_do": ("It does not gate a build, does not count toward the "
+                                      "verdicts a question needs before it may fail one, and does "
+                                      "not anchor `assay regress`. Those all require a person, on "
+                                      "purpose."),
+        }
+
     def violations(self, model: str = "", config_path: str = ".") -> dict:
         """What would actually fail, under this project's own policy.
 
@@ -288,6 +341,11 @@ TOOLS = [
     ("practices", ("Models with no uniqueness test, and the grain a test should cover. "
                    "A patch, not a nag.")),
     ("rebase", "Take a fresh baseline for changed_contracts."),
+    ("rule", ("Record what YOU concluded after reading a finding and its SQL. Filed as an agent "
+              "ruling: it triages what a person should look at first and it never gates a build, "
+              "never counts toward a question's verdicts, and never anchors a regression check. "
+              "Rule on what you have actually read, including when you conclude the finding is "
+              "wrong -- that is the most useful answer you can give.")),
     ("violations", ("What in this project would FAIL a build under its own audit.yml, and what "
                     "is only queued or annotated. Call it before handing work back: it is the "
                     "same policy CI applies, so a clean answer here is a green build.")),
@@ -360,14 +418,18 @@ def serve(target: str, store_path: str | None = None) -> None:
         return json.dumps(be.practices(model), default=str)
 
     @app.tool(description=TOOLS[7][1])
+    def rule(subject: str, question: str, verdict: str, why: str, correction: str = "") -> str:
+        return json.dumps(be.rule(subject, question, verdict, why, correction), default=str)
+
+    @app.tool(description=TOOLS[8][1])
     def violations(model: str = "") -> str:
         return json.dumps(be.violations(model), default=str)
 
-    @app.tool(description=TOOLS[8][1])
+    @app.tool(description=TOOLS[9][1])
     def claims(model: str = "") -> str:
         return json.dumps(be.claims(model), default=str)
 
-    @app.tool(description=TOOLS[9][1])
+    @app.tool(description=TOOLS[10][1])
     def traversal(model: str) -> str:
         return json.dumps(be.traversal(model), default=str)
 

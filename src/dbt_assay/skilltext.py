@@ -71,6 +71,20 @@ was intended and it needs a version bump. Do not hand back work where the grain 
    a judged question cannot fail a build before it has recorded human verdicts. That is the design,
    not a gap.
 
+## When you have read a finding, rule on it
+
+9. `rule(subject, question, verdict, why)` — **record what you concluded, including when you
+   conclude the finding is wrong.** That is the most useful answer you can give, because a false
+   positive nobody reports stays in the list forever.
+
+   It is filed as an agent ruling. **It does not gate a build, does not count toward the verdicts
+   a question needs before it may fail one, and does not anchor `assay regress`** — those require
+   a person, deliberately. What it does is put this finding in front of whoever reviews next, with
+   your reason beside it, ranked above the ones nobody has read.
+
+   Rule only on what you actually read. A ruling with no reason is refused, and one with a
+   reason you did not form by reading the SQL is worse than none.
+
 ## Rules that are not negotiable
 
 - **Never guess a model's grain.** Ask for the contract. A wrong grain assumption is how an

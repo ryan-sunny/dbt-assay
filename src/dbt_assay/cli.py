@@ -95,18 +95,25 @@ def _review_coverage(findings, store_path: str) -> None:
     try:
         st = Store(store_path)
         ruled = st.ruled_subjects()
+        agent = st.agent_rulings()
         st.close()
     except Exception:                                                   # noqa: BLE001
         return
     models = {f.subject for f in findings}
     seen = {m for m in models if m in ruled}
     pct = len(seen) / len(models) if models else 0
+    by_agent = {a["subject"].split("::")[0] for a in agent} - seen
     colour = "green" if pct >= 0.5 else ("yellow" if seen else "red")
     console.print(f"\n[{colour}]{len(seen)} of {len(models)} model(s) with a finding have been "
                   f"ruled on by a person.[/]")
+    if by_agent:
+        console.print(f"[cyan]{len(by_agent)} more have an agent's reading[/] [dim]-- which is a "
+                      f"place to start, not a substitute. `assay review -i` shows it beside the "
+                      f"finding.[/]")
     if pct < 1:
         console.print("[dim]This is the only number here a release cannot improve. Every other "
-                      "one moves when assay gets better; this moves when you read SQL.[/]")
+                      "one moves when assay gets better, and an agent cannot raise it either; "
+                      "this moves when you read SQL.[/]")
 
 
 def _coverage_panel(project, digests, failures, show_errors: bool = True) -> None:
@@ -3421,6 +3428,13 @@ def _review_loop(store, limit: int, target=None, dialect: str | None = None) -> 
         n = sum(fams[f] for f in idle)
         console.print(f"[dim]{n} of these are {', '.join(idle)}, which no finding rests on yet: "
                       f"ruling on them records evidence and moves no gate.[/]")
+    agent_said: dict = {}
+    for a in store.agent_rulings():
+        agent_said.setdefault((a["subject"], a["question"]), []).append(a)
+    if agent_said:
+        console.print(f"[cyan]{len(agent_said)} of these already have an agent's reading[/] "
+                      f"[dim]-- shown beside the finding. It is context, not the answer: only a "
+                      f"person's keypress counts toward anything.[/]")
     console.print(f"[bold]{len(rows)}[/] to rule on, least certain first.  "
                   "[dim]a agree · d disagree · u unclear · s skip · q quit[/]\n")
     done = 0
@@ -3429,6 +3443,12 @@ def _review_loop(store, limit: int, target=None, dialect: str | None = None) -> 
         subject = about or key.split(".")[-1]
         cf = f"  [dim]confidence {conf:.2f}[/]" if conf is not None else ""
         console.print(f"[dim]{fam}[/]  [bold]{subject}[/]")
+        for a in (agent_said.get((subject, q)) or [])[:1]:
+            # *** AN AGENT'S READING IS WORTH SEEING, AND IS NOT THE ANSWER. ***
+            # It triages: this row is in front of you because something already read the SQL and
+            # had a view. The keypress is still yours and it is still the only one that counts.
+            console.print(f"  [cyan]an agent read this and said {a['verdict']}[/]"
+                          f"  [dim]{(a['note'] or '')[:96]}[/]")
         console.print(f"  {q.split('__')[0]}  =  [bold]{ans}[/]{cf}")
         _show_evidence(ctx, key, q)
         ch = _keypress()
