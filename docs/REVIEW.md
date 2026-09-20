@@ -140,3 +140,82 @@ answer: `adjudications` carries `decided_by` and `source`.
   right the exact failure this project kept finding elsewhere.
 - **`min_adjudications`, and the footer that says an agent cannot raise the ruled-on figure.** The
   claim is made where the result is read, not buried in docs.
+
+---
+
+# Round two: items 1–5 verified, item 6 worked
+
+Re-run against the same warehouse on 0.13.0.
+
+## Verified fixed
+
+```
+stg_water_resume_entry_facts   main_water      149x        was (not counted)
+int_water_call_exposure_basis  main_water      1.31x       was 1x
+az_section_parcel_sales        main_water_az   HOLDS       was (not counted)
+fact_permit                    5.81x                       was 6x
+business_leads                 1.56x                       was 2x
+export's closing line          path:seeds/assay + why the glob fails
+locked store                   names DuckDB's single-writer rule
+```
+
+The schema fix corrected **me** as well: I had measured `az_section_parcel_sales` as fanning out
+2.23x on three columns, and the grain is four. With the full key it holds at 944,604/944,604. My
+number was wrong because I truncated the key — which is the same defect the intersection fix exists
+to prevent, made by hand.
+
+`option_routes_to_another` closed item 6e in the best possible way. It fired on exactly the two
+families where I had guessed the routing sentence explained the overlap judge's false negative.
+Rather than acknowledge it I measured it: removing the sentence kept **8/8 recorded verdicts,
+regress exit 0, answer mix identical at 75/4/3**, and cleared the warning. The rule was right and
+the sentence was not load-bearing. One run, because eight verdicts existed.
+
+## Still open
+
+**`practices` and `patch` disagree about an empty table.** Same model, same run:
+
+```
+practices:  int_azcc_owners  owner_key  (holds: 0 rows, 0 distinct)
+patch:      int_azcc_owners: the table is EMPTY, so any uniqueness test on it
+                             passes for the wrong reason
+```
+
+`patch` is right and `practices` is the one `onboard` points at first, with `holds` sitting in the
+column a reader scans for green. The 0.10.2 refusal should reach both.
+
+**The lockfile detection looks in the wrong directory.** `onboard --compile` still says
+*"'dbt' is not on PATH. Pass --dbt with the command you use"* with no `uv run dbt` suggestion,
+because it looks beside `dbt_project.yml`:
+
+```
+dbt_project.yml   ./transform/dbt_project.yml
+uv.lock           ./uv.lock           <- repo root, one level up
+```
+
+A dbt project in a subdirectory (`transform/`, `dbt/`, `warehouse/`) is the common layout in a repo
+that is not only dbt. Walking up to the git root would find it.
+
+**The dbt-binary flag is named two ways.**
+
+```
+practices   --dbt-bin
+adjudicate  --dbt-bin
+probe       --dbt-bin
+patch       --dbt
+onboard     --dbt
+```
+
+It also flipped between releases — `practices` took `--dbt` on 0.9.4 and takes `--dbt-bin` on
+0.13.0, so a script written against one version breaks on the next. Worth accepting both with one
+as the documented spelling.
+
+## On `rule(decided_by=...)`
+
+Rejecting `on_behalf_of='human'` was right and my proposal was wrong. *The one field an agent fills
+in itself cannot be the field that decides authority* — that is the whole property, and I had
+proposed handing the agent the key to it. `decided_by` as provenance with the tier still fixed at
+`agent` is correct.
+
+`review_queue()` is the other half and matters more than it looks: an agent that can see the queue
+it is building can rank its own next reading by blast radius, which is the difference between
+ruling on 99 findings and ruling on the 99 that matter in an order somebody would choose.
