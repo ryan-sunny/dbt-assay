@@ -319,6 +319,56 @@ or a `.env`, and `assay config` says which.
 directory and holds judgments, verdicts, claims and findings. `assay export` is how its contents
 become relations *in* your warehouse.
 
+## Your own questions
+
+```bash
+assay banks              # every question, where it came from, and whether its shape is sound
+assay banks --strict     # exit non-zero on a warning too
+```
+
+Put a `.yml` in **`assay_questions/`** — here or in any parent, or wherever `ASSAY_QUESTIONS`
+points. A family with a new name is added. A family with a shipped name **replaces** it, which is
+the point: a warehouse whose `column_role` needs an extra option should not have to fork.
+
+```yaml
+# assay_questions/mine.yml
+version: 1
+water_division_completeness:
+  id_prefix: "wdiv"          # verdicts file under this family; must be unique
+  type: noul
+  prompt_version: "wdiv.v1"  # the cache is keyed on it. Bump it when you reword.
+  instructions:
+    question: >-
+      Does this model join or group on a case number without also carrying the water division?
+  criteria:
+    "true":
+      what: "A case number is used as a key or join column with no division beside it."
+    "false":
+      what: "Every use of a case number carries its division, or no case number is used."
+```
+
+### The lint is every shape already measured to fail
+
+`assay banks` checks your questions against what Jev is bad at, and it is **not** style advice.
+A badly shaped question does not error — it answers confidently and uselessly, which is worse.
+`keys_on_a_non_unique_column` read 0.73 to 0.85 on every model tested, clean or broken, and looked
+like a working check for weeks.
+
+| rule | why |
+|---|---|
+| `not_a_calculator` | *"Jev is not a calculator."* Asked whether a date expression implemented "the last day of the second month following", it scored the **correct** one 0.39 and a **wrong** one 0.62 |
+| `dates_are_text` | it reads dates as text, not as ordered quantities, so comparisons and durations are unreliable |
+| `multi_hop` | one lumped question over three rules read 0.64 where the split rule that applied read 0.85 |
+| `no_match_option` | without one the model must pick a wrong answer. A real division bug surfaced **only** because it could say "not on the list" |
+| `options_not_separated` | two options described alike give the model nothing to cut on; assay's own pair sat at 0.36–0.39 until they were merged |
+| `state_size` | unrelated detail is a distractor: one correct extra sentence took a claim from 0.96 to 0.47 |
+| `id_prefix` | two families sharing a prefix means one silently absorbs the other's verdicts |
+| `level_names_nothing` | a score answer can land **between** levels, so "medium" describes nothing |
+
+**It checks the shape, not the answer.** Only running a question against cases you have already
+ruled on tells you whether it is right — and the linter was itself calibrated that way: run against
+assay's own fifteen hand-tuned banks it flagged four, and all four were the linter being wrong.
+
 ## Nothing gates until it has been measured
 
 This is the part most tools get wrong, and it is why `assay` is safe to put in CI on day one.
@@ -367,7 +417,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.3.3
+- uses: ryan-sunny/dbt-assay@v0.4.0
   with:
     target: target-head
     baseline: base/target

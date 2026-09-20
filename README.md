@@ -95,7 +95,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.3.3
+- uses: ryan-sunny/dbt-assay@v0.4.0
   with:
     target: target-head
     baseline: base/target
@@ -487,6 +487,21 @@ or any parent directory. An exported variable always beats the file. **The key n
 This existed as a bug first: `assay` read only `os.environ`, so a key sitting in a `.env` was
 invisible and every judged command reported the tier as off. A capability check that can be wrong
 needs a way to show what it decided, which is what `assay config` is for.
+
+## Your own questions, and whether their shape is sound
+
+```bash
+assay banks     # every question, where it came from, and a lint of its shape
+```
+
+A `.yml` in `assay_questions/` here or in any parent adds a family, or replaces a shipped one by
+name. `assay banks` then checks it against every shape already measured to fail — arithmetic Jev
+cannot do, dates it reads as text, a choice with no way to decline, options described so alike
+there is nothing to cut on. [The full list is in the overview](docs/OVERVIEW.md).
+
+It checks the shape, not the answer, and it was calibrated the only honest way: run against
+assay's own fifteen hand-tuned banks it flagged four questions, and all four were the linter being
+wrong.
 
 ## Nothing gates until it has been measured
 

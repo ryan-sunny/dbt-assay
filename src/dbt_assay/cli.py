@@ -575,6 +575,10 @@ def onboard(
     elif judged is False:
         steps.append(("export TYPESAFE_API_KEY=... (or OPENROUTER_API_KEY)",
                       ("section 4 is what a key buys; everything above it ran without one")))
+    from .contracts import user_bank_dir as _ubd
+    if _ubd():
+        steps.append(("assay banks",
+                      "you have an assay_questions/ directory; this lints what is in it"))
     if not agent:
         steps.append(("assay onboard --agent",
                       "writes the agent skill file and prints the MCP line"))
@@ -1041,6 +1045,66 @@ def traverse(
     for f, p_ in sorted(bad, key=lambda x: -x[1])[:15]:
         console.print(f"  [bold]{f.parent_name}[/] -> [bold]{f.child_name}[/]  "
                       f"[dim]p={p_:.2f}  on {', '.join(sorted(f.joined_on or [])[:4]) or 'no key'}[/]")
+
+
+@app.command()
+def banks(
+    lint: bool = typer.Option(True, "--lint/--no-lint",
+                              help="check every question against the rules Jev's shape imposes"),
+    strict: bool = typer.Option(False, "--strict", help="exit non-zero on a warning too"),
+):
+    """Every question assay will ask, where it came from, and whether its shape is sound.
+
+    *** YOUR OWN QUESTIONS GO IN `assay_questions/` AND LOAD ON TOP. ***
+    A directory here or in any parent, or wherever `ASSAY_QUESTIONS` points. A family with a new
+    name is added; one with a shipped name REPLACES it, which is the point -- a warehouse whose
+    `column_role` needs an extra option should not have to fork.
+
+    The lint is every shape already measured to fail: arithmetic Jev cannot do, dates it reads as
+    text, a choice with no way to decline, options described so alike there is nothing to cut on.
+    It cannot tell you a question is GOOD. Only running it against cases you have already ruled on
+    does that.
+    """
+    from .contracts import SHIPPED, load_all_banks, user_bank_dir
+    from .lint import lint_all
+
+    ud = user_bank_dir()
+    all_banks = load_all_banks()
+    added = sorted(n for n in all_banks if n not in SHIPPED)
+    replaced = sorted(n for n in all_banks
+                      if n in SHIPPED and all_banks[n].get("_source") != SHIPPED[n].get("_source"))
+    where = (f"{len(added)} added, {len(replaced)} replaced, from {ud}" if ud
+             else "no assay_questions/ directory found")
+    console.print(f"[bold]{len(all_banks)}[/] question(s)  "
+                  f"[dim]{len(SHIPPED)} shipped; {where}[/]")
+
+    t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    t.add_column("question"); t.add_column("type"); t.add_column("version"); t.add_column("from")
+    for name in sorted(all_banks):
+        q = all_banks[name]
+        own = name in added
+        repl = name in replaced
+        src = ("[green]yours[/]" if own else
+               "[yellow]yours, replacing[/]" if repl else "[dim]shipped[/]")
+        t.add_row(f"[bold]{name}[/]" if own or repl else name,
+                  q.get("type", "?"), q.get("prompt_version", "?"), src)
+    console.print(t)
+
+    if not lint:
+        raise typer.Exit(0)
+    issues = lint_all(all_banks, SHIPPED)
+    if not issues:
+        console.print("\n[green]every question has a shape Jev answers well.[/] "
+                      "[dim]That is a check on the SHAPE. Only running it against cases you have "
+                      "already ruled on says whether it is right.[/]")
+        raise typer.Exit(0)
+    errs = [i for i in issues if i.level == "error"]
+    console.print(f"\n[bold]{len(errs)} error(s), {len(issues) - len(errs)} warning(s)[/]")
+    for i in sorted(issues, key=lambda x: (x.level != "error", x.question)):
+        colour = "red" if i.level == "error" else "yellow"
+        console.print(f"\n  [{colour}]{i.level}[/]  [bold]{i.question}[/]  [dim]{i.rule}[/]")
+        console.print(f"    {i.detail}")
+    raise typer.Exit(1 if errs or (strict and issues) else 0)
 
 
 @app.command()

@@ -19,6 +19,7 @@ path is ever used for is a label in the output.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,17 +44,50 @@ def _load_bank(path: Path) -> dict:
     return data
 
 
-def load_all_banks(directory: Path | None = None) -> dict:
-    """Every .yml in the questions directory. A user's own bank loads the same way."""
-    directory = directory or (Path(__file__).parent / "questions")
+def user_bank_dir() -> Path | None:
+    """Where this project keeps its own questions, if it does.
+
+    `ASSAY_QUESTIONS` wins; otherwise an `assay_questions/` directory here or above, found the same
+    way a `.env` is. Convention rather than configuration, because this has to resolve at IMPORT
+    time: fourteen modules bind their question at module level, so a bank loaded any later would
+    add families and silently fail to override one.
+    """
+    env = os.environ.get("ASSAY_QUESTIONS")
+    if env:
+        p = Path(env).expanduser()
+        return p if p.is_dir() else None
+    here = Path.cwd().resolve()
+    for d in [here, *here.parents][:6]:
+        c = d / "assay_questions"
+        if c.is_dir():
+            return c
+    return None
+
+
+def load_all_banks(directory: Path | None = None, with_user: bool = True) -> dict:
+    """Every .yml in the questions directory, then this project's own on top.
+
+    *** A USER'S BANK CAN ADD A FAMILY AND CAN REPLACE ONE. ***
+    Replacing is the point: a warehouse whose `column_role` needs an extra option should not have
+    to fork. The shipped bank loads first and the user's overwrites by name, and `assay banks`
+    prints which is which so an override is never a surprise.
+    """
     out: dict = {}
-    for f in sorted(directory.glob("*.yml")):
-        for name, q in _load_bank(f).items():
-            if name != "version":
-                out[name] = q
+    for d in ([directory] if directory else
+              [Path(__file__).parent / "questions",
+               *( [user_bank_dir()] if with_user and user_bank_dir() else [] )]):
+        if d is None:
+            continue
+        for f in sorted(d.glob("*.yml")):
+            for name, q in _load_bank(f).items():
+                if name != "version":
+                    q = dict(q)
+                    q["_source"] = str(f)
+                    out[name] = q
     return out
 
 
+SHIPPED = load_all_banks(Path(__file__).parent / "questions")
 QUESTIONS = load_all_banks()
 KEY_Q = QUESTIONS["column_is_part_of_the_key"]
 PROMPT_VERSION = KEY_Q["prompt_version"]

@@ -34,6 +34,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --all-extras
       - run: uv run ruff check src tests
+      # The shipped banks are hand-tuned and measured. If the linter nags about
+      # them, one of the two is wrong and it must be settled before release.
+      - run: uv run assay banks --strict
 
   dependency-majors:
     # *** THE JOB THAT EARNS ITS KEEP. ***
