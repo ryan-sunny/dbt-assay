@@ -65,18 +65,10 @@ def test_every_choice_and_score_can_be_built_without_a_key():
 def test_the_declared_sqlglot_floor_is_not_a_claim_assay_cannot_keep():
     """`>=25` was a lie: `exp.RegexpFullMatch` does not exist before 28, so assay failed to parse
     ANY model there. CI pins the floor and the latest on every push."""
-    from pathlib import Path
-
-    import tomllib
-
-    import dbt_assay
-    root = Path(dbt_assay.__file__).parent.parent.parent
-    pj = root / "pyproject.toml"
-    if not pj.exists():
+    data = _pyproject()
+    if data is None:
         return
-    with pj.open("rb") as fh:
-        deps = tomllib.load(fh)["project"]["dependencies"]
-    floor = next(d for d in deps if d.startswith("sqlglot"))
+    floor = next(d for d in data["project"]["dependencies"] if d.startswith("sqlglot"))
     assert ">=28" in floor, floor
 
 
