@@ -152,8 +152,9 @@ def _resolve_roots(d, schema, uid, project) -> dict:
 
 
 def derive_columns(project, digests: dict[str, Digest], schema: Schema,
-                   dialect: str = "duckdb") -> dict:
+                   dialect: str | None = None) -> dict:
     """Walk the DAG parents-first, expanding stars with what the parents were found to offer."""
+    dialect = dialect or getattr(project, "dialect", "duckdb")
     stats = {"expanded": 0, "qualify_failed": 0, "from_sql": 0, "from_catalog": 0,
              "from_declared": 0, "unknown": 0}
     raw_nodes = project.raw.get("nodes", {})

@@ -57,7 +57,7 @@ class Pair:
         return f"{self.model_a}.{self.column_a}::{self.model_b}.{self.column_b}"
 
 
-def joined_pairs(project, digests, schema, dialect: str = "duckdb") -> set:
+def joined_pairs(project, digests, schema, dialect: str | None = None) -> set:
     """Column pairs this project already joins. Free positive labels.
 
     *** THE TWO SIDES OF ONE EQUALITY, NOT EVERY COLUMN IN THE ON CLAUSE. ***
@@ -67,6 +67,7 @@ def joined_pairs(project, digests, schema, dialect: str = "duckdb") -> set:
     including ('bad', 'city'), all of them nonsense. Only `left = right` is somebody asserting two
     columns hold the same concept.
     """
+    dialect = dialect or getattr(project, "dialect", "duckdb")
     import sqlglot
     from sqlglot import exp
 

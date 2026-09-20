@@ -22,6 +22,19 @@ from pathlib import Path
 
 LAYERS = ("staging", "intermediate", "marts")
 
+# *** THE MANIFEST NAMES ITS OWN ADAPTER, SO NOBODY SHOULD HAVE TO PASS A DIALECT. ***
+# Defaulting to duckdb meant every other warehouse was silently misparsed unless the user knew a
+# flag existed. Most adapter names ARE sqlglot dialect names; these are the ones that are not.
+ADAPTER_DIALECT = {
+    "postgres": "postgres", "redshift": "redshift", "snowflake": "snowflake",
+    "bigquery": "bigquery", "databricks": "databricks", "spark": "spark",
+    "duckdb": "duckdb", "trino": "trino", "athena": "athena", "clickhouse": "clickhouse",
+    "fabric": "tsql", "synapse": "tsql", "sqlserver": "tsql", "mssql": "tsql",
+    "materialize": "postgres", "dremio": "presto", "starrocks": "starrocks",
+    "doris": "doris", "oracle": "oracle", "teradata": "teradata", "exasol": "postgres",
+    "glue": "spark", "vertica": "postgres", "greenplum": "postgres",
+}
+
 
 def _layer_of(path: str) -> str:
     parts = Path(path).parts
@@ -90,6 +103,8 @@ class Project:
         self.project_root = Path(project_root) if project_root else target_dir.parent
         self.project_name = manifest.get("metadata", {}).get("project_name", "")
         self.dbt_version = manifest.get("metadata", {}).get("dbt_version", "")
+        self.adapter_type = manifest.get("metadata", {}).get("adapter_type", "") or ""
+        self.dialect_override = ""      # set once, by the CLI, when --dialect is passed
         self.models: dict[str, Model] = {}
         self.sources: dict[str, Source] = {}
         self.tests: list[Test] = []
@@ -230,6 +245,17 @@ class Project:
                 from .backtest import dejinja
                 m.compiled, m.compiled_from = dejinja(raw), "stripped"
                 m.compiled_path = str(self.project_root / m.path) if self.project_root else m.path
+
+    @property
+    def dialect(self) -> str:
+        """The SQL this project actually speaks, read from its own manifest.
+
+        Everything that parses reads this rather than defaulting, so ONE place decides and a call
+        site that forgets to thread a flag cannot quietly parse Snowflake as DuckDB.
+        """
+        if self.dialect_override:
+            return self.dialect_override
+        return ADAPTER_DIALECT.get(self.adapter_type.lower(), self.adapter_type.lower() or "duckdb")
 
     # ---------- graph ----------
 

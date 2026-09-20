@@ -68,8 +68,9 @@ def _root_class(root: str) -> str | None:
     return None
 
 
-def classify(uid: str, project, digests, schema, dialect: str = "duckdb"
+def classify(uid: str, project, digests, schema, dialect: str | None = None
              ) -> dict[str, ColumnProvenance]:
+    dialect = dialect or getattr(project, "dialect", "duckdb")
     d = digests.get(uid)
     if not d or not d.ok:
         return {}

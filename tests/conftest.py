@@ -80,7 +80,9 @@ def project_dir(tmp_path: Path) -> Path:
         parent_map[f"test.p.{uid}"] = [model_uid]
 
     manifest = {
-        "metadata": {"project_name": "p", "dbt_version": "1.11.0"},
+        # The `~` fixtures are DuckDB semantics, so the fixture says so rather than relying on a
+        # default. A manifest that names no adapter is its own test, in test_dialect.py.
+        "metadata": {"project_name": "p", "dbt_version": "1.11.0", "adapter_type": "duckdb"},
         "nodes": nodes, "sources": {}, "parent_map": parent_map, "child_map": child_map,
     }
     (tmp_path / "target" / "manifest.json").write_text(json.dumps(manifest))

@@ -55,8 +55,12 @@ def _find_target(given: str | None) -> Path:
         "could not find target/manifest.json. Pass --target, or run `dbt parse` in your project.")
 
 
-def _load(target: Path, dialect: str = "duckdb"):
+def _load(target: Path, dialect: str | None = None):
     project = Project.load(target)
+    # An explicit --dialect always wins; otherwise the project says what it speaks. Recording it on
+    # the project means every downstream default follows, rather than each call site remembering.
+    project.dialect_override = dialect or ""
+    dialect = project.dialect
     digests, failures = {}, []
     for uid, m in project.models.items():
         if not m.readable:
@@ -73,11 +77,13 @@ def _load(target: Path, dialect: str = "duckdb"):
     return project, digests, failures, schema, schema_stats
 
 
-def _coverage_panel(project, digests, failures) -> None:
+def _coverage_panel(project, digests, failures, show_errors: bool = True) -> None:
     cov = project.coverage()
     ok = sum(1 for d in digests.values() if d.ok)
     t = Table(show_header=False, box=None, padding=(0, 2))
-    t.add_row("project", f"[bold]{project.project_name}[/]  (dbt {project.dbt_version})")
+    t.add_row("project", f"[bold]{project.project_name}[/]  (dbt {project.dbt_version}, "
+                         f"{project.adapter_type or 'adapter unknown'} "
+                         f"\u2192 {project.dialect})")
     t.add_row("models", f"{cov['models']}   sources {cov['sources']}   tests {cov['tests']}   edges {cov['edges']}")
     t.add_row("compiled SQL", f"{cov['readable']} read  ({cov['from_disk']} from disk, "
                               f"{cov['from_manifest']} from manifest)")
@@ -95,6 +101,12 @@ def _coverage_panel(project, digests, failures) -> None:
                   f"Run `dbt compile` to include them.[/]")
     t.add_row("parsed", f"{ok}/{len(digests)}" + (f"   [yellow]{len(failures)} failed[/]" if failures else ""))
     console.print(t)
+    if not show_errors:
+        # A first run should not open with five screens of someone else's SQL. The COUNT is the
+        # signal; the bodies are a second command away.
+        if failures:
+            console.print(f"   [dim]`assay scan` prints why each of the {len(failures)} failed.[/]")
+        return
     for _, name, _, err in failures[:5]:
         console.print(f"   [yellow]parse failed[/] {name}: {err}")
 
@@ -118,9 +130,9 @@ def _schema_panel(schema, stats: dict) -> None:
 @app.command()
 def scan(
     target: str = typer.Option(None, "--target", "-t", help="path to dbt target/ directory"),
-    dialect: str = typer.Option("duckdb", "--dialect",
-                                help="snowflake | bigquery | postgres | redshift | databricks | "
-                                     "duckdb -- the SQL your warehouse speaks"),
+    dialect: str = typer.Option(None, "--dialect",
+                                help="override the dialect; by default it is read from the "
+                                     "manifest's own adapter_type"),
 ):
     """Read the project and report what can and cannot be audited."""
     tdir = _find_target(target)
@@ -158,8 +170,8 @@ def check(
     limit: int = typer.Option(25, "--limit", "-n", help="how many findings to print"),
     check_name: str = typer.Option(None, "--check", help="only this check"),
     config_path: str = typer.Option(".", "--config", help="directory holding audit.yml"),
-    dialect: str = typer.Option("duckdb", "--dialect",
-                                help="the SQL your warehouse speaks"),
+    dialect: str = typer.Option(None, "--dialect",
+                                help="override; read from the manifest by default"),
 ):
     """Run the structural checks. No network, no API key, no spend."""
     tdir = _find_target(target)
@@ -276,6 +288,110 @@ def check(
 
 
 @app.command()
+def onboard(
+    target: str = typer.Option(None, "--target", "-t", help="a dbt target dir, or a project root"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config", help="where audit.yml should live"),
+    agent: bool = typer.Option(False, "--agent",
+                               help="also write the agent skill file and print the MCP config"),
+    dialect: str = typer.Option(None, "--dialect",
+                                help="override; read from the manifest by default"),
+):
+    """One command for a project assay has never seen. Reads, reports, writes nothing that gates.
+
+    *** THE POINT IS THE HONEST PART, NOT THE WELCOME. ***
+    A first run on someone else\'s warehouse is where assay is most likely to be quietly wrong: no
+    compiled SQL, no catalog, a dialect it guessed. Every one of those degrades the answers without
+    changing how confident the output looks, so onboard says which of them is true here BEFORE it
+    shows a single finding, and it prints the command that fixes each one.
+    """
+    tdir = _find_target(target)
+    project, digests, failures, schema, sstats = _load(tdir, dialect)
+    cov = project.coverage()
+
+    console.print("\n[bold]1. what assay found[/]")
+    _coverage_panel(project, digests, failures, show_errors=False)
+    if not project.adapter_type:
+        console.print("   [yellow]this manifest names no adapter, so the dialect was assumed to be "
+                      "duckdb. Pass --dialect if that is wrong.[/]")
+    console.print("\n[bold]2. what it can see[/]")
+    _schema_panel(schema, sstats)
+
+    console.print("\n[bold]3. what it found, with no key and no spend[/]")
+    _facts, edge_findings = relate.run_all(project, digests, schema)
+    findings = run_all(project, digests, schema) + edge_findings
+    findings.sort(key=lambda f: -f.weight)
+    blind = unevaluable_tests(project, digests)
+    if blind:
+        console.print(f"   [yellow]{len(blind)} test(s) cannot be evaluated[/] "
+                      f"[dim]-- they are not a pass. `assay tests` lists them.[/]")
+    if not findings:
+        console.print("   [green]no structural findings.[/] "
+                      "[dim]That is a real result on a small or careful project; on a large one it "
+                      "usually means the compiled SQL is missing. Check the counts above.[/]")
+    else:
+        by = Counter(f.check for f in findings)
+        t = Table(show_header=False, box=None, padding=(0, 2))
+        for check_, n in by.most_common(8):
+            ex = next(f for f in findings if f.check == check_)
+            t.add_row(f"[bold]{n}[/]", check_, f"[dim]e.g. {ex.subject_name}[/]")
+        console.print(t)
+        console.print("   [dim]`assay check --check <name>` reads one of them in full.[/]")
+
+    console.print("\n[bold]4. config[/]")
+    p = Path(config_path) / "audit.yml"
+    if p.exists():
+        console.print(f"   [dim]{p} already exists; left alone.[/]")
+    else:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(DEFAULT_YML)
+        console.print(f"   wrote [bold]{p}[/]. "
+                      "[dim]Nothing in it fails a build, and assay refuses to gate on a question "
+                      "with no recorded verdicts anyway.[/]")
+
+    if agent:
+        from .skilltext import SKILL_MD
+        sp = Path(".claude/skills/dbt-assay/SKILL.md")
+        sp.parent.mkdir(parents=True, exist_ok=True)
+        sp.write_text(SKILL_MD)
+        console.print(f"   wrote [bold]{sp}[/] [dim](the procedure an agent follows when it edits "
+                      "a model)[/]")
+        console.print("   [dim]MCP: claude mcp add assay -- assay mcp --target "
+                      f"{tdir}[/]")
+
+    console.print("\n[bold]5. next[/]")
+    steps = []
+    if cov["unreadable"] or cov.get("from_stripped"):
+        n_raw = cov["unreadable"] + cov.get("from_stripped", 0)
+        steps.append(("dbt compile",
+                      (f"{n_raw} model(s) were read without compiled SQL, which is the single "
+                       f"biggest thing holding assay back here")))
+    if not schema.catalog_present:
+        steps.append(("dbt docs generate",
+                      "gives assay real column lists for your sources instead of inferring them"))
+    steps.append(("assay inventory --out inventory.html",
+                  "one page per model: columns, provenance, tests, findings"))
+    if findings:
+        steps.append((f"assay check --check {by.most_common(1)[0][0]}",
+                      "the finding there is most of"))
+    from .jev import Client as _C
+    if not _C(provider=None).available:
+        steps.append(("export TYPESAFE_API_KEY=... (or OPENROUTER_API_KEY)",
+                      ("the judgment tier is off until a key exists; all of the above ran "
+                       "without one")))
+    else:
+        steps.append(("assay columns --limit 25",
+                      "the judged tier: what each column MEANS, adjudicated"))
+    if not agent:
+        steps.append(("assay onboard --agent",
+                      "writes the agent skill file and prints the MCP line"))
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    for cmd, why in steps:
+        t.add_row(f"[bold cyan]{cmd}[/]", f"[dim]{why}[/]")
+    console.print(t)
+
+
+@app.command()
 def version():
     """Print the version."""
     console.print(f"assay {__version__}")
@@ -296,7 +412,8 @@ def init(force: bool = typer.Option(False, "--force", help="overwrite an existin
     console.print(f"wrote [bold]{p}[/]. Nothing in it enables spend; the judgment tier is opt-in.")
 
 
-def _grain_setup(target: str | None, store_path: str | None = None, dialect: str = "duckdb"):
+def _grain_setup(target: str | None, store_path: str | None = None,
+                 dialect: str | None = None):
     tdir = _find_target(target)
     project, digests, _fail, schema, _sstats = _load(tdir, dialect)
     declared = relate.declared_keys(project)
@@ -464,7 +581,7 @@ def probe(
     project_dir: str = typer.Option(".", "--project-dir",
                                     help="the dbt project to run `dbt show` from"),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
-    dialect: str = typer.Option("duckdb", "--dialect"),
+    dialect: str = typer.Option(None, "--dialect"),
     dbt_bin: str = typer.Option("dbt", "--dbt-bin",
                                 help='how to invoke dbt, e.g. "uv run dbt"'),
     dry_run: bool = typer.Option(False, "--dry-run",
@@ -542,7 +659,8 @@ def columns(
                                    help="also ask what a NULL means. Off by default: without a "
                                         "null rate from `assay probe` it answers at ~0.49 "
                                         "confidence over six options."),
-    dialect: str = typer.Option("duckdb", "--dialect", help="the SQL your warehouse speaks"),
+    dialect: str = typer.Option(None, "--dialect",
+                                help="override; read from the manifest by default"),
     control: bool = typer.Option(False, "--control",
                                  help="ask only about columns the project already labels, and "
                                       "report agreement"),
@@ -647,7 +765,7 @@ def review(
                                           "project: unique tests, declared keys, join conditions. "
                                           "Evidence, never a gate."),
     target: str = typer.Option(None, "--target", "-t", help="needed with --from-labels"),
-    dialect: str = typer.Option("duckdb", "--dialect"),
+    dialect: str = typer.Option(None, "--dialect"),
     limit: int = typer.Option(20, "--limit", "-n"),
     subject: str = typer.Option(None, "--subject", help="the decision key to rule on"),
     question: str = typer.Option(None, "--question"),
@@ -725,7 +843,8 @@ def inventory(
     everything: bool = typer.Option(False, "--include-unadjudicated",
                                     help="with --write, include entries nobody has ruled on"),
     limit: int = typer.Option(40, "--limit", "-n"),
-    dialect: str = typer.Option("duckdb", "--dialect", help="the SQL your warehouse speaks"),
+    dialect: str = typer.Option(None, "--dialect",
+                                help="override; read from the manifest by default"),
 ):
     """What every model in this project actually IS.
 
@@ -1398,7 +1517,7 @@ def semantics(
     store.close()
 
 
-def _entries(tdir, store, dialect: str = "duckdb"):
+def _entries(tdir, store, dialect: str | None = None):
     project, digests, _f, schema, _s = _load(tdir, dialect)
     obs = probe_mod.read(store) if store else {}
     return project, digests, schema, inv_mod.build(project, digests, schema, store, obs)
@@ -1438,12 +1557,12 @@ def feeds(
     sentinels, findings = [], []
     for t in tg:
         cols = feeds_mod.columns_to_sample(schema, t.uid, t.columns)
-        prof_rows = probe_mod.run_sql(probe_mod.profile_sql(t.relation, cols),
+        prof_rows = probe_mod.run_sql(probe_mod.profile_sql(t.relation, cols, project.dialect),
                                       project_dir, profiles_dir, dbt_bin, limit=1)
         profile = prof_rows[0] if prof_rows else {}
         sent = probe_mod.sentinel_findings(t.relation, cols, profile)
         sentinels += [(t.relation, c, v, w) for c, v, w in sent]
-        rows = probe_mod.run_sql(probe_mod.sample_sql(t.relation, cols, sample),
+        rows = probe_mod.run_sql(probe_mod.sample_sql(t.relation, cols, sample, project.dialect),
                                  project_dir, profiles_dir, dbt_bin, limit=sample)
         if not rows:
             continue
@@ -1571,7 +1690,8 @@ def tests_cmd(
     target: str = typer.Option(None, "--target", "-t"),
     gaps_only: bool = typer.Option(False, "--gaps-only",
                                    help="coverage only. Pure code, no API key, no spend."),
-    dialect: str = typer.Option("duckdb", "--dialect", help="the SQL your warehouse speaks"),
+    dialect: str = typer.Option(None, "--dialect",
+                                help="override; read from the manifest by default"),
     limit: int = typer.Option(80, "--limit", "-n", help="how many tests to judge"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     config_path: str = typer.Option(".", "--config"),
@@ -1710,7 +1830,8 @@ def practices(
     dbt_bin: str = typer.Option("dbt", "--dbt-bin"),
     schema_name: str = typer.Option(None, "--evaluator-schema",
                                     help="where dbt-project-evaluator built its fct_ tables"),
-    dialect: str = typer.Option("duckdb", "--dialect", help="the SQL your warehouse speaks"),
+    dialect: str = typer.Option(None, "--dialect",
+                                help="override; read from the manifest by default"),
     keys_only: bool = typer.Option(False, "--keys-only",
                                    help="just the primary-key patches. Pure code, no key, no "
                                         "warehouse."),
@@ -1907,7 +2028,7 @@ def _show_evidence(ctx, key: str, question: str) -> None:
         console.print(f"  [dim]filters: {', '.join(d.predicates_atomic[:2])[:110]}[/]")
 
 
-def _review_loop(store, limit: int, target=None, dialect: str = "duckdb") -> None:
+def _review_loop(store, limit: int, target=None, dialect: str | None = None) -> None:
     rows = store.pending(limit)
     if not rows:
         console.print("[green]nothing is waiting for a verdict.[/]")

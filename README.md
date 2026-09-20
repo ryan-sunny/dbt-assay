@@ -183,10 +183,19 @@ something you can chart and diff.
 ## Install
 
 ```bash
-uvx dbt-assay scan --target path/to/dbt/target
+uvx dbt-assay onboard --target path/to/dbt/target
 ```
 
-No install step, no API key, no configuration.
+No install step, no API key, no configuration. `onboard` reads the project, says what it can and
+cannot see, shows what it found for free, writes an `audit.yml` that gates nothing, and prints the
+next command. `--agent` also writes the skill file your coding agent follows.
+
+**You do not pass a dialect.** `manifest.json` carries `metadata.adapter_type`, so assay parses
+Snowflake as Snowflake and BigQuery as BigQuery on its own; `--dialect` is an override for the rare
+project whose manifest does not say. This was a flag once, and forgetting it was expensive: parsed
+with the wrong dialect, basedosdados went from 12 parse failures to 128 and silently lost two real
+findings. Nothing spurious appeared — the failure mode was a clean-looking run that had quietly
+stopped looking.
 
 ## What runs without an API key
 
