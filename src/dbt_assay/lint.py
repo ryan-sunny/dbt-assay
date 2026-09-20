@@ -77,6 +77,21 @@ def _text(v) -> str:
     return ""
 
 
+def _acknowledged(q: dict) -> dict:
+    """*** A LINT WITH NO WAY TO SAY "I KNOW, AND HERE IS WHY" GETS MUTED WHOLESALE. ***
+
+    Reported from the field: a question earned `multi_hop` for reading a partition before an order
+    by, the rule was RIGHT that it costs accuracy, and the author kept it because one hop could not
+    distinguish the shapes. That is a trade the lint cannot express, so it has to be expressible in
+    the question.
+
+    A reason is required, exactly as it is for a waiver. "Acknowledged" with no reason is how a
+    finding goes to die.
+    """
+    ack = q.get("acknowledge") or {}
+    return {k: str(v) for k, v in ack.items() if isinstance(ack, dict) and str(v).strip()}
+
+
 def lint_question(name: str, q: dict, shipped: dict | None = None) -> list[Issue]:
     """Every rule this codebase learned the hard way, applied to one question.
 
@@ -87,6 +102,13 @@ def lint_question(name: str, q: dict, shipped: dict | None = None) -> list[Issue
     out: list[Issue] = []
     shipped_prefixes = {v["id_prefix"]: k for k, v in (shipped or {}).items()
                         if isinstance(v, dict) and v.get("id_prefix")}
+    ack = _acknowledged(q)
+    raw_ack = q.get("acknowledge") or {}
+    for k, v in (raw_ack.items() if isinstance(raw_ack, dict) else []):
+        if not str(v).strip():
+            out.append(Issue(name, "error", "acknowledge",
+                             f"`acknowledge: {k}` has no reason. A rule silenced without one is "
+                             f"how a finding goes to die."))
     add = lambda lvl, rule, detail: out.append(Issue(name, lvl, rule, detail))
 
     kind = q.get("type")
@@ -188,9 +210,16 @@ def lint_question(name: str, q: dict, shipped: dict | None = None) -> list[Issue
             add("error", "subject", f"unknown subject {subj!r}. Use one of {sorted(KINDS)}.")
         fw = q.get("finding_when")
         if fw is None:
-            add("warn", "finding_when",
-                "no `finding_when`, so this is asked and stored but produces no finding. That is "
-                "valid -- the answers still reach the inventory -- but nothing will gate on it.")
+            # *** THIS IS THE DEAD QUESTION PROBLEM WEARING A NEW HAT. ***
+            # Before the runner, a family with a new name was asked by nothing. Now it is asked,
+            # answered, paid for and stored -- and still produces nothing. Reported from the
+            # field, where the old wording ("that is valid") undersold it. It IS valid, and it is
+            # almost never what someone writing their first question meant.
+            add("error", "finding_when",
+                "no `finding_when`, so this is asked, paid for, stored -- and produces no finding "
+                "and gates nothing. That is a real mode (the answers still fill the inventory and "
+                "`trace`), but it is rarely what a new question means. Name the answers that are "
+                "findings, or acknowledge this explicitly: `acknowledge: {finding_when: \"...\"}`.")
         elif kind == "choice":
             unknown = [a for a in (fw if isinstance(fw, list) else [fw]) if a not in crit]
             if unknown:
@@ -203,7 +232,9 @@ def lint_question(name: str, q: dict, shipped: dict | None = None) -> list[Issue
 
     if not crit and kind != "noul":
         add("error", "criteria", "no criteria. The options are the question.")
-    return out
+    # An acknowledged rule is silenced HERE, at the end, so the checks above stay simple and an
+    # acknowledgement of a rule that never fired is itself visible as dead config.
+    return [i for i in out if i.rule not in ack or i.rule == "acknowledge"]
 
 
 def _check_options_separate(name: str, crit: dict, out: list[Issue]) -> None:
@@ -245,6 +276,16 @@ def lint_all(banks: dict, shipped: dict | None = None) -> list[Issue]:
     out: list[Issue] = []
     for name, q in sorted(banks.items()):
         out += lint_question(name, q, shipped)
+    return out
+
+
+def acknowledged_issues(banks: dict, shipped: dict | None = None) -> list[Issue]:
+    """What each question silenced, and why. Shown rather than hidden: an acknowledgement is a
+    decision someone made, and the next reader deserves to see it."""
+    out: list[Issue] = []
+    for name, q in sorted(banks.items()):
+        for rule, why in _acknowledged(q).items():
+            out.append(Issue(name, "acknowledged", rule, why))
     return out
 
 

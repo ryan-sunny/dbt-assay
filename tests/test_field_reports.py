@@ -241,3 +241,29 @@ def test_every_subject_kind_builds_a_state_with_the_thing_it_names_in_it():
     assert set(subjects.KINDS) == {"model", "edge", "column", "predicate", "expression", "window"}
     with pytest.raises(ValueError, match="unknown subject"):
         subjects.build("sql", None, {}, None)
+
+
+def test_ask_estimates_before_it_spends_and_refuses_over_the_cap():
+    """*** `subject: expression` YIELDS THOUSANDS OF SUBJECTS. ***
+
+    Reported from the field: 3,540 expressions against 82 windows on one project. The number worth
+    printing is the one you see BEFORE running it without `--select`. A cap that fires after the
+    spend is not a cap, and neither is an estimate.
+    """
+    import inspect
+
+    from dbt_assay.cli import _estimate, ask
+    from dbt_assay.subjects import Subject
+
+    subs = [Subject("expression", f"k{i}", "m", f"n{i}", state={"expression": "a + b" * 20})
+            for i in range(1000)]
+    q = {"id_prefix": "x", "type": "choice", "instructions": {"question": "?"},
+         "criteria": {"a": {"what": "x"}, "cannot_tell": {"what": "y"}}}
+    cheap = _estimate(subs[:10], q)
+    dear = _estimate(subs, q)
+    assert dear > cheap * 50, "the estimate must scale with the number of subjects"
+    assert _estimate([], q) == 0.0
+
+    src = inspect.getsource(ask)
+    assert "refused before spending anything" in src
+    assert "--dry-run" in src, "the escape hatch must be named where the refusal happens"

@@ -1153,6 +1153,15 @@ def banks(
 
     if not lint:
         raise typer.Exit(0)
+    from .lint import acknowledged_issues
+    acks = acknowledged_issues(all_banks, SHIPPED)
+    if acks:
+        # Shown, never hidden: an acknowledgement is a decision someone made, and the next reader
+        # deserves to see what was silenced and why.
+        console.print(f"\n[bold]{len(acks)} rule(s) acknowledged[/]")
+        for a in acks:
+            console.print(f"  [cyan]ack[/]  [bold]{a.question}[/]  [dim]{a.rule}[/]")
+            console.print(f"    {a.detail}")
     issues = lint_all(all_banks, SHIPPED)
     if not issues:
         console.print("\n[green]every question has a shape Jev answers well.[/] "
@@ -1166,6 +1175,23 @@ def banks(
         console.print(f"\n  [{colour}]{i.level}[/]  [bold]{i.question}[/]  [dim]{i.rule}[/]")
         console.print(f"    {i.detail}")
     raise typer.Exit(1 if errs or (strict and issues) else 0)
+
+
+def _estimate(subs, q: dict) -> float:
+    """What asking every one of these would cost, from the real states rather than a guess.
+
+    Sampled and extrapolated: serialising 3,540 states to count them exactly would be slower than
+    the thing it is protecting you from.
+    """
+    from .jev import USD_PER_INPUT_TOKEN
+    if not subs:
+        return 0.0
+    sample = subs[:25]
+    overhead = len(_json.dumps({"questions": {q.get("id_prefix", "x"): {
+        "type": q.get("type"), "instructions": q.get("instructions"),
+        "criteria": q.get("criteria")}}}, default=str))
+    per = sum(len(_json.dumps(x.state, default=str)) + overhead for x in sample) / len(sample)
+    return per / 4 * USD_PER_INPUT_TOKEN * len(subs)
 
 
 @app.command()
@@ -1227,10 +1253,23 @@ def ask(
             subs = [x for x in subs if x.uid in scope]
         if limit:
             subs = subs[:limit]
-        console.print(f"\n[bold]{name}[/]  [dim]{q['subject']} · {len(subs)} subject(s)[/]")
+        # *** THE COUNT AND THE COST, BEFORE ANYTHING IS SPENT. ***
+        # Reported from the field: `subject: expression` yields 3,540 subjects on a real project
+        # against 82 for `window`. That is $0.35 to ask one question project-wide, and the number
+        # worth printing is the one you see BEFORE running it without `--select`. A cap that fires
+        # after the spend is not a cap, and neither is an estimate.
+        est = _estimate(subs, q)
+        console.print(f"\n[bold]{name}[/]  [dim]{q['subject']} · {len(subs)} subject(s) · "
+                      f"~${est:.4f}[/]")
         if dry_run:
             if subs:
                 console.print(f"  [dim]{_json.dumps(subs[0].state, default=str)[:400]}...[/]")
+            continue
+        if est > cfg.max_spend_usd:
+            console.print(f"  [red]refused before spending anything:[/] ~${est:.2f} exceeds the "
+                          f"${cfg.max_spend_usd:.2f} cap in audit.yml.")
+            console.print("  [dim]Scope it with --select, cut it with --limit, or raise "
+                          "jev.max_spend_usd. `--dry-run` shows the state and costs nothing.[/]")
             continue
         if not client.available:
             console.print("  [yellow]no API key.[/] [dim]`assay config` shows what was "

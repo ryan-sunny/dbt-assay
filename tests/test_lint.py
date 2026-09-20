@@ -111,3 +111,42 @@ def test_it_does_not_punish_code_counting_and_the_model_judging_consequence():
     column nobody reads. That is the CORRECT pattern and must not be flagged."""
     assert "numeric_magnitude" not in {i.rule for i in lint_question(
         "severity_fit", SHIPPED["severity_fit"], SHIPPED)}
+
+
+def test_a_subject_with_no_finding_when_is_an_error_not_a_footnote():
+    """*** THE DEAD QUESTION PROBLEM WEARING A NEW HAT. ***
+
+    Before the runner, a family with a new name was asked by nothing. With it, a family with a
+    subject and no `finding_when` is asked, answered, PAID FOR, stored -- and still produces
+    nothing. Reported from the field, where the old wording ("that is valid") undersold it.
+    """
+    q = _bad(subject="window")
+    issues = {(i.level, i.rule) for i in lint_question("q", q)}
+    assert ("error", "finding_when") in issues
+    q2 = _bad(subject="window", finding_when=["yes"])
+    q2["criteria"] = {"yes": {"what": "The window orders by an adjudication date."},
+                      "no": {"what": "The window orders by an appropriation date."},
+                      "cannot_tell": {"what": "The columns do not settle which it is."}}
+    assert "finding_when" not in {i.rule for i in lint_question("q", q2)}
+
+
+def test_a_rule_can_be_acknowledged_with_a_reason_and_not_without_one():
+    """*** A LINT WITH NO WAY TO SAY "I KNOW, AND HERE IS WHY" GETS MUTED WHOLESALE. ***
+
+    Reported from the field: a question earned `multi_hop` for reading a partition before an order
+    by, the rule was RIGHT that it costs accuracy, and the author kept it because one hop could not
+    distinguish the shapes. That trade cannot be expressed by the lint, so it is expressed in the
+    question -- with a reason, exactly as a waiver requires one.
+    """
+    from dbt_assay.lint import acknowledged_issues
+
+    q = _bad(instructions={"question": "Read the PARTITION first, and then the ORDER BY."})
+    assert "multi_hop" in {i.rule for i in lint_question("q", q)}
+
+    ok = dict(q, acknowledge={"multi_hop": "one hop cannot distinguish the shapes"})
+    assert "multi_hop" not in {i.rule for i in lint_question("q", ok)}
+    shown = acknowledged_issues({"q": ok})
+    assert [(i.rule, i.level) for i in shown] == [("multi_hop", "acknowledged")]
+
+    silent = dict(q, acknowledge={"multi_hop": ""})
+    assert "acknowledge" in {i.rule for i in lint_question("q", silent)}

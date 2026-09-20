@@ -354,9 +354,35 @@ seniority_ordered_by_the_wrong_date:
 ```
 
 ```bash
-assay ask --dry-run    # count the subjects and print one state, spend nothing
+assay ask --dry-run    # count the subjects, estimate the cost, print one state, spend nothing
 assay ask              # run every family that declares a subject
 ```
+
+**Check the subject count before you run it without `--select`.** `subject: window` is tens of
+subjects; `subject: expression` is thousands — 2,848 on a 265-model warehouse. `assay ask` prints
+the count and an estimate for every family before it asks anything, and **refuses outright** when
+the estimate exceeds `jev.max_spend_usd`, rather than discovering it mid-run.
+
+```
+mixes_conditional_with_absolute  expression · 2848 subject(s) · ~$0.0329
+  refused before spending anything: ~$0.03 exceeds the $0.01 cap in audit.yml.
+```
+
+**`finding_when` is not optional in practice.** Without it a family is asked, answered, paid for
+and stored, and produces no finding and gates nothing — the dead-question problem wearing a new
+hat. `assay banks` reports its absence as an **error**, not a note. It is a real mode (the answers
+still fill the inventory and `trace`), so it can be acknowledged deliberately:
+
+```yaml
+acknowledge:
+  finding_when: "these feed the inventory; nothing should gate on them yet"
+  multi_hop: "one hop cannot distinguish the shapes; kept deliberately"
+```
+
+**A reason is required**, exactly as it is for a waiver, and `assay banks` prints every
+acknowledgement with its reason rather than hiding it. A rule silenced without a reason is how a
+finding goes to die — and a lint with no way to say *"I know, and here is why"* gets muted
+wholesale instead.
 
 That exact question, on 51 windows of a real water warehouse: **$0.0015**, 3 flagged at p=1.00, 4
 correctly read as ordered by appropriation.

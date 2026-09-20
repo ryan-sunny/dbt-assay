@@ -154,3 +154,20 @@ dict keys. One line in the docs.
   inadequate test, from one sample of six rows.
 - **`min_adjudications` refusing to let a question gate before it has verdicts.** This is the
   discipline most tools skip.
+
+---
+
+## Second report, after 0.7.0
+
+Three more, all fixed in 0.7.1.
+
+- **`finding_when` matters more than its lint warning suggested.** Without it a family is asked,
+  stored, and produces nothing. "That is valid" was true and undersold it: it is the dead-question
+  problem wearing a new hat. It is an **error** now, acknowledgeable with a reason.
+- **A question earned a `multi_hop` warning it did not have a version earlier**, kept deliberately
+  because one hop could not distinguish the shapes. The lint was right and the trade was not
+  expressible. `acknowledge: {multi_hop: "..."}` expresses it, a reason is required, and
+  `assay banks` prints every acknowledgement rather than hiding it.
+- **`subject: expression` yields thousands of subjects where `window` yields tens.**
+  `assay ask` now prints the count and a cost estimate per family before asking anything, and
+  refuses outright above `jev.max_spend_usd`.
