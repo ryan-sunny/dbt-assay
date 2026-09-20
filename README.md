@@ -77,6 +77,30 @@ a judgment, and your current `severity:` setting is the weak label it argues wit
 returning 3,229 rows becomes a triage list instead of a reason to switch the test off. The
 explanation options are domain knowledge: `explanations:` in audit.yml holds one set per mart.
 
+## Standard practice, and your agent following it
+
+```bash
+assay practices --keys-only     # models with no uniqueness test, and the grain a test should cover
+assay practices                 # the full standard set, adjudicated
+assay skill --write .claude/skills/dbt-assay/SKILL.md
+```
+
+assay does **not** reimplement dbt-project-evaluator. It reads that package's own `fct_*` tables
+and splits its 23 checks three ways: **enforce** (exact, essentially no exception — a staging model
+reading downstream, a hard-coded table name), **recommend** (conventions; enforcing them is how a
+tool gets muted), and **adjudicate** (real candidates with real exceptions — a dimension with
+twelve children *is* what a dimension is).
+
+What it adds is consequence, since evaluator has no notion of blast radius, and a judgment for the
+eight checks everyone currently ignores.
+
+And where it beats the standard check outright: `missing_primary_key_tests` says "no PK test", while
+assay knows the inferred grain and says **which columns it should cover**.
+
+`assay skill` writes the procedure an agent follows: call `contract` before editing, call
+`changed_contracts` after, never hand back work where the grain moved silently. The MCP server
+gives an agent the ability to check itself; the skill gives it the obligation.
+
 ## It becomes part of your warehouse
 
 ```bash

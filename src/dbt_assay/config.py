@@ -142,6 +142,8 @@ class Config:
     # Per-mart options for the row-adjudication family. THE OPTIONS ARE THE DOMAIN KNOWLEDGE and
     # there is one set per mart; this is the part of the file worth maintaining.
     explanations: dict = field(default_factory=dict)
+    # Per-check overrides for the standard-practice split: enforce | recommend | adjudicate | off.
+    practices: dict = field(default_factory=dict)
     provider: str = "auto"
     model: str = "jev-latest"
     max_spend_usd: float = 1.0
@@ -167,6 +169,7 @@ class Config:
         cfg.min_adjudications = int((data.get("gating") or {}).get("min_adjudications", 20))
         cfg.vocab = data.get("vocab") or {}
         cfg.explanations = data.get("explanations") or {}
+        cfg.practices = data.get("practices") or {}
 
         for name, q in (data.get("questions") or {}).items():
             q = q or {}
@@ -245,6 +248,11 @@ questions:
     act:
       annotate: "p > 0.50"
       queue:    "p > 0.75"
+
+# practices: override how a standard dbt-project-evaluator check is treated.
+#   enforce (exact, may gate) | recommend (informational) | adjudicate (ask) | off
+practices: {}
+#  fct_model_fanout: recommend
 
 # explanations: options for the row-adjudication family, per model. The generic set is always
 # available; these are added to it, and they are where the domain knowledge lives.

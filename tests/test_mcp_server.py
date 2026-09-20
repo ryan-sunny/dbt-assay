@@ -40,7 +40,7 @@ def test_rebase_resets_the_baseline(project_dir):
 
 
 def test_every_tool_is_described_for_an_agent_not_for_a_programmer():
-    assert len(TOOLS) == 6
+    assert len(TOOLS) == 7
     for name, desc in TOOLS:
         assert name and len(desc) > 30
     assert any("self-check" in d for _n, d in TOOLS)

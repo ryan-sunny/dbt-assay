@@ -98,6 +98,21 @@ class Backend:
             "still_typing": st.unparsed,
         }
 
+    def practices(self, model: str = "") -> dict:
+        """Standard-practice status, and the uniqueness test a model is missing.
+
+        The pure-code half only: what a model's grain is and whether anything asserts it. The
+        evaluator-backed half needs a warehouse round trip and belongs in the CLI.
+        """
+        from . import practices as prac
+        st = self.state()
+        patches = prac.primary_key_patches(st.project, st.entries)
+        if model:
+            patches = [p for p in patches if p[0] == model]
+        return {"missing_uniqueness_tests": [
+            {"model": n, "grain_a_test_should_cover": cols, "grain_source": src, "marts": m}
+            for n, cols, src, m in patches[:40]]}
+
     def rebase(self) -> dict:
         self.baseline = live.Snapshot.of(self.state().entries)
         return {"ok": True, "models": len(self.baseline.entries)}
@@ -111,6 +126,8 @@ TOOLS = [
     ("findings", "Contradictions assay currently sees, optionally for one model."),
     ("changed_contracts", ("Did recent edits change what anything MEANS? The self-check to run "
                            "after editing and before moving on.")),
+    ("practices", ("Models with no uniqueness test, and the grain a test should cover. "
+                   "A patch, not a nag.")),
     ("rebase", "Take a fresh baseline for changed_contracts."),
 ]
 
@@ -154,6 +171,10 @@ def serve(target: str, store_path: str | None = None) -> None:
         return json.dumps(be.changed_contracts(), default=str)
 
     @app.tool(description=TOOLS[5][1])
+    def practices(model: str = "") -> str:
+        return json.dumps(be.practices(model), default=str)
+
+    @app.tool(description=TOOLS[6][1])
     def rebase() -> str:
         return json.dumps(be.rebase(), default=str)
 

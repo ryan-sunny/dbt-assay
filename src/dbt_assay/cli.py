@@ -20,6 +20,7 @@ from . import feeds as feeds_mod
 from . import inventory as inv_mod
 from . import judged as judged_mod
 from . import live as live_mod
+from . import practices as prac_mod
 from . import probe as probe_mod
 from . import rows as rows_mod
 from . import semantics as sem_mod
@@ -1628,3 +1629,136 @@ def adjudicate(
     console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
     store.close()
+
+
+@app.command()
+def practices(
+    target: str = typer.Option(None, "--target", "-t"),
+    project_dir: str = typer.Option(".", "--project-dir"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    dbt_bin: str = typer.Option("dbt", "--dbt-bin"),
+    schema_name: str = typer.Option(None, "--evaluator-schema",
+                                    help="where dbt-project-evaluator built its fct_ tables"),
+    keys_only: bool = typer.Option(False, "--keys-only",
+                                   help="just the primary-key patches. Pure code, no key, no "
+                                        "warehouse."),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+):
+    """Standard dbt practice: deferred to where it exists, adjudicated where it is noisy.
+
+    assay does not reimplement dbt-project-evaluator. It reads that package's own fct_ tables and
+    adds what they lack: consequence, adjudication for the checks with real exceptions, and one
+    stream with the gate discipline.
+    """
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    store = Store(store_path) if Path(store_path).exists() else None
+    project, _d, _sch, entries = _entries(tdir, store)
+
+    patches = prac_mod.primary_key_patches(project, entries)
+    if patches:
+        t = Table(title="no uniqueness test, and here is what it should cover",
+                  header_style="bold")
+        t.add_column("model"); t.add_column("marts", justify="right")
+        t.add_column("the grain a test should assert"); t.add_column("from")
+        for name, cols, src, marts in patches[:15]:
+            t.add_row(name, str(marts), ", ".join(cols)[:44], src)
+        console.print(t)
+        console.print(f"[dim]{len(patches)} model(s). The standard check says 'no primary key "
+                      f"test'; this says which columns it should cover.[/]")
+    if keys_only:
+        if store:
+            store.close()
+        raise typer.Exit(0)
+
+    cats = prac_mod.categories(cfg.practices)
+    flags, _missing = prac_mod.collect(project, entries, probe_mod, project_dir, profiles_dir,
+                                      dbt_bin, cats, schema_name)
+    if not flags:
+        console.print("\n[yellow]no dbt-project-evaluator tables found.[/] [dim]Build it first: "
+                      "dbt build --select package:dbt_project_evaluator, then pass "
+                      "--evaluator-schema.[/]")
+        if store:
+            store.close()
+        raise typer.Exit(0)
+
+    by_cat = {}
+    for f in flags:
+        by_cat.setdefault(f.category, []).append(f)
+    t = Table(title="\nstandard practice", header_style="bold")
+    t.add_column("category"); t.add_column("n", justify="right"); t.add_column("checks")
+    for cat in ("enforce", "adjudicate", "recommend"):
+        fs = by_cat.get(cat) or []
+        if fs:
+            t.add_row(cat, str(len(fs)),
+                      ", ".join(sorted({x.check.replace("fct_", "") for x in fs}))[:52])
+    console.print(t)
+
+    for f in sorted(by_cat.get("enforce", []), key=lambda f: -f.marts)[:10]:
+        console.print(f"  [red]enforce[/] [bold]{f.model}[/] {f.check.replace('fct_','')}  "
+                      f"[dim]{f.why} · {f.marts} marts[/]")
+
+    todo = by_cat.get("adjudicate", [])
+    if not todo:
+        if store:
+            store.close()
+        raise typer.Exit(0)
+
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        console.print(f"\n[dim]{len(todo)} flag(s) need a judgment; no API key, so they are "
+                      f"listed unadjudicated.[/]")
+        if store:
+            store.close()
+        raise typer.Exit(0)
+    if store is None:
+        store = Store(store_path)
+
+    verdicts = {}
+    for f in todo:
+        st = prac_mod.build_state(f, cfg.vocab)
+        try:
+            ans = decide(store, client, st, prac_mod.question_for(f),
+                         decision_key=f"practice::{f.check}::{f.model}",
+                         prompt_version=prac_mod.PRACTICE_VERSION, caller="assay.practices")
+        except BudgetExceeded as e:
+            console.print(f"[yellow]stopped: {e}[/]")
+            break
+        a = ans.get("exception")
+        if a:
+            verdicts.setdefault(a["answer"], []).append((f, a.get("confidence")))
+
+    t2 = Table(title="\nadjudicated", header_style="bold")
+    t2.add_column("verdict"); t2.add_column("n", justify="right"); t2.add_column("example")
+    for k in sorted(verdicts, key=lambda k: -len(verdicts[k])):
+        f, _c = verdicts[k][0]
+        t2.add_row(k, str(len(verdicts[k])), f"{f.model}: {f.check.replace('fct_','')}")
+    console.print(t2)
+    for kind in ("a_real_problem", "a_missing_layer"):
+        for f, conf in sorted(verdicts.get(kind, []), key=lambda x: -(x[1] or 0))[:6]:
+            console.print(f"  [yellow]{kind}[/] [bold]{f.model}[/] "
+                          f"{f.check.replace('fct_','')} [dim]@{conf:.2f} · {f.marts} marts[/]")
+    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}[/]")
+    store.close()
+
+
+@app.command()
+def skill(
+    out: str = typer.Option(None, "--write", help="write to a path, e.g. "
+                                                  ".claude/skills/dbt-assay/SKILL.md"),
+):
+    """Emit the agent procedure: what to call before and after editing a dbt model.
+
+    The MCP server gives an agent the ABILITY to check itself. This gives it the OBLIGATION.
+    Without it an agent checks when it remembers; with it, checking is the procedure.
+    """
+    from .skilltext import SKILL_MD
+    if out:
+        p = Path(out)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(SKILL_MD)
+        console.print(f"wrote [bold]{p}[/]")
+    else:
+        print(SKILL_MD)

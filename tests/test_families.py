@@ -143,3 +143,67 @@ def test_a_row_state_drops_empty_fields_rather_than_sending_nulls():
     st = rows.build_state(fr)
     assert st["row"] == {"a": 1} and st["rule"] == "unique on `a`"
     assert "model_purpose" not in st
+
+
+# --------------------------------------------------------------------------- standard practice
+
+def test_the_standard_checks_are_split_three_ways_not_all_enforced():
+    """Enforcing conventions is how a tool gets muted."""
+    from dbt_assay import practices as prac
+    cats = set(prac.ALL.values())
+    assert cats == {"enforce", "recommend", "adjudicate"}
+    assert "fct_model_naming_conventions" in prac.RECOMMEND
+    assert "fct_hard_coded_references" in prac.ENFORCE
+    assert "fct_model_fanout" in prac.ADJUDICATE
+
+
+def test_every_enforced_check_says_why_it_has_no_exception():
+    from dbt_assay import practices as prac
+    assert all(len(v) > 30 for v in prac.ENFORCE.values())
+
+
+def test_a_check_can_be_recategorised_or_switched_off():
+    from dbt_assay import practices as prac
+    c = prac.categories({"fct_model_fanout": "recommend", "fct_root_models": "off"})
+    assert c["fct_model_fanout"] == "recommend" and c["fct_root_models"] == "off"
+    import pytest
+    with pytest.raises(ValueError):
+        prac.categories({"fct_model_fanout": "nonsense"})
+
+
+def test_the_offending_model_is_found_whatever_column_names_it():
+    from dbt_assay import practices as prac
+    assert prac.model_of({"resource_name": "model.p.water_rights"}) == "water_rights"
+    assert prac.model_of({"child": "model.p.a", "parent": "model.p.b"}) == "a"
+    assert prac.model_of({"nothing": 1}) is None
+
+
+def test_a_missing_key_test_comes_with_the_grain_it_should_cover():
+    """Evaluator says 'no primary key test'. This says which columns -- a patch, not a nag."""
+    from types import SimpleNamespace
+
+    from dbt_assay import practices as prac
+    e = ModelEntry(uid="model.p.m", name="m", path="p.sql", layer="marts", materialized="table")
+    e.grain = Fact(["section_id", "county"], "declared")
+    e.marts = 3
+    project = SimpleNamespace(tests=[])
+    got = prac.primary_key_patches(project, [e])
+    assert got == [("m", ["section_id", "county"], "declared", 3)]
+
+
+def test_a_model_that_already_has_a_uniqueness_test_is_not_patched():
+    from types import SimpleNamespace
+
+    from dbt_assay import practices as prac
+    e = ModelEntry(uid="model.p.m", name="m", path="p.sql", layer="marts", materialized="table")
+    e.grain = Fact(["id"], "declared")
+    project = SimpleNamespace(tests=[SimpleNamespace(kind="unique", tests_model="model.p.m")])
+    assert prac.primary_key_patches(project, [e]) == []
+
+
+def test_the_shipped_skill_tells_an_agent_to_check_its_own_work():
+    from dbt_assay.skilltext import SKILL_MD
+    assert "changed_contracts()" in SKILL_MD
+    assert "Never guess a model's grain" in SKILL_MD
+    assert "Never remove a filter you do not understand" in SKILL_MD
+    assert "not what you concluded" in SKILL_MD

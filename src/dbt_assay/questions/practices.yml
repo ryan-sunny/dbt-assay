@@ -1,0 +1,38 @@
+# Adjudicating the standard checks that have real exceptions.
+#
+# *** dbt-project-evaluator IS ANOTHER CANDIDATE GENERATOR. ***
+# The same division of labour as `store_failures` for the row layer and a deterministic rule for
+# the mart layer: a cheap exact rule narrows, and a judgment says whether the context explains it.
+# A dimension with twelve children IS what a dimension is; a model missing an intermediate layer
+# with twelve children is not. Evaluator cannot tell those apart and neither can a threshold, so
+# eight of its twenty-four checks get ignored by everyone.
+version: 1
+
+practice_exception:
+  type: choice
+  prompt_version: "practice.v1"
+  instructions:
+    question: >-
+      A standard dbt project check flagged `pattern` on this model. Given what the model is and
+      what reads it, is this an exception or a real problem?
+    note: >-
+      `blast_radius` is arithmetic over the DAG, not an opinion. `contract` is what the model
+      actually is. Judge THIS model, not the pattern in general.
+  criteria:
+    expected_for_this_kind_of_model:
+      what: >-
+        The pattern is what this kind of model is FOR. Flagging it means the rule is too broad
+        here, not that anything is wrong.
+      examples: ["a shared dimension having many children, which is the point of a dimension",
+                 "a source every staging model reads, which is a source doing its job"]
+    deliberate_and_documented:
+      what: "It is a choice somebody made on purpose, and the model or its docs say why."
+    a_missing_layer:
+      what: >-
+        The same logic is being repeated by several consumers because an intermediate model that
+        should exist does not.
+      examples: ["twelve models each re-deriving the same join off one source"]
+    a_real_problem:
+      what: "Nothing about this model explains it. The check is right."
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
