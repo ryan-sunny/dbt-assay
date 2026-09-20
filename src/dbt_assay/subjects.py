@@ -35,14 +35,29 @@ def _model_of(project, uid):
     return project.models.get(uid)
 
 
-def build(kind: str, project, digests: dict, schema, limit: int = 0) -> list[Subject]:
-    """Every subject of one kind in this project. Ordered so a --limit takes the reachable ones."""
+def build(kind: str, project, digests: dict, schema, limit: int = 0,
+          state: str = "full") -> list[Subject]:
+    """Every subject of one kind in this project. Ordered so a --limit takes the reachable ones.
+
+    *** A FIELD THAT HELPS ONE FAMILY CAN COST ANOTHER, AND BOTH ARE THE FIELD WORKING. ***
+    `what_one_row_of_this_model_is` was added because a window subject could not say whether it
+    ranked rights or sections. It fixed that case and cost two of eight verified answers on a
+    family whose own criteria reason about the PARTITION: the model read a right id in the
+    MODEL's grain as satisfying a clause about the WINDOW's partition, which was a different list.
+
+    The criterion was relying on the model not knowing something, which is not a stable thing to
+    rely on -- but the fix is to let that family opt out, not to remove a field that is correct
+    and that other families need. `subject_state: minimal` in the bank.
+    """
     if kind not in KINDS:
         raise ValueError(f"unknown subject {kind!r}. Use one of {KINDS}.")
+    if state not in ("full", "minimal"):
+        raise ValueError(f"unknown subject_state {state!r}. Use 'full' or 'minimal'.")
     fn = {"model": _models, "edge": _edges, "column": _columns,
           "predicate": _predicates, "expression": _expressions, "window": _windows}[kind]
     out = fn(project, digests, schema)
-    _add_what_a_row_is(out, project, digests, schema)
+    if state == "full":
+        _add_what_a_row_is(out, project, digests, schema)
     # Most reachable first: a limit should spend itself where a defect costs most.
     out.sort(key=lambda s: -project.blast_radius(s.uid)["descendants"])
     return out[:limit] if limit else out

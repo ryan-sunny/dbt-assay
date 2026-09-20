@@ -207,3 +207,30 @@ That is the whole argument for `min_adjudications`, made better than the docs ma
 usually described as what earns a question the right to gate. It is also, and sooner, **a
 regression test for the question itself** — the only way to change criteria and know what you broke.
 Eight keypresses bought that.
+
+---
+
+## Fourth report: the state field cost two verified answers
+
+`what_one_row_of_this_model_is` fixed the wildfire case and **cost 2 of 8** verified answers on a
+family whose criteria reason about the **window's partition**: `water_reach_screen` declares
+`(isf_key, water_right_id)`, the disqualifier mentions "a right id", and the model read a right id
+in the MODEL's grain as satisfying a clause about the PARTITION, which is `isf_key` alone.
+Rewording to compensate scored **5/8** — worse.
+
+> "The field is doing exactly what it should and my criterion was relying on the model not knowing
+> something."
+
+That is the right diagnosis, so the fix is an opt-out rather than removing a field other families
+need. **`subject_state: minimal`** in the bank.
+
+### And the line that earned its own command
+
+> The answer distribution barely moved — 79 `not_a_seniority_order` either way. A two-answer
+> regression from a tool upgrade was invisible in the summary and only measurable because eight
+> rulings were on record. Verdicts aren't just a regression test for the question; they're the only
+> regression test you have for assay itself against a real bank.
+
+`assay regress` replays every answer a person agreed with and reports what moved, exiting non-zero
+when anything did. Verified both ways: 8/8 held on an unchanged bank at **zero calls** (unchanged
+states are cached), and a forced move was caught and failed the command.

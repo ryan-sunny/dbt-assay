@@ -1274,7 +1274,8 @@ def ask(
     total = Counter()
 
     for name, q in runnable.items():
-        subs = subjects_mod.build(q["subject"], project, digests, schema)
+        subs = subjects_mod.build(q["subject"], project, digests, schema,
+                                  state=q.get("subject_state", "full"))
         if scope is not None:
             subs = [x for x in subs if x.uid in scope]
         if limit:
@@ -1340,6 +1341,105 @@ def ask(
     if not dry_run:
         console.print(f"\n[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
                       f"${client.spent_usd:.4f}[/]")
+
+
+@app.command()
+def regress(
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    family: str = typer.Option(None, "--family", "-f", help="only this question family"),
+):
+    """Re-ask every question a person already agreed with, and report what moved.
+
+    *** VERDICTS ARE THE ONLY REGRESSION TEST assay HAS AGAINST A REAL BANK. ***
+    Reported from the field, and it is the reason this command exists: an upgrade to the subject
+    state moved two of eight verified answers on one family, and the answer DISTRIBUTION barely
+    moved -- 79 of the same answer either side. The regression was invisible in every summary the
+    tool prints and measurable only because eight rulings were on record.
+
+    Run it after upgrading assay, after editing a question, and after changing `vocab`. An answer
+    that moves away from something a person confirmed is the finding, whichever direction it went.
+    """
+    from .contracts import load_all_banks
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir)
+    store = Store(store_path)
+    confirmed = store.confirmed(family)
+    if not confirmed:
+        store.close()
+        console.print("[yellow]no confirmed answers to replay.[/] "
+                      "[dim]`assay review -i` records them; this replays them. Eight is enough to "
+                      "catch a regression that no summary shows.[/]")
+        raise typer.Exit(0)
+
+    banks = load_all_banks()
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        store.close()
+        console.print("[yellow]no API key.[/] [dim]`assay config` shows what was resolved.[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]{len(confirmed)}[/] confirmed answer(s) to replay")
+    moved, held, skipped = [], 0, []
+    by_family: dict = {}
+    for row in confirmed:
+        by_family.setdefault(row["family"], []).append(row)
+
+    with console.status("replaying..."):
+        for fam, rows in by_family.items():
+            q = banks.get(fam)
+            if q is None or not q.get("subject"):
+                skipped += [(r, "no subject; its own command replays it") for r in rows]
+                continue
+            subs = {x.key: x for x in subjects_mod.build(
+                q["subject"], project, digests, schema, state=q.get("subject_state", "full"))}
+            for r in rows:
+                sub = subs.get(r["subject"])
+                if sub is None:
+                    skipped.append((r, "that subject no longer exists in this project"))
+                    continue
+                try:
+                    got = decide(store, client,
+                                 {**sub.state, **({"vocabulary": cfg.vocab} if cfg.vocab else {})},
+                                 {q["id_prefix"]: choice_q(fam)},
+                                 contexts={q["id_prefix"]: sub.name},
+                                 decision_key=sub.key, prompt_version=q["prompt_version"],
+                                 caller="assay.regress")
+                except BudgetExceeded as e:
+                    console.print(f"[yellow]stopped at the cap: {e}[/]")
+                    break
+                a = got.get(q["id_prefix"])
+                if not a:
+                    continue
+                if a["answer"] == r["answered"]:
+                    held += 1
+                else:
+                    moved.append((fam, sub, r["answered"], a["answer"], a.get("confidence") or 0))
+    store.close()
+
+    console.print(f"[dim]{client.calls} call(s), ${client.spent_usd:.4f}"
+                  + ("  (unchanged states are cached and cost nothing)" if client.calls
+                     < len(confirmed) else "") + "[/]")
+    if skipped:
+        console.print(f"[dim]{len(skipped)} not replayed: "
+                      f"{skipped[0][1]}[/]")
+    if not moved:
+        console.print(f"\n[green]{held}/{held} confirmed answers still hold.[/]")
+        raise typer.Exit(0)
+
+    console.print(f"\n[bold red]{len(moved)} of {held + len(moved)} confirmed answers MOVED[/]")
+    t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    t.add_column("family"); t.add_column("subject", overflow="fold")
+    t.add_column("you confirmed"); t.add_column("now says")
+    for fam, sub, was, now, conf in moved:
+        t.add_row(fam, sub.name, f"[green]{was}[/]", f"[red]{now}[/] [dim]@{conf:.2f}[/]")
+    console.print(t)
+    console.print("\n[dim]An answer moving away from one a person confirmed is the finding, "
+                  "whichever direction it went. If the new answer is right, re-rule it; if the "
+                  "old one was, the change that moved it is the defect.[/]")
+    raise typer.Exit(1)
 
 
 @app.command()

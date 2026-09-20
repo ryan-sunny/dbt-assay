@@ -305,3 +305,54 @@ def test_the_judged_lint_is_cached_so_it_cannot_flap_in_ci():
     src = inspect.getsource(judge_overlap)
     assert "decide(store, client" in src
     assert 'prompt_version=spec["prompt_version"]' in src, "the cache must invalidate on a reword"
+
+
+def test_a_family_can_opt_out_of_the_row_field_that_costs_it_answers():
+    """*** A FIELD THAT HELPS ONE FAMILY CAN COST ANOTHER, AND BOTH ARE THE FIELD WORKING. ***
+
+    Reported from the field: `what_one_row_of_this_model_is` fixed a wildfire case and cost two of
+    eight verified answers on a family whose criteria reason about the WINDOW's partition. The
+    model read a right id in the MODEL's grain as satisfying a clause about the partition, which
+    was a different list. Rewording to compensate scored WORSE (5/8). The fix is an opt-out, not
+    removing a field other families need.
+    """
+    import inspect
+
+    from dbt_assay import subjects
+    src = inspect.getsource(subjects.build)
+    assert 'state == "full"' in src
+    assert "minimal" in src
+    with pytest.raises(ValueError, match="subject_state"):
+        subjects.build("window", None, {}, None, state="whatever")
+
+    from dbt_assay.lint import lint_question
+    bad = {"type": "choice", "prompt_version": "x.v1", "id_prefix": "zz", "subject": "window",
+           "subject_state": "tiny", "finding_when": ["a"],
+           "instructions": {"question": "?"},
+           "criteria": {"a": {"what": "one thing that happens"},
+                        "b": {"what": "a different thing entirely"},
+                        "cannot_tell": {"what": "not enough to decide either way"}}}
+    assert "subject_state" in {i.rule for i in lint_question("q", bad)}
+
+
+def test_confirmed_answers_are_the_regression_test_for_assay_itself():
+    """*** THE ANSWER DISTRIBUTION BARELY MOVED. THE REGRESSION WAS INVISIBLE. ***
+
+    Reported from the field: an upgrade moved two of eight verified answers while 79 of the same
+    answer came back either side. No summary this tool prints would have shown it. Eight rulings
+    on record did.
+    """
+    from dbt_assay.store import Store
+
+    s = Store(":memory:")
+    s.con.execute(
+        "insert into adjudications (subject, question, family, answered, verdict, source, "
+        "decided_at) values "
+        "('m::win::0','senior','fam','ordered_by_appropriation','agree','human',current_timestamp),"
+        "('m::win::1','senior','fam','not_a_seniority_order','disagree','human',current_timestamp),"
+        "('m::win::2','senior','fam','x','agree','label',current_timestamp)")
+    got = s.confirmed()
+    s.close()
+    # only what a PERSON agreed with: a disagreement is not a baseline, and a label is not a person
+    assert [r["subject"] for r in got] == ["m::win::0"]
+    assert got[0]["answered"] == "ordered_by_appropriation"

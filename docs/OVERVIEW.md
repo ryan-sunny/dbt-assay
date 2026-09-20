@@ -343,6 +343,8 @@ seniority_ordered_by_the_wrong_date:
   id_prefix: "senior"
   type: choice
   subject: window          # model | edge | column | predicate | expression | window
+  # subject_state: minimal # omit `what_one_row_of_this_model_is` where your criteria already
+                           #   reason about something narrower, like a window's partition
   finding_when: [ordered_by_adjudication]    # which answers are findings
   prompt_version: "senior.v1"
   instructions:
@@ -492,6 +494,17 @@ column_role  zip_tiers
 already given at 0.99 teaches almost nothing and one at 0.45 is where the question is actually
 being decided. The evidence is on screen because a verdict nobody can reach in five seconds does
 not get given.
+
+```bash
+assay regress    # re-ask every answer a person agreed with; report what moved
+```
+
+**And verdicts are the only regression test assay has against a real bank.** Reported from the
+field: an upgrade to the subject state moved **two of eight** verified answers on one family — and
+the answer *distribution* barely moved, 79 of the same answer either side. No summary this tool
+prints would have shown it. Eight rulings on record did. Run `assay regress` after upgrading assay,
+after editing a question, and after changing `vocab`. Unchanged states are cached and cost nothing;
+it exits non-zero when something moved.
 
 **A verdict is a regression test for the question, before it is ever a licence to gate.** Reported
 from the field: after rewriting a question's criteria, 8 of 8 recorded verdicts still agreed — the

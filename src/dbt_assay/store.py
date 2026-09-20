@@ -236,6 +236,26 @@ class Store:
         return [dict(zip(cols, r, strict=True))
                 for r in self.con.execute(q + " order by subject_name, claim_id", args).fetchall()]
 
+    def confirmed(self, family: str | None = None) -> list[dict]:
+        """Every answer a person AGREED with, which is the set an upgrade must not move.
+
+        *** THIS IS THE ONLY REGRESSION TEST assay HAS AGAINST A REAL BANK. ***
+        Reported from the field: a change to the subject state moved two of eight verified answers
+        on one family, and the answer DISTRIBUTION barely moved -- 79 of the same answer either
+        side. The regression was invisible in the summary and measurable only because eight
+        rulings were on record.
+        """
+        self.con.execute(DDL)
+        q = ("select subject, question, family, answered, correction from adjudications "
+             "where verdict = 'agree' and source = 'human'")
+        args: list = []
+        if family:
+            q += " and family = ?"
+            args.append(family)
+        cols = ("subject", "question", "family", "answered", "correction")
+        return [dict(zip(cols, r, strict=True))
+                for r in self.con.execute(q + " order by family, subject", args).fetchall()]
+
     def suppress_claim(self, claim_id: str) -> None:
         self.con.execute(DDL)
         self.con.execute("update claims set status = 'suppressed' where claim_id = ?", [claim_id])

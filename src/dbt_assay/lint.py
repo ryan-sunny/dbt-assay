@@ -208,6 +208,12 @@ def lint_question(name: str, q: dict, shipped: dict | None = None) -> list[Issue
         from .subjects import KINDS
         if subj not in KINDS:
             add("error", "subject", f"unknown subject {subj!r}. Use one of {sorted(KINDS)}.")
+        ss = q.get("subject_state")
+        if ss is not None and ss not in ("full", "minimal"):
+            add("error", "subject_state",
+                f"unknown subject_state {ss!r}. Use 'full' (the default) or 'minimal', which "
+                f"omits `what_one_row_of_this_model_is` for a family whose criteria already "
+                f"reason about a narrower thing.")
         fw = q.get("finding_when")
         if fw is None:
             # *** THIS IS THE DEAD QUESTION PROBLEM WEARING A NEW HAT. ***
