@@ -98,6 +98,9 @@ class GrainCandidate:
     columns: list[str]
     route: str            # group_by | qualify_dedupe | from_driver
     reason: str = ""
+    # Columns the route named that this model does not actually emit. A grain is only useful in
+    # the names a consumer can see, and one that names something else is a test nobody can write.
+    not_emitted: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -134,8 +137,19 @@ def candidates(uid: str, project, digests: dict[str, Digest], schema,
 
     for w in d.windows:
         if w.position == "qualify" and w.partition_columns:
-            return GrainCandidate(list(w.partition_columns), "qualify_dedupe",
-                                  "the model dedupes to one row per partition")
+            # *** THE GROUP BY ROUTE RESOLVES ALIASES AND THIS ONE DID NOT. ***
+            # `fact_sale` does `parcel_id as sale_id` and dedupes per parcel, so the grain came
+            # back as `parcel_id` -- a column the model does not emit. A test cannot be written on
+            # it, and `practices` duly proposed one. The output name is the only one anything
+            # downstream can assert.
+            alias = {k.lower(): v for k, v in (d.alias_of or {}).items()}
+            cols = [alias.get(str(c).lower(), c) for c in w.partition_columns]
+            renamed = [f"{c} (as {alias[str(c).lower()]})"
+                       for c in w.partition_columns if str(c).lower() in alias]
+            why = "the model dedupes to one row per partition"
+            if renamed:
+                why += f", renamed on the way out: {', '.join(renamed)}"
+            return GrainCandidate(cols, "qualify_dedupe", why)
 
     drivers = [x for x in (schema.uid_of.get(r.lower()) for r in d.from_relations) if x]
     if not drivers:
@@ -169,6 +183,42 @@ def candidates(uid: str, project, digests: dict[str, Digest], schema,
     return None
 
 
+def _in_this_models_own_names(c: GrainCandidate, uid: str, digests, schema) -> GrainCandidate:
+    """*** A GRAIN IS ONLY USEFUL IN THE NAMES A CONSUMER CAN SEE. ***
+
+    `fact_sale` inherited `parcel_id` from a parent while its own arms do `parcel_id as sale_id`.
+    The grain named a column the model does not emit, so `practices` proposed a uniqueness test
+    that cannot be written, and every consumer reading the inventory was told the wrong key.
+
+    Translated where the SQL says how -- an alias, or an output expression that IS that column --
+    and where it cannot be translated the column is KEPT and recorded as not emitted, because
+    dropping it would quietly narrow a key and that is worse than naming a problem.
+    """
+    d = digests.get(uid)
+    try:
+        emitted = {x.lower() for x in schema.columns(uid).names}
+    except Exception:                                                   # noqa: BLE001
+        return c
+    if not emitted:
+        return c
+    alias = {k.lower(): v for k, v in ((d.alias_of if d else None) or {}).items()}
+    exprs = {str(v).strip().lower(): k for k, v in ((d.output_exprs if d else None) or {}).items()}
+
+    cols, missing = [], []
+    for col in c.columns:
+        low = str(col).lower()
+        if low in emitted:
+            cols.append(col)
+        elif low in alias and str(alias[low]).lower() in emitted:
+            cols.append(alias[low])                     # renamed on the way out
+        elif low in exprs and str(exprs[low]).lower() in emitted:
+            cols.append(exprs[low])                     # an output column IS this expression
+        else:
+            cols.append(col)
+            missing.append(col)
+    return GrainCandidate(cols, c.route, c.reason, missing)
+
+
 def propose_all(project, digests, schema, declared, observed=None) -> dict[str, GrainCandidate]:
     """Walk the DAG parents-first so a child can inherit what its parents were found to be."""
     known: dict[str, list[str]] = {}
@@ -176,6 +226,7 @@ def propose_all(project, digests, schema, declared, observed=None) -> dict[str, 
     for uid in project.topological():
         c = candidates(uid, project, digests, schema, known, declared, observed)
         if c:
+            c = _in_this_models_own_names(c, uid, digests, schema)
             out[uid] = c
             known[uid] = [x.lower() for x in c.columns]
         elif uid in declared:

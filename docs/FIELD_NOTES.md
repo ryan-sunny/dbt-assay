@@ -456,3 +456,28 @@ YAML I had broken myself — it said *"could not count any proposed grain ... No
 verified"* and marked every row `(not counted)`. Not one was reported as holding. That is the sixth
 instance of the absent-reads-as-pass defect this codebase has found, and the first one where the
 code already got it right before anyone looked.
+
+### The alias defect, traced
+
+`fact_sale` does `parcel_id as sale_id` and its grain came back as `parcel_id`. The cause was not
+the rename: the grain was **inherited from a parent and never translated into the child's own
+column names**. So a `practices` proposal named a column the model does not emit, and every
+consumer reading the inventory was told the wrong key.
+
+Fixed in one place rather than per route — `_in_this_models_own_names` translates through an alias
+or an output expression, and where it cannot translate it **keeps the column and marks it**, since
+dropping it would quietly narrow a key.
+
+**28 of 87 proposals on that warehouse name a column their model does not emit.** They were
+silently wrong and are now marked. Checking one by hand found the next gap rather than a false
+positive: `dim_building` states its own grain as `(geography, building_key)` in a comment and
+groups by exactly that — **inside a CTE**. The top-level `group by` is empty, so the grain fell
+through to inheritance. CTE-level grouping is not read yet, and that is the real reason those 28
+exist.
+
+### Still open
+
+- The overlap check's judged false negative: mass **0.35** against a 0.60 threshold, with four
+  shipped families within 0.11 of the line. The static `option_routes_to_another` rule catches the
+  known cause; the judged check does not.
+- CTE-level `group by` as a grain route, which is what the 28 above are really asking for.

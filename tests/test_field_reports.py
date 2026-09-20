@@ -561,3 +561,55 @@ def test_a_grain_that_does_not_hold_is_reported_as_the_stronger_finding():
     assert "would_fail" in src
     assert "nobody knows what one row" in src
     assert "not a patch" in src, "a test that fails on its first run must not be recommended"
+
+
+def test_a_grain_is_expressed_in_the_model_s_own_column_names():
+    """*** `fact_sale` INHERITED `parcel_id` WHILE ITS OWN ARMS DO `parcel_id as sale_id`. ***
+
+    The grain named a column the model does not emit, so `practices` proposed a uniqueness test
+    that cannot be written and every consumer reading the inventory was told the wrong key. A
+    grain is only useful in the names a consumer can see.
+    """
+    from types import SimpleNamespace
+
+    from dbt_assay.contracts import GrainCandidate, _in_this_models_own_names
+
+    sch = SimpleNamespace(columns=lambda _u: SimpleNamespace(names=["sale_id", "building_key"]))
+
+    renamed = SimpleNamespace(alias_of={"parcel_id": "sale_id"}, output_exprs={})
+    got = _in_this_models_own_names(
+        GrainCandidate(["parcel_id"], "from_driver", ""), "u", {"u": renamed}, sch)
+    assert got.columns == ["sale_id"] and got.not_emitted == []
+
+    via_expr = SimpleNamespace(alias_of={}, output_exprs={"sale_id": "parcel_id"})
+    got = _in_this_models_own_names(
+        GrainCandidate(["parcel_id"], "from_driver", ""), "u", {"u": via_expr}, sch)
+    assert got.columns == ["sale_id"]
+
+
+def test_an_untranslatable_grain_column_is_kept_and_marked_not_dropped():
+    """Dropping it would quietly NARROW a key, which is worse than naming a problem. 28 of 87
+    proposals on a real warehouse name a column their model does not emit."""
+    from types import SimpleNamespace
+
+    from dbt_assay.contracts import GrainCandidate, _in_this_models_own_names
+
+    sch = SimpleNamespace(columns=lambda _u: SimpleNamespace(names=["a", "b"]))
+    d = SimpleNamespace(alias_of={}, output_exprs={})
+    got = _in_this_models_own_names(
+        GrainCandidate(["a", "gone"], "from_driver", ""), "u", {"u": d}, sch)
+    assert got.columns == ["a", "gone"], "the key must not be narrowed silently"
+    assert got.not_emitted == ["gone"]
+
+
+def test_a_model_whose_columns_are_unknown_is_left_alone():
+    """No column list is not the same fact as an empty one, and assuming it would mark every
+    grain as wrong."""
+    from types import SimpleNamespace
+
+    from dbt_assay.contracts import GrainCandidate, _in_this_models_own_names
+
+    sch = SimpleNamespace(columns=lambda _u: SimpleNamespace(names=[]))
+    d = SimpleNamespace(alias_of={}, output_exprs={})
+    got = _in_this_models_own_names(GrainCandidate(["x"], "from_driver", ""), "u", {"u": d}, sch)
+    assert got.not_emitted == []
