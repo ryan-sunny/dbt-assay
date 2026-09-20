@@ -8,8 +8,6 @@ that do not exist.
 
 This is the check assay would make of any other project, made of assay.
 """
-import re
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -37,16 +35,27 @@ def test_every_question_family_is_named_in_the_docs():
     assert not missing, missing
 
 
+def commands() -> set[str]:
+    """*** READ THE APP, NOT ITS RENDERED HELP. ***
+
+    The first version of this scraped `assay --help` for box-drawing characters. rich does not
+    emit them without a TTY, so on CI the reader found ZERO commands -- and the "assert it found
+    something" clause is the only reason that surfaced as a failure rather than as a pass. Exactly
+    the defect this file is about: a fact read through a representation that can differ from it.
+    """
+    from dbt_assay.cli import app
+    return {(c.name or c.callback.__name__.removesuffix("_cmd").replace("_", "-"))
+            for c in app.registered_commands}
+
+
 def test_every_cli_command_is_named_in_the_docs():
     docs = _docs()
     if docs is None:
         pytest.skip("no docs in a wheel install")
-    h = subprocess.run(["assay", "--help"], capture_output=True, text=True, check=False)
-    if h.returncode != 0:
-        pytest.skip("assay not on PATH in this environment")
-    cmds = {m.group(1) for m in re.finditer(r"^\s*│ ([a-z][a-z0-9-]*)\s", h.stdout, re.MULTILINE)}
-    assert len(cmds) > 20, "the help reader found almost nothing; it is broken"
-    assert not [c for c in cmds if c not in docs]
+    cmds = commands()
+    assert len(cmds) > 20, "the command reader found almost nothing; it is broken"
+    missing = sorted(c for c in cmds if c not in docs)
+    assert not missing, missing
 
 
 def test_every_mcp_tool_is_in_the_skill_file():
