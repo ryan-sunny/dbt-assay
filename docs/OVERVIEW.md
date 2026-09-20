@@ -280,9 +280,15 @@ on a grain that moved, or ask your BI tool which dashboards rest on a judgment n
 
 ## What it will not do
 
-**It reads the SQL, not the data.** A model can be flawless and still be fed a column that means
-something other than its name. The probe and the feed families are what reach the rows, and they
-need your dbt.
+**Reading the rows needs your dbt, and is worth wiring up.** A model can be flawless and still be
+fed a column that means something other than its name, so three parts of `assay` reach the data
+and all of them go through `dbt show --inline` — your adapter, your auth, no credential held here.
+`assay probe` counts keys to settle a grain code could not. The **feed** family samples raw columns
+and asks whether a field still matches its name and whether its units are what the column claims,
+which is the one defect that passes every schema test and every volume monitor ever written. The
+**row** family adjudicates what `store_failures` already wrote to `dbt_test__audit`: dbt built the
+candidate generator, and a test returning 3,229 rows stops being a gate nobody reads and becomes a
+list a judgment triages down to the handful that need a person.
 
 **It will produce false positives.** On the permit models above, five of seven flagged descriptions
 were clearly right, and two were models that follow the documented rule. The tool narrows; a person

@@ -23,22 +23,47 @@ Jev](https://docs.typesafe.ai) reads the meaning. SQL does the rest.
 **[Full overview](docs/OVERVIEW.md)** — what it is, what each tier finds, and how to run it as a
 standing part of your warehouse rather than a one-off audit.
 
+## How it works
+
+<img src="docs/how-jev-fits.svg" alt="assay: a parser settles what it can, Jev judges the rest, you rule on it, and it lands in your warehouse as relations">
+
+**The parser and the judgment are not two products.** They are one division of labour, and it is
+the whole design: *if a parser can answer it, Jev is never asked.* A grain, a column's provenance,
+a test that cannot fail — those are facts, settled exactly and for free, and putting them to a
+model would be spending money to make a certainty approximate.
+
+What is left over is not a gap in the parser. It is a different kind of question.
+
+```sql
+where status != 'CANCELLED'
+```
+
+That is domain logic, a patch over a bad feed, or the thing that makes the model mean what it
+means. **The SQL is identical for all three**, no parser will ever separate them, and which one it
+is decides whether the line gets deleted next quarter or guarded forever.
+
+That is the question `assay` exists to answer, and it is why Jev is not an add-on.
+
 ## One command
 
 ```bash
 uvx dbt-assay onboard --target path/to/dbt/target
 ```
 
-One command on a project assay has never seen. It reads your manifest, tells you what it can and
-cannot see, runs the free structural checks, runs the judgment tier if a key is present, writes an
-`audit.yml` that gates nothing, and prints the next command. `--agent` also writes the skill file
-your coding agent follows.
+On a project `assay` has never seen. It reads your manifest, tells you what it can and cannot see,
+runs the structural checks, runs the judgment tier if a key is present, writes an `audit.yml` that
+gates nothing, and prints the next command. `--agent` also writes the skill file your coding agent
+follows.
 
 ## Status
 
-Both tiers work. The structural tier needs nothing but your manifest. The judgment tier needs an
-API key and is opt-in, cached, and capped. Nothing gates a build in either tier until a question
-has recorded human verdicts, and `assay` refuses rather than warns.
+Both tiers work. **Run it with a key.** The structural tier needs nothing but your manifest and is
+genuinely useful — it found 38 tests that cannot fail in a 356-model warehouse — but it is a very
+good linter, and a linter is not the point. The point is a warehouse that knows what it means, and
+meaning is the half a parser cannot reach.
+
+Nothing gates a build in either tier until a question has recorded your verdicts, and `assay`
+refuses rather than warns.
 
 ## The inventory
 
@@ -225,9 +250,11 @@ with the wrong dialect, basedosdados went from 12 parse failures to 128 and sile
 findings. Nothing spurious appeared — the failure mode was a clean-looking run that had quietly
 stopped looking.
 
-## What runs without an API key
+## What a parser settles, before Jev is asked anything
 
-Structure is exact and free. These need nothing but your `manifest.json` and compiled SQL:
+Exact, free, local, and never put to a model. These need nothing but your `manifest.json` and
+compiled SQL, and they run first precisely so the judged tier is only ever asked the questions it
+is the only thing that can answer:
 
 - the project graph, blast radius, and per-edge facts
 - **tests that cannot fail** — `not_null` on a `coalesce(x, 0)`, `unique` on the group by key,
@@ -262,6 +289,60 @@ and a mostly-null column would otherwise look unique.
 A result says `unique`, `has_duplicates`, `has_nulls` or `unknown`. A permissions error, a missing
 table or a timeout records **unknown**, never "not unique". And an observation is stored with its
 row count and timestamp, because unique in today's data is not a constraint.
+
+## What Jev is, and why it is not a chat model in a trench coat
+
+[Jev](https://docs.typesafe.ai) is a System One model. It does not generate text and it does not
+explain itself. It takes a **state** — named JSON fields, not a prompt — and a map of **typed
+questions**, and it returns typed answers with calibrated probabilities.
+
+```python
+# this is the real question assay ships, copied from questions/semantics.yml
+noul("Does the documentation -- `description` and `documentation_in_the_file` together -- "
+     "assert something about this model that the code in `contract` and `filters` does not do?",
+     true_means="The description states something the code does not do, or states the opposite.",
+     false_means="Everything the description claims is true of the code. It may be incomplete, "
+                 "terse, or silent about details; that is not a contradiction.")
+```
+
+Three primitives, and choosing right is most of the work:
+
+| | returns | the distinction that matters |
+|---|---|---|
+| `choice` | one of your options | confidence is **distribution concentration**, not permission to act |
+| `noul` | probability a condition holds | **0.5 means genuinely unsure**, not a weak yes |
+| `score` | a position on ordered levels | each level names a concrete situation; "medium" describes nothing |
+
+It cannot return anything outside what you defined. That is the difference from asking a chat model
+for JSON and hoping: there is no parse step, no retry loop, no "as an AI language model", and no
+answer that is outside the option set because the option set is the type.
+
+**And it is cheap enough to run on every model.** $0.042 per million input tokens, output free. A
+265-model warehouse: 60 calls, 15 seconds, **$0.0026**. Cached on a hash of the state, so an
+unchanged model is free forever and a rebuild only re-asks what moved.
+
+### The design rules, measured rather than assumed
+
+**One noul per rule, never one over a list of them.** Asked as a single lumped question over three
+rules, a known case-number defect read 0.64. Split, the rule that applied read **0.85** and the two
+that did not read 0.02 and 0.05. The split is sharper where it applies, correctly near zero where
+it does not, and it kills a false positive the lumped version produced on clean code.
+
+**A question the state cannot answer returns a confident non-answer.** `keys_on_a_non_unique_column`
+read **0.73 to 0.85 on every model tested, clean or broken** — because a column's uniqueness is a
+property of the DATA, not of the SQL. It was not a bad question, it was in the wrong layer. It is
+now `count(*) = count(distinct k)` and needs no model at all. Before adding a question, ask what in
+the state could make the answer *no*.
+
+**Ask for the explanation, not for a plausibility score.** On rows that looked anomalous, "is this
+plausible" read 0.46–0.49 on a genuinely normal case and barely separated a pond from a reservoir.
+A choice whose options **name concrete situations** read `normal_for_this_right_type` at 0.73 and
+separated cleanly. Plausibility is a judgment against nothing.
+
+**Strip the prose before judging the code.** Measured: removing every comment *improved* results.
+It killed a false positive on a clean model whose header happens to discuss case numbers at length
+(0.50 → 0.14) and strengthened a real detection (0.52 → 0.73). The one exception is the description
+family, where the prose *is* the subject.
 
 ## What the judgment tier adds
 

@@ -132,3 +132,48 @@ def test_the_console_script_points_at_the_handler_and_not_at_the_app():
     if data is None:
         return
     assert data["project"]["scripts"]["assay"] == "dbt_assay.cli:main"
+
+
+def test_the_readme_python_snippet_is_the_question_assay_actually_ships():
+    """*** A README THAT DRIFTS FROM THE CODE IS THE DEFECT THIS TOOL EXISTS TO FIND. ***
+
+    The snippet is presented as "the real question assay ships", so it is executed and compared
+    rather than trusted. Three option lists in the overview had already drifted before anyone
+    checked them once.
+    """
+    import re
+    from pathlib import Path
+
+    import dbt_assay
+    from dbt_assay.contracts import QUESTIONS
+    from dbt_assay.jev import noul  # noqa: F401  (used by eval)
+
+    root = Path(dbt_assay.__file__).parent.parent.parent
+    readme = root / "README.md"
+    if not readme.exists():
+        return                                          # installed as a wheel
+    m = re.search(r"```python\n(.*?)```", readme.read_text(), re.DOTALL)
+    assert m, "the README no longer carries the worked example"
+    q = eval(m.group(1).split("\n", 1)[1].strip())
+    real = QUESTIONS["description_contradicts_the_code"]
+    assert q["instructions"] == real["instructions"]["question"].strip()
+    assert q["criteria"]["true"] == real["criteria"]["true"]["what"]
+    assert q["criteria"]["false"] == real["criteria"]["false"]["what"]
+
+
+def test_the_diagram_the_readme_points_at_exists_and_has_no_external_refs():
+    """GitHub sanitizes SVG. A diagram with a script or a remote href renders as nothing."""
+    import xml.etree.ElementTree as ET
+    from pathlib import Path
+
+    import dbt_assay
+    root = Path(dbt_assay.__file__).parent.parent.parent
+    svg = root / "docs" / "how-jev-fits.svg"
+    if not (root / "README.md").exists():
+        return
+    assert svg.exists(), "README points at a diagram that is not in the repo"
+    ET.parse(svg)                                       # raises on malformed XML
+    body = svg.read_text()
+    for forbidden in ("<script", "xlink:href", "<foreignObject", "<image"):
+        assert forbidden not in body, forbidden
+    assert 'src="docs/how-jev-fits.svg"' in (root / "README.md").read_text()
