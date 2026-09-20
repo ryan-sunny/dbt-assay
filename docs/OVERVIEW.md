@@ -582,7 +582,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.10.0
+- uses: ryan-sunny/dbt-assay@v0.10.1
   with:
     target: target-head
     baseline: base/target
@@ -631,6 +631,7 @@ everything needed to write it, and everything needed **not to break something el
 | `evidence` | the exact construct — the window's partition and sort keys, the predicate, the columns. Not a description of it |
 | `downstream`, `marts` | how carefully to tread. A leaf is not a model 19 marts read |
 | `detail` | why it is wrong, and what shape the fix takes |
+| `violations()` | **what would actually fail a build**, under your own `audit.yml`, using the same policy CI applies |
 | **`must_stay_true`** | **the claims this project makes that the code currently supports, and the verdicts a person recorded** |
 
 That last row is the one that matters. **A fix is not finished when the finding goes away — it is

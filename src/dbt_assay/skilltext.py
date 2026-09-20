@@ -59,6 +59,18 @@ was intended and it needs a version bump. Do not hand back work where the grain 
    construct: the partition and sort keys of the window, the predicate, the columns. Use it to
    find the code rather than re-deriving it, and use `marts` to decide how carefully to tread.
 
+## Before you hand it back
+
+8. `violations()` — **what would actually fail a build**, under this project's own `audit.yml`.
+   `findings` lists everything wrong; most of it is configured to annotate and only some of it
+   stops CI. Deciding which is which by reading the list is exactly the judgment you should not
+   be making. This applies the same policy the pipeline applies, so `"this would pass"` means a
+   green build rather than your opinion that it ought to be one.
+
+   An empty `would_fail_the_build` can also mean nothing has earned the right to gate yet, because
+   a judged question cannot fail a build before it has recorded human verdicts. That is the design,
+   not a gap.
+
 ## Rules that are not negotiable
 
 - **Never guess a model's grain.** Ask for the contract. A wrong grain assumption is how an
@@ -90,6 +102,8 @@ was intended and it needs a version bump. Do not hand back work where the grain 
 - `assay claims --extract` then `assay verify` — pull every claim out of this project's own prose
   and check each one against the code.
 - `assay traverse` — judge every hop in the graph for a fan-out nobody declared.
+- `assay patch tests/assay` — write the uniqueness tests assay can PROVE will pass. It counts each
+  grain first and refuses to write one that would fail on its first run.
 
 ## When `changed_contracts` is noisy
 

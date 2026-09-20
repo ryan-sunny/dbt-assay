@@ -176,6 +176,47 @@ class Backend:
             {"model": n, "grain_a_test_should_cover": cols, "grain_source": src, "marts": m}
             for n, cols, src, m in patches[:40]]}
 
+    def violations(self, model: str = "", config_path: str = ".") -> dict:
+        """What would actually fail, under this project's own policy.
+
+        *** AN AGENT COULD SEE EVERY FINDING AND NOT WHICH ONES STOP A BUILD. ***
+        `findings` lists what is wrong. Most of it is configured to annotate, some to queue, and a
+        little to fail -- and only the last group is the difference between handing work back and
+        handing back a red pipeline. Reading the whole list and guessing which is which is exactly
+        the judgment an agent should not be making.
+
+        This applies the SAME `apply_policy` the CLI and the Action apply, including the refusal
+        to let a judged question fail a build before it has recorded human verdicts. A clean
+        answer here means a green build, not an opinion that it should be.
+        """
+        from .config import Config
+        from .judged import apply_policy
+        st = self.state()
+        fs = live.findings_for(st, model or None)
+        cfg = Config.load(config_path)
+        store = self._open_store()
+        try:
+            policed, waived = apply_policy(fs, cfg, store, st.project)
+        finally:
+            if store is not None:
+                store.close()
+        buckets: dict = {"fail": [], "queue": [], "annotate": []}
+        for f, action, why in policed:
+            buckets.setdefault(action or "annotate", []).append(
+                {"check": f.check, "model": f.subject_name, "file": f.file,
+                 "summary": f.summary, "marts": f.marts, "because": why})
+        return {
+            "would_fail_the_build": buckets["fail"],
+            "queued_for_a_person": buckets["queue"][:20],
+            "annotated_only": len(buckets["annotate"]),
+            "waived": [{"model": f.subject_name, "check": f.check, "why": w} for f, w in waived],
+            "verdict": ("this would fail" if buckets["fail"] else "this would pass"),
+            "note": ("Only `would_fail_the_build` stops CI. A judged question cannot appear there "
+                     "until it has recorded human verdicts, so an empty list may mean nothing is "
+                     "wrong OR that nothing has earned the right to gate yet -- `assay config` "
+                     "says which."),
+        }
+
     def claims(self, model: str = "") -> dict:
         """The claims on a model, each with what the code did to it.
 
@@ -247,6 +288,9 @@ TOOLS = [
     ("practices", ("Models with no uniqueness test, and the grain a test should cover. "
                    "A patch, not a nag.")),
     ("rebase", "Take a fresh baseline for changed_contracts."),
+    ("violations", ("What in this project would FAIL a build under its own audit.yml, and what "
+                    "is only queued or annotated. Call it before handing work back: it is the "
+                    "same policy CI applies, so a clean answer here is a green build.")),
     ("claims", ("What this project ASSERTS about a model, and whether its own code supports each "
                 "claim. Call this BEFORE editing: the claims are what the edit must keep true.")),
     ("traversal", ("How a model's parents reach it, and whether any hop multiplies rows without "
@@ -297,10 +341,14 @@ def serve(target: str, store_path: str | None = None) -> None:
         return json.dumps(be.practices(model), default=str)
 
     @app.tool(description=TOOLS[7][1])
+    def violations(model: str = "") -> str:
+        return json.dumps(be.violations(model), default=str)
+
+    @app.tool(description=TOOLS[8][1])
     def claims(model: str = "") -> str:
         return json.dumps(be.claims(model), default=str)
 
-    @app.tool(description=TOOLS[8][1])
+    @app.tool(description=TOOLS[9][1])
     def traversal(model: str) -> str:
         return json.dumps(be.traversal(model), default=str)
 

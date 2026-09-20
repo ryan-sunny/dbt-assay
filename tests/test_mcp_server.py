@@ -40,7 +40,9 @@ def test_rebase_resets_the_baseline(project_dir):
 
 
 def test_every_tool_is_described_for_an_agent_not_for_a_programmer():
-    assert len(TOOLS) == 9
+    # A floor, not an exact count: adding a tool should not break a test about DESCRIPTIONS.
+    # The indices are checked separately, in test_field_reports.
+    assert len(TOOLS) >= 10
     for name, desc in TOOLS:
         assert name and len(desc) > 30
     assert any("self-check" in d for _n, d in TOOLS)

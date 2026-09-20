@@ -646,3 +646,35 @@ def test_an_agent_is_told_what_a_fix_must_not_break():
     # and the procedure tells it to read them
     assert "must_stay_true" in SKILL_MD
     assert "assay regress" in SKILL_MD
+
+
+def test_an_agent_can_ask_what_would_actually_fail_the_build():
+    """*** SEEING EVERY FINDING IS NOT KNOWING WHICH ONES STOP CI. ***
+
+    Most findings are configured to annotate. Deciding which are which by reading the list is
+    exactly the judgment an agent should not be making, and it is the difference between handing
+    work back and handing back a red pipeline. `violations` applies the SAME `apply_policy` the
+    CLI and the Action apply, including the refusal to let a judged question gate before it has
+    recorded verdicts.
+    """
+    import inspect
+
+    from dbt_assay.mcp_server import TOOLS, Backend
+    from dbt_assay.skilltext import SKILL_MD
+    src = inspect.getsource(Backend.violations)
+    assert "apply_policy" in src, "it must not reimplement the policy, or it will diverge from CI"
+    assert "would_fail_the_build" in src
+    assert "recorded human verdicts" in src
+    assert "violations" in {n for n, _d in TOOLS}
+    assert "violations()" in SKILL_MD, "the procedure must tell the agent to call it"
+
+
+def test_every_mcp_tool_description_is_still_indexed_correctly():
+    """The tool list and the decorators are two copies of one order, and an off-by-one silently
+    gives a tool somebody else's description."""
+    import inspect
+
+    from dbt_assay import mcp_server
+    src = inspect.getsource(mcp_server.serve)
+    for i, (name, _d) in enumerate(mcp_server.TOOLS):
+        assert f"TOOLS[{i}][1])\n    def {name}(" in src, f"{name} is not registered at index {i}"
