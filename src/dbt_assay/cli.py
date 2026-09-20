@@ -2088,7 +2088,22 @@ def export(
         ex.write_text(export_mod.EXAMPLE_SQL)
         console.print(f"wrote [bold]{p.name}[/] documenting every column, "
                       f"and an example query in {ex.name}")
-    console.print(f"\n[dim]now: dbt seed --select {export_mod.PREFIX}*[/]")
+    # *** `--select assay_*` MATCHES NOTHING, AND IT WAS THE LAST THING THE COMMAND SAID. ***
+    # Reported from the field: `dbt list` shows all five nodes and the glob selects none of them.
+    # A path selector does work, and the closing line of a command is the one instruction a
+    # reader is most likely to run verbatim.
+    # dbt resolves `path:` against the PROJECT root, not the working directory, so an absolute
+    # path here would be another instruction that does not work.
+    out_dir = Path(directory).resolve()
+    proj = _project_dir_for(_find_target(None)) if Path("dbt_project.yml").exists() \
+        or Path("transform/dbt_project.yml").exists() else None
+    try:
+        rel = out_dir.relative_to(proj.resolve()) if proj else Path(directory)
+    except (ValueError, AttributeError):
+        rel = Path(directory)
+    console.print(f"\n[dim]now: [bold]dbt seed --select path:{rel}[/bold]  "
+                  f"[/][dim](relative to your dbt project. An `{export_mod.PREFIX}*` glob "
+                  f"matches nothing here, even though `dbt list` shows the nodes.)[/]")
     store.close()
 
 
@@ -2964,23 +2979,56 @@ def practices(
                   header_style="bold")
         t.add_column("model"); t.add_column("marts", justify="right")
         t.add_column("the grain a test should assert"); t.add_column("from")
-        for name, cols, src, marts in patches[:15]:
-            t.add_row(name, str(marts), ", ".join(cols)[:44], src)
+        inexpressible = []
+        for name, cols, src, marts, dropped in patches[:15]:
+            if not cols:
+                inexpressible.append((name, dropped, marts))
+                continue
+            note = (f"  [yellow](and {', '.join(map(str, dropped))}, which it does not emit)[/]"
+                    if dropped else "")
+            t.add_row(name, str(marts), ", ".join(cols)[:44] + note, src)
         console.print(t)
-        console.print(f"[dim]{len(patches)} model(s). The standard check says 'no primary key "
-                      f"test'; this says which columns it should cover.[/]")
+        n_ok = sum(1 for p_ in patches if p_[1])
+        console.print(f"[dim]{n_ok} model(s) where a test can be written as-is. The standard check "
+                      f"says 'no primary key test'; this says which columns it should cover, and "
+                      f"only ever names columns the model actually emits.[/]")
+        if inexpressible:
+            # *** THE GRAIN IS NOT IN THE OUTPUT, SO NOTHING CAN ASSERT IT. ***
+            # A model that dedups on a column and then drops it cannot have its own uniqueness
+            # tested by anything downstream. Verification found this on a model documented as
+            # "one row per company + city" that does `partition by name_key, city` and then
+            # `select * exclude (name_key)`.
+            console.print(f"\n[yellow]{len(inexpressible)} model(s) whose grain is NOT in their "
+                          f"own output[/], so no test downstream can assert it:")
+            for name, cols, marts in inexpressible[:8]:
+                console.print(f"  [bold]{name}[/]  [dim]{marts} marts · groups or dedups on "
+                              f"{', '.join(map(str, cols))[:60]}, none of which it emits[/]")
     if keys_only:
         if store:
             store.close()
         raise typer.Exit(0)
 
     cats = prac_mod.categories(cfg.practices)
-    flags, _missing = prac_mod.collect(project, entries, probe_mod, project_dir, profiles_dir,
-                                      dbt_bin, cats, schema_name)
+    flags, not_checked = prac_mod.collect(project, entries, probe_mod, project_dir, profiles_dir,
+                                          dbt_bin, cats, schema_name)
+    # *** A CHECK WHOSE TABLE IS NOT THERE IS NOT A CHECK THAT PASSED. ***
+    # Reported from the field: a partially built evaluator -- five fct_ models of many -- reported
+    # one category and said nothing about the rest, so a partial build read as a clean project.
+    # This is the same defect as a guard that scans nothing, and it is now impossible to miss.
+    if not_checked:
+        console.print(f"\n[yellow]{len(not_checked)} of {len(cats)} standard check(s) were NOT "
+                      f"LOOKED AT[/] [dim]-- their table is absent or empty, and assay cannot "
+                      f"tell those apart from here. This is not a pass.[/]")
+        console.print(f"  [dim]{', '.join(sorted(not_checked)[:8])}"
+                      + (f" and {len(not_checked) - 8} more" if len(not_checked) > 8 else "")
+                      + "[/]")
+        console.print("  [dim]`dbt build --select package:dbt_project_evaluator` builds them "
+                      "all.[/]")
     if not flags:
-        console.print("\n[yellow]no dbt-project-evaluator tables found.[/] [dim]Build it first: "
-                      "dbt build --select package:dbt_project_evaluator, then pass "
-                      "--evaluator-schema.[/]")
+        console.print("\n[yellow]no dbt-project-evaluator findings.[/] [dim]"
+                      + ("Given the above, that is because most of it was not built, not because "
+                         "the project is clean." if not_checked else
+                         "Every check assay could reach came back empty.") + "[/]")
         if store:
             store.close()
         raise typer.Exit(0)

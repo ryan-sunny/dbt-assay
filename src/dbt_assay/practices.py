@@ -126,6 +126,11 @@ def collect(project, entries, probe_mod, project_dir: str, profiles_dir: str | N
         got = probe_mod.run_sql(f"select * from {rel}", project_dir, profiles_dir, dbt_bin,
                                 limit=per_check)
         if not got:
+            # *** A PARTIAL EVALUATOR BUILD READ AS A CLEAN PROJECT. ***
+            # Reported from the field: five fct_ models of many were built, and the categories
+            # whose tables did not exist were reported as nothing at all. An absent table and an
+            # empty one are not the same fact, and only one of them is a pass. The caller is told
+            # which; `collect` cannot tell them apart from an empty result alone.
             missing.append(check)
             continue
         for r in got:
@@ -176,5 +181,17 @@ def primary_key_patches(project, entries) -> list[tuple]:
         if e.uid in tested or not e.grain or e.unreadable:
             continue
         cols = e.grain.value if isinstance(e.grain.value, list) else [e.grain.value]
-        out.append((e.name, cols, e.grain.source, e.marts))
+        # *** A TEST CANNOT ASSERT ON A COLUMN THE MODEL DOES NOT EMIT. ***
+        # Reported from the field: 0 of 15 proposed grains held, and 9 named a column that is not
+        # in the model's output. The grain is what the SQL groups or dedups by, and a model can
+        # dedup on a key and then drop it -- which is the `my_prospects` case verification already
+        # found, where `partition by name_key, city` is followed by `exclude (name_key)`.
+        emitted = {c.name.lower() for c in (e.columns or [])}
+        keep = [c for c in cols if str(c).lower() in emitted] if emitted else list(cols)
+        dropped = [c for c in cols if c not in keep]
+        if emitted and not keep:
+            # Not a patch at all: nothing downstream can assert this model's own uniqueness.
+            out.append((e.name, [], e.grain.source, e.marts, list(cols)))
+            continue
+        out.append((e.name, keep, e.grain.source, e.marts, dropped))
     return sorted(out, key=lambda x: -x[3])

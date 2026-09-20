@@ -188,7 +188,9 @@ def test_a_missing_key_test_comes_with_the_grain_it_should_cover():
     e.marts = 3
     project = SimpleNamespace(tests=[])
     got = prac.primary_key_patches(project, [e])
-    assert got == [("m", ["section_id", "county"], "declared", 3)]
+    # the fifth element is what the grain names and the model does NOT emit;
+    # an entry with no columns known falls back to proposing the whole grain
+    assert got == [("m", ["section_id", "county"], "declared", 3, [])]
 
 
 def test_a_model_that_already_has_a_uniqueness_test_is_not_patched():

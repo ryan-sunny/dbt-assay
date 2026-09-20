@@ -418,3 +418,88 @@ def test_the_cross_reference_rule_does_not_fire_on_a_substring():
                       "other": {"what": "Some other kind of thing entirely, not those."},
                       "cannot_tell": {"what": "The name is too abbreviated to say."}}}
     assert "option_routes_to_another" not in {i.rule for i in lint_question("q", q)}
+
+
+def test_a_proposed_key_test_only_names_columns_the_model_emits():
+    """*** 0 OF 15 PROPOSED GRAINS HELD, AND 9 NAMED A COLUMN THE MODEL DOES NOT EMIT. ***
+
+    Reported from the field. The grain is what the SQL groups or dedups by, and a model can dedup
+    on a key and then drop it. A test asserting on a column that is not in the output cannot even
+    be written, so the patch was a nag with extra steps.
+    """
+    from types import SimpleNamespace
+
+    from dbt_assay import practices as prac
+    from dbt_assay.inventory import Fact, ModelEntry
+
+    e = ModelEntry(uid="model.p.m", name="m", path="p.sql", layer="marts", materialized="table")
+    e.grain = Fact(["name_key", "city"], "derived")
+    e.columns = [SimpleNamespace(name="city"), SimpleNamespace(name="business_name")]
+    e.marts = 2
+    got = prac.primary_key_patches(SimpleNamespace(tests=[]), [e])
+    assert got[0][1] == ["city"], "it must not propose a test on name_key"
+    assert got[0][4] == ["name_key"], "and it must say which column it dropped and why"
+
+
+def test_a_grain_entirely_absent_from_the_output_is_its_own_finding():
+    """*** A MODEL THAT DEDUPS ON A COLUMN AND THEN DROPS IT CANNOT BE TESTED BY ANYTHING. ***
+
+    Verification found this before the field did: a model documented "one row per company + city"
+    that does `partition by name_key, city` and then `select * exclude (name_key)`. Nothing
+    downstream can assert its uniqueness, and proposing a test was the wrong answer entirely.
+    """
+    from types import SimpleNamespace
+
+    from dbt_assay import practices as prac
+    from dbt_assay.inventory import Fact, ModelEntry
+
+    e = ModelEntry(uid="model.p.m", name="m", path="p.sql", layer="marts", materialized="table")
+    e.grain = Fact(["name_key"], "derived")
+    e.columns = [SimpleNamespace(name="business_name"), SimpleNamespace(name="city")]
+    got = prac.primary_key_patches(SimpleNamespace(tests=[]), [e])
+    assert got[0][1] == [], "no test can be proposed"
+    assert got[0][4] == ["name_key"], "and what it dedups on is reported instead"
+
+
+def test_a_partial_evaluator_build_does_not_read_as_a_clean_project():
+    """*** FIVE fct_ MODELS OF MANY, AND THE REST REPORTED AS NOTHING AT ALL. ***
+
+    Reported from the field. A check whose table is absent is not a check that passed, and this
+    is the same defect as a guard that scans nothing -- the one this codebase keeps finding.
+    """
+    import inspect
+
+    from dbt_assay.cli import practices
+    src = inspect.getsource(practices)
+    assert "not_checked" in src, "the missing checks must not be thrown away as `_missing`"
+    assert "NOT\n" in src or "NOT " in src
+    assert "This is not a pass" in src
+    # and the empty-findings message must depend on whether anything was skipped
+    assert "not because\n" in src or "not because " in src
+
+
+def test_the_seed_instruction_is_one_that_works():
+    """*** `--select assay_*` MATCHES NOTHING, AND IT WAS THE COMMAND'S LAST LINE. ***
+
+    `dbt list` shows the nodes and the glob selects none of them. The closing line of a command
+    is the one instruction a reader runs verbatim.
+    """
+    import inspect
+
+    from dbt_assay.cli import export
+    src = inspect.getsource(export)
+    assert "path:" in src
+    assert "relative to your dbt project" in src, "dbt resolves path: against the project root"
+
+
+def test_the_readme_does_not_teach_the_selector_that_matches_nothing():
+    from pathlib import Path
+
+    import dbt_assay
+    root = Path(dbt_assay.__file__).parent.parent.parent
+    r = root / "README.md"
+    if not r.exists():
+        pytest.skip("installed as a wheel")
+    body = r.read_text()
+    assert "--select assay_*" not in body
+    assert "--select path:seeds/assay" in body

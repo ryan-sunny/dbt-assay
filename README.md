@@ -107,7 +107,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.9.2
+- uses: ryan-sunny/dbt-assay@v0.9.3
   with:
     target: target-head
     baseline: base/target
@@ -222,7 +222,7 @@ gives an agent the ability to check itself; the skill gives it the obligation.
 
 ```bash
 assay export transform/seeds/assay   # CSV seeds + a generated schema.yml
-dbt seed --select assay_*            # now it is a relation
+dbt seed --select path:seeds/assay  # now it is a relation
 ```
 
 The inventory, every finding, every stored judgment with its full probability distribution, every

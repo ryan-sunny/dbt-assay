@@ -308,3 +308,39 @@ This project installs `dbt_project_evaluator` but only five `fct_` models are bu
 standard-practice category — `recommend: documentation_coverage` — with nothing saying the other
 checks were absent rather than clean. A run against a partially built evaluator looks like a project
 with one practice issue.
+
+---
+
+## Sixth report: assay in the warehouse
+
+> "Not a report you run, a relation you join to."
+
+87 findings, 1,675 judgments with full distributions, 8 human verdicts, 573 per-edge facts, and an
+`ops_assay_debt` model over them. The question it answers is one no findings list can:
+
+```
+ 50 findings  41 models  worst 15 marts  0 ruled on   dead guard
+ 29 findings  25 models  worst 19 marts  1 ruled on   nondeterminism
+  5 findings   5 models  worst 14 marts  0 ruled on   geometry
+```
+
+`marts` comes off the DAG, so that ranking is exact and free. **`ruled on` is the column to watch**
+— 0 of 41 models carrying a dead guard has been looked at by a person. `min_adjudications` is
+usually described as what earns a question the right to gate. Seen this way it is also a coverage
+measure of the *reviewing*, which is the scarce thing.
+
+Three fixes, all in 0.9.3:
+
+- **`practices --keys-only` proposed 15 grains and 0 held**, 9 naming a column the model does not
+  emit. It never intersected the grain with the output. Fixed, and a grain with **nothing** left
+  after the intersection is now its own finding: a model that dedups on a column and then drops it
+  cannot have its uniqueness asserted by anything downstream. Verified on `fact_sale`, which does
+  `parcel_id as sale_id` — so the grain was tracking the pre-rename name. That is worth fixing on
+  its own and has not been.
+- **`dbt seed --select assay_*` matches nothing**, and it was the command's closing line — the one
+  instruction a reader runs verbatim. It prints `path:seeds/assay` now, resolved relative to the
+  dbt project, because `path:` is project-relative and an absolute path would have been a second
+  instruction that does not work.
+- **A partially built `dbt_project_evaluator` read as a clean project.** `collect` already returned
+  the checks it could not reach and the caller threw them away as `_missing`. The same defect as a
+  guard that scans nothing, in the one place that reports on other people's standards.
