@@ -108,3 +108,17 @@ def test_a_description_many_models_share_is_not_judged(project_dir):
     assert "stg_bad_notnull" in judged            # its description is its own
     for name in ("stg_ok_notnull", "stg_bad_accepted", "stg_bad_tilde"):
         assert name not in judged, f"{name} shares its description with two other models"
+
+
+def test_it_does_not_tell_you_to_export_a_key_you_already_have(project_dir, tmp_path, monkeypatch):
+    """*** --no-judge WITH A KEY IS A CHOICE, NOT A MISSING CAPABILITY. ***
+
+    Telling someone to export what they already exported is the same defect this tool exists to
+    find, in its own output. It has now been that defect four times.
+    """
+    monkeypatch.setenv("TYPESAFE_API_KEY", "sk-not-real")
+    r = runner.invoke(app, ["onboard", "-t", str(project_dir), "--config", str(tmp_path),
+                            "--no-judge"])
+    assert r.exit_code == 0, r.output
+    assert "export TYPESAFE_API_KEY" not in r.output
+    assert "--no-judge was passed" in r.output

@@ -290,7 +290,7 @@ def check(
 
 
 def _onboard_judge(project, digests, schema, findings, config_path: str, store_path: str,
-                   judge: bool, judge_limit: int) -> bool:
+                   judge: bool, judge_limit: int) -> bool | None:
     """The judged tier, on a first run, bounded.
 
     *** LEADS WITH THE DESCRIPTION FAMILY, AND ONLY THAT. ***
@@ -326,6 +326,10 @@ def _onboard_judge(project, digests, schema, findings, config_path: str, store_p
 
     client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
     if not judge or not client.available:
+        # *** DO NOT TELL SOMEONE TO EXPORT A KEY THEY ALREADY HAVE. ***
+        # `--no-judge` with a key present is a choice, not a missing capability, and saying
+        # otherwise is the same defect this tool exists to find.
+        has_key = client.available
         why = ("--no-judge was passed" if not judge else
                "no API key. Set TYPESAFE_API_KEY or OPENROUTER_API_KEY")
         console.print(f"   [yellow]not run:[/] {why}.")
@@ -338,7 +342,7 @@ def _onboard_judge(project, digests, schema, findings, config_path: str, store_p
         st = sem_mod.description_state(picked[0], cfg.vocab)
         console.print(f"   [dim]what it would ask about [bold]{picked[0].name}[/bold]:[/]")
         console.print(f"   [dim]{_json.dumps(st, default=str)[:400]}...[/]")
-        return False
+        return None if has_key else False
 
     stale, asked = [], 0
     with console.status(f"judging {len(picked)} description(s)..."):
@@ -484,6 +488,9 @@ def onboard(
     if findings:
         steps.append((f"assay check --check {by.most_common(1)[0][0]}",
                       "the finding there is most of"))
+    if judged is None:
+        steps.append(("assay onboard   (without --no-judge)",
+                      "a key is present; section 4 was skipped because you asked it to be"))
     if judged:
         steps.append(("assay claims --extract",
                       "pull every claim out of this project's own prose, as data you can audit"))
@@ -493,7 +500,7 @@ def onboard(
                       "judge every hop in the graph for a fan-out nobody declared"))
         steps.append(("assay columns --limit 25",
                       "the same tier over every column: what each one MEANS, adjudicated"))
-    else:
+    elif judged is False:
         steps.append(("export TYPESAFE_API_KEY=... (or OPENROUTER_API_KEY)",
                       ("section 4 is what a key buys; everything above it ran without one")))
     if not agent:
