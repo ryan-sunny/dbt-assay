@@ -252,6 +252,7 @@ assay check --json        # an OBJECT, not a list: {coverage, parse_failures,
 assay inventory           # what every model IS; --html writes a page you can commit
 assay trace <column>      # where one column's value actually came from
 assay tests               # tests that cannot fail, and what nothing asserts at all
+assay tests --count-defaults  # ...and how often each COALESCE default actually wins
 assay practices           # dbt-project-evaluator violations, with judged exceptions
 assay patch tests/assay   # WRITE the uniqueness tests it can prove will pass
 ```
@@ -598,7 +599,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.11.0
+- uses: ryan-sunny/dbt-assay@v0.12.0
   with:
     target: target-head
     baseline: base/target

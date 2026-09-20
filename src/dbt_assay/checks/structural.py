@@ -101,6 +101,21 @@ def unevaluable_tests(project, digests: dict[str, Digest], schema=None) -> list[
     return out
 
 
+def _sharpen(expr: str, ev: dict) -> dict:
+    """Add what the expression settles beyond 'this cannot fail'."""
+    lit = default_literal(expr)
+    if lit is not None:
+        ev["coalesce_default"] = lit
+        ev["what_to_do"] = (f"the guard is live and pointed at the wrong column: count how often "
+                            f"the value IS {lit}. `assay tests --count-defaults` does it.")
+    if cannot_fail_by_construction(expr):
+        ev["cannot_fail_by"] = "construction"
+        ev["what_to_do"] = ("a CASE with one branch and no ELSE yields exactly one value or NULL, "
+                            "so this cannot fail whatever the data does -- stronger than the "
+                            "general finding.")
+    return ev
+
+
 def tests_that_cannot_fail(project, digests: dict[str, Digest]) -> list[Finding]:
     """dbt reports that a test passed. It never reports that a test was INCAPABLE of failing."""
     found = []
@@ -144,9 +159,10 @@ def tests_that_cannot_fail(project, digests: dict[str, Digest]) -> list[Finding]
                     subject=uid, subject_name=m.name, file=m.path,
                     summary=f"{t.kind} test on `{col}` cannot fail",
                     detail=why, base=2,
-                    evidence={"test": t.name, "kind": t.kind, "column": col,
-                              "expression": d.output_exprs.get(col, "")[:160],
-                              "severity": t.severity},
+                    evidence=_sharpen(d.output_exprs.get(col, ""),
+                                      {"test": t.name, "kind": t.kind, "column": col,
+                                       "expression": d.output_exprs.get(col, "")[:160],
+                                       "severity": t.severity}),
                 ))
     return found
 
@@ -205,6 +221,14 @@ def bbox_used_as_distance(project, digests: dict[str, Digest]) -> list[Finding]:
         m = project.models[uid]
         in_join = d.functions_at("join_condition") & BBOX_FUNCS
         in_where = d.functions_at("where") & BBOX_FUNCS
+        # *** A BOX BUILT FROM STORED BOUNDS IS A TESSELLATION, NOT AN APPROXIMATED CIRCLE. ***
+        # `ST_MakeEnvelope(cx0, cy0, cx1, cy1)` from columns on the same row IS the intended
+        # geometry -- a grid cell -- and "a box is not a circle" only holds when the envelope
+        # stands in for a radius. Both disagreements on a hand-ruled warehouse were this, and the
+        # AST settles it: bare columns versus arithmetic on a point.
+        kinds = {v for k, v in (d.bbox_corners or {}).items() if k in (in_join | in_where)}
+        if kinds and kinds <= {"stored_bounds"}:
+            continue
         if in_join or in_where:
             found.append(Finding(
                 check="bbox_as_radius",
@@ -214,7 +238,8 @@ def bbox_used_as_distance(project, digests: dict[str, Digest]) -> list[Finding]:
                         "2km east-west and 2.2km north-south, so the filter is anisotropic. Fine as "
                         "a prefilter before an exact test; wrong as the test itself."),
                 base=1,
-                evidence={"position": "join_condition" if in_join else "where"},
+                evidence={"position": "join_condition" if in_join else "where",
+                          "corners": sorted(kinds) or ["unknown"]},
             ))
     return found
 
@@ -424,3 +449,49 @@ def run_all(project, digests: dict[str, Digest], schema=None) -> list[Finding]:
         b = project.blast_radius(f.subject)
         f.descendants, f.marts = b["descendants"], b["marts"]
     return sorted(out, key=lambda f: -f.weight)
+
+
+# *** "THIS TEST CANNOT FAIL" IS TRUE AND IS NOT THE ACTIONABLE SENTENCE. ***
+# Reported after ruling on forty of these by hand: every one is correct as stated, and a `not_null`
+# on a `COALESCE(x, <literal>)` is not a dead guard -- it is a LIVE guard pointed at the wrong
+# column. On one warehouse:
+#
+#   water_rights.dwr_analysis_status   170,730 of 172,695  (99%) are the default
+#   water_parcels.irrigated_acres    2,623,519 of 2,732,101 (96%) are 0
+#
+# The test passes on every row while saying nothing about whether any lookup ran, because the
+# coalesce conflates "none" with "not measured". The share is one query, batched the same way
+# `which_have_failures` already batches.
+_COALESCE_DEFAULT = re.compile(
+    r"COALESCE\s*\(.+?,\s*('(?:[^']|'')*'|-?\d+(?:\.\d+)?|TRUE|FALSE)\s*\)\s*$",
+    re.IGNORECASE | re.DOTALL)
+
+
+def default_literal(expression: str) -> str | None:
+    """The literal a COALESCE falls back to, when the whole expression is that coalesce."""
+    m = _COALESCE_DEFAULT.search((expression or "").strip())
+    return m.group(1) if m else None
+
+
+def cannot_fail_by_construction(expression: str) -> bool:
+    """A CASE with one branch and no ELSE produces exactly one value or NULL.
+
+    An `accepted_values` test on it cannot fail BY CONSTRUCTION rather than by today's data, which
+    is a stronger statement than the general finding and was indistinguishable from it.
+    """
+    e = (expression or "").strip()
+    if not re.match(r"^CASE\b", e, re.IGNORECASE):
+        return False
+    whens = len(re.findall(r"\bWHEN\b", e, re.IGNORECASE))
+    has_else = bool(re.search(r"\bELSE\b", e, re.IGNORECASE))
+    return whens == 1 and not has_else
+
+
+def default_share_sql(rows: list, dialect: str = "duckdb") -> str:
+    """One statement counting how often each default wins. `rows` is (relation, column, literal)."""
+    parts = []
+    for rel, col, lit in rows:
+        parts.append(
+            f"select '{rel}.{col}' as c, count(*) as n, "
+            f"count(*) filter (where \"{col}\" is not distinct from {lit}) as d from {rel}")
+    return " union all ".join(parts)

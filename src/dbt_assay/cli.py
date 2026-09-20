@@ -1109,6 +1109,10 @@ def traverse(
                     "relation": f.parent_name,
                     "to_one_row_per": pre or "a distinct",
                 }
+            if f.parent_name in (cd.union_members or set()):
+                st["the_child_reads_this_parent_as_one_arm_of_a_UNION"] = (
+                    "so one row of the parent is one row of the child. The child having more "
+                    "rows than this parent is the union, not a fan-out on this hop.")
             st = {k: v for k, v in st.items() if v}
             st["parent"] = {k: v for k, v in st["parent"].items() if v}
             st["child"] = {k: v for k, v in st["child"].items() if v}
@@ -2939,9 +2943,77 @@ def align(
     store.close()
 
 
+def _count_defaults(project, digests, schema, probe, project_dir, profiles_dir, dbt_bin) -> bool:
+    """How often each COALESCE default actually wins, for every test that cannot fail.
+
+    *** "THIS TEST CANNOT FAIL" IS TRUE AND IS NOT THE ACTIONABLE SENTENCE. ***
+    A defaulted column whose default is 99% of its rows is a lookup that never ran, and the test
+    guarding it passes on every row while saying nothing about that. The finding says the guard is
+    dead; this says the COLUMN is. Measured on a real warehouse: 170,730 of 172,695 rows of
+    `dwr_analysis_status` are the string 'not looked up'.
+    """
+    from .checks.structural import default_literal, default_share_sql, tests_that_cannot_fail
+
+    rows, seen = [], []
+    for f in tests_that_cannot_fail(project, digests):
+        ev = f.evidence or {}
+        lit = ev.get("coalesce_default") or default_literal(ev.get("expression", ""))
+        col = ev.get("column")
+        if not lit or not col:
+            continue
+        rel = schema.relation.get(f.subject) or project.models[f.subject].name
+        rows.append((rel, col, lit))
+        seen.append((f.subject_name, rel, col, lit, f.marts))
+    if not rows:
+        console.print("[green]no test rests on a COALESCE default.[/]")
+        return True
+
+    console.print(f"[bold]{len(rows)}[/] defaulted column(s) to count, in one query")
+    got = probe.run_sql(default_share_sql(rows), project_dir, profiles_dir, dbt_bin,
+                        limit=len(rows) + 1)
+    if not got:
+        console.print("[yellow]could not count them.[/] [dim]The models may not be built, or "
+                      "--dbt / --project-dir may be wrong. Nothing here is a pass.[/]")
+        return False
+    counts = {}
+    for r in got:
+        v = list(r.values())
+        try:
+            counts[str(r.get("c", v[0]))] = (int(r.get("n", v[1])), int(r.get("d", v[2])))
+        except (TypeError, ValueError, IndexError):
+            continue
+
+    t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    t.add_column("column", overflow="fold"); t.add_column("marts", justify="right")
+    t.add_column("default"); t.add_column("share that ARE it", justify="right")
+    hot = 0
+    for name, rel, col, lit, marts in sorted(seen, key=lambda x: -x[4]):
+        n, d = counts.get(f"{rel}.{col}", (0, 0))
+        if not n:
+            t.add_row(f"{name}.{col}", str(marts), lit, "[dim]not counted[/]")
+            continue
+        pct = d / n
+        hot += pct >= 0.5
+        style = "[red]" if pct >= 0.9 else ("[yellow]" if pct >= 0.5 else "[dim]")
+        t.add_row(f"{name}.{col}", str(marts), lit, f"{style}{d:,} of {n:,}  ({pct:.0%})[/]")
+    console.print(t)
+    if hot:
+        console.print(f"\n[bold]{hot}[/] column(s) are at least half default. "
+                      f"[dim]The test passes on every row and says nothing about whether the "
+                      f"lookup behind it ever ran: the coalesce conflates 'none' with 'not "
+                      f"measured'.[/]")
+    return True
+
+
 @app.command("tests")
 def tests_cmd(
     target: str = typer.Option(None, "--target", "-t"),
+    count_defaults: bool = typer.Option(False, "--count-defaults",
+                                        help="count how often each COALESCE default actually "
+                                             "wins. Needs your dbt; one batched query."),
+    project_dir: str = typer.Option(".", "--project-dir"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    dbt_bin: str = typer.Option("dbt", "--dbt"),
     gaps_only: bool = typer.Option(False, "--gaps-only",
                                    help="coverage only. Pure code, no API key, no spend."),
     dialect: str = typer.Option(None, "--dialect",
@@ -2955,6 +3027,16 @@ def tests_cmd(
     tdir = _find_target(target)
     store = Store(store_path) if Path(store_path).exists() else None
     project, digests, _schema, entries = _entries(tdir, store, dialect)
+
+    if count_defaults:
+        # *** "THIS TEST CANNOT FAIL" IS TRUE AND IS NOT THE ACTIONABLE SENTENCE. ***
+        # A `not_null` on `COALESCE(x, <literal>)` is a LIVE guard pointed at the wrong column.
+        # The share that ARE the default is what someone acts on, and it is one batched query.
+        _c = _count_defaults(project, digests, _schema, probe_mod, project_dir, profiles_dir,
+                             dbt_bin)
+        if store:
+            store.close()
+        raise typer.Exit(0 if _c else 1)
 
     gaps = testing_mod.coverage_gaps(project, digests, entries)
     console.print(f"[bold]{len(gaps)}[/] coverage gap(s) [dim]found by code alone[/]")

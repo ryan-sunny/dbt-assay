@@ -786,3 +786,51 @@ clause, what the count is).
 The ratio is the useful output. A check with a high disagree rate has a blind spot; a check with a
 high unclear rate has a reporting gap. Neither is visible without someone reading, and the reading
 is now in the warehouse next to the finding.
+
+---
+
+## Tenth report: every finding on a 357-model warehouse, ruled
+
+99 findings, all read. `agree 70 / disagree 12 / unclear 17`, and `regress` still 8/8 off
+`source='human'` after a hundred agent writes — the separation held without needing a second
+thought, which was the whole bet.
+
+`docs/REVIEW.md` is the ranked list. Items 1–3 are fixed:
+
+**Two structural blind spots caused every single disagreement**, and both are readable from the
+AST with no judgment and no call. That is the part worth sitting with: the judgment was allowed to
+be wrong about something a parser settles exactly.
+
+- **A union member cannot multiply** — ten of twelve. `dim_business` (16 marts) unions eleven
+  staging feeds and was reported `silently_multiplied`. One parent row is one child row; the child
+  having more rows than any single parent is the union. `Digest.union_members` now records it, the
+  edge state carries it, and `hop_multiplies_rows` REFUSES the finding outright rather than
+  believing a judgment about it. Verified: 17 union arms found on `dim_business`, 4 on
+  `int_water_section_match`, 7 on `fact_sale`.
+- **An envelope built from stored bounds is a tessellation, not a radius** — the other two. Bare
+  columns are a grid cell that already exists in the data; arithmetic on a point is a box standing
+  in for a circle, which is the only case "a box is not a circle" argues about. `bbox_as_radius`
+  went 3 → 2 on the test warehouse and both survivors are `point_plus_offset`, in the two models
+  that rank by degrees.
+
+**All seventeen unclears were one problem** and in every case the missing piece was already
+computed. `hop_multiplies_rows` now says where the collapse was found *or that it was not found on
+this path*, which is as useful. `description_contradicts_the_code` names the prose it judged, since
+it sends the schema.yml description and the in-file comments together and a reader could not tell
+which one the contradiction was in.
+
+**`test_cannot_fail` now reports the live bug as well as the dead one.** Every finding was correct
+as stated, and a `not_null` on `COALESCE(x, <literal>)` is a live guard pointed at the wrong
+column. `assay tests --count-defaults` counts the share that ARE the default, in one batched
+statement. Run against the warehouse it reproduced all five reported numbers and found five more:
+
+```
+water_rights.dwr_analysis_status          170,730 of   172,695  (99%)  'not looked up'
+water_parcels.irrigated_acres_on_parcel 2,623,519 of 2,732,101  (96%)  0
+water_section_summary.wells_household_only   55,230 of    64,433  (86%)  0
+az_section_summary.n_water_level             96,624 of   114,305  (85%)  0
+```
+
+Nine of ten are at least a third default. The sub-case has its own name now too:
+`water_outreach_agents.contact_role` is a CASE with one branch and no ELSE, so its
+`accepted_values` test cannot fail **by construction** rather than by today's data.

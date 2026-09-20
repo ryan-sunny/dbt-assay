@@ -103,6 +103,15 @@ def _edges(project, digests, schema) -> list[Subject]:
         if pre is not None:
             st["the_child_already_collapsed_the_parent_before_joining"] = {
                 "relation": f.parent_name, "to_one_row_per": pre or "a distinct"}
+        # *** A UNION MEMBER CANNOT MULTIPLY, AND THE QUESTION COULD NOT SEE THAT. ***
+        # Ten of twelve disagreements on a hand-ruled warehouse were this hop being read as
+        # `silently_multiplied` when the parent is one arm of a union: one parent row is one child
+        # row, and the child having more rows than any single parent is a different fact.
+        if f.parent_name in (cd.union_members or set()):
+            st["the_child_reads_this_parent_as_one_arm_of_a_UNION"] = (
+                "so one row of the parent is one row of the child. The child having more rows "
+                "than this parent is the union, not a fan-out on this hop.")
+        st = _prune(st)
         out.append(Subject("edge", f"{f.child}::edge::{f.parent}", f.child,
                            f"{f.parent_name} -> {f.child_name}",
                            file=(_model_of(project, f.child) or _Blank()).path, state=_prune(st)))

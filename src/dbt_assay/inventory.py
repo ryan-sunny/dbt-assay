@@ -100,6 +100,12 @@ class ModelEntry:
     claim_conflicts: list = field(default_factory=list)
     # (parent -> child, probability) for hops that multiply rows without declaring it.
     fanout_hops: list = field(default_factory=list)
+    # Parents this model reads as one arm of a UNION. Such a hop cannot multiply, so a
+    # `silently_multiplied` judgment about it is refused by code rather than believed.
+    union_parents: set = field(default_factory=set)
+    # {parent: [keys]} for parents collapsed inside a subquery before being joined.
+    pre_aggregated_parents: dict = field(default_factory=dict)
+    description: str = ""
     # *** A JUDGMENT THAT ONLY ITS OWN COMMAND CAN SEE IS NOT PART OF THE TOOL. ***
     # The description family answered, stored, and then reached nothing: not `check`, not the JSON,
     # not the HTML, not the pull request. It printed once, where it was asked, and was gone. A
@@ -148,6 +154,12 @@ def build(project, digests, schema, store=None, observed=None) -> list[ModelEntr
                            reads=[project.name_of(p) for p in m.parents])
         b = project.blast_radius(uid)
         entry.descendants, entry.marts = b["descendants"], b["marts"]
+        _d = digests.get(uid)
+        if _d is not None and getattr(_d, "union_members", None):
+            entry.union_parents = set(_d.union_members)
+        if _d is not None and getattr(_d, "pre_aggregated", None):
+            entry.pre_aggregated_parents = dict(_d.pre_aggregated)
+        entry.description = (m.description or "").strip()
 
         # ---- grain, strongest evidence first ----
         judged = _judgments(store, uid)

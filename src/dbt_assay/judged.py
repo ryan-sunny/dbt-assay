@@ -196,8 +196,19 @@ def description_contradicts_the_code(project, entries) -> list[Finding]:
                     "everyone downstream. Re-read both, and either fix the code or fix the "
                     "sentence."),
             base=2,
+            # *** SEVENTEEN UNCLEAR RULINGS WERE ALL ONE PROBLEM: THE FINDING DID NOT CARRY
+            # ENOUGH TO SETTLE IT, AND IN EVERY CASE THE MISSING PIECE WAS ALREADY COMPUTED. ***
+            # This family judges the description and the in-file comments TOGETHER, so a reader
+            # cannot tell which one the contradiction is in. `water_address_sections` is the clear
+            # case: its description and its SQL header are the same sentence verbatim.
             evidence={"probability": f.confidence, "downstream": e.descendants,
-                      "marts": e.marts},
+                      "marts": e.marts,
+                      "it_judged": _prose_judged(e),
+                      "where_to_look": ("the contradiction is in one of these. Both the "
+                                        "schema.yml description and the model's own comment block "
+                                        "were sent. `assay claims --extract` splits prose into "
+                                        "atomic claims and `assay verify` names the one that "
+                                        "fails.")},
         ))
     return out
 
@@ -249,6 +260,28 @@ def code_contradicts_a_claim(project, entries) -> list[Finding]:
     return out
 
 
+def _prose_judged(entry) -> dict:
+    """What prose this model actually has, so a reader knows where to look."""
+    out: dict = {}
+    desc = (getattr(entry, "description", "") or "").strip()
+    if desc:
+        out["schema_yml_description"] = desc[:300]
+    out["and_the_models_own_comment_block"] = "sent too; see the top of " + (entry.path or "the file")
+    return out
+
+
+def _collapse_note(entry, hop: str) -> str:
+    """Whether a group by or distinct was found on this hop, said either way."""
+    parent = (hop or "").split(" -> ")[0].strip()
+    if parent and parent in (getattr(entry, "union_parents", None) or set()):
+        return f"{parent} is read as a UNION arm, which cannot multiply"
+    pre = getattr(entry, "pre_aggregated_parents", None) or {}
+    if parent in pre:
+        return f"{parent} was collapsed to one row per {pre[parent]} before the join"
+    return ("no group by, distinct or union was found on THIS path. The child may still collapse "
+            "elsewhere, which is why the ruling needs the file")
+
+
 def hop_multiplies_rows(project, entries) -> list[Finding]:
     """A join that turns one parent row into several, where nothing says it should.
 
@@ -260,6 +293,12 @@ def hop_multiplies_rows(project, entries) -> list[Finding]:
     out = []
     for e in entries:
         for ctx, p_ in e.fanout_hops:
+            # *** A UNION MEMBER CANNOT MULTIPLY, AND CODE KNOWS IT. ***
+            # Ten of twelve disagreements were this. The judgment is allowed to be wrong here;
+            # the finding is not, because a parser settles it exactly and for free.
+            if e.union_parents and any(
+                    f" {p_name} " in f" {ctx} " for p_name in e.union_parents):
+                continue
             out.append(Finding(
                 check="hop_multiplies_rows",
                 rests_on="edge_preserves_the_grain",
@@ -272,7 +311,11 @@ def hop_multiplies_rows(project, entries) -> list[Finding]:
                         "own declared key."),
                 base=3,
                 evidence={"hop": ctx, "probability": round(p_, 3),
-                          "downstream": e.descendants, "marts": e.marts},
+                          "downstream": e.descendants, "marts": e.marts,
+                          # Which hop the collapse sits on is the thing a ruling stalls for, and
+                          # the parser already knows. Saying "no collapse found on this path" is
+                          # as useful as naming one.
+                          "collapse_on_this_path": _collapse_note(e, ctx)},
             ))
     return out
 

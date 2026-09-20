@@ -63,6 +63,58 @@ def _base_column(e: exp.Expression) -> str | None:
     return cols[0].name.lower() if len(cols) == 1 else None
 
 
+_BBOX_NAMES = ("makeenvelope", "expand", "envelope")
+
+
+def _bbox_corners(tree) -> dict:
+    """{function: 'stored_bounds' | 'point_plus_offset' | 'mixed'} for each box-building call.
+
+    Bare columns are a box that already exists in the data. Arithmetic on a point is a box someone
+    built to stand in for a radius, and only the second is what the proximity check is about.
+    """
+    out: dict = {}
+    for f in tree.find_all(exp.Anonymous, exp.Func):
+        name = (getattr(f, "name", "") or "").lower()
+        if not any(b in name for b in _BBOX_NAMES):
+            continue
+        args = f.args.get("expressions") or []
+        if not args:
+            continue
+        kinds = set()
+        for a in args:
+            if isinstance(a, exp.Column):
+                kinds.add("column")
+            elif isinstance(a, (exp.Add, exp.Sub, exp.Mul, exp.Div)):
+                kinds.add("offset")
+            elif isinstance(a, exp.Literal):
+                kinds.add("literal")
+            else:
+                kinds.add("other")
+        if kinds == {"column"}:
+            out[name.upper()] = "stored_bounds"
+        elif "offset" in kinds:
+            out[name.upper()] = "point_plus_offset"
+        else:
+            out[name.upper()] = "mixed"
+    return out
+
+
+def _union_members(tree, dialect: str) -> set:
+    """Relations that appear inside a UNION arm of this model.
+
+    A parent read this way contributes rows alongside its siblings rather than being joined to,
+    so one of its rows is one of the child's. Whatever else the child does, THIS hop did not
+    multiply anything.
+    """
+    out: set = set()
+    for u in tree.find_all(exp.Union):
+        for tbl in u.find_all(exp.Table):
+            name = tbl.name or tbl.sql(dialect=dialect)
+            if name:
+                out.add(name)
+    return out
+
+
 def _pre_aggregated(tree, dialect: str) -> dict:
     """{relation: [group keys]} for every relation collapsed inside a subquery or CTE.
 
@@ -321,6 +373,18 @@ class Digest:
     # -- already one row per key. The judgment saw join keys and no grouping and inferred fan-out
     # from true facts that were not the whole state.
     pre_aggregated: dict = field(default_factory=dict)
+    # *** A UNION MEMBER CANNOT MULTIPLY. ***
+    # One parent row becomes exactly one child row; the child having MORE rows than any single
+    # parent is a different fact and not a fan-out. Ten of twelve disagreements on a hand-ruled
+    # warehouse were this: `dim_business` unions eleven staging feeds and was reported
+    # `silently_multiplied` at 16 marts. Readable from the AST, no judgment, no call.
+    union_members: set = field(default_factory=set)
+    # *** AN ENVELOPE BUILT FROM STORED BOUNDS IS A TESSELLATION, NOT A RADIUS. ***
+    # `ST_MakeEnvelope(cx0, cy0, cx1, cy1)` from columns on the same row IS the intended geometry
+    # -- a cell of a grid. `ST_MakeEnvelope(lon-0.02, lat-0.02, lon+0.02, lat+0.02)` approximates a
+    # circle and is the case "a box is not a circle" was written for. Both `bbox_as_radius`
+    # disagreements on a hand-ruled warehouse were the first kind.
+    bbox_corners: dict = field(default_factory=dict)
     # DuckDB's `~` is regexp_full_match, not Postgres's partial match. Captured here so no check
     # ever has to parse the SQL a second time; one parse per model is the contract.
     full_match_patterns: list[str] = field(default_factory=list)
@@ -494,6 +558,8 @@ def _extract(tree, name: str, dialect: str) -> Digest:
     # with a plain `select distinct` inside a CTE, which none of the above would have seen. Missing
     # any of these marks a deliberate, correct pattern as a defect.
     d.pre_aggregated = _pre_aggregated(tree, dialect)
+    d.union_members = _union_members(tree, dialect)
+    d.bbox_corners = _bbox_corners(tree)
     d.absorbs_fanout = (
         any(sel.args.get("distinct") for sel in tree.find_all(exp.Select))
         or bool(list(tree.find_all(exp.Distinct)))
