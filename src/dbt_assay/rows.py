@@ -96,11 +96,69 @@ def questions_for(fr: FailingRow, config_explanations: dict | None = None) -> di
     }
 
 
+def which_have_failures(relations: list[str], probe_mod, project_dir: str,
+                        profiles_dir: str | None, dbt_bin: str,
+                        batch: int = 200) -> tuple[set[str], list[str]]:
+    """*** NARROW IN ONE QUERY, NOT ONE QUERY PER TEST. ***
+
+    Reported from a project that turns `store_failures` on globally: this loop shelled a COLD
+    `dbt show --inline` for each of 1,288 tests at roughly fifteen seconds each -- five and a half
+    hours -- and thirteen of those tables held a single row between them. Every other call paid a
+    dbt startup to be told a table was empty.
+
+    A `union all` of counts answers the same question for hundreds of relations in one statement.
+    A relation that does not exist would fail the whole batch, so a failed batch is retried in
+    halves and a single relation that still fails is recorded as UNKNOWN rather than as empty:
+    silence has to be distinguishable from absence, which is the rule this tool is built on.
+
+    Returns (relations_with_rows, relations_we_could_not_read).
+    """
+    have: set[str] = set()
+    unknown: list[str] = []
+
+    def ask(chunk: list[str]) -> bool:
+        sql = " union all ".join(
+            f"select '{r}' as rel, count(*) as n from {r}" for r in chunk)
+        got = probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=len(chunk) + 1)
+        if not got:
+            return False
+        for row in got:
+            vals = list(row.values())
+            rel = row.get("rel", vals[0] if vals else None)
+            n = row.get("n", vals[1] if len(vals) > 1 else 0)
+            try:
+                if rel and int(n) > 0:
+                    have.add(str(rel))
+            except (TypeError, ValueError):
+                continue
+        return True
+
+    def walk(chunk: list[str]) -> None:
+        if not chunk:
+            return
+        if ask(chunk):
+            return
+        if len(chunk) == 1:
+            unknown.append(chunk[0])          # never counted clean
+            return
+        mid = len(chunk) // 2
+        walk(chunk[:mid])
+        walk(chunk[mid:])
+
+    rels = sorted(set(relations))
+    for i in range(0, len(rels), batch):
+        walk(rels[i:i + batch])
+    return have, unknown
+
+
 def collect(project, entries, probe_mod, project_dir: str, profiles_dir: str | None,
             dbt_bin: str, limit_per_test: int = MAX_ROWS_PER_TEST) -> tuple[list, list]:
     """(rows, skipped). A test whose failures were never stored is skipped, not counted clean."""
     by_uid = {e.uid: e for e in entries}
     rows, skipped = [], []
+
+    # One pass to find which audit tables hold anything, then one query per table that does.
+    candidates = {}
     for t in project.tests:
         rel = audit_relation(project, t.unique_id)
         if not rel:
@@ -108,10 +166,21 @@ def collect(project, entries, probe_mod, project_dir: str, profiles_dir: str | N
             continue
         if not t.tests_model or t.tests_model not in project.models:
             continue
+        candidates[t.unique_id] = (t, rel)
+    have, unknown = which_have_failures([r for _t, r in candidates.values()], probe_mod,
+                                        project_dir, profiles_dir, dbt_bin)
+
+    for t, rel in candidates.values():
+        if rel in unknown:
+            skipped.append((t.name, "the audit table could not be read; NOT counted as clean"))
+            continue
+        if rel not in have:
+            skipped.append((t.name, "the audit table is empty: this test stored no failures"))
+            continue
         got = probe_mod.run_sql(f"select * from {rel}", project_dir, profiles_dir, dbt_bin,
                                 limit=limit_per_test)
         if not got:
-            skipped.append((t.name, "no stored failures, or the audit table is absent"))
+            skipped.append((t.name, "counted rows but could not read them"))
             continue
         e = by_uid.get(t.tests_model)
         for r in got[:limit_per_test]:

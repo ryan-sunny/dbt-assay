@@ -245,9 +245,10 @@ wheels = [
 
 [[package]]
 name = "dbt-assay"
-version = "0.5.0"
+version = "0.5.1"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "duckdb" },
     { name = "httpx" },
     { name = "python-dotenv" },
@@ -273,6 +274,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.0" },
     { name = "duckdb", specifier = ">=1.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx", marker = "extra == 'jev'", specifier = ">=0.27" },

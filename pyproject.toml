@@ -1,6 +1,6 @@
 [project]
 name = "dbt-assay"
-version = "0.5.0"
+version = "0.5.1"
 description = "Recover the semantics your warehouse never wrote down. sqlglot for structure, TypeSafe's Jev for meaning."
 readme = "README.md"
 license = "Apache-2.0"
@@ -25,6 +25,10 @@ dependencies = [
   "sqlglot>=28",
   "duckdb>=1.0",
   "typer>=0.12",
+  # *** typer 0.27 STOPPED DEPENDING ON click. ***
+  #  reads a single keypress through click, and that import was undeclared, so
+  # the only path by which a question reaches its gate died for anyone on a current typer.
+  "click>=8.0",
   "rich>=13",
   "pyyaml>=6",
   "httpx>=0.28.1",

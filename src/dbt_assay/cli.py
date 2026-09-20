@@ -315,6 +315,21 @@ def _run_dbt_compile(target: Path, dbt_bin: str = "dbt", profiles_dir: str | Non
     if pd is None:
         return False, ("no dbt_project.yml above this target, so there is no project to compile. "
                        "Run `dbt compile` yourself in the project this manifest came from.")
+    # *** dbt compile OVERWRITES run_results.json, AND THAT FILE HOLDS WHICH TESTS FAILED. ***
+    # Reported from the field: after `assay onboard --compile`, run_results held one result and
+    # nothing about test status, so anything downstream reading it saw a clean project. assay
+    # caused a check to stop seeing and report a pass -- the exact defect this tool exists to
+    # find. It is copied aside first and the caller is told where, because silently restoring it
+    # would be its own lie: run_results is supposed to describe the LAST dbt invocation.
+    rr = target / "run_results.json"
+    kept = None
+    if rr.exists():
+        kept = target / "run_results.before-assay-compile.json"
+        try:
+            kept.write_bytes(rr.read_bytes())
+        except OSError:
+            kept = None
+
     cmd = [*dbt_bin.split(), "compile"]
     if profiles_dir:
         cmd += ["--profiles-dir", profiles_dir]
@@ -328,7 +343,11 @@ def _run_dbt_compile(target: Path, dbt_bin: str = "dbt", profiles_dir: str | Non
     if r.returncode != 0:
         tail = (r.stdout or r.stderr or "").strip().splitlines()[-3:]
         return False, "dbt compile failed: " + " / ".join(t.strip() for t in tail)
-    return True, str(pd)
+    where = str(pd)
+    if kept is not None:
+        where += (f"  [run_results.json now describes the compile, not your last test run. "
+                  f"The previous one is at {kept.name}.]")
+    return True, where
 
 
 def _onboard_judge(project, digests, schema, findings, config_path: str, store_path: str,
@@ -2745,10 +2764,19 @@ def _keypress() -> str:
     """
     import sys
 
-    import click
+    # *** typer 0.27 STOPPED DEPENDING ON click, AND THIS IMPORT WAS UNDECLARED. ***
+    # `import click` sat inside the one function that records verdicts, so the whole review loop --
+    # the only way a question ever reaches its gate -- died with ModuleNotFoundError for anyone on
+    # a current typer. It survived this long only because click used to arrive for free.
+    #
+    # click is declared now, and this still degrades rather than dies: a terminal read is a
+    # convenience, and losing it must not lose the ability to rule.
     if sys.stdin.isatty():
         try:
+            import click
             return click.getchar().lower()
+        except ImportError:
+            pass                      # fall through to line input; one Enter per verdict
         except (OSError, KeyboardInterrupt, EOFError):
             return "q"
     line = sys.stdin.readline()
