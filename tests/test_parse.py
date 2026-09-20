@@ -1,0 +1,66 @@
+from dbt_assay.parse import case_branch_values, digest
+
+
+def test_output_roots_classify_expressions():
+    d = digest("""
+        select id,
+               coalesce(a, 0)  as with_literal,
+               coalesce(a, b)  as with_column,
+               row_number() over (partition by id order by ts) as rn,
+               case when s = 'x' then 'X' else 'Y' end as flag,
+               count(*) as n
+        from t group by id, a, b, s, ts
+    """)
+    assert d.ok
+    assert d.output_roots["with_literal"] == "coalesce:literal"
+    assert d.output_roots["with_column"] == "coalesce"
+    assert d.output_roots["rn"] == "window:row_number"
+    assert d.output_roots["flag"] == "case"
+    assert d.output_roots["n"] == "agg:count"
+
+
+def test_case_branches_are_enumerated_only_when_all_literal():
+    assert case_branch_values("case when a then 'X' else 'Y' end") == ["X", "Y"]
+    # a non-literal branch means the value set is open, so the answer is "unknown", not a guess
+    assert case_branch_values("case when a then col else 'Y' end") is None
+    assert case_branch_values("coalesce(a, 1)") is None
+
+
+def test_join_facts_capture_kind_and_keys():
+    d = digest("select 1 from a inner join b using (k) left join c on c.id = a.id cross join d")
+    kinds = {j.kind for j in d.joins}
+    assert "LEFT" in kinds and "CROSS" in kinds
+    using = [j.using for j in d.joins if j.using]
+    assert using == [["k"]]
+    on = next(j.on_columns for j in d.joins if j.on_columns)
+    assert "c.id" in on and "a.id" in on
+
+
+def test_window_position_distinguishes_qualify_from_projection():
+    proj = digest("select id, row_number() over (partition by id order by ts) rn from t")
+    assert proj.windows[0].position == "projection"
+    qual = digest("select id from t qualify row_number() over (partition by id order by ts) = 1")
+    assert qual.windows[0].position == "qualify"
+    assert qual.has_qualify
+
+
+def test_order_key_root_is_resolved_through_nesting():
+    d = digest("select row_number() over (order by ST_Distance_Sphere(ST_ClosestPoint(g, p), p)) rn from t")
+    assert d.windows[0].order_roots == ["ST_DISTANCE_SPHERE"]
+
+
+def test_function_position_is_recorded():
+    d = digest("select ST_Distance(a, b) as d from t join u on ST_MakeEnvelope(1,2,3,4) where x > 1")
+    assert "ST_DISTANCE" in d.functions_at("projection")
+    assert "ST_MAKEENVELOPE" in d.functions_at("join_condition")
+
+
+def test_function_names_are_always_upper_case():
+    """sqlglot spells a native function and an anonymous one differently; assay does not."""
+    d = digest("select ST_Distance(a, b), ST_MakeEnvelope(1, 2, 3, 4), coalesce(x, 1) from t")
+    assert all(n == n.upper() for n, _ in d.functions), d.functions
+
+
+def test_a_parse_failure_is_reported_not_raised():
+    d = digest("this is not sql at all ((((", "broken")
+    assert d.ok is False and d.error
