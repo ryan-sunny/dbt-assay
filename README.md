@@ -153,6 +153,25 @@ rewrite whose contract is unchanged produces nothing, which is exactly right.
 It tracks the SQL's grain separately from the declared one, so a GROUP BY drifting away from a live
 `unique` test is caught and named: *one of the two is now wrong*.
 
+## Backtest: does it work on YOUR repo?
+
+```bash
+assay backtest --repo .
+```
+
+Replays every commit touching model SQL, reads the blob before and after with `git show`, and asks
+whether a check fired before and went quiet after. No checkout, no stash, nothing that can collide
+with other work in the clone.
+
+On the repo it was built against it found the two models a spatial-ranking defect was removed from,
+at a commit whose message never contains the word "fix" — which is why the message is a label here
+and never a filter. Three of the four commits that removed that defect would have been missed by
+matching on wording.
+
+It is honest about what it cannot read: historical compiled SQL does not exist, so `ref()` and
+`source()` are resolved and control blocks stripped, which is not a compile. Blobs that do not
+survive that are reported, not counted as clean.
+
 ## Configuration actually configures
 
 `assay init` writes an `audit.yml`. It scopes questions, waives findings, and decides what an

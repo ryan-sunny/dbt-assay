@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__, contracts, provenance, relate
+from . import backtest as backtest_mod
 from . import columns as columns_mod
 from . import diff as diff_mod
 from . import export as export_mod
@@ -911,3 +912,71 @@ def diff_cmd(
         console.print(t)
     if len(changes) > limit:
         console.print(f"[dim]... {len(changes) - limit} more[/]")
+
+
+@app.command()
+def backtest(
+    repo: str = typer.Option(".", "--repo", "-r", help="the git repo holding your dbt models"),
+    limit: int = typer.Option(60, "--limit", "-n", help="how many commits to replay"),
+    fix_like_only: bool = typer.Option(False, "--fix-like-only",
+                                       help="only commits whose message says fix/bug/broken. Off "
+                                            "by default: on a real repo 3 of 4 commits that "
+                                            "removed a known defect did not say so."),
+    since: str = typer.Option(None, "--since", help="e.g. 2026-01-01"),
+    show: int = typer.Option(10, "--show", help="how many replays to print"),
+):
+    """Replay this repo's own history and measure whether the checks catch what it already fixed.
+
+    A commit whose message says it fixed something is a defect and its repair, already labelled by
+    whoever wrote it. Did the check fire before the fix and go quiet after?
+
+    Reads blobs out of the object store with `git show`. No checkout, no stash, nothing that could
+    collide with other work in the same clone.
+    """
+    try:
+        replays = backtest_mod.run(repo, limit, since, fix_like_only)
+    except RuntimeError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+
+    if not replays:
+        console.print("[yellow]no commits touching model SQL were found.[/] "
+                      "[dim]Try --since, or a larger --limit.[/]")
+        raise typer.Exit(0)
+
+    counts = backtest_mod.tally(replays)
+    rate = counts.pop("_silenced_rate", None)
+    had = counts.pop("_had_something", 0)
+    t = Table(title="replayed history", header_style="bold")
+    t.add_column("outcome"); t.add_column("n", justify="right"); t.add_column("means")
+    MEANS = {
+        "caught": "fired before, quiet after: the check works",
+        "introduced": "quiet before, fires after: this commit added something",
+        "still_firing": "fires at both: the commit did not address what assay sees",
+        "silent": "assay saw nothing either side",
+        "no_pair": "the model was added or removed here, so there is nothing to compare",
+        "unparseable": "a blob assay could not read; NOT counted as clean",
+    }
+    counts.pop("skipped", None)
+    for k in ("caught", "introduced", "still_firing", "silent", "no_pair", "unparseable"):
+        if counts.get(k):
+            t.add_row(k, str(counts[k]), MEANS[k])
+    console.print(t)
+    if rate is not None:
+        console.print(f"[dim]a check was firing in {had} replay(s); a later commit silenced it in "
+                      f"{rate:.0%} of them. The denominator is deliberately not every commit: most "
+                      f"touch models that never had the defect.[/]")
+
+    caught = [r for r in replays if r.verdict == "caught"]
+    for r in caught[:show]:
+        label = "" if r.message_says_fix else "  [dim](the message never says 'fix')[/]"
+        console.print(f"\n[green]caught[/] [bold]{r.model}[/]  [dim]{r.sha}[/]{label}")
+        console.print(f"  [dim]{r.subject}[/]")
+        console.print(f"  fired before, quiet after: {', '.join(r.checks_that_caught)}")
+
+    unread = [r for r in replays if r.verdict == "unparseable"]
+    if unread:
+        pairs = [r for r in replays if r.verdict != "no_pair"]
+        console.print(f"\n[yellow]{len(unread)} of {len(pairs)} comparable replays could not be "
+                      f"read[/] [dim]({len(unread) / max(len(pairs), 1):.0%}), and are not counted "
+                      f"as clean. A Jinja strip is not a compile.[/]")
