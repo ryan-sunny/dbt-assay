@@ -462,6 +462,7 @@ like a working check for weeks.
 | `multi_hop` | one lumped question over three rules read 0.64 where the split rule that applied read 0.85 |
 | `no_match_option` | without one the model must pick a wrong answer. A real division bug surfaced **only** because it could say "not on the list" |
 | `options_not_separated` | two options described alike give the model nothing to cut on; assay's own pair sat at 0.36–0.39 until they were merged |
+| `option_routes_to_another` | an option whose description names ANOTHER option is routing, and the answering model may not honour it. Measured: a question doing this passed the judged overlap check at 0.63 while the model put one subject under both options at 0.55 and 0.63 |
 | `options_overlap` *(`--judge`)* | the static rule compares WORDS. Two options can share a **situation** and no vocabulary: a real pair scored 0.25 against a 0.75 threshold and passed, while both correctly described the same window. This asks Jev instead, and it independently flagged `predicate_intent` — already proven weak by hand |
 | `state_size` | unrelated detail is a distractor: one correct extra sentence took a claim from 0.96 to 0.47 |
 | `id_prefix` | two families sharing a prefix means one silently absorbs the other's verdicts |

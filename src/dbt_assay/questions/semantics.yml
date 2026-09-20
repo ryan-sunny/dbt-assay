@@ -104,6 +104,15 @@ sentence_is_a_claim:
 # says_nothing. The third option is the one that matters.
 claim_alignment:
   id_prefix: "claim"
+  # Dogfooding the escape hatch: `contradicts` names `says_nothing` to push silence away from
+  # itself, which IS the routing the lint warns about. Kept because it was measured, not assumed:
+  # adding that sentence took contradictions from 8 to 5 on a real slice while says_nothing rose
+  # from 8 to 14, and a hand-verified false positive disappeared. The field's warning stands --
+  # the answering model may not honour a routing sentence -- and here it demonstrably did.
+  acknowledge:
+    option_routes_to_another: >-
+      measured: naming says_nothing inside contradicts moved a real slice from 8 contradictions to
+      5 and removed a hand-verified false positive. Re-measure before removing it.
   type: choice
   prompt_version: "claim.v2"
   instructions:

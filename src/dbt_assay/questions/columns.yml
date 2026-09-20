@@ -10,6 +10,14 @@ version: 1
 # had no room for a structured contact detail. The gap was in the criteria, not the judgment.
 column_role:
   id_prefix: "role"
+  # `identifier` names `foreign_key` to push references away from itself. Same shape as the
+  # acknowledgement on claim_alignment, and this one is NOT separately measured -- it is inherited
+  # from a bank written before the rule existed. Recorded honestly rather than quietly exempted.
+  acknowledge:
+    option_routes_to_another: >-
+      not separately measured; inherited from before this rule existed. The role family agreed
+      with 57 of 61 free labels overall, which is evidence about the family and not about this
+      sentence. Worth a controlled rewrite.
   type: choice
   prompt_version: "role.v2"
   instructions:

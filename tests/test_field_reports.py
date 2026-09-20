@@ -356,3 +356,65 @@ def test_confirmed_answers_are_the_regression_test_for_assay_itself():
     # only what a PERSON agreed with: a disagreement is not a baseline, and a label is not a person
     assert [r["subject"] for r in got] == ["m::win::0"]
     assert got[0]["answered"] == "ordered_by_appropriation"
+
+
+def test_regress_resolves_a_verdict_filed_under_a_prefix():
+    """*** `review` RECORDED A PREFIX AND `regress` LOOKED UP A NAME. ***
+
+    Every verdict was skipped on the mismatch, and the command written to catch exactly that class
+    of regression reported a pass. Resolved on BOTH spellings, because an old store must keep
+    working and the two will coexist in every store that already exists.
+    """
+    from dbt_assay.cli import _resolve_family
+    banks = {"seniority_ordered_by_the_wrong_date": {"id_prefix": "senior"},
+             "column_role": {"id_prefix": "role"}}
+    assert _resolve_family("senior", banks) == "seniority_ordered_by_the_wrong_date"
+    assert _resolve_family("column_role", banks) == "column_role"
+    assert _resolve_family("a_family_that_was_deleted", banks) is None
+
+
+def test_regress_refuses_to_report_a_pass_over_an_empty_set():
+    """*** "0/0 CONFIRMED ANSWERS STILL HOLD", GREEN, EXIT 0, HAVING REPLAYED NOTHING. ***
+
+    The same shape as a guard that scans nothing and a scanner that matches nothing -- in the one
+    command written to catch regressions.
+    """
+    import inspect
+
+    from dbt_assay.cli import regress
+    src = inspect.getsource(regress)
+    assert "NOTHING WAS REPLAYED" in src
+    assert "held == 0 and not moved" in src
+
+
+def test_an_option_that_names_another_option_is_flagged():
+    """*** A TEXT CHECK BELIEVES PROSE, AND HERE BELIEVING IT IS KNOWN TO BE WRONG. ***
+
+    Reported with numbers: a question whose option said "the answer is <other>, not this" scored
+    no_overlap 0.63 against an overlap mass of 0.35 -- the judged check read the routing as a
+    disjointness guarantee. The answering model did not honour it, putting one subject under both
+    options at 0.55 and 0.63.
+    """
+    from dbt_assay.lint import lint_question
+    q = {"type": "choice", "prompt_version": "x.v1", "id_prefix": "zz",
+         "instructions": {"question": "?"},
+         "criteria": {
+             "not_a_seniority_order": {"what": "It ranks rows by a column that is not a priority."},
+             "something_else": {"what": "It ranks a non-right. If ranked by a non-priority column "
+                                        "the answer is not_a_seniority_order, not this."},
+             "cannot_tell": {"what": "The ordering columns do not settle which it is."}}}
+    assert "option_routes_to_another" in {i.rule for i in lint_question("q", q)}
+
+
+def test_the_cross_reference_rule_does_not_fire_on_a_substring():
+    """`square_feet` was flagged for naming `feet`, and `other` matched inside "some other
+    entity". An option name has to be a whole token, and never one that is merely part of a
+    longer option name being legitimately described."""
+    from dbt_assay.lint import lint_question
+    q = {"type": "choice", "prompt_version": "x.v1", "id_prefix": "zz",
+         "instructions": {"question": "?"},
+         "criteria": {"feet": {"what": "The name claims feet, as a depth or a height."},
+                      "square_feet": {"what": "The name claims square feet, as an area."},
+                      "other": {"what": "Some other kind of thing entirely, not those."},
+                      "cannot_tell": {"what": "The name is too abbreviated to say."}}}
+    assert "option_routes_to_another" not in {i.rule for i in lint_question("q", q)}

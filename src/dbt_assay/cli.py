@@ -1389,9 +1389,14 @@ def regress(
 
     with console.status("replaying..."):
         for fam, rows in by_family.items():
-            q = banks.get(fam)
-            if q is None or not q.get("subject"):
-                skipped += [(r, "no subject; its own command replays it") for r in rows]
+            resolved = _resolve_family(fam, banks)
+            q = banks.get(resolved) if resolved else None
+            if q is None:
+                skipped += [(r, f"no question named {fam!r} in any bank") for r in rows]
+                continue
+            fam = resolved
+            if not q.get("subject"):
+                skipped += [(r, "declares no subject; its own command replays it") for r in rows]
                 continue
             subs = {x.key: x for x in subjects_mod.build(
                 q["subject"], project, digests, schema, state=q.get("subject_state", "full"))}
@@ -1425,8 +1430,20 @@ def regress(
     if skipped:
         console.print(f"[dim]{len(skipped)} not replayed: "
                       f"{skipped[0][1]}[/]")
+    # *** A PASS COMPUTED OVER AN EMPTY SET IS THE WORST RESULT THIS TOOL CAN PRINT. ***
+    # Reported from the field: every verdict was skipped on a name mismatch and this printed
+    # "0/0 confirmed answers still hold" and exited 0. Green, over nothing. It is the same shape
+    # as the guard that scans nothing and the scanner that matches nothing, in the one command
+    # written to catch regressions.
+    if held == 0 and not moved:
+        console.print(f"\n[red]NOTHING WAS REPLAYED.[/] {len(skipped)} confirmed answer(s) were "
+                      f"skipped, so this is not a pass -- it is a check that looked at nothing.")
+        for r, why in skipped[:6]:
+            console.print(f"  [dim]{r['family']} · {r['subject'][:60]}: {why}[/]")
+        raise typer.Exit(1)
     if not moved:
-        console.print(f"\n[green]{held}/{held} confirmed answers still hold.[/]")
+        console.print(f"\n[green]{held}/{held} confirmed answers still hold.[/]"
+                      + (f" [yellow]{len(skipped)} skipped.[/]" if skipped else ""))
         raise typer.Exit(0)
 
     console.print(f"\n[bold red]{len(moved)} of {held + len(moved)} confirmed answers MOVED[/]")
@@ -3069,6 +3086,26 @@ def _prompt_version(name: str) -> str:
 
 def _family_of(question: str) -> str:
     return _FAMILY.get(question.split("__")[0], question.split("__")[0])
+
+
+def _resolve_family(recorded: str, banks: dict) -> str | None:
+    """A family name, from whatever `review` happened to write down.
+
+    *** `review` RECORDED A PREFIX AND `regress` LOOKED UP A NAME. ***
+    `_family_of` falls back to the prefix when the bank is not loaded, so a verdict on a custom
+    family was filed under `water.prio` while `regress` asked `banks.get("water.prio")` against a
+    dict keyed by `seniority_ordered_by_the_wrong_date`. Every verdict was skipped, and the
+    command written to catch exactly that class of regression reported a pass.
+
+    Resolved on BOTH spellings here rather than migrating the store, because an old store must
+    keep working and the two spellings will coexist in every store that already exists.
+    """
+    if recorded in banks:
+        return recorded
+    for name, q in banks.items():
+        if q.get("id_prefix") == recorded:
+            return name
+    return None
 
 
 def _keypress() -> str:

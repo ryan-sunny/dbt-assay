@@ -172,6 +172,7 @@ def lint_question(name: str, q: dict, shipped: dict | None = None) -> list[Issue
                 "so it must pick a wrong one. A real division bug surfaced here ONLY because a "
                 "no-match option existed.")
         _check_options_separate(name, crit, out)
+        _check_cross_references(name, crit, out)
 
     if kind == "score":
         levels = crit if isinstance(crit, list) else list(crit.values())
@@ -241,6 +242,43 @@ def lint_question(name: str, q: dict, shipped: dict | None = None) -> list[Issue
     # An acknowledged rule is silenced HERE, at the end, so the checks above stay simple and an
     # acknowledgement of a rule that never fired is itself visible as dead config.
     return [i for i in out if i.rule not in ack or i.rule == "acknowledge"]
+
+
+def _check_cross_references(name: str, crit: dict, out: list[Issue]) -> None:
+    """*** AN OPTION THAT NAMES ANOTHER OPTION IS ROUTING, AND THE MODEL MAY NOT HONOUR IT. ***
+
+    Reported from the field with numbers. A question whose `something_else` said "if they are
+    ranked by a non-priority column the answer is something_else, not this" scored `no_overlap`
+    0.63 against an overlap mass of 0.35 -- the judged check read the routing as a disjointness
+    guarantee and passed it. The answering model did NOT honour it: the same subject came back
+    under both options at 0.55 and 0.63.
+
+    A text check believes prose. This is the one shape where believing it is known to be wrong,
+    so it is caught statically instead, where no model is asked to be consistent about anything.
+    """
+    keys = list(crit)
+    for k, v in crit.items():
+        body = _text(v).lower()
+        for other in keys:
+            if other == k:
+                continue
+            # *** SUBSTRING MATCHING FLAGGED "square feet" FOR NAMING "feet". ***
+            # And `other` matched inside "some other entity". An option name has to be matched as
+            # a whole token, in both its snake_case and spaced spellings, and never when it is
+            # merely part of a longer option name that is legitimately being described.
+            o = other.lower()
+            if any(o != x.lower() and o in x.lower() for x in keys):
+                continue                      # `feet` inside `square_feet`: ambiguous, skip it
+            pat = re.compile(r"\b" + re.escape(o).replace(r"\_", "[ _]") + r"\b")
+            if pat.search(body):
+                out.append(Issue(
+                    name, "warn", "option_routes_to_another",
+                    f"option {k!r} names {other!r} in its own description. That tells the model "
+                    f"where to send a case instead of describing this option, and it may not "
+                    f"honour it -- measured: a question doing exactly this passed the overlap "
+                    f"check at 0.63 while the answering model put one subject under both options. "
+                    f"Describe what {k!r} IS; let the other option describe itself."))
+                return
 
 
 def _check_options_separate(name: str, crit: dict, out: list[Issue]) -> None:
@@ -397,15 +435,28 @@ def judge_overlap(banks: dict, client, store=None) -> list[Issue]:
         probs = ans.get("probabilities") or {}
         overlap = float(probs.get("two_overlap", 0)) + float(probs.get("several_overlap", 0))
         through = float(probs.get("a_case_falls_through", 0))
+        # *** REPORT THE MARGIN, NOT JUST THE SIDE OF THE LINE. ***
+        # Reported from the field: four shipped families sit within 0.11 of the threshold, two
+        # passing and two warning. Caching stops them flapping; a one-word rewording still crosses.
+        # A reader who can see 0.61 knows to treat it differently from 0.89, and a reader shown
+        # only "warn" cannot.
+        margin = abs(overlap - 0.6)
         if overlap >= 0.6:
             worst = "several" if probs.get("several_overlap", 0) >= probs.get("two_overlap", 0) \
                 else "one pair"
+            near = "  [NEAR THE LINE]" if margin <= 0.12 else ""
             out.append(Issue(
                 name, "warn", "options_overlap",
-                f"two or more options could both be correct about the same subject (p={overlap:.2f}, "
-                f"{worst}). Which one comes back is then arbitrary for those cases. The static "
-                f"rule cannot see this: it compares words, and an overlap of MEANING shares a "
-                f"situation rather than a vocabulary."))
+                f"two or more options could both be correct about the same subject (p={overlap:.2f} "
+                f"against a 0.60 threshold, {worst}){near}. Which one comes back is then arbitrary "
+                f"for those cases. The static rule cannot see this: it compares words, and an "
+                f"overlap of MEANING shares a situation rather than a vocabulary."))
+        elif margin <= 0.12:
+            out.append(Issue(
+                name, "info", "options_overlap_near_the_line",
+                f"passes at p={overlap:.2f} against a 0.60 threshold, which is within 0.12 of it. "
+                f"A one-word rewording can cross. Treat a pass here as unsettled rather than as "
+                f"a clean bill."))
         if through >= 0.6:
             out.append(Issue(
                 name, "warn", "options_fall_through",

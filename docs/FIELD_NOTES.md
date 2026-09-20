@@ -234,3 +234,29 @@ need. **`subject_state: minimal`** in the bank.
 `assay regress` replays every answer a person agreed with and reports what moved, exiting non-zero
 when anything did. Verified both ways: 8/8 held on an unchanged bank at **zero calls** (unchanged
 states are cached), and a forced move was caught and failed the command.
+
+---
+
+## Fifth report: the regression command could not replay the regression
+
+- **`subject_state: minimal` restores 8/8**, and both moved answers come back at 0.51 and 0.59.
+  The diagnosis is confirmed and the opt-out is the right shape.
+- **`assay regress` skipped all eight verdicts and called it a pass.** `review` records the family
+  as the id_prefix; `regress` looked it up by family name. It printed
+  `0/0 confirmed answers still hold` with a non-zero skip count and exited 0.
+
+  > "A green result computed over an empty set. Same family as everything else caught tonight — a
+  > check that passes because it looked at nothing."
+
+  Fixed on both sides of the boundary: the family resolves on either spelling, and **a pass with
+  nothing replayed is now a failure** that names what was skipped. Verified by reproducing the
+  exact shape — verdicts filed under the prefix now replay, and an unresolvable family exits 1.
+- **The overlap false negative, reproduced with your numbers.** `no_overlap` 0.63 against an
+  overlap mass of 0.35, not borderline. Your candidate was right: the sentence that routes to
+  another option **by name**. A text check reads that as a disjointness guarantee; the answering
+  model does not honour it. There is now a static rule — `option_routes_to_another` — which needs
+  no model to be consistent about anything. It caught two shipped families, and both are real:
+  `claim_alignment` (kept, with the measurement, acknowledged) and `column_role` (acknowledged as
+  **not** separately measured, which is the honest record).
+- **The margin is reported now**, not just the side of the line. A pass within 0.12 of the
+  threshold prints as `near the line` and says to treat it as unsettled rather than clean.
