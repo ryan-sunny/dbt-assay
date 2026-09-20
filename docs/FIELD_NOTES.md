@@ -13,7 +13,8 @@ might. Ranked by what it cost or would have cost.
 
 > **Fixed in 0.6.0.** `assay banks` prints an `asked by` column and names any family nothing
 > asks, in red. The documented example now replaces a shipped family. A generic runner is
-> still the real fix and is not built.
+> **The generic runner landed in 0.7.0.** A family declares `subject:` and `assay ask` builds
+> that state and asks it, whatever the family is called.
 
 `QUESTIONS = load_all_banks()` loads your bank. Every **call site** then asks for a shipped family
 by string literal — `judged.py`, `semantics.py`, `columns.py`, `claims.py`, `rows.py`. There is no

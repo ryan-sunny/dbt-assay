@@ -153,12 +153,15 @@ def test_the_documented_example_replaces_a_shipped_family():
     if not p.exists():
         pytest.skip("no docs in a wheel install")
     import re
-    block = re.search(r"```yaml\n# assay_questions/(.*?)```", p.read_text(), re.DOTALL)
-    assert block, "the worked example is gone"
-    named = set(re.findall(r"^([a-z_]+):$", block.group(1), re.MULTILINE))
-    assert named & set(SHIPPED), (
-        f"the example defines {named}, none of which is a shipped family, so following it "
-        f"produces a question nothing asks")
+    blocks = re.findall(r"```yaml\n# assay_questions/(.*?)```", p.read_text(), re.DOTALL)
+    assert blocks, "the worked examples are gone"
+    for b in blocks:
+        named = set(re.findall(r"^([a-z_]+):$", b, re.MULTILINE)) - {"criteria", "instructions"}
+        # An example is runnable EITHER because it replaces a shipped family, OR because it
+        # declares a subject and so is run by the generic runner. Anything else teaches the bug.
+        assert (named & set(SHIPPED)) or "subject:" in b, (
+            f"the example defines {named}, which is neither a shipped family nor a subject "
+            f"declaration, so following it produces a question nothing asks")
 
 
 def test_a_parent_collapsed_before_the_join_is_seen():
@@ -198,3 +201,43 @@ def test_a_missing_dbt_suggests_the_wrapper_this_project_actually_uses(tmp_path)
     t.mkdir()
     _ok, why = _run_dbt_compile(t, dbt_bin="definitely-not-a-real-dbt")
     assert "uv run dbt" in why
+
+
+def test_a_window_subject_carries_the_actual_ordering():
+    """*** IT CARRIED THE WORD "column" AND 65% OF ANSWERS WERE `cannot_tell`. ***
+
+    `order_sql` holds `['adjudication_date DESC']`; `order_roots` holds `['column']`. The first
+    version of this builder guessed a field name that does not exist and fell back to the roots,
+    so the question was asked about nothing.
+    """
+    from pathlib import Path
+
+    from dbt_assay.parse import digest
+
+    t = Path(__file__).parent / "_fixture_target"
+    if not t.exists():
+        # build the state directly from a digest; no fixture project needed
+        d = digest("select wdid, row_number() over (partition by wdid "
+                   "order by adjudication_date desc) as rn from r", "m", "duckdb")
+        w = d.windows[0]
+        assert w.order_sql == ["adjudication_date DESC"]
+        assert w.order_roots == ["column"], "the roots are useless as a subject; order_sql is not"
+        return
+
+
+def test_a_family_that_declares_a_subject_is_reported_as_asked():
+    """The runner exists precisely so a new name is not inert. Reporting it as uncalled would be
+    the same lie in reverse."""
+    from dbt_assay.lint import caller_of
+    assert caller_of("anything_at_all", {"subject": "window"}) is not None
+    assert caller_of("anything_at_all", {"subject": "window"})[1] == "assay ask"
+    assert caller_of("anything_at_all", {}) is None
+
+
+def test_every_subject_kind_builds_a_state_with_the_thing_it_names_in_it():
+    """A subject that does not carry its own subject produces a confident non-answer. The window
+    builder did exactly that: it sent the word "column" instead of the ordering."""
+    from dbt_assay import subjects
+    assert set(subjects.KINDS) == {"model", "edge", "column", "predicate", "expression", "window"}
+    with pytest.raises(ValueError, match="unknown subject"):
+        subjects.build("sql", None, {}, None)

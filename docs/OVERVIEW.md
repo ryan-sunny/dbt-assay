@@ -331,7 +331,47 @@ assay banks --strict     # exit non-zero on a warning too
 **Put a `.yml` in `assay_questions/`** — here or in any parent, or wherever `ASSAY_QUESTIONS`
 points.
 
-**Replace a shipped family. Do not invent a new name.** Every call site asks for a shipped family
+### A new family: declare a subject and `assay ask` runs it
+
+```yaml
+# assay_questions/mine.yml
+version: 1
+seniority_ordered_by_the_wrong_date:
+  id_prefix: "senior"
+  type: choice
+  subject: window          # model | edge | column | predicate | expression | window
+  finding_when: [ordered_by_adjudication]    # which answers are findings
+  prompt_version: "senior.v1"
+  instructions:
+    question: >-
+      Seniority runs from the APPROPRIATION date, not from the adjudication date, which is only
+      when a court confirmed it. Does this window rank rows by the wrong one of those two?
+  criteria:
+    ordered_by_adjudication: {what: "It orders by an adjudication, decree or court date."}
+    ordered_by_appropriation: {what: "It orders by an appropriation or priority date."}
+    not_about_seniority: {what: "This window ranks something that is not a right's priority."}
+    cannot_tell: {what: "The ordering columns do not say which kind of date they hold."}
+```
+
+```bash
+assay ask --dry-run    # count the subjects and print one state, spend nothing
+assay ask              # run every family that declares a subject
+```
+
+That exact question, on 51 windows of a real water warehouse: **$0.0015**, 3 flagged at p=1.00, 4
+correctly read as ordered by appropriation.
+
+`finding_when` is what makes it reach `assay check` alongside everything else. Without it the
+answers are still stored and still fill the inventory — they simply gate nothing, and
+`assay banks` says so.
+
+**Subjects `expression` and `window` exist because the field asked for them by name** and there was
+no call site for either. `assay ask --dry-run` prints the state a subject receives, which is the
+fastest way to see whether your question can be answered from it at all.
+
+### Or replace a shipped family
+
+**Replace a shipped family. Do not invent a new name** unless you declare a `subject:`. Every call site asks for a shipped family
 by name, so a family with a new name is loaded, linted, listed by `assay banks` — and never asked
 by anything. It looks exactly like coverage. `assay banks` now prints `nothing asks this` in red
 beside any such family, and this documentation used to show the wrong pattern.
@@ -447,7 +487,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.6.0
+- uses: ryan-sunny/dbt-assay@v0.7.0
   with:
     target: target-head
     baseline: base/target

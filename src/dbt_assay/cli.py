@@ -27,6 +27,7 @@ from . import probe as probe_mod
 from . import render as render_mod
 from . import rows as rows_mod
 from . import semantics as sem_mod
+from . import subjects as subjects_mod
 from . import testing as testing_mod
 from . import versioning as ver_mod
 from .checks import run_all, unevaluable_tests
@@ -1133,7 +1134,7 @@ def banks(
         repl = name in replaced
         src = ("[green]yours[/]" if own else
                "[yellow]yours, replacing[/]" if repl else "[dim]shipped[/]")
-        called = caller_of(name)
+        called = caller_of(name, q)
         if called is None:
             inert.append(name)
         t.add_row(f"[bold]{name}[/]" if own or repl else name,
@@ -1145,11 +1146,10 @@ def banks(
         # *** THE SAME RULE AS EVERYWHERE ELSE: A GUARD THAT MATCHES NOTHING PASSES WRONGLY. ***
         console.print(f"\n[red]{len(inert)} question(s) are never asked by anything:[/] "
                       f"{', '.join(inert)}")
-        console.print("[dim]Every call site names a SHIPPED family by name, so a family with a NEW "
-                      "name is loaded, linted, listed here, and inert. To add a judgment today, "
-                      "REPLACE a shipped family whose `about` column matches the subject you want "
-                      "to judge -- its options are yours, and no amount of `vocab` makes a model "
-                      "pick an option that is not on the list.[/]")
+        console.print("[dim]Add a [bold]subject:[/bold] line and `assay ask` runs it: one of "
+                      "model, edge, column, predicate, expression, window. Add "
+                      "[bold]finding_when:[/bold] naming the answers that are findings, and it "
+                      "reaches `assay check` with everything else.[/]")
 
     if not lint:
         raise typer.Exit(0)
@@ -1166,6 +1166,115 @@ def banks(
         console.print(f"\n  [{colour}]{i.level}[/]  [bold]{i.question}[/]  [dim]{i.rule}[/]")
         console.print(f"    {i.detail}")
     raise typer.Exit(1 if errs or (strict and issues) else 0)
+
+
+@app.command()
+def ask(
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    family: str = typer.Option(None, "--family", "-f", help="one family; default is all that "
+                                                            "declare a subject"),
+    select: str = typer.Option(None, "--select", "-s"),
+    limit: int = typer.Option(0, "--limit", "-n", help="stop after N subjects per family"),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="count the subjects and print one state; ask nothing"),
+):
+    """Run every question that declares a `subject:`, including your own.
+
+    *** A FAMILY USED TO NEED A HAND-WRITTEN CALL SITE, SO HALF OF WRITING ONE WAS A CODE CHANGE. ***
+    A family with a new name was loaded, linted, listed by `assay banks` and never asked by
+    anything -- and it looked exactly like coverage. Three were written on a real warehouse before
+    anyone noticed. Declare `subject: expression` and assay builds that state and asks it.
+
+    Subjects: model, edge, column, predicate, expression, window. `expression` and `window` were
+    asked for by name in the field and had no call site at all.
+    """
+    from .contracts import load_all_banks
+    from .lint import caller_of
+    from .selector import resolve
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir)
+    banks = load_all_banks()
+
+    runnable = {n: q for n, q in banks.items() if q.get("subject")}
+    if family:
+        if family not in banks:
+            console.print(f"[red]no question named {family!r}.[/] `assay banks` lists them.")
+            raise typer.Exit(1)
+        if not banks[family].get("subject"):
+            called = caller_of(family)
+            console.print(f"[yellow]{family} declares no `subject:`[/], so the generic runner "
+                          f"cannot build a state for it."
+                          + (f" It is asked by [bold]{called[1]}[/]." if called else ""))
+            raise typer.Exit(1)
+        runnable = {family: banks[family]}
+    if not runnable:
+        console.print("[yellow]no question declares a `subject:`.[/] "
+                      "[dim]Add one to a question in assay_questions/ and it runs here. "
+                      "The shipped families have their own commands; `assay banks` shows which.[/]")
+        raise typer.Exit(0)
+
+    scope = resolve(project, select)
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    store = Store(store_path)
+    total = Counter()
+
+    for name, q in runnable.items():
+        subs = subjects_mod.build(q["subject"], project, digests, schema)
+        if scope is not None:
+            subs = [x for x in subs if x.uid in scope]
+        if limit:
+            subs = subs[:limit]
+        console.print(f"\n[bold]{name}[/]  [dim]{q['subject']} · {len(subs)} subject(s)[/]")
+        if dry_run:
+            if subs:
+                console.print(f"  [dim]{_json.dumps(subs[0].state, default=str)[:400]}...[/]")
+            continue
+        if not client.available:
+            console.print("  [yellow]no API key.[/] [dim]`assay config` shows what was "
+                          "resolved; --dry-run needs none.[/]")
+            store.close()
+            raise typer.Exit(1)
+
+        want = q.get("finding_when")
+        want = [want] if isinstance(want, str) else (want or [])
+        counts, hits = Counter(), []
+        with console.status(f"asking {name} about {len(subs)} subject(s)..."):
+            for sub in subs:
+                try:
+                    ans = decide(store, client, {**sub.state, **({"vocabulary": cfg.vocab}
+                                                                if cfg.vocab else {})},
+                                 {q["id_prefix"]: choice_q(name)},
+                                 contexts={q["id_prefix"]: f"{sub.name}"},
+                                 decision_key=sub.key, prompt_version=q["prompt_version"],
+                                 caller=f"assay.ask.{name}")
+                except BudgetExceeded as e:
+                    console.print(f"  [yellow]stopped at the cap: {e}[/]")
+                    break
+                a = ans.get(q["id_prefix"])
+                if not a:
+                    continue
+                counts[a["answer"]] += 1
+                if a["answer"] in want:
+                    hits.append((sub, (a["probabilities"] or {}).get(a["answer"], 0)))
+        total.update(counts)
+        t = Table(show_header=False, box=None, padding=(0, 2))
+        for k, n in counts.most_common():
+            t.add_row(f"[bold red]{n}[/]" if k in want else f"[dim]{n}[/]",
+                      f"[bold red]{k}[/]" if k in want else f"[dim]{k}[/]")
+        console.print(t)
+        for sub, p_ in sorted(hits, key=lambda x: -x[1])[:10]:
+            console.print(f"    [bold]{sub.name}[/]  [dim]p={p_:.2f}  {sub.file}[/]")
+        if not want and counts:
+            console.print("    [dim]no `finding_when:`, so these are stored and produce no "
+                          "finding.[/]")
+
+    store.close()
+    if not dry_run:
+        console.print(f"\n[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                      f"${client.spent_usd:.4f}[/]")
 
 
 @app.command()

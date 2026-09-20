@@ -180,6 +180,27 @@ def lint_question(name: str, q: dict, shipped: dict | None = None) -> list[Issue
             add("warn", "noul_has_no_confidence",
                 "a noul returns no confidence field at all. The value IS the probability.")
 
+    # --- a family that declares a subject is run by the generic runner ---
+    subj = q.get("subject")
+    if subj is not None:
+        from .subjects import KINDS
+        if subj not in KINDS:
+            add("error", "subject", f"unknown subject {subj!r}. Use one of {sorted(KINDS)}.")
+        fw = q.get("finding_when")
+        if fw is None:
+            add("warn", "finding_when",
+                "no `finding_when`, so this is asked and stored but produces no finding. That is "
+                "valid -- the answers still reach the inventory -- but nothing will gate on it.")
+        elif kind == "choice":
+            unknown = [a for a in (fw if isinstance(fw, list) else [fw]) if a not in crit]
+            if unknown:
+                add("error", "finding_when",
+                    f"{unknown} are not options of this question, so the finding can never fire. "
+                    f"Options are {sorted(crit)}.")
+    elif q.get("finding_when") is not None:
+        add("warn", "finding_when",
+            "`finding_when` without a `subject` does nothing: only the generic runner reads it.")
+
     if not crit and kind != "noul":
         add("error", "criteria", "no criteria. The options are the question.")
     return out
@@ -260,6 +281,12 @@ CALLERS: dict[str, tuple[str, str, str]] = {
 }
 
 
-def caller_of(name: str) -> tuple[str, str, str] | None:
-    """(module, command, state) for a family, or None when nothing asks it."""
+def caller_of(name: str, bank: dict | None = None) -> tuple[str, str, str] | None:
+    """(module, command, state) for a family, or None when nothing asks it.
+
+    A family that declares a `subject:` is asked by the GENERIC RUNNER, whatever its name. That is
+    the whole point of the runner, and reporting it as uncalled would be the same lie in reverse.
+    """
+    if bank and bank.get("subject"):
+        return ("subjects", "assay ask", f"one {bank['subject']}")
     return CALLERS.get(name)
