@@ -20,9 +20,22 @@ Jev](https://docs.typesafe.ai) reads the meaning. SQL does the rest.
 > Built while auditing a Colorado water rights warehouse, where a case number is only unique inside
 > a water division and nothing in the stack could tell me that.
 
+## One command
+
+```bash
+uvx dbt-assay onboard --target path/to/dbt/target
+```
+
+One command on a project assay has never seen. It reads your manifest, tells you what it can and
+cannot see, runs the free structural checks, runs the judgment tier if a key is present, writes an
+`audit.yml` that gates nothing, and prints the next command. `--agent` also writes the skill file
+your coding agent follows.
+
 ## Status
 
-Early. The no-key tier works; the judgment tier is landing next.
+Both tiers work. The structural tier needs nothing but your manifest. The judgment tier needs an
+API key and is opt-in, cached, and capped. Nothing gates a build in either tier until a question
+has recorded human verdicts, and `assay` refuses rather than warns.
 
 ## The inventory
 
@@ -58,12 +71,17 @@ dbt docs shows you lineage. This shows you meaning.
   with:
     target: target-head
     baseline: base/target
-    dialect: snowflake
+    store: assay.duckdb      # optional: commit or cache it and judged findings post too
 ```
 
 Posts what changed about what your models mean, who consumes it, and how many of those aggregate
 over it. It does **not** gate by default: nothing should fail a build until its question has
 recorded verdicts, and assay refuses to anyway.
+
+There is no `dialect:` line because the manifest names its own adapter. Pass one only to override.
+An earlier version of this action defaulted it to `duckdb`, which silently misparsed every other
+warehouse: on a BigQuery project that turned 12 parse failures into 128 and lost two real findings,
+without changing how confident the output looked.
 
 ## Ruling on findings, one keypress each
 
@@ -253,8 +271,44 @@ the answer to "where did this number come from" that no warehouse can give you t
 identify a row. **Column role** and **null meaning**, chunked so repeated criteria stay inside the
 token budget.
 
-Opt-in, cached so an unchanged model is free forever, and roughly a third of a cent for sixty
-models.
+**And the one that needs no `assay` vocabulary to read: does the description still describe the
+code?** Prose is written once and the SQL changes around it. Nothing in a warehouse tests a
+sentence, so it drifts silently and everyone downstream keeps believing it.
+
+The first one this found on the author's own warehouse:
+
+> `stg_boulder_permits` — *"Boulder commercial building permits (residential filtered out)."*
+
+The filter excludes exactly two substrings, `%single family%` and `%dwelling%`. Of the 14,150 rows
+that survive it, 373 are non-residential, 157 are explicitly `building permit - multifamily`, and
+13,620 are trade permits with no commercial distinction at all. Valid SQL, passing tests, false
+prose, and a lead product shipping residential roofing jobs as commercial. No structural check
+reaches that.
+
+**A description that many models share is excluded before anything is asked.** On that same
+warehouse 84 of 343 descriptions were boilerplate repeated across models, and they produced half
+the first run's findings. Every one was true and worthless: "Staging model: light cleanup of one
+raw source" reads as contradicting any model that also filters, because template prose never
+mentions what the model does. Repetition is the general form of a placeholder and needs no
+vocabulary to detect.
+
+Opt-in, cached so an unchanged model is free forever. Measured on a 265-model warehouse: 60 calls,
+15 seconds, $0.0026.
+
+## The key, and where assay looks for it
+
+```bash
+assay config              # provider, model, spend cap, and where the key came from
+assay config --check      # one real call to prove it works, about $0.00001
+```
+
+`TYPESAFE_API_KEY` or `OPENROUTER_API_KEY`, from your environment or from a `.env` in your project
+or any parent directory. An exported variable always beats the file. **The key never goes in
+`audit.yml`**, because `audit.yml` belongs in git.
+
+This existed as a bug first: `assay` read only `os.environ`, so a key sitting in a `.env` was
+invisible and every judged command reported the tier as off. A capability check that can be wrong
+needs a way to show what it decided, which is what `assay config` is for.
 
 ## Nothing gates until it has been measured
 
@@ -264,6 +318,24 @@ that question has enough of them. Not a warning in the docs, an actual downgrade
 Two families can be calibrated on day one against tests the project already contains, and the
 measurement is honest about its own limits: role agreed with 57 of 61 such labels, and reading the
 four disagreements showed three were the *label* being wrong.
+
+**Getting a question to the gate takes about ten minutes of keypresses**, and there is no way to
+skip it that is not a lie:
+
+```bash
+assay columns --limit 40      # ask, so there is something to rule on
+assay review -i               # a, d, u, s -- least certain first
+```
+
+`min_adjudications` is 20 per question, counted per question rather than overall, so gating on
+three families is sixty verdicts and not twenty. Only verdicts marked `human` count.
+`--from-labels` is real evidence and is deliberately excluded, because a `unique` test can itself
+be the thing that is wrong, and letting a project's own assertions authorise a gate over those
+assertions is circular.
+
+Until then every judged finding is an annotation. That is the intended resting state, not a
+limitation to work around: a threshold set before anything was measured is a guess wearing a
+number.
 
 ## What leaves your machine
 
