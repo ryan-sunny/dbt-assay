@@ -135,6 +135,24 @@ Nothing, until you turn the judgment tier on.
 - `--print-state` on any command renders exactly what would be sent, without sending it.
 - The warehouse connection is opened read-only.
 
+## Contract diff
+
+```bash
+assay diff --baseline ../main/target            # what changed about what your models MEAN
+assay diff --baseline ../main/target --markdown # the paragraph, for a PR comment
+```
+
+> **int_water_section_irrigation**: the SQL's grain moves from section_id, irrigation_year to
+> section_id. 1 model consumes it, and 1 of them aggregates over it (water_section_summary).
+> 9 marts downstream. Nothing in the SQL diff says this.
+
+A grain change looks like somebody edited a GROUP BY. This says one row stopped being one row per
+(section, case), who consumes it, and which of those aggregate over it and are now inflated. A
+rewrite whose contract is unchanged produces nothing, which is exactly right.
+
+It tracks the SQL's grain separately from the declared one, so a GROUP BY drifting away from a live
+`unique` test is caught and named: *one of the two is now wrong*.
+
 ## Configuration actually configures
 
 `assay init` writes an `audit.yml`. It scopes questions, waives findings, and decides what an

@@ -85,6 +85,12 @@ class ModelEntry:
     layer: str
     materialized: str
     grain: Fact | None = None
+    # *** WHAT THE SQL SAYS, KEPT EVEN WHEN A DECLARATION OUTRANKS IT. ***
+    # A declared key wins in the inventory, which is right. But it means a model whose GROUP BY
+    # moved would show no change at all, and a group by drifting away from a declared key is
+    # exactly the event worth catching: the test is about to start failing, or the declaration has
+    # already gone stale.
+    derived_grain: list | None = None
     columns: list = field(default_factory=list)
     descendants: int = 0
     marts: int = 0
@@ -126,6 +132,8 @@ def build(project, digests, schema, store=None, observed=None) -> list[ModelEntr
 
         # ---- grain, strongest evidence first ----
         judged = _judgments(store, uid)
+        if uid in proposed:
+            entry.derived_grain = [c.lower() for c in proposed[uid].columns]
         if uid in declared:
             entry.grain = Fact(declared[uid], "declared", note="a test in this project declares it")
         elif uid in proposed:

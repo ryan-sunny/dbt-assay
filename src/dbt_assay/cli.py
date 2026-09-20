@@ -12,6 +12,7 @@ from rich.table import Table
 
 from . import __version__, contracts, provenance, relate
 from . import columns as columns_mod
+from . import diff as diff_mod
 from . import export as export_mod
 from . import inventory as inv_mod
 from . import judged as judged_mod
@@ -845,3 +846,68 @@ def trace(
     if last == "from_source":
         console.print("\n[dim]The trail ends at a source. What produced this value happened "
                       "outside this project, and assay will not guess at it.[/]")
+
+
+@app.command("diff")
+def diff_cmd(
+    baseline: str = typer.Option(..., "--baseline", "-b",
+                                 help="a target/ directory to compare AGAINST, e.g. a checkout "
+                                      "of main"),
+    target: str = typer.Option(None, "--target", "-t", help="the current target/ directory"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    markdown: bool = typer.Option(False, "--markdown", help="the paragraph, for a PR comment"),
+    limit: int = typer.Option(30, "--limit", "-n"),
+):
+    """What changed about what your models MEAN.
+
+    A grain change is invisible in a SQL diff -- it looks like somebody edited a GROUP BY. This
+    says one row stopped being one row per (section, case), how many models consume it, and how
+    many of those aggregate over it and are now inflated.
+    """
+    tdir = _find_target(target)
+    bdir = _find_target(baseline)
+    store = Store(store_path) if Path(store_path).exists() else None
+    obs = probe_mod.read(store) if store else {}
+
+    proj_a, dig_a, _f, sch_a, _s = _load(tdir)
+    after = inv_mod.build(proj_a, dig_a, sch_a, store, obs)
+
+    proj_b, dig_b, _f2, sch_b, _s2 = _load(bdir)
+    before = inv_mod.build(proj_b, dig_b, sch_b, store, obs)
+    if store:
+        store.close()
+
+    changes = diff_mod.compare(before, after, proj_a, dig_a)
+    if not changes:
+        console.print("[green]No model changed meaning.[/] "
+                      "[dim]A rewrite whose contract is unchanged needs no semantic review.[/]")
+        raise typer.Exit(0)
+
+    if markdown:
+        print(diff_mod.summarise(changes[:limit]))
+        raise typer.Exit(0)
+
+    grain = [c for c in changes if c.kind in ("grain", "grain_in_sql")]
+    if grain:
+        console.print(f"[bold red]{len(grain)} model(s) changed grain[/]\n")
+        for c in grain[:limit]:
+            console.print(f"[bold]{c.model}[/]  {c.detail}")
+            if c.consumers:
+                console.print(f"  [dim]{len(c.consumers)} consumers[/]", end="")
+                if c.aggregating_consumers:
+                    console.print(f"  [red]{len(c.aggregating_consumers)} aggregate over it: "
+                                  f"{', '.join(c.aggregating_consumers[:4])}[/]", end="")
+                console.print(f"  [dim]{c.marts} marts downstream[/]")
+            console.print("  [dim]Nothing in the SQL diff says this.[/]\n")
+
+    rest = [c for c in changes if c.kind not in ("grain", "grain_in_sql")]
+    if rest:
+        t = Table(title="other contract changes", header_style="bold")
+        t.add_column("model"); t.add_column("what"); t.add_column("column")
+        t.add_column("before"); t.add_column("after")
+        for c in rest[:limit]:
+            t.add_row(c.model, c.kind, c.column or "-",
+                      str(c.before or "-")[:28], str(c.after or "-")[:28])
+        console.print(t)
+    if len(changes) > limit:
+        console.print(f"[dim]... {len(changes) - limit} more[/]")
