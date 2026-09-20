@@ -652,3 +652,41 @@ restoring the cycle and watching it fail.
 
 That is the honest description of the whole tool, and it is better than anything in the docs. 69
 models with a finding, 0 ruled on. Ugly, accurate, and visible.
+
+## 0.11.0 in use: 23 agent rulings, and the one that found something
+
+`rule()` works and the separation holds exactly: `adjudications` reads `agent 23, human 8`,
+`regress` still replays 8/8 off `source='human'` and exits 0, and `check`'s footer says an agent
+cannot raise the ruled-on figure. Nothing about the property needed testing twice.
+
+**What the rulings contain is the part worth looking at.** Two examples from this pass:
+
+*Six findings, one defect.* `stg_gilbert/mesa/tempe/peoria/maricopa/tucson_permits` are each a
+single line calling the `permit_stg` macro, so they share one CASE at `macros/permit_stg.sql:28-32`
+returning three values, tested against a shared YAML anchor written for Denver that lists four. The
+test cannot fail, and on the AZ path one listed value — `Change of Use` — is unreachable. Filed with
+the open question attached rather than as a claim: whether AZ change-of-use permits exist in the raw
+feeds and fall through to NULL.
+
+*A default hiding what the test was for.* `water_rights.dwr_analysis_status` is
+`coalesce(ca.dwr_analysis_status, 'not looked up')`, so `not_null` can never fire — and counted,
+**170,730 of 172,695 rows (99%) ARE that default**. The test passes on every row while saying
+nothing about whether any analysis happened. That is not a dead guard, it is a live guard pointed at
+the wrong column, and `test_cannot_fail` is what surfaced it.
+
+## The lock error names the wrong cause
+
+Nineteen rulings did not land because I had a read-only DuckDB connection open in the same process.
+`rule()` was honest — it returned an error every time, and I lost them by not checking the return,
+which is my mistake and the same shape as everything else in this file.
+
+But the message is:
+
+```
+no store to write to. Run any judged command once to create one.
+```
+
+The store exists. It is locked, by this process. That message sends someone to create a file they
+already have. `duckdb` raises something specific for a conflicting lock and the two cases want
+different sentences — "not created yet" and "another connection holds it, close your reader" are
+opposite fixes.
