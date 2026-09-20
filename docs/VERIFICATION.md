@@ -160,6 +160,16 @@ start.
 
 ---
 
+## The measure that matters most, and that this page cannot improve
+
+Ten of sixteen families have had findings read by a person. That number, and the `ruled on` column
+in any warehouse this is exported to, are the only figures in the system a release cannot move.
+Every other one responds to better code: a sharper check finds more, a fuller state raises a
+confidence, the DAG moves the blast radius.
+
+**A good release makes it look worse**, because finding more raises the denominator and no release
+raises the numerator. Treat that as the design working, not as a regression.
+
 ## How to redo this
 
 Nothing here was a proxy metric. Every row is a person reading the thing the model judged:

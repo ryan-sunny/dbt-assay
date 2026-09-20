@@ -79,6 +79,35 @@ def _load(target: Path, dialect: str | None = None):
     return project, digests, failures, schema, schema_stats
 
 
+def _review_coverage(findings, store_path: str) -> None:
+    """How much of this has ever been looked at by a person.
+
+    *** THE ONE NUMBER A RELEASE CANNOT IMPROVE, WHICH IS WHY IT BELONGS ON EVERY RUN. ***
+    Every other figure assay prints responds to a release: a better check finds more, a better
+    state raises a confidence, the DAG moves the blast radius. This moves only when somebody reads
+    SQL. It is the only honest measure of whether a warehouse is being UNDERSTOOD rather than
+    scanned -- and a good release makes it look WORSE, because finding more raises the denominator
+    and no release raises the numerator.
+    """
+    if not findings or not Path(store_path or "").exists():
+        return
+    try:
+        st = Store(store_path)
+        ruled = st.ruled_subjects()
+        st.close()
+    except Exception:                                                   # noqa: BLE001
+        return
+    models = {f.subject for f in findings}
+    seen = {m for m in models if m in ruled}
+    pct = len(seen) / len(models) if models else 0
+    colour = "green" if pct >= 0.5 else ("yellow" if seen else "red")
+    console.print(f"\n[{colour}]{len(seen)} of {len(models)} model(s) with a finding have been "
+                  f"ruled on by a person.[/]")
+    if pct < 1:
+        console.print("[dim]This is the only number here a release cannot improve. Every other "
+                      "one moves when assay gets better; this moves when you read SQL.[/]")
+
+
 def _coverage_panel(project, digests, failures, show_errors: bool = True) -> None:
     cov = project.coverage()
     ok = sum(1 for d in digests.values() if d.ok)
@@ -290,7 +319,8 @@ def check(
             for c, n, sm in d["gone"][:5]:
                 console.print(f"  [green]-[/] {n}: {sm}")
         s.close()
-        console.print(f"\n[dim]run {run_id} written to {store_path}[/]")
+        _review_coverage(findings, store_path)
+    console.print(f"\n[dim]run {run_id} written to {store_path}[/]")
 
     if failing:
         raise typer.Exit(1)
@@ -2956,6 +2986,10 @@ def practices(
                                     help="where dbt-project-evaluator built its fct_ tables"),
     dialect: str = typer.Option(None, "--dialect",
                                 help="override; read from the manifest by default"),
+    verify: bool = typer.Option(True, "--verify/--no-verify",
+                                help="count each proposed grain through your dbt before "
+                                     "recommending it. A test that fails on its first run is "
+                                     "not a patch."),
     keys_only: bool = typer.Option(False, "--keys-only",
                                    help="just the primary-key patches. Pure code, no key, no "
                                         "warehouse."),
@@ -2974,24 +3008,54 @@ def practices(
     project, _d, _sch, entries = _entries(tdir, store, dialect)
 
     patches = prac_mod.primary_key_patches(project, entries)
+    # *** "CAN BE WRITTEN" IS NOT "WOULD PASS", AND THE DIFFERENCE WAS 0 OF 7. ***
+    # Counted, in one statement per batch, wherever the models are built. A proposal nobody can
+    # count stays absent from `held` and is reported as unchecked, never as holding.
+    held: dict = {}
+    if verify and patches:
+        held = prac_mod.verify_grains(patches, project, probe_mod, project_dir, profiles_dir,
+                                      dbt_bin)
+        if not held:
+            console.print("[yellow]could not count any proposed grain[/] [dim]-- the models may "
+                          "not be built, or `--dbt`/`--project-dir` may be wrong. Nothing below "
+                          "has been verified.[/]")
     if patches:
         t = Table(title="no uniqueness test, and here is what it should cover",
                   header_style="bold")
         t.add_column("model"); t.add_column("marts", justify="right")
         t.add_column("the grain a test should assert"); t.add_column("from")
-        inexpressible = []
+        inexpressible, would_fail = [], []
         for name, cols, src, marts, dropped in patches[:15]:
             if not cols:
                 inexpressible.append((name, dropped, marts))
                 continue
+            counted = held.get(name)
+            if counted and counted[1] < counted[0]:
+                would_fail.append((name, cols, marts, counted))
+                continue                  # a test that fails on its first run is not a patch
             note = (f"  [yellow](and {', '.join(map(str, dropped))}, which it does not emit)[/]"
                     if dropped else "")
+            if verify and not counted:
+                note += "  [dim](not counted)[/]"
+            elif counted:
+                note += f"  [green](holds: {counted[0]:,} rows, {counted[1]:,} distinct)[/]"
             t.add_row(name, str(marts), ", ".join(cols)[:44] + note, src)
         console.print(t)
         n_ok = sum(1 for p_ in patches if p_[1])
         console.print(f"[dim]{n_ok} model(s) where a test can be written as-is. The standard check "
                       f"says 'no primary key test'; this says which columns it should cover, and "
                       f"only ever names columns the model actually emits.[/]")
+        if would_fail:
+            # *** THE STRONGER FINDING, AND IT WAS INVISIBLE. ***
+            # No uniqueness test AND nobody knows what one row is. Worse than a missing test, and
+            # printing it as a recommendation would hand someone a test that fails immediately.
+            console.print(f"\n[red]{len(would_fail)} model(s) where nobody knows what one row "
+                          f"is[/] [dim]-- no uniqueness test, and the inferred grain does not "
+                          f"hold when counted:[/]")
+            for name, cols, marts, (n, d) in sorted(would_fail, key=lambda x: -(x[3][0] / max(x[3][1], 1))):
+                console.print(f"  [bold]{name}[/]  [dim]{marts} marts · {', '.join(cols)[:40]} "
+                              f"gives {d:,} distinct over {n:,} rows "
+                              f"([bold]{n / max(d, 1):.0f}x[/bold])[/]")
         if inexpressible:
             # *** THE GRAIN IS NOT IN THE OUTPUT, SO NOTHING CAN ASSERT IT. ***
             # A model that dedups on a column and then drops it cannot have its own uniqueness

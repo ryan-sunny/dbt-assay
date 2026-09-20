@@ -236,6 +236,20 @@ class Store:
         return [dict(zip(cols, r, strict=True))
                 for r in self.con.execute(q + " order by subject_name, claim_id", args).fetchall()]
 
+    def ruled_subjects(self) -> set[str]:
+        """Every subject a PERSON has ruled on, however they ruled.
+
+        *** THE ONLY NUMBER IN THE SYSTEM A RELEASE CANNOT MOVE. ***
+        Findings move when checks improve. Confidences move when states improve. Blast radius
+        moves when the DAG does. This moves when somebody reads SQL, and nothing else touches it
+        -- which makes it the only honest measure of whether a warehouse is being UNDERSTOOD
+        rather than scanned. It is also the number a good release makes look worse, because
+        finding more raises the denominator and a person raised none of it.
+        """
+        self.con.execute(DDL)
+        return {r[0] for r in self.con.execute(
+            "select distinct subject from adjudications where source = 'human'").fetchall()}
+
     def confirmed(self, family: str | None = None) -> list[dict]:
         """Every answer a person AGREED with, which is the set an upgrade must not move.
 

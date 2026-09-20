@@ -503,3 +503,61 @@ def test_the_readme_does_not_teach_the_selector_that_matches_nothing():
     body = r.read_text()
     assert "--select assay_*" not in body
     assert "--select path:seeds/assay" in body
+
+
+def test_a_proposed_grain_is_counted_before_it_is_recommended():
+    """*** "CAN BE WRITTEN" IS NOT "WOULD PASS", AND THE DIFFERENCE WAS 0 OF 7. ***
+
+    Reported from the field after the columns fix: every proposal was expressible in the output
+    and none held. `water_division` was proposed as the grain of a 1,045-row model with SEVEN
+    distinct values. A reader following that writes a test that fails on its first run, and a
+    command claiming to hand over a patch rather than a nag cannot do that.
+    """
+    from types import SimpleNamespace
+
+    from dbt_assay import practices as prac
+
+    sqls = []
+
+    class _Probe:
+        @staticmethod
+        def run_sql(sql, *_a, **_k):
+            sqls.append(sql)
+            return [{"m": "water_rights", "n": 1045, "d": 7}, {"m": "ok", "n": 500, "d": 500}]
+
+    proj = SimpleNamespace(models={"a": SimpleNamespace(name="water_rights"),
+                                   "b": SimpleNamespace(name="ok")})
+    patches = [("water_rights", ["water_division"], "derived", 3, []),
+               ("ok", ["id"], "derived", 1, [])]
+    held = prac.verify_grains(patches, proj, _Probe, ".", None, "dbt")
+    assert held == {"water_rights": (1045, 7), "ok": (500, 500)}
+    # batched, as `which_have_failures` is: one statement, not one per model
+    assert len(sqls) == 1 and "union all" in sqls[0] and "count(distinct" in sqls[0]
+
+
+def test_a_grain_that_cannot_be_counted_is_absent_rather_than_holding():
+    """An absent count must never read as a pass. It is the rule this codebase keeps relearning."""
+    from types import SimpleNamespace
+
+    from dbt_assay import practices as prac
+
+    class _Dead:
+        @staticmethod
+        def run_sql(*_a, **_k):
+            return []
+
+    proj = SimpleNamespace(models={"a": SimpleNamespace(name="m")})
+    held = prac.verify_grains([("m", ["k"], "derived", 1, [])], proj, _Dead, ".", None, "dbt")
+    assert held == {}, "an uncountable proposal must be absent, not recorded as holding"
+
+
+def test_a_grain_that_does_not_hold_is_reported_as_the_stronger_finding():
+    """No uniqueness test AND nobody knows what one row is. Worse than a missing test, and it was
+    invisible -- printed as a recommendation."""
+    import inspect
+
+    from dbt_assay.cli import practices
+    src = inspect.getsource(practices)
+    assert "would_fail" in src
+    assert "nobody knows what one row" in src
+    assert "not a patch" in src, "a test that fails on its first run must not be recommended"

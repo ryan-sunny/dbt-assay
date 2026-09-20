@@ -376,3 +376,45 @@ would pass".
 test and nobody knows what one row is — worse than a missing test, and currently invisible because
 it is printed as a recommendation. That also makes the 149x case impossible to hand over as a
 patch, which is the point of the command.
+
+---
+
+## Seventh report: "can be written" is not "would pass"
+
+The columns fix made every proposal expressible in the output and **0 of 7 still held**.
+`water_division` was proposed as the grain of a 1,045-row model with **seven distinct values** —
+a reader following that writes a test that fails on its first run.
+
+> "The command claims to hand over a patch rather than a nag, and a test that fails immediately is
+> neither."
+
+`practices` now COUNTS each proposal through your own dbt before recommending it, batched exactly
+as `which_have_failures` is: one `union all` of `count(*)` against `count(distinct <grain>)`, not
+one query per model. A proposal nobody could count is reported as **not counted**, never as
+holding.
+
+And the report's better point: **a proposal that does not hold is the stronger finding.** The model
+has no uniqueness test *and* nobody knows what one row of it is. That is worse than a missing test
+and it was invisible, printed as a recommendation. It has its own section now, ranked by how badly
+the grain misses — the 149x case at the top.
+
+### The `ruled on` column, taken further
+
+> "It isn't just coverage of the reviewing; it's the only number in the whole system that can't be
+> improved by the tool. Everything else responds to a release: findings move when checks improve,
+> confidences move when states improve, marts moves when the DAG does. 0 of 41 moves only when a
+> person reads SQL. And it's the number a good release makes look worse by finding more."
+
+Checked against the store and it is exactly true — every other table responds to a release, and
+`adjudications where source='human'` responds to nothing but a person. So it prints at the end of
+every `assay check` now, with that property stated rather than hidden:
+
+```
+0 of 41 model(s) with a finding have been ruled on by a person.
+This is the only number here a release cannot improve. Every other one moves when
+assay gets better; this moves when you read SQL.
+```
+
+And the same reframe turned back on this project, where it is not flattering: **eight rulings, one
+family of sixteen.** `assay regress` automates the catching. Nothing automates the ruling, and
+nothing will.

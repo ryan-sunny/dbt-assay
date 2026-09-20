@@ -195,3 +195,61 @@ def primary_key_patches(project, entries) -> list[tuple]:
             continue
         out.append((e.name, keep, e.grain.source, e.marts, dropped))
     return sorted(out, key=lambda x: -x[3])
+
+
+# *** "CAN BE WRITTEN" IS NOT "WOULD PASS", AND THE DIFFERENCE WAS 0 OF 7. ***
+# Reported from the field after the columns fix: every proposed grain was expressible in the
+# output and none of them held. `water_division` was proposed as the grain of a 1,045-row model
+# with SEVEN distinct values -- a reader following that recommendation writes a test that fails on
+# its first run. A command that claims to hand over a patch rather than a nag cannot do that.
+#
+# The shape is already in this codebase: `rows.which_have_failures` batches a count across
+# hundreds of relations in one statement. The same batching over count(*) against
+# count(distinct <grain>) settles every proposal at once, wherever the model is built.
+#
+# AND A PROPOSAL THAT DOES NOT HOLD IS THE STRONGER FINDING. The model has no uniqueness test AND
+# nobody knows what one row of it is, which is worse than a missing test and was invisible.
+def verify_grains(patches: list, project, probe_mod, project_dir: str,
+                  profiles_dir: str | None, dbt_bin: str, batch: int = 60) -> dict:
+    """{model_name: (rows, distinct)} for every proposal that could be counted.
+
+    A model absent from the result was not counted, and an absent count must never read as a pass:
+    the caller reports `could not check` rather than `holds`.
+    """
+    by_name = {}
+    for e in project.models.values():
+        by_name[e.name] = getattr(e, "relation_name", None) or e.name
+    todo = [(name, cols) for name, cols, _src, _m, _d in patches if cols and name in by_name]
+    out: dict = {}
+
+    def ask(chunk: list) -> bool:
+        parts = []
+        for name, cols in chunk:
+            keys = ", ".join(f'"{c}"' for c in cols)
+            parts.append(f"select '{name}' as m, count(*) as n, "
+                         f"count(distinct ({keys})) as d from {by_name[name]}")
+        got = probe_mod.run_sql(" union all ".join(parts), project_dir, profiles_dir, dbt_bin,
+                                limit=len(chunk) + 1)
+        if not got:
+            return False
+        for row in got:
+            vals = list(row.values())
+            m = row.get("m", vals[0] if vals else None)
+            try:
+                out[str(m)] = (int(row.get("n", vals[1])), int(row.get("d", vals[2])))
+            except (TypeError, ValueError, IndexError):
+                continue
+        return True
+
+    def walk(chunk: list) -> None:
+        if not chunk or ask(chunk):
+            return
+        if len(chunk) == 1:
+            return                        # uncounted, and deliberately absent from `out`
+        mid = len(chunk) // 2
+        walk(chunk[:mid])
+        walk(chunk[mid:])
+
+    for i in range(0, len(todo), batch):
+        walk(todo[i:i + batch])
+    return out
