@@ -690,3 +690,99 @@ The store exists. It is locked, by this process. That message sends someone to c
 already have. `duckdb` raises something specific for a conflicting lock and the two cases want
 different sentences — "not created yet" and "another connection holds it, close your reader" are
 opposite fixes.
+
+# Fifth report: every finding read, and what 99 rulings say about the checks
+
+All 99 models carrying a finding now have an agent reading attached. `agree 70, disagree 12,
+unclear 17`, `human 8` untouched, `regress` still 8/8 off `source='human'` and exiting 0. The
+separation held through a hundred writes without needing to be thought about again.
+
+**The verdicts are a measurement of the checks, not just of the warehouse.** Sorted by what they say:
+
+## `hop_multiplies_rows` — 10 of 23 disagreed, and the cause is structural
+
+A **union-member edge cannot multiply**. One parent row becomes exactly one child row; the child
+having more rows than any single parent is a different thing. Nine models here union their parents
+and several then aggregate on top — `dim_business` ends `group by geography, business_key,
+building_key`, `int_water_section_match` uses `distinct on (entity_type, entity_id)`. Both are
+`deliberately_coarser`, the opposite verdict, at 16 and 19 marts.
+
+Two more were lookup joins onto keys that are unique but undeclared — `int_water_streamflow_summary`
+2,387 rows / 2,387 distinct `abbrev`, `geo_places` 726/726, `city_aliases` 6/6, `freshness_windows`
+25/25. Right about the project, wrong about the data, the same shape as the other join findings.
+
+**Suggested discriminator, and it needs no judgment:** an edge whose parent is referenced inside a
+`UNION` arm is never silent multiplication. That is readable from the AST.
+
+The remaining 13 are `unclear` on purpose: the child contains a `GROUP BY`/`DISTINCT`/`QUALIFY`
+somewhere, but proving it sits on *that* hop needs the path read, and I checked the file not the
+path. Recorded as a question rather than a claim.
+
+## `bbox_as_radius` — both disagreed, and the discriminator is mechanical
+
+`stg_blm_plss_sections` builds `ST_MakeEnvelope(cx0, cy0, cx1, cy1)` from bounds **stored on the
+same row** and intersects a land-grant polygon with it — the envelope is a grid cell and the box is
+the intended shape. Its own comment says so. The check's detail argues "a box is not a circle",
+which only applies when the envelope approximates a radius.
+
+**An envelope whose corners are columns is a tessellation; one whose corners are a point ± a
+constant is the proximity case this check is for.**
+
+## `test_cannot_fail` — 40 agreed, and one of them found a live bug
+
+Every one is correct as stated. Three patterns, all verified against source: a CASE whose branches
+are all in the accepted list, a `unique` test on the only `GROUP BY` key, and `not_null` on a
+`COALESCE` ending in a literal.
+
+The third is not a dead guard — it is a **live guard pointed at the wrong column**:
+
+```
+water_rights.dwr_analysis_status      170,730 of 172,695 (99%) are the default 'not looked up'
+az_section_summary.n_well_depth        95,650 of 114,305 (84%) are 0
+az_section_summary.parcel_count        85,264 of 114,305 (75%) are 0
+water_section_summary.rights_late…     45,842 of  64,433 (71%) are 0
+water_parcels.irrigated_acres…      2,623,519 of 2,732,101 (96%) are 0
+```
+
+The `not_null` test passes on every row while saying nothing about whether any lookup happened. The
+coalesce conflates "none" with "not measured". **`test_cannot_fail` is the check that surfaces this
+class, and the finding as printed undersells it** — "this test cannot fail" is true and "this
+default is 99% of your rows" is the sentence somebody acts on. The count is one query away.
+
+Also worth naming: `water_outreach_agents.contact_role` is `case when max(w.email) is not null then
+'brokerage_office' end` — one branch, no else. An `accepted_values` test on a **constant**, which
+cannot fail by construction rather than by today's data. A distinct and stronger sub-case.
+
+## `description_contradicts_the_code` — 4 agreed, 5 unclear, and it found the best defect
+
+```
+int_water_parcel_sections   says "by centroid"   code says "ST_PointOnSurface, NOT ST_Centroid,
+                                                  AND THIS WAS A REAL BUG ... 369 of 40,000
+                                                  parcels (0.92%) have a centroid outside their
+                                                  own polygon"
+int_az_parcel_sections      THE SAME WRONG SENTENCE, copied into Arizona with the model
+int_discovered_contacts     says "one best contact per BUILDING"   code says "Grain = one row per
+                                                  (building, occupant NAME) -- we keep ALL tenants"
+stg_co_health               says "food establishment"   code routes five programs
+```
+
+**The description documents the bug that was fixed**, and the copy propagated it to a second region.
+`int_discovered_contacts` is the dangerous one: 11 marts read a sentence promising a grain the model
+deliberately does not have, so anything joining on `building_key` alone fans out.
+
+The 5 `unclear` are where the generic detail line — *"A description is written once and the SQL
+changes around it"* — does not say **which clause** contradicts. On `water_address_sections` the
+model description and the SQL header are the same sentence verbatim, so the finding must rest on a
+column description or the body, and there is no way to tell from the output. **Naming the contradicted
+clause would convert most of those 5 into rulings.**
+
+## What this says about the loop
+
+70 agrees are the checks working. 12 disagrees are two fixable structural blind spots — unions and
+tessellation envelopes. 17 unclears are almost all one thing: **the finding does not carry enough to
+settle it**, and in every case the missing piece is something assay already has (which hop, which
+clause, what the count is).
+
+The ratio is the useful output. A check with a high disagree rate has a blind spot; a check with a
+high unclear rate has a reporting gap. Neither is visible without someone reading, and the reading
+is now in the warehouse next to the finding.
