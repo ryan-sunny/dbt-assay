@@ -924,6 +924,14 @@ def backtest(
                                             "removed a known defect did not say so."),
     since: str = typer.Option(None, "--since", help="e.g. 2026-01-01"),
     show: int = typer.Option(10, "--show", help="how many replays to print"),
+    compile_fallback: bool = typer.Option(
+        False, "--compile",
+        help="where the Jinja strip fails, really compile that commit in a detached worktree. "
+             "Slower (a project parse per commit) and far more faithful."),
+    project_dir: str = typer.Option(".", "--project-dir",
+                                    help="the dbt project inside the repo, e.g. transform"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    dbt_bin: str = typer.Option("dbt", "--dbt-bin", help='e.g. "uv run dbt"'),
 ):
     """Replay this repo's own history and measure whether the checks catch what it already fixed.
 
@@ -933,8 +941,19 @@ def backtest(
     Reads blobs out of the object store with `git show`. No checkout, no stash, nothing that could
     collide with other work in the same clone.
     """
+    compiler = None
+    if compile_fallback:
+        compiler = backtest_mod.Compiler(repo, project_dir, dbt_bin, profiles_dir)
+        if not compiler.ok:
+            console.print(f"[red]could not create a worktree: {compiler.reason}[/]")
+            raise typer.Exit(1)
+        console.print("[dim]compiling where the strip fails, in a detached worktree. "
+                      "Your working tree is untouched.[/]")
     try:
-        replays = backtest_mod.run(repo, limit, since, fix_like_only)
+        with console.status("replaying...") as st:
+            replays = backtest_mod.run(
+                repo, limit, since, fix_like_only, compiler,
+                on_commit=lambda i, n, subj: st.update(f"replaying {i + 1}/{n}  {subj[:60]}"))
     except RuntimeError as e:
         console.print(f"[red]{e}[/]")
         raise typer.Exit(1) from None
@@ -944,6 +963,8 @@ def backtest(
                       "[dim]Try --since, or a larger --limit.[/]")
         raise typer.Exit(0)
 
+    if compiler:
+        compiler.close()
     counts = backtest_mod.tally(replays)
     rate = counts.pop("_silenced_rate", None)
     had = counts.pop("_had_something", 0)
@@ -962,6 +983,9 @@ def backtest(
         if counts.get(k):
             t.add_row(k, str(counts[k]), MEANS[k])
     console.print(t)
+    n_compiled = sum(1 for r in replays if r.via == "compiled")
+    if n_compiled:
+        console.print(f"[dim]{n_compiled} replay(s) were recovered by a real compile.[/]")
     if rate is not None:
         console.print(f"[dim]a check was firing in {had} replay(s); a later commit silenced it in "
                       f"{rate:.0%} of them. The denominator is deliberately not every commit: most "

@@ -73,3 +73,38 @@ def test_a_new_model_is_not_the_same_as_a_blob_assay_could_not_read():
     assert broken.verdict == "unparseable"
     t = backtest.tally([added, broken])
     assert t["no_pair"] == 1 and t["unparseable"] == 1 and t["skipped"] == 2
+
+
+def test_a_throwaway_profile_is_generated_under_the_projects_own_profile_name(tmp_path):
+    """dbt needs a CONNECTION even to compile, and a fresh worktree has no warehouse file.
+    Pointing a replay at the live warehouse would collide with whatever else is using it."""
+    import yaml
+    (tmp_path / "dbt_project.yml").write_text("name: demo\nprofile: my_profile\n")
+    c = backtest.Compiler.__new__(backtest.Compiler)
+    c.repo, c.project_subdir = str(tmp_path), "."
+    assert c._profile_name() == "my_profile"
+    d = c._throwaway_profile(str(tmp_path))
+    prof = yaml.safe_load((tmp_path / "profiles.yml").read_text())
+    assert "my_profile" in prof
+    out = prof["my_profile"]["outputs"]["assay"]
+    assert out["type"] == "duckdb" and out["path"].endswith("replay.duckdb")
+    assert d == str(tmp_path)
+
+
+def test_a_project_without_a_profile_key_still_gets_one(tmp_path):
+    (tmp_path / "dbt_project.yml").write_text("name: demo\n")
+    c = backtest.Compiler.__new__(backtest.Compiler)
+    c.repo, c.project_subdir = str(tmp_path), "."
+    assert c._profile_name() == "default"
+
+
+def test_a_replay_records_how_it_was_read():
+    assert Replay("a", "s", "m", "f").via == "stripped"
+    assert Replay("a", "s", "m", "f", via="compiled").via == "compiled"
+
+
+def test_compiled_sql_needs_no_jinja_strip():
+    """It is already what the warehouse ran."""
+    fired, skip = backtest._fire_compiled(
+        "select row_number() over (order by ST_Distance(a, b)) rn from t", "m")
+    assert not skip and "ranks_by_degrees" in fired

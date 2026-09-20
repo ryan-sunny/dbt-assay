@@ -168,9 +168,23 @@ at a commit whose message never contains the word "fix" — which is why the mes
 and never a filter. Three of the four commits that removed that defect would have been missed by
 matching on wording.
 
-It is honest about what it cannot read: historical compiled SQL does not exist, so `ref()` and
-`source()` are resolved and control blocks stripped, which is not a compile. Blobs that do not
-survive that are reported, not counted as clean.
+Historical compiled SQL does not exist, so by default `ref()` and `source()` are resolved and
+control blocks stripped. That is fast and reads 83% of blobs. For the rest:
+
+```bash
+assay backtest --compile --project-dir transform
+```
+
+checks each commit out into a **detached worktree** (never your working tree), links this
+checkout's `dbt_packages` so nothing is fetched, generates a throwaway DuckDB profile so dbt can
+connect without touching your warehouse, and really compiles — but only for the blobs the strip
+could not read, so you pay the per-commit parse just where it buys something. On a real repo that
+took unreadable replays from 3 to 0.
+
+The remaining caveat, stated rather than hidden: today's packages and dbt version are not
+guaranteed to render exactly what that commit rendered years ago, and on a Snowflake or BigQuery
+project the throwaway profile compiles through DuckDB's adapter, so an adapter-dispatching macro
+can differ. Pass `--profiles-dir` to use your real one.
 
 ## Configuration actually configures
 
