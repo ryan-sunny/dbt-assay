@@ -151,6 +151,20 @@ the ten cities keyword-guess. Jev flagged all five.
 
 **No structural check reaches any of that.**
 
+### Claims, and traversals
+
+**Claims** turn your prose into data. Code splits descriptions and comments into sentences; a
+judgment says what job each is doing; the checkable ones become rows with a stable id, a file and
+line, and a `claims.yml` you can edit. Then each is checked on its own against evidence chosen for
+it: supports, contradicts, or says_nothing. Judging whole prose instead produced a coin flip —
+0.51 / 0.47 on a claim whose two halves disagree with each other.
+
+**Traversals** judge the hops. Every other question reads one model, so a fan-out introduced
+upstream and consumed downstream is invisible to all of them: every count past it is inflated and
+nothing fails. Code narrows to the edges where something changes, and the judgment answers whether
+one child row still means one of the same thing as one parent row. On the warehouse this was built
+for it found a bounding-box overlap join feeding a mart, for about two cents.
+
 ### The rest of the bank
 
 **Column role and null meaning.** What each column actually is — `identifier`, `foreign_key`,
@@ -239,7 +253,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.2.0
+- uses: ryan-sunny/dbt-assay@v0.3.0
   with:
     target: target-head
     baseline: base/target

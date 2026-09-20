@@ -216,9 +216,68 @@ FAMILIES_WITHOUT_FINDINGS = frozenset({
     "units_are_what_the_column_claims",    # feeds tier: needs the probe
     "row_explanation",                     # rows tier: needs warehouse rows
     "row_is_internally_coherent",          # rows tier: needs warehouse rows
+    "sentence_is_a_claim",                 # extraction: it decides what to ASK
 })
 
-CHECKS = (measure_inside_the_grain, unresolved_judgment, description_contradicts_the_code)
+def code_contradicts_a_claim(project, entries) -> list[Finding]:
+    """The model's own documentation asserts something its code does not do.
+
+    *** THE CLAIM IS ATOMIC, WHICH IS WHY THIS CAN BE A FINDING AT ALL. ***
+    Judged as whole prose, "Boulder commercial building permits, residential filtered out" split
+    0.51 supports / 0.47 contradicts and flipped between runs, because one half is true and the
+    other is not. A finding cannot be built on a coin flip. `assay claims` breaks prose into
+    atomic claims first, and this rests on those.
+    """
+    out = []
+    for e in entries:
+        for ctx, p_ in e.claim_conflicts:
+            text = (ctx or "").split(": ", 1)[-1] if ctx else ""
+            out.append(Finding(
+                check="code_contradicts_a_claim",
+                rests_on="claim_alignment",
+                subject=e.uid, subject_name=e.name, file=e.path,
+                summary=f"the code contradicts a claim this project makes: {text[:90]}",
+                detail=("Someone wrote this down about this model and the code does something "
+                        "else. Nothing in a warehouse tests a sentence, so it stays written and "
+                        "stays believed. `assay claims --write claims.yml` shows where it was "
+                        "written; either the code or the sentence has to move."),
+                base=2,
+                evidence={"claim": text, "probability": round(p_, 3),
+                          "downstream": e.descendants, "marts": e.marts},
+            ))
+    return out
+
+
+def hop_multiplies_rows(project, entries) -> list[Finding]:
+    """A join that turns one parent row into several, where nothing says it should.
+
+    *** NO SINGLE-MODEL CHECK CAN SEE THIS. ***
+    Every other question here reads one model. A fan-out introduced at one hop and consumed three
+    models downstream is invisible to all of them, and every count past it is inflated while
+    nothing fails. It is the defect a person finds by chasing a number by hand, months later.
+    """
+    out = []
+    for e in entries:
+        for ctx, p_ in e.fanout_hops:
+            out.append(Finding(
+                check="hop_multiplies_rows",
+                rests_on="edge_preserves_the_grain",
+                subject=e.uid, subject_name=e.name, file=e.path,
+                summary=f"this hop appears to multiply rows without declaring it: {ctx[:70]}",
+                detail=("One parent row becomes several child rows here, and no group by, "
+                        "distinct or aggregate says that was intended. Every count downstream of "
+                        "this edge is inflated by the same factor, and no test fails, because "
+                        "each individual row is valid. Check the join key against the parent's "
+                        "own declared key."),
+                base=3,
+                evidence={"hop": ctx, "probability": round(p_, 3),
+                          "downstream": e.descendants, "marts": e.marts},
+            ))
+    return out
+
+
+CHECKS = (measure_inside_the_grain, unresolved_judgment, description_contradicts_the_code,
+          code_contradicts_a_claim, hop_multiplies_rows)
 
 
 def run_all(project, entries, declared, digests=None) -> list[Finding]:

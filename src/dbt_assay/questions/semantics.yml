@@ -46,6 +46,103 @@ predicate_intent:
 # A description is written once and the SQL changes forty times. Phrased as the DEFECT, so a high
 # probability means the prose is wrong -- mixing polarity across a bank is how a threshold gets
 # applied backwards.
+# *** EXTRACTION IS SELECTION. THE MODEL NEVER WRITES A CLAIM. ***
+# Jev is not trained to generate and does badly when forced to, so code splits the prose and this
+# decides what KIND of sentence each one is. Prose in a warehouse is mostly NOT claims: it is
+# rationale, incident history, and instructions to whoever reads it next. Treating an incident note
+# as a claim about today's code is how a findings list fills up with the past.
+sentence_is_a_claim:
+  id_prefix: "sentence"
+  type: choice
+  prompt_version: "sentence.v1"
+  instructions:
+    question: >-
+      Each sentence in `sentences_under_judgement` was written in this model's documentation. For
+      the one named in the question id, what job is that sentence doing?
+    note: >-
+      Judge the sentence as written. A sentence can be true and still not be a claim about what
+      this model produces.
+  criteria:
+    claim_about_output:
+      what: >-
+        It asserts something checkable about what this model produces -- its grain, its filters,
+        which rows it keeps or drops, what a column contains or means.
+      examples: ["one row per water division and case number",
+                 "residential permits are filtered out",
+                 "amount is in acre-feet, never gallons"]
+    claim_about_a_rule:
+      what: >-
+        It asserts that the model follows a rule from somewhere outside this project -- a statute,
+        a spec, a standard, a policy -- whether or not it names the source.
+      examples: ["the deadline is the last day of the second month following the filing month",
+                 "per C.R.S. 37-92-302(1)(c), objections close two months after filing"]
+    rationale:
+      what: >-
+        It explains WHY the code is the way it is, without asserting what the code does.
+      examples: ["a degree of longitude compresses by cos(latitude), so metres matter here",
+                 "this is cheaper than the obvious join"]
+    incident_or_history:
+      what: >-
+        It records something that WAS true, was found, or was fixed. It is about the past, not
+        about what the code does now.
+      examples: ["B-sweep found 53 dateless Peoria permits",
+                 "this used to group by year and silently split entities"]
+    instruction_to_maintainers:
+      what: "It tells whoever reads it next what to do or not do. A TODO, a warning, a pointer."
+      examples: ["do not add a filter here without checking the crosswalk",
+                 "see docs/water_law.md before changing this"]
+    not_a_statement:
+      what: "A heading, a fragment, a label, or anything with no assertion in it at all."
+
+# *** A NOUL HAD NOWHERE TO PUT "THE CODE NEITHER DOES NOR CONTRADICTS THIS". ***
+# The family shipped as a noul, so a description the code simply does not speak to arrived as a
+# CONTRADICTION. That is why boilerplate flagged: "Staging model: light cleanup of one raw source"
+# is not false, it is silent, and a yes/no question forced silence into the wrong bucket. A
+# repetition heuristic was added to work around it, which is a workaround for a missing option.
+#
+# TypeSafe's citation_check cookbook is this exact shape one level down: supports / contradicts /
+# says_nothing. The third option is the one that matters.
+claim_alignment:
+  id_prefix: "claim"
+  type: choice
+  prompt_version: "claim.v2"
+  instructions:
+    question: >-
+      `claim` is something this project's documentation asserts about the model. `evidence` is what
+      the model's code actually does. Does the evidence support the claim, contradict it, or not
+      speak to it at all?
+    note: >-
+      Judge ONLY the claim given. Evidence that is silent is not evidence against: a claim about
+      one column is not contradicted by the model also emitting others, and a claim that is terse
+      is not thereby wrong.
+  criteria:
+    supports:
+      what: "The evidence does what the claim says, or directly entails it."
+      examples: ["claim says one row per section, and the model groups by section alone",
+                 "claim says withdrawn filings are excluded, and a filter excludes them"]
+    contradicts:
+      what: >-
+        The evidence positively disagrees: it does something the claim rules out, or omits
+        something the claim requires and the evidence WOULD have shown. Never choose this merely
+        because the evidence is silent -- that is `says_nothing`.
+      examples: ["claim says one row per section, and the model groups by section AND year",
+                 "claim says residential is filtered out, and the filter excludes two spellings",
+                 "claim describes a column the model no longer produces"]
+    says_nothing:
+      what: >-
+        The evidence does not reach the claim. This includes a claim about what VALUES a column
+        holds when the evidence shows only that the column exists, a claim about data the SQL
+        cannot show, a claim about something outside this model, and a claim too general for any
+        filter or column to bear on. Prefer this over `contradicts` whenever the evidence is
+        merely absent: absence is not disagreement.
+      examples: ["claim says a column holds readable names, and the evidence shows the column is
+                  read but shows none of its values",
+                 "claim is 'light cleanup of one raw source', which no filter confirms or denies",
+                 "claim is about a downstream consumer rather than about this model's output",
+                 "claim describes what an upstream system writes, which this SQL cannot witness"]
+    cannot_tell:
+      what: "The claim is too vague to check against any evidence, or the evidence is unreadable."
+
 description_contradicts_the_code:
   id_prefix: "desc"
   type: noul

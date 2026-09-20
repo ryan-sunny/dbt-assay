@@ -96,6 +96,10 @@ class ModelEntry:
     marts: int = 0
     reads: list = field(default_factory=list)
     unreadable: bool = False
+    # (claim_id, probability) for every claim this model's own code contradicts.
+    claim_conflicts: list = field(default_factory=list)
+    # (parent -> child, probability) for hops that multiply rows without declaring it.
+    fanout_hops: list = field(default_factory=list)
     # *** A JUDGMENT THAT ONLY ITS OWN COMMAND CAN SEE IS NOT PART OF THE TOOL. ***
     # The description family answered, stored, and then reached nothing: not `check`, not the JSON,
     # not the HTML, not the pull request. It printed once, where it was asked, and was gone. A
@@ -120,9 +124,15 @@ def _judgments(store, uid: str) -> dict:
     if store is None:
         return {}
     rows = store.con.execute(
-        """select question, answer, confidence from model_decisions
+        """select question, answer, confidence, probabilities, context from model_decisions
            where decision_key = ? or decision_key like ?""", [uid, uid + "::%"]).fetchall()
-    return {q: {"answer": a, "confidence": c} for q, a, c in rows}
+    out: dict = {}
+    for i, (q, a, c, probs, ctx) in enumerate(rows):
+        # A model has ONE grain answer but MANY claim answers, so claim keys are made unique.
+        key = q if q not in ("align", "edge") else f"{q}__{i}"
+        out[key] = {"answer": a, "confidence": c,
+                    "probabilities": json.loads(probs or "{}"), "context": ctx}
+    return out
 
 
 def build(project, digests, schema, store=None, observed=None) -> list[ModelEntry]:
@@ -141,6 +151,23 @@ def build(project, digests, schema, store=None, observed=None) -> list[ModelEntr
 
         # ---- grain, strongest evidence first ----
         judged = _judgments(store, uid)
+        for q, v in judged.items():
+            if q.startswith("edge") and v.get("answer") == "silently_multiplied":
+                try:
+                    pm = float((v.get("probabilities") or {}).get("silently_multiplied", 0) or 0)
+                except (TypeError, ValueError, AttributeError):
+                    pm = 0.0
+                if pm >= 0.6:
+                    entry.fanout_hops.append((v.get("context") or "", pm))
+            if not q.startswith("align"):
+                continue
+            try:
+                probs = v.get("probabilities") or {}
+                pc = float(probs.get("contradicts", 0) or 0)
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if v.get("answer") == "contradicts" and pc >= 0.6:
+                entry.claim_conflicts.append((v.get("context") or "", pc))
         if (d := judged.get("desc")) is not None:
             try:
                 entry.doc_conflict = Fact(value=float(d["answer"]), source="judged",

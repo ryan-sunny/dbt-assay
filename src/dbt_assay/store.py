@@ -83,6 +83,23 @@ create table if not exists edge_facts (
     available integer, carried integer, dropped integer, joined_on varchar, dropped_cols varchar,
     primary key (run_id, parent, child)
 );
+-- *** CLAIMS ARE DATA, NOT PROSE, AND THE ID MUST OUTLIVE A REWORDING. ***
+-- A verdict attaches to claim_id. It is a hash of (subject, normalised text), so reflowing a
+-- paragraph around a claim does not orphan the ruling that was made on it.
+create table if not exists claims (
+    claim_id      varchar primary key,
+    subject       varchar,       -- model uid, or "<uid>.<column>"
+    subject_name  varchar,
+    text          varchar,
+    source_kind   varchar,       -- description | sql_comment | meta | manual
+    source_ref    varchar,       -- path, or path:line
+    kind          varchar,       -- what the extractor judged it to be
+    kind_conf     double,
+    citation      varchar,
+    status        varchar,       -- active | suppressed
+    extracted_at  timestamp
+);
+
 create table if not exists unreadable (
     run_id varchar, subject varchar, subject_name varchar, file varchar, reason varchar,
     primary key (run_id, subject)
@@ -190,6 +207,38 @@ class Store:
                values (?,?,?,?,?,?,?,?,?,?)""",
             [subject, question, family, answered, verdict, correction, note,
              who or "unknown", source, datetime.now(timezone.utc)])
+
+    def save_claims(self, rows: list) -> None:
+        """Named columns, never positional. Positional inserts broke twice after a migration."""
+        self.con.execute(DDL)
+        self.con.executemany(
+            """insert or replace into claims
+               (claim_id, subject, subject_name, text, source_kind, source_ref,
+                kind, kind_conf, citation, status, extracted_at)
+               values (?,?,?,?,?,?,?,?,?,?, current_timestamp)""", rows)
+
+    def claims(self, subject: str | None = None, checkable_only: bool = False,
+               min_conf: float = 0.0) -> list[dict]:
+        self.con.execute(DDL)
+        q = ("select claim_id, subject, subject_name, text, source_kind, source_ref, "
+             "kind, kind_conf, citation, status from claims where status = 'active'")
+        args: list = []
+        if subject:
+            q += " and (subject = ? or subject_name = ?)"
+            args += [subject, subject]
+        if checkable_only:
+            q += " and kind in ('claim_about_output', 'claim_about_a_rule')"
+        if min_conf:
+            q += " and coalesce(kind_conf, 0) >= ?"
+            args.append(min_conf)
+        cols = ("claim_id", "subject", "subject_name", "text", "source_kind", "source_ref",
+                "kind", "kind_conf", "citation", "status")
+        return [dict(zip(cols, r, strict=True))
+                for r in self.con.execute(q + " order by subject_name, claim_id", args).fetchall()]
+
+    def suppress_claim(self, claim_id: str) -> None:
+        self.con.execute(DDL)
+        self.con.execute("update claims set status = 'suppressed' where claim_id = ?", [claim_id])
 
     def adjudication_counts(self, source: str = "human") -> dict:
         """Verdicts per family. ONLY HUMAN ONES COUNT TOWARD A GATE.

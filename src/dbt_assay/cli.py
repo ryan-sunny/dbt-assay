@@ -14,6 +14,7 @@ from rich.table import Table
 from . import __version__, contracts, mcp_server, provenance, relate
 from . import align as align_mod
 from . import backtest as backtest_mod
+from . import claims as claims_mod
 from . import columns as columns_mod
 from . import diff as diff_mod
 from . import export as export_mod
@@ -484,10 +485,14 @@ def onboard(
         steps.append((f"assay check --check {by.most_common(1)[0][0]}",
                       "the finding there is most of"))
     if judged:
+        steps.append(("assay claims --extract",
+                      "pull every claim out of this project's own prose, as data you can audit"))
+        steps.append(("assay verify",
+                      "check each of those claims against what the code actually does"))
+        steps.append(("assay traverse",
+                      "judge every hop in the graph for a fan-out nobody declared"))
         steps.append(("assay columns --limit 25",
                       "the same tier over every column: what each one MEANS, adjudicated"))
-        steps.append(("assay semantics --families predicates",
-                      "why each filter is there: domain logic, or a patch over a bad feed"))
     else:
         steps.append(("export TYPESAFE_API_KEY=... (or OPENROUTER_API_KEY)",
                       ("section 4 is what a key buys; everything above it ran without one")))
@@ -620,6 +625,341 @@ def config(
         raise typer.Exit(1) from e
     console.print(f"\n[green]the key works.[/] [dim]1 call, {client.input_tokens} tokens, "
                   f"${client.spent_usd:.5f}[/]")
+
+
+@app.command()
+def claims(
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    extract: bool = typer.Option(False, "--extract",
+                                 help="ask which sentences are claims, and store them"),
+    select: str = typer.Option(None, "--select", "-s", help="scope it, e.g. \"path:models/water\""),
+    limit: int = typer.Option(0, "--limit", "-n", help="stop after N models"),
+    min_conf: float = typer.Option(0.7, "--min-confidence",
+                                   help="how sure the extractor must be that a sentence IS a "
+                                        "claim. Measured: above this every answer read correctly "
+                                        "by hand; below it they are headers and fragments."),
+    write: str = typer.Option(None, "--write", help="write claims.yml so you can edit and audit"),
+    model: str = typer.Option(None, "--model", "-m", help="show one model's claims"),
+):
+    """What this project ASSERTS about its models, as data you can read, edit and rule on.
+
+    *** A MODEL DESCRIPTION IS NOT ONE CLAIM, AND JUDGING IT AS ONE PRODUCES A COIN FLIP. ***
+    Measured: "Boulder commercial building permits, residential filtered out" is two claims, the
+    first supported and the second not. Put to a single choice it split 0.51/0.47 and flipped
+    between runs. Split, the sharpest atomic claim read `contradicts` at 0.82.
+
+    Extraction is SELECTION, never generation: code splits the prose, and a judgment says what job
+    each sentence is doing. The model never writes a claim, so every one points at the file and
+    line where a person wrote it.
+    """
+    from .selector import resolve
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    project, digests, _f, _schema, _s = _load(tdir)
+    store = Store(store_path)
+
+    if not extract:
+        rows = store.claims(subject=model, checkable_only=True, min_conf=min_conf)
+        if not rows:
+            n = len(store.claims())
+            store.close()
+            console.print("[yellow]no claims stored yet.[/] "
+                          f"[dim]{n} row(s) in the table. Run `assay claims --extract`.[/]"
+                          if n else "[yellow]no claims stored.[/] "
+                                    "[dim]Run `assay claims --extract` first.[/]")
+            raise typer.Exit(0)
+        if write:
+            _write_claims_yaml(Path(write), rows)
+            console.print(f"wrote [bold]{write}[/] with {len(rows)} claim(s). "
+                          f"[dim]Edit it, then `assay claims --extract` keeps your edits: a "
+                          f"suppressed claim stays suppressed.[/]")
+            store.close()
+            raise typer.Exit(0)
+        t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        t.add_column("model"); t.add_column("kind"); t.add_column("claim", overflow="fold")
+        for r in rows[:200]:
+            t.add_row(r["subject_name"], r["kind"].replace("claim_about_", ""),
+                      r["text"][:140] + ("  [cyan]" + r["citation"] + "[/]" if r["citation"] else ""))
+        console.print(t)
+        console.print(f"\n[dim]{len(rows)} claim(s) at confidence >= {min_conf}. "
+                      f"`--write claims.yml` to audit them.[/]")
+        store.close()
+        raise typer.Exit(0)
+
+    # ---- extract ----
+    shared = sem_mod.boilerplate(project)
+    cands = claims_mod.candidates(project, digests, shared)
+    scope = resolve(project, select)
+    if scope is not None:
+        cands = [c for c in cands if c.subject in scope]
+    seen, uniq = set(), []
+    for c in cands:                       # the same sentence in a description AND a comment is one
+        if c.claim_id not in seen:
+            seen.add(c.claim_id)
+            uniq.append(c)
+    by_model: dict = {}
+    for c in uniq:
+        by_model.setdefault(c.subject, []).append(c)
+    if limit:
+        by_model = dict(list(by_model.items())[:limit])
+
+    already = {r["claim_id"] for r in store.claims()}
+    suppressed = {r["claim_id"] for r in store.claims() if r["status"] == "suppressed"}
+    todo = {u: [c for c in cs if c.claim_id not in already]
+            for u, cs in by_model.items()}
+    todo = {u: cs for u, cs in todo.items() if cs}
+    n_new = sum(len(v) for v in todo.values())
+    console.print(f"[bold]{len(uniq)}[/] candidate sentence(s) across {len(by_model)} model(s) · "
+                  f"[bold]{n_new}[/] not yet classified")
+    if not n_new:
+        store.close()
+        raise typer.Exit(0)
+
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        console.print("[yellow]no API key.[/] `assay config` shows what was resolved.")
+        store.close()
+        raise typer.Exit(1)
+
+    rows, kinds = [], Counter()
+    with console.status(f"classifying {n_new} sentence(s)..."):
+        for uid, cs in todo.items():
+            m = project.models[uid]
+            for chunk in [cs[i:i + claims_mod.CHUNK]
+                          for i in range(0, len(cs), claims_mod.CHUNK)]:
+                st = claims_mod.kind_state(m.name, chunk, m.description or "")
+                try:
+                    ans = decide(store, client, st, claims_mod.kind_questions(chunk),
+                                 contexts={f"claim__{i}": c.text[:120]
+                                           for i, c in enumerate(chunk)},
+                                 decision_key=f"{uid}::sentence::{chunk[0].claim_id}",
+                                 prompt_version=claims_mod.KIND_VERSION, caller="assay.claims")
+                except BudgetExceeded as e:
+                    console.print(f"[yellow]stopped at the cap: {e}[/]")
+                    break
+                for i, c in enumerate(chunk):
+                    a = ans.get(f"claim__{i}")
+                    if not a:
+                        continue
+                    kinds[a["answer"]] += 1
+                    rows.append((c.claim_id, c.subject, c.subject_name, c.text, c.source_kind,
+                                 c.source_ref, a["answer"], a["confidence"], c.citation,
+                                 "suppressed" if c.claim_id in suppressed else "active"))
+    store.save_claims(rows)
+    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}[/]")
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    for k, n in kinds.most_common():
+        mark = "[bold]" if k in claims_mod.CHECKABLE else "[dim]"
+        t.add_row(f"{mark}{n}[/]", f"{mark}{k}[/]")
+    console.print(t)
+    keep = sum(n for k, n in kinds.items() if k in claims_mod.CHECKABLE)
+    console.print(f"\n[bold]{keep}[/] checkable claim(s). "
+                  f"[dim]`assay claims` lists them, `--write claims.yml` audits them.[/]")
+    store.close()
+
+
+def _write_claims_yaml(path: Path, rows: list) -> None:
+    """The audit surface. Ordered by model so a diff reads like a review."""
+    import yaml
+    out: dict = {}
+    for r in rows:
+        out.setdefault(r["subject_name"], []).append({
+            "id": r["claim_id"], "claim": r["text"], "kind": r["kind"],
+            "confidence": round(r["kind_conf"] or 0, 2), "from": r["source_ref"],
+            **({"citation": r["citation"]} if r["citation"] else {}),
+        })
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# Claims assay extracted from this project's own prose. EDIT FREELY.\n"
+        "# Delete a claim to suppress it; it stays suppressed across re-extraction.\n"
+        "# Add one by hand with any id you like -- a claim nobody wrote down is still a claim.\n\n"
+        + yaml.safe_dump(out, sort_keys=True, width=100, allow_unicode=True))
+
+
+@app.command()
+def verify(
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    select: str = typer.Option(None, "--select", "-s"),
+    limit: int = typer.Option(0, "--limit", "-n", help="stop after N claims"),
+    min_conf: float = typer.Option(0.7, "--min-confidence"),
+    model: str = typer.Option(None, "--model", "-m"),
+):
+    """Check every extracted claim against what the code actually does.
+
+    One claim per call, with only the evidence that bears on it. A compound claim judged whole
+    splits its probability and flips between runs; that is why `assay claims` breaks prose into
+    atomic claims before anything is asked here.
+    """
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir)
+    store = Store(store_path)
+    rows = store.claims(subject=model, checkable_only=True, min_conf=min_conf)
+    if select:
+        from .selector import resolve
+        scope = resolve(project, select)
+        if scope is not None:
+            rows = [r for r in rows if r["subject"] in scope]
+    if limit:
+        rows = rows[:limit]
+    if not rows:
+        store.close()
+        console.print("[yellow]no claims to verify.[/] [dim]Run `assay claims --extract`.[/]")
+        raise typer.Exit(0)
+
+    observed = probe_mod.read(store)
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        store.close()
+        console.print("[yellow]no API key.[/] [dim]`assay config` shows what was resolved.[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]{len(rows)}[/] claim(s) to check")
+    out, counts = [], Counter()
+    with console.status(f"checking {len(rows)} claim(s)..."):
+        for r in rows:
+            ev = claims_mod.evidence_for(r["subject"], project, digests, schema, observed,
+                                         claim_text=r["text"])
+            if not ev:
+                continue
+            c = claims_mod.Claim(r["claim_id"], r["subject"], r["subject_name"], r["text"],
+                                 r["source_kind"], r["source_ref"], citation=r["citation"] or "")
+            try:
+                ans = decide(store, client, claims_mod.align_state(c, ev),
+                             claims_mod.align_question(),
+                             contexts={"align": f"{c.subject_name}: {c.text[:120]}"},
+                             decision_key=f"{c.subject}::claim::{c.claim_id}",
+                             prompt_version=claims_mod.ALIGN_VERSION, caller="assay.verify")
+            except BudgetExceeded as e:
+                console.print(f"[yellow]stopped at the cap: {e}[/]")
+                break
+            a = ans.get("align")
+            if not a:
+                continue
+            counts[a["answer"]] += 1
+            if a["answer"] == "contradicts":
+                out.append((c, a["confidence"], (a["probabilities"] or {}).get("contradicts", 0)))
+    store.close()
+
+    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}[/]")
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    for k, n in counts.most_common():
+        style = "[bold red]" if k == "contradicts" else "[dim]"
+        t.add_row(f"{style}{n}[/]", f"{style}{k}[/]")
+    console.print(t)
+    if not out:
+        console.print("\n[green]no claim is contradicted by its code.[/]")
+        raise typer.Exit(0)
+    console.print(f"\n[bold]{len(out)}[/] claim(s) the code contradicts:")
+    for c, conf, p_ in sorted(out, key=lambda x: -x[2])[:20]:
+        console.print(f"  [bold]{c.subject_name}[/]  [dim]p={p_:.2f}  {c.source_ref}[/]")
+        console.print(f"    {c.text[:150]}")
+
+
+@app.command()
+def traverse(
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    select: str = typer.Option(None, "--select", "-s"),
+    limit: int = typer.Option(0, "--limit", "-n", help="stop after N edges"),
+    model: str = typer.Option(None, "--model", "-m", help="only edges into this model"),
+):
+    """Judge every hop in the graph: does one row still mean the same thing on the other side?
+
+    *** THIS IS THE ONE DEFECT CLASS NO SINGLE-MODEL CHECK CAN SEE. ***
+    A fan-out introduced upstream and consumed downstream is invisible to every question that
+    reads one model, and it is what a person only finds by chasing a number by hand. The graph
+    facts are already free -- what each edge carries, what it drops, what it joins on -- so the
+    only thing asked here is whether the hop changed what a row IS.
+    """
+    from .selector import resolve
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir)
+    facts, _edge_findings = relate.run_all(project, digests, schema)
+
+    # *** CODE NARROWS FIRST. *** An edge that carries everything and joins on nothing cannot have
+    # changed a grain, and asking is paying to be told so.
+    cands = [f for f in facts if f.joined_on or f.dropped]
+    if model:
+        cands = [f for f in cands if f.child_name == model or f.parent_name == model]
+    scope = resolve(project, select)
+    if scope is not None:
+        cands = [f for f in cands if f.child in scope]
+    cands.sort(key=lambda f: -(len(f.dropped or []) + 10 * bool(f.joined_on)))
+    if limit:
+        cands = cands[:limit]
+    console.print(f"[bold]{len(facts)}[/] edge(s), [bold]{len(cands)}[/] where something changes")
+    if not cands:
+        raise typer.Exit(0)
+
+    store = Store(store_path)
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        store.close()
+        console.print("[yellow]no API key.[/] [dim]`assay config` shows what was resolved.[/]")
+        raise typer.Exit(1)
+
+    declared = relate.declared_keys(project)
+    counts, bad = Counter(), []
+    with console.status(f"judging {len(cands)} edge(s)..."):
+        for f in cands:
+            cd = digests.get(f.child)
+            if cd is None or not cd.ok:
+                continue
+            st = {
+                "parent": {"model": f.parent_name,
+                           "declared_key": declared.get(f.parent) or None,
+                           "columns": list(f.carried or [])[:25]},
+                "child": {"model": f.child_name,
+                          "declared_key": declared.get(f.child) or None,
+                          "joins_on": list(f.joined_on or [])[:10],
+                          "groups_by": list(cd.group_by or [])[:10] or None,
+                          "uses_qualify": bool(getattr(cd, "has_qualify", False)) or None},
+                "columns_the_child_drops": sorted(f.dropped or [])[:20] or None,
+            }
+            st = {k: v for k, v in st.items() if v}
+            st["parent"] = {k: v for k, v in st["parent"].items() if v}
+            st["child"] = {k: v for k, v in st["child"].items() if v}
+            try:
+                ans = decide(store, client, st,
+                             {"edge": choice_q("edge_preserves_the_grain")},
+                             contexts={"edge": f"{f.parent_name} -> {f.child_name}"},
+                             decision_key=f"{f.child}::edge::{f.parent}",
+                             prompt_version=_prompt_version("edge_preserves_the_grain"),
+                             caller="assay.traverse")
+            except BudgetExceeded as e:
+                console.print(f"[yellow]stopped at the cap: {e}[/]")
+                break
+            a = ans.get("edge")
+            if not a:
+                continue
+            counts[a["answer"]] += 1
+            if a["answer"] == "silently_multiplied":
+                bad.append((f, (a["probabilities"] or {}).get("silently_multiplied", 0)))
+    store.close()
+
+    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}[/]")
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    for k, n in counts.most_common():
+        style = "[bold red]" if k == "silently_multiplied" else "[dim]"
+        t.add_row(f"{style}{n}[/]", f"{style}{k}[/]")
+    console.print(t)
+    if not bad:
+        console.print("\n[green]no hop multiplies rows without saying so.[/]")
+        raise typer.Exit(0)
+    console.print(f"\n[bold]{len(bad)}[/] hop(s) that multiply rows without declaring it:")
+    for f, p_ in sorted(bad, key=lambda x: -x[1])[:15]:
+        console.print(f"  [bold]{f.parent_name}[/] -> [bold]{f.child_name}[/]  "
+                      f"[dim]p={p_:.2f}  on {', '.join(sorted(f.joined_on or [])[:4]) or 'no key'}[/]")
 
 
 @app.command()
@@ -2224,6 +2564,18 @@ def _family_map() -> dict:
 
 
 _FAMILY = _family_map()
+
+def choice_q(name: str) -> dict:
+    """A bank entry as a live question. One place, so a rename cannot half-apply."""
+    from .contracts import QUESTIONS
+    from .jev import choice as _c
+    q = QUESTIONS[name]
+    return _c(q["instructions"], q["criteria"])
+
+
+def _prompt_version(name: str) -> str:
+    from .contracts import QUESTIONS
+    return QUESTIONS[name]["prompt_version"]
 
 
 def _family_of(question: str) -> str:

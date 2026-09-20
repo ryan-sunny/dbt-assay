@@ -95,7 +95,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.2.0
+- uses: ryan-sunny/dbt-assay@v0.3.0
   with:
     target: target-head
     baseline: base/target
@@ -389,6 +389,65 @@ the answer to "where did this number come from" that no warehouse can give you t
 **Grain**, where code proposes the candidate columns and one noul per column decides which of them
 identify a row. **Column role** and **null meaning**, chunked so repeated criteria stay inside the
 token budget.
+
+### Claims: what this project says, checked against what it does
+
+```bash
+assay claims --extract     # every sentence in your prose, classified
+assay claims --write claims.yml   # audit them, edit them, suppress them
+assay verify               # check each claim against the code
+```
+
+Your prose is not one claim, it is many, and judging it whole produces a coin flip. Measured:
+*"Boulder commercial building permits, residential filtered out"* put to a single question split
+**0.51 supports / 0.47 contradicts** and flipped between runs, because one half is true and the
+other is not. Split into atomic claims, the sharpest read `contradicts` at **0.82**.
+
+So code splits the prose and a judgment says what job each sentence is doing — a claim about
+output, a claim about a rule, rationale, an incident note, an instruction to maintainers, or not a
+statement at all. **Extraction is selection, never generation**, because Jev is not trained to
+generate. The model never writes a claim; it picks from what your team already wrote, which is why
+every claim points at the file and line it came from and why `claims.yml` is a real audit surface.
+
+Each claim is then checked on its own, against evidence chosen *for it*: **supports**,
+**contradicts**, or **says_nothing**.
+
+Four rounds of measurement on one slice, every change to how the question was asked rather than to
+the model:
+
+| | contradicts | says_nothing | supports |
+|---|---|---|---|
+| generic evidence, compound claims | 10 | 10 | 6 |
+| split on semicolons too | 10 | 10 | 6 |
+| evidence chosen **by** the claim | 8 | 8 | 10 |
+| criteria: **absence is not disagreement** | **5** | 14 | 7 |
+
+The third row is the one worth reading twice. A claim about `d_class_cn` read `contradicts` at
+**0.97** purely because the evidence listed thirty other columns and not that one — the model could
+not see the thing it was asked about, so it did what TypeSafe document it does and returned a
+confident non-answer. Now each claim names its own evidence.
+
+### Traversals: the defect class no single-model check can see
+
+```bash
+assay traverse             # judge every hop in the graph
+```
+
+Every other question reads one model. A fan-out introduced at one hop and consumed three models
+downstream is invisible to all of them: every count past it is inflated, each individual row is
+valid, and nothing fails. It is the defect a person finds by chasing a number by hand, months later.
+
+The graph facts are free — what each edge carries, what it drops, what it joins on — so code
+narrows to the 395 edges of 457 where something actually changes, and the judgment answers the one
+thing code cannot: **does one child row still mean one of the same thing as one parent row?**
+`same_thing`, `deliberately_coarser`, `silently_multiplied`, or `different_entity`.
+
+The top hit on the warehouse this was built for:
+
+> `stg_co_parcels_composite → int_water_parcel_irrigation`, joined on `xmin, xmax, ymin, ymax`
+
+which is `join irr i on p.xmin <= i.xmax and p.xmax >= i.xmin` — a bounding-box **overlap** join.
+One parcel matches many irrigation polygons. Around $0.02 for the whole graph.
 
 **And the one that needs no `assay` vocabulary to read: does the description still describe the
 code?** Prose is written once and the SQL changes around it. Nothing in a warehouse tests a

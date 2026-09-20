@@ -23,3 +23,47 @@ same_concept:
     - "They describe different things. Joining them would be a mistake."
     - "They are related and might be the same thing, but the state does not settle it."
     - "They are the same concept under two names, and a value in one means the same as a value in the other."
+
+# *** THE DEFECT THAT ONLY EXISTS BETWEEN TWO MODELS. ***
+# Every other family in this bank reads one model. A fan-out introduced upstream and consumed
+# downstream is invisible to all of them, and it is the class a person only finds by chasing a
+# number by hand. The graph facts are free -- carried, dropped, and the join key, per edge -- so
+# what is asked here is the one thing code cannot settle: whether the hop changed what a row IS.
+edge_preserves_the_grain:
+  id_prefix: "edge"
+  type: choice
+  prompt_version: "edge.v1"
+  instructions:
+    question: >-
+      `parent` produces rows of one kind and `child` reads it. Given what the child joins on and
+      what it groups by, does one row of the child still mean one of the same thing as one row of
+      the parent?
+    note: >-
+      Judge the CHANGE at this hop only. A child that deliberately aggregates its parent is not
+      wrong; it is a different grain on purpose, and that is a different answer from a child that
+      meant to stay one-to-one and did not.
+  criteria:
+    same_thing:
+      what: "One child row is still one parent row. The hop carries the grain through unchanged."
+      examples: ["child filters the parent and renames columns",
+                 "child joins a lookup on that lookup's full unique key"]
+    deliberately_coarser:
+      what: >-
+        One child row is MANY parent rows, and the code says so plainly -- a group by, a distinct,
+        an aggregate. Narrowing on purpose.
+      examples: ["child groups the parent by section and counts",
+                 "child selects distinct owner from a per-parcel parent"]
+    silently_multiplied:
+      what: >-
+        One parent row becomes SEVERAL child rows without the code declaring it. A join on part of
+        a key, or onto a table that is not unique on the joined columns. This is the defect: every
+        downstream count is now inflated and nothing failed.
+      examples: ["child joins a parent on case_number where the parent is unique on (division, case_number)",
+                 "child joins a multi-row detail table and still calls the result one row per filing"]
+    different_entity:
+      what: >-
+        The child's row is about a DIFFERENT thing than the parent's, not more or fewer of the same
+        thing. The hop changes the subject.
+      examples: ["parent is one row per permit, child is one row per contractor"]
+    cannot_tell:
+      what: "The join keys or grouping are not visible enough to decide."

@@ -25,19 +25,29 @@ re-derive it by reading SQL, and do not guess.
    Fifteen lines instead of two hundred of SQL.
 2. `blast_radius(model)` — who reads it, and how many marts are downstream. If this number is
    large, say so before you change anything.
-3. `lineage(model, column)` when you are about to change a column — it tells you the hop that
+3. `claims(model)` — **what this project SAYS this model does**, sentence by sentence, with what
+   its own code did to each claim. Reading the SQL tells you what the code does; this tells you
+   what a person asserted it does, which is the thing your edit is most likely to quietly break.
+   A claim marked `supports` is a promise you are now responsible for keeping.
+
+4. `traversal(model)` — every hop into this model, what each one joins on, and whether any of them
+   multiplies rows without declaring it. This is the defect class you cannot see by reading one
+   file, so do not try to.
+
+5. `lineage(model, column)` when you are about to change a column — it tells you the hop that
    actually produces the value, which is often several models upstream.
 
 ## After you edit, before you hand anything back
 
-4. `changed_contracts()` — **this is the step that matters.** It says whether your edit changed
+6. `changed_contracts()` — **this is the step that matters.** It says whether your edit changed
    what anything MEANS, as opposed to how it reads. A reformat, a renamed CTE, a join rewritten as
    a subquery come back empty, and that silence is correct.
 
 If it reports a grain change, stop. Either the change was unintended and you should undo it, or it
 was intended and it needs a version bump. Do not hand back work where the grain moved silently.
 
-5. `findings(model)` — the contradictions assay currently sees in what you just wrote.
+7. `findings(model)` — the contradictions assay currently sees in what you just wrote, including
+   any claim your edit has just made false.
 
 ## Rules that are not negotiable
 
@@ -50,6 +60,11 @@ was intended and it needs a version bump. Do not hand back work where the grain 
 - **If `changed_contracts` shows a grain change with aggregating consumers, that is a breaking
   change.** Say so plainly in your summary, name the consumers, and do not describe it as a
   refactor.
+- **If you change what a model does, change the sentence that says what it does.** A claim and the
+  code are one artefact. Leaving the prose behind is how the next person is misled, and assay will
+  report it as a contradiction against your name.
+- **Do not add a claim you have not made true.** A sentence in a comment becomes a checked claim
+  the next time anyone runs `assay claims --extract`.
 - **Report what assay said, not what you concluded from it.** If it was uncertain, say it was
   uncertain.
 
@@ -59,6 +74,9 @@ was intended and it needs a version bump. Do not hand back work where the grain 
 - `assay diff --baseline <main target>` — what changed about what models MEAN, for a review.
 - `assay version-check --baseline <main target>` — whether anything owes a version bump.
 - `assay practices --keys-only` — models with no uniqueness test, and the grain a test should cover.
+- `assay claims --extract` then `assay verify` — pull every claim out of this project's own prose
+  and check each one against the code.
+- `assay traverse` — judge every hop in the graph for a fan-out nobody declared.
 
 ## What assay is not
 
