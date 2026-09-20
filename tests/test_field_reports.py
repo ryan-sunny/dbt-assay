@@ -110,3 +110,91 @@ def test_click_is_a_declared_dependency():
     if not pj.exists():
         pytest.skip("installed as a wheel")
     assert "click>=" in pj.read_text(), "review -i needs click; it must not arrive by accident"
+
+
+def test_a_family_nothing_asks_is_reported_rather_than_shown_as_coverage():
+    """*** THREE CUSTOM FAMILIES LINTED CLEAN, LISTED AS `yours`, AND DID NOTHING. ***
+
+    Every call site names a SHIPPED family by string literal; there is no generic runner. So a
+    family with a NEW name is loaded, validated, displayed and inert -- and it looks exactly like
+    coverage. Worse, the documented example used a new name.
+    """
+    from dbt_assay.contracts import SHIPPED
+    from dbt_assay.lint import CALLERS, caller_of
+
+    uncalled = [f for f in SHIPPED if caller_of(f) is None]
+    assert not uncalled, f"shipped families nothing asks: {uncalled}"
+    assert caller_of("a_family_nobody_wrote_a_call_site_for") is None
+    for fam, (_mod, cmd, state) in CALLERS.items():
+        assert fam in SHIPPED, f"{fam} is claimed to have a caller but is not a shipped family"
+        assert cmd.startswith("assay "), fam
+        assert state, fam
+
+
+def test_the_caller_table_matches_the_source_that_asks():
+    """A hand-kept table is a second copy of a fact, and the second copy is what drifts."""
+    import importlib
+    import inspect
+
+    from dbt_assay.lint import CALLERS
+    for fam, (mod, _cmd, _state) in CALLERS.items():
+        src = inspect.getsource(importlib.import_module(f"dbt_assay.{mod}"))
+        assert f'"{fam}"' in src, f"{mod}.py does not mention {fam}"
+
+
+def test_the_documented_example_replaces_a_shipped_family():
+    """The docs taught the broken pattern: their example used a NEW name, so anyone following
+    them wrote a question that cannot run."""
+    from pathlib import Path
+
+    from dbt_assay.contracts import SHIPPED
+    root = Path(__file__).parent.parent
+    p = root / "docs" / "OVERVIEW.md"
+    if not p.exists():
+        pytest.skip("no docs in a wheel install")
+    import re
+    block = re.search(r"```yaml\n# assay_questions/(.*?)```", p.read_text(), re.DOTALL)
+    assert block, "the worked example is gone"
+    named = set(re.findall(r"^([a-z_]+):$", block.group(1), re.MULTILINE))
+    assert named & set(SHIPPED), (
+        f"the example defines {named}, none of which is a shipped family, so following it "
+        f"produces a question nothing asks")
+
+
+def test_a_parent_collapsed_before_the_join_is_seen():
+    """*** 33% OF 543 HOPS READ `silently_multiplied`, AND THE TOP ONE WAS THIS. ***
+
+    `join (select wdid, count(*) from int_water_diligence group by wdid) dl on dl.wdid = r.wdid`
+    is already one row per key. Without this the state says "joins on wdid, no grouping" -- every
+    word true, conclusion wrong. Measured: cannot_tell @0.24 became same_thing @0.41.
+    """
+    from dbt_assay.parse import digest
+
+    sub = digest("select r.wdid, dl.n from water_rights r left join "
+                 "(select wdid, count(*) as n from int_water_diligence group by wdid) dl "
+                 "on dl.wdid = r.wdid", "m", "duckdb")
+    assert sub.pre_aggregated == {"int_water_diligence": ["wdid"]}
+
+    plain = digest("select r.wdid, d.note from water_rights r "
+                   "join int_water_diligence d on d.wdid = r.wdid", "m", "duckdb")
+    assert plain.pre_aggregated == {}
+
+
+def test_a_top_level_group_by_is_not_mistaken_for_pre_aggregation():
+    """That would mask a deliberate narrowing as "the parent was already collapsed"."""
+    from dbt_assay.parse import digest
+    assert digest("select wdid, count(*) n from water_rights group by wdid",
+                  "m", "duckdb").pre_aggregated == {}
+
+
+def test_a_missing_dbt_suggests_the_wrapper_this_project_actually_uses(tmp_path):
+    """It failed with one quiet line, the run completed looking successful, and the models stayed
+    unreadable. A uv or poetry project has no bare `dbt` on PATH, which is the common case."""
+    from dbt_assay.cli import _run_dbt_compile
+
+    (tmp_path / "dbt_project.yml").write_text("name: p\n")
+    (tmp_path / "uv.lock").write_text("")
+    t = tmp_path / "target"
+    t.mkdir()
+    _ok, why = _run_dbt_compile(t, dbt_bin="definitely-not-a-real-dbt")
+    assert "uv run dbt" in why

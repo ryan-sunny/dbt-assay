@@ -337,7 +337,17 @@ def _run_dbt_compile(target: Path, dbt_bin: str = "dbt", profiles_dir: str | Non
         r = subprocess.run(cmd, cwd=pd, capture_output=True, text=True,
                            timeout=timeout, check=False)
     except FileNotFoundError:
-        return False, f"{dbt_bin!r} is not on PATH. Pass --dbt with the command you use."
+        # *** A uv OR poetry PROJECT HAS NO BARE `dbt` ON PATH, AND THAT IS THE COMMON CASE. ***
+        # Reported from the field: the compile failed with one line, onboard printed the rest of a
+        # successful-looking run, and the models stayed unreadable. Guessing the wrapper from the
+        # lockfile beside dbt_project.yml removes a whole wasted run.
+        hint = ""
+        for lock, wrapper in (("uv.lock", "uv run dbt"), ("poetry.lock", "poetry run dbt"),
+                              ("Pipfile.lock", "pipenv run dbt")):
+            if (pd / lock).exists():
+                hint = f"  This looks like a {lock.split('.')[0]} project: try --dbt \"{wrapper}\"."
+                break
+        return False, f"{dbt_bin!r} is not on PATH.{hint or ' Pass --dbt with the command you use.'}"
     except subprocess.TimeoutExpired:
         return False, f"`dbt compile` did not finish within {timeout}s."
     if r.returncode != 0:
@@ -496,7 +506,12 @@ def onboard(
         console.print(f"[dim]compiling: {missing} model(s) have no compiled SQL...[/]")
         ok, why = _run_dbt_compile(tdir, dbt_bin, profiles_dir)
         if not ok:
-            console.print(f"   [yellow]{why}[/]")
+            # *** LOUDER THAN ONE LINE ABOVE A SUCCESS SUMMARY. ***
+            # It printed quietly, the run completed, and the models stayed unreadable while
+            # everything below looked like it had worked.
+            console.print(f"\n[bold red]  the compile did NOT run:[/] {why}")
+            console.print(f"   [yellow]{missing} model(s) are still without compiled SQL, so "
+                          f"everything below is the thinner answer.[/]\n")
         else:
             before = missing
             project, digests, failures, schema, sstats = _load(tdir, dialect)
@@ -1027,6 +1042,16 @@ def traverse(
                           "uses_qualify": bool(getattr(cd, "has_qualify", False)) or None},
                 "columns_the_child_drops": sorted(f.dropped or [])[:20] or None,
             }
+            # *** WITHOUT THIS, EVERY WORD OF THE STATE IS TRUE AND THE CONCLUSION IS WRONG. ***
+            # A parent collapsed inside a subquery before the join cannot fan the join out. 33% of
+            # 543 hops read `silently_multiplied` on a real warehouse, and the top one was exactly
+            # this shape.
+            pre = (cd.pre_aggregated or {}).get(f.parent_name)
+            if pre is not None:
+                st["the_child_already_collapsed_the_parent_before_joining"] = {
+                    "relation": f.parent_name,
+                    "to_one_row_per": pre or "a distinct",
+                }
             st = {k: v for k, v in st.items() if v}
             st["parent"] = {k: v for k, v in st["parent"].items() if v}
             st["child"] = {k: v for k, v in st["child"].items() if v}
@@ -1097,17 +1122,34 @@ def banks(
     console.print(f"[bold]{len(all_banks)}[/] question(s)  "
                   f"[dim]{len(SHIPPED)} shipped; {where}[/]")
 
+    from .lint import caller_of
     t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
-    t.add_column("question"); t.add_column("type"); t.add_column("version"); t.add_column("from")
+    t.add_column("question"); t.add_column("type"); t.add_column("from")
+    t.add_column("asked by"); t.add_column("about", overflow="fold")
+    inert = []
     for name in sorted(all_banks):
         q = all_banks[name]
         own = name in added
         repl = name in replaced
         src = ("[green]yours[/]" if own else
                "[yellow]yours, replacing[/]" if repl else "[dim]shipped[/]")
+        called = caller_of(name)
+        if called is None:
+            inert.append(name)
         t.add_row(f"[bold]{name}[/]" if own or repl else name,
-                  q.get("type", "?"), q.get("prompt_version", "?"), src)
+                  q.get("type", "?"), src,
+                  called[1] if called else "[red]nothing asks this[/]",
+                  called[2] if called else "[dim]--[/]")
     console.print(t)
+    if inert:
+        # *** THE SAME RULE AS EVERYWHERE ELSE: A GUARD THAT MATCHES NOTHING PASSES WRONGLY. ***
+        console.print(f"\n[red]{len(inert)} question(s) are never asked by anything:[/] "
+                      f"{', '.join(inert)}")
+        console.print("[dim]Every call site names a SHIPPED family by name, so a family with a NEW "
+                      "name is loaded, linted, listed here, and inert. To add a judgment today, "
+                      "REPLACE a shipped family whose `about` column matches the subject you want "
+                      "to judge -- its options are yours, and no amount of `vocab` makes a model "
+                      "pick an option that is not on the list.[/]")
 
     if not lint:
         raise typer.Exit(0)

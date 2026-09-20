@@ -225,3 +225,41 @@ def lint_all(banks: dict, shipped: dict | None = None) -> list[Issue]:
     for name, q in sorted(banks.items()):
         out += lint_question(name, q, shipped)
     return out
+
+
+# *** A FAMILY NOTHING ASKS IS NOT COVERAGE, AND IT LOOKS EXACTLY LIKE COVERAGE. ***
+# Reported from the field: three custom families were written, linted at zero errors, listed by
+# `assay banks` as `yours`, and were never asked by anything. Every call site names a SHIPPED
+# family by string literal; there is no generic runner. So a family with a NEW name is loaded,
+# validated, displayed, and inert.
+#
+# Worse, the documented example used a new name, so anyone following the docs wrote a question
+# that cannot run. This table is what `assay banks` prints so that is visible at a glance, and a
+# test asserts it against the source so it cannot drift into a lie.
+#
+# `state` is the subject the call site hands the question. A replacement can only ask about what
+# its caller already builds: replacing `edge_preserves_the_grain` gets parent, child, join keys
+# and grouping, so it can judge a join and cannot judge a window function.
+CALLERS: dict[str, tuple[str, str, str]] = {
+    # family: (module that asks it, command, the state it receives)
+    "column_role":                      ("columns",    "assay columns",   "a chunk of columns"),
+    "null_meaning":                     ("columns",    "assay columns",   "a chunk of columns"),
+    "column_is_part_of_the_key":        ("contracts",  "assay infer",     "a model's candidate key"),
+    "predicate_intent":                 ("semantics",  "assay semantics", "a chunk of predicates"),
+    "description_contradicts_the_code": ("semantics",  "assay semantics", "a model's prose + code"),
+    "sentence_is_a_claim":              ("claims",     "assay claims",    "a chunk of sentences"),
+    "claim_alignment":                  ("claims",     "assay verify",    "one claim + its evidence"),
+    "edge_preserves_the_grain":         ("cli",        "assay traverse",  "one parent->child edge"),
+    "same_concept":                     ("align",      "assay align",     "a chunk of column pairs"),
+    "severity_fit":                     ("testing",    "assay tests",     "a test + its blast radius"),
+    "practice_exception":               ("practices",  "assay practices", "one evaluator violation"),
+    "field_matches_its_name":           ("feeds",      "assay feeds",     "a column + a sample"),
+    "units_are_what_the_column_claims": ("feeds",      "assay feeds",     "a column name"),
+    "row_explanation":                  ("rows",       "assay adjudicate", "one failing row"),
+    "row_is_internally_coherent":       ("rows",       "assay adjudicate", "one failing row"),
+}
+
+
+def caller_of(name: str) -> tuple[str, str, str] | None:
+    """(module, command, state) for a family, or None when nothing asks it."""
+    return CALLERS.get(name)

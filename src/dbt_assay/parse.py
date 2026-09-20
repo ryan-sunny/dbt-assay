@@ -63,6 +63,33 @@ def _base_column(e: exp.Expression) -> str | None:
     return cols[0].name.lower() if len(cols) == 1 else None
 
 
+def _pre_aggregated(tree, dialect: str) -> dict:
+    """{relation: [group keys]} for every relation collapsed inside a subquery or CTE.
+
+    A child that joins `(select k, count(*) from parent group by k)` has already reduced that
+    parent to one row per k, so the join cannot multiply. Without this the state says "joins on k,
+    no grouping" -- every word true, and the conclusion wrong.
+    """
+    out: dict = {}
+    # The OUTERMOST select is excluded: a top-level `group by` makes the child deliberately
+    # coarser, which is a different answer and is already carried as `groups_by`. Counting it here
+    # would mask a real narrowing as "the parent was already collapsed".
+    root = tree.find(exp.Select)
+    for node in tree.find_all(exp.Select):
+        if node is root:
+            continue
+        g = node.args.get("group")
+        if g is None and not any(isinstance(e, exp.Distinct) for e in node.args.get("expressions", [])
+                                 if e is not None):
+            continue
+        keys = [x.sql(dialect=dialect) for x in g.expressions] if g is not None else []
+        for tbl in node.find_all(exp.Table):
+            name = tbl.name or tbl.sql(dialect=dialect)
+            if name:
+                out.setdefault(name, keys)
+    return out
+
+
 def _resolve_group_by(group_exprs, select_exprs) -> list[str]:
     out = []
     for g in group_exprs:
@@ -287,6 +314,13 @@ class Digest:
     # that conflates the two reports a fan-out against the table the model is simply reading.
     from_relations: list[str] = field(default_factory=list)
     absorbs_fanout: bool = False    # a DISTINCT somewhere: duplicate rows are collapsed again
+    # *** A RELATION COLLAPSED BEFORE THE JOIN CANNOT FAN THE JOIN OUT. ***
+    # {relation: [group keys]} for anything aggregated inside a subquery or CTE. Reported from the
+    # field: 33% of 543 hops came back `silently_multiplied`, and the top one was
+    # `join (select wdid, count(*) from int_water_diligence group by wdid) dl on dl.wdid = r.wdid`
+    # -- already one row per key. The judgment saw join keys and no grouping and inferred fan-out
+    # from true facts that were not the whole state.
+    pre_aggregated: dict = field(default_factory=dict)
     # DuckDB's `~` is regexp_full_match, not Postgres's partial match. Captured here so no check
     # ever has to parse the SQL a second time; one parse per model is the contract.
     full_match_patterns: list[str] = field(default_factory=list)
@@ -459,6 +493,7 @@ def _extract(tree, name: str, dialect: str) -> Digest:
     # `string_agg(distinct ..)` may not even be an AggFunc; and a real model absorbed its fan-out
     # with a plain `select distinct` inside a CTE, which none of the above would have seen. Missing
     # any of these marks a deliberate, correct pattern as a defect.
+    d.pre_aggregated = _pre_aggregated(tree, dialect)
     d.absorbs_fanout = (
         any(sel.args.get("distinct") for sel in tree.find_all(exp.Select))
         or bool(list(tree.find_all(exp.Distinct)))

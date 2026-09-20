@@ -246,6 +246,8 @@ assay init                # write an audit.yml and nothing else
 ```bash
 assay scan                # parse coverage, and what could not be read
 assay check               # every finding, structural and judged, ranked by blast radius
+assay check --json        # an OBJECT, not a list: {coverage, parse_failures,
+                          #   unevaluable_tests, findings}. Iterate `["findings"]`.
 assay inventory           # what every model IS; --html writes a page you can commit
 assay trace <column>      # where one column's value actually came from
 assay tests               # tests that cannot fail, and what nothing asserts at all
@@ -326,26 +328,54 @@ assay banks              # every question, where it came from, and whether its s
 assay banks --strict     # exit non-zero on a warning too
 ```
 
-Put a `.yml` in **`assay_questions/`** — here or in any parent, or wherever `ASSAY_QUESTIONS`
-points. A family with a new name is added. A family with a shipped name **replaces** it, which is
-the point: a warehouse whose `column_role` needs an extra option should not have to fork.
+**Put a `.yml` in `assay_questions/`** — here or in any parent, or wherever `ASSAY_QUESTIONS`
+points.
+
+**Replace a shipped family. Do not invent a new name.** Every call site asks for a shipped family
+by name, so a family with a new name is loaded, linted, listed by `assay banks` — and never asked
+by anything. It looks exactly like coverage. `assay banks` now prints `nothing asks this` in red
+beside any such family, and this documentation used to show the wrong pattern.
+
+The `about` column in `assay banks` tells you which state each family receives, and a replacement
+can only ask about what its caller already builds. Pick the one whose subject matches yours:
+
+| you want to judge | replace |
+|---|---|
+| a parent → child edge | `edge_preserves_the_grain` |
+| a chunk of columns | `column_role` or `null_meaning` |
+| a chunk of predicates | `predicate_intent` |
+| one claim against its evidence | `claim_alignment` |
+| a model's prose against its code | `description_contradicts_the_code` |
+| one failing row | `row_explanation` |
+| a column and a sample of its values | `field_matches_its_name` |
 
 ```yaml
-# assay_questions/mine.yml
+# assay_questions/mine.yml -- REPLACING a shipped family, keeping its options and adding one
 version: 1
-water_division_completeness:
-  id_prefix: "wdiv"          # verdicts file under this family; must be unique
-  type: noul
-  prompt_version: "wdiv.v1"  # the cache is keyed on it. Bump it when you reword.
+edge_preserves_the_grain:
+  id_prefix: "edge"            # keep the shipped prefix: verdicts file under it
+  type: choice
+  prompt_version: "edge.water.v1"   # your own; the cache is keyed on it
   instructions:
     question: >-
-      Does this model join or group on a case number without also carrying the water division?
+      Given what the child joins on, does one row of the child still mean one of the same thing as
+      one row of the parent?
   criteria:
-    "true":
-      what: "A case number is used as a key or join column with no division beside it."
-    "false":
-      what: "Every use of a case number carries its division, or no case number is used."
+    same_thing: {what: "One child row is still one parent row."}
+    deliberately_coarser: {what: "One child row is many parent rows, and a group by says so."}
+    silently_multiplied: {what: "One parent row becomes several, and nothing declares it."}
+    wrong_scope_entirely:
+      what: >-
+        One row, the right COUNT, the wrong INSTANCE: the match used an identifier that is only
+        unique inside a scope the join condition left out.
+      examples: ["joined on case_number where a case number is unique only within a division",
+                 "joined on section without the principal meridian"]
+    cannot_tell: {what: "The join keys are not visible enough to decide."}
 ```
+
+That last option is the thing a replacement does that `vocab` cannot: **no amount of vocabulary
+makes a model pick an option that is not on the list.** Over 543 edges on the warehouse this was
+written for, it fired three times, all correctly, at 0.21–0.33.
 
 ### The lint is every shape already measured to fail
 
@@ -417,7 +447,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.5.0
+- uses: ryan-sunny/dbt-assay@v0.6.0
   with:
     target: target-head
     baseline: base/target

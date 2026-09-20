@@ -1,5 +1,8 @@
 # Field notes: one night on a 357-model warehouse
 
+**Status: 1, 2, 3, 6 and 7 are fixed in 0.6.0; 4 and 5 were fixed in 0.5.1.** What each fix was is
+noted inline. The notes are kept as written, because the report is the evidence.
+
 Written from using `assay` 0.5.0 → 0.5.1 against `sunny_data` (357 models, 212 sources, 1,288 tests,
 956 edges, DuckDB) on 2026-09-20. Everything below is something that happened, not something that
 might. Ranked by what it cost or would have cost.
@@ -7,6 +10,10 @@ might. Ranked by what it cost or would have cost.
 ---
 
 ## 1. A custom family with a new name is never asked, and the docs teach that pattern
+
+> **Fixed in 0.6.0.** `assay banks` prints an `asked by` column and names any family nothing
+> asks, in red. The documented example now replaces a shipped family. A generic runner is
+> still the real fix and is not built.
 
 `QUESTIONS = load_all_banks()` loads your bank. Every **call site** then asks for a shipped family
 by string literal — `judged.py`, `semantics.py`, `columns.py`, `claims.py`, `rows.py`. There is no
@@ -30,6 +37,9 @@ Three fixes, cheapest first:
   real fix; the first two are worth doing regardless.
 
 ## 2. A replacement inherits its call site's state, and nothing says what that is
+
+> **Fixed in 0.6.0.** `assay banks` prints an `about` column naming the state each family
+> receives, and the overview carries a table of which family to replace for which subject.
 
 Replacing a shipped name works — proved below. But the replacement can only ask about what that
 caller already hands it. `edge_preserves_the_grain` receives parent, child, join keys and grouping,
@@ -67,6 +77,10 @@ will not be so tidy."* A true positive with the author's own expiry condition at
 
 ## 3. `traverse` misses an inline `group by` that precedes the join
 
+> **Fixed in 0.6.0.** `Digest.pre_aggregated` records every relation collapsed inside a
+> subquery or CTE, and `traverse` sends it. Measured on the hop named below: `cannot_tell`
+> @0.24 became `same_thing` @0.41, and `silently_multiplied` stopped competing.
+
 177 of 543 hops came back `silently_multiplied` — 33%. The top water hit was wrong for a checkable
 reason:
 
@@ -99,6 +113,10 @@ Either warn before compiling, or restore the file afterwards.
 
 ## 6. `--dbt` defaults to `dbt`, which is not on PATH for a `uv` project
 
+> **Fixed in 0.6.0.** A missing binary now reads the lockfile beside `dbt_project.yml` and
+> suggests `uv run dbt`, `poetry run dbt` or `pipenv run dbt`, and a failed compile prints
+> in red above the run with the count of models still unreadable.
+
 `onboard --compile` ran, printed `'dbt' is not on PATH. Pass --dbt with the command you use.`, and
 then completed the rest — so the compile silently did not happen while the run looked successful.
 It needed `--dbt "uv run dbt"`. Detecting `uv.lock` / `poetry.lock` beside `dbt_project.yml` and
@@ -106,6 +124,8 @@ suggesting the wrapper would remove a whole failed run. At minimum, make a faile
 than one line above a success summary.
 
 ## 7. `assay check --json` returns an object, the table implies a list
+
+> **Fixed in 0.6.0.** The overview's command list says so inline.
 
 `{coverage, parse_failures, unevaluable_tests, findings}`. Reasonable, but every example in the
 README shows findings, so the first thing anyone writes is `for f in json.load(...)` and iterates

@@ -20,6 +20,9 @@ Jev](https://docs.typesafe.ai) reads the meaning. SQL does the rest.
 > Built while auditing a Colorado water rights warehouse, where a case number is only unique inside
 > a water division and nothing in the stack could tell me that.
 
+**[Field notes](docs/FIELD_NOTES.md)** — one night on a 357-model warehouse, written by someone
+else using it. Seven problems, five of them now fixed, kept as reported.
+
 **[What has actually been verified](docs/VERIFICATION.md)** — per family, whether a person has read
 its findings against the real thing. Two families failed their own controls and were rewritten;
 five have not been verified at all, and it says which.
@@ -99,7 +102,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.5.0
+- uses: ryan-sunny/dbt-assay@v0.6.0
   with:
     target: target-head
     baseline: base/target
