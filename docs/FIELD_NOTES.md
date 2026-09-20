@@ -260,3 +260,51 @@ states are cached), and a forced move was caught and failed the command.
   **not** separately measured, which is the honest record).
 - **The margin is reported now**, not just the side of the line. A pass within 0.12 of the
   threshold prints as `near the line` and says to treat it as unsettled rather than clean.
+
+---
+
+# Third report: `practices --keys-only` proposes grains that cannot be tested
+
+0.9.2, same 357-model warehouse. `assay practices` reports 21 models with no uniqueness test and
+names **which columns a test should cover**, which is the thing dbt-project-evaluator does not do
+and the reason to prefer it. Checked all fifteen it printed against the built tables:
+
+```
+9   name a column the model DOES NOT EMIT
+4   fan out            fact_permit 5.81x, az_section_parcel_sales 2.23x,
+                       int_water_call_exposure_basis 1.31x,
+                       stg_water_resume_entry_facts 149.29x
+2   empty table        vacuously unique
+0   hold
+```
+
+Examples, model against its real columns:
+
+```
+int_address_crosswalk    proposed `parid`     emits building_key, geography, owner_name, …
+int_water_call_exposure  proposed `wdid`      emits water_right_id, call_year, days_curtailed, …
+water_isf_call_record    proposed `call_id`   emits calls_total, isf_rights, isf_calls, …
+business_leads           proposed `business_key` among three; that one is not emitted
+```
+
+**The nine are free to fix and need no judgment.** Intersect the proposed grain with the model's
+own output columns before printing it. A key column the model does not emit cannot be asserted by
+dbt, so the recommendation is unactionable by construction — and a reader who trusts it writes a
+test that fails to compile. This is `column_is_part_of_the_key`'s documented weakness
+("can propose a grain that is not in the output") in its checkable form.
+
+The remaining four are the judgment. `stg_water_resume_entry_facts → water_division` is the clearest:
+seven distinct values over 1,076 rows, proposed as the grain of the model.
+
+**What the command gets right, and why it is still the better tool here:** the ranking. It put
+`int_address_crosswalk` and `int_assessor_parcels` at the top on 22 marts downstream, and those are
+genuinely the models where an undeclared grain would hurt most. The blast radius is exact and free;
+it is only the proposed key that needs the intersection.
+
+## Closing `practice_exception` needs the evaluator built, and a partial build is silent
+
+This project installs `dbt_project_evaluator` but only five `fct_` models are built
+(`fct_documentation_coverage`, `fct_undocumented_models`, …). `assay practices` reported exactly one
+standard-practice category — `recommend: documentation_coverage` — with nothing saying the other
+checks were absent rather than clean. A run against a partially built evaluator looks like a project
+with one practice issue.
