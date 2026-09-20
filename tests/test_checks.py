@@ -72,3 +72,17 @@ def test_severity_is_lifted_by_reach(findings):
     _, fs = findings
     leaf = [f for f in fs if f.descendants == 0]
     assert all(f.weight == f.base for f in leaf)
+
+
+def test_a_distance_measured_after_reprojection_is_not_flagged():
+    """Correct code: transform to a metre-based CRS, THEN measure. A guard that bans the function
+    outright catches the one model that already did the right thing."""
+    from dbt_assay.parse import digest as dg
+    bad = dg("select row_number() over (order by ST_Distance(a.geom, b.pt)) rn from t a join u b on true")
+    assert bad.windows[0].order_roots == ["ST_DISTANCE"]
+    assert bad.windows[0].order_reprojected == [False]
+    good = dg("select row_number() over (order by ST_Distance("
+              "ST_Transform(ST_Point(s.lon, s.lat), 'EPSG:4326', 'EPSG:5070', true), b.pt)) rn "
+              "from t s join u b on true")
+    assert good.windows[0].order_roots == ["ST_DISTANCE"]
+    assert good.windows[0].order_reprojected == [True]

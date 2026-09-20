@@ -42,6 +42,11 @@ class Columns:
     """What a relation offers, and where that knowledge came from."""
     names: list[str] = field(default_factory=list)
     source_of: str = "unknown"          # derived | catalog | declared | unknown
+    # column -> what it ROOTS in (column | agg:min | coalesce:literal | window:row_number | ...).
+    # Propagated parents-first, so a child referencing `c.first_year` learns it is `min(year)`
+    # four models up. An AGGREGATE CAN NEVER BE PART OF THE GRAIN, which makes this a code fact
+    # rather than a judgment -- but only once it has been carried this far.
+    roots: dict = field(default_factory=dict)
 
 
 class Schema:
@@ -106,6 +111,39 @@ class Schema:
         return out
 
 
+def _resolve_roots(d, schema, uid, project) -> dict:
+    """A model's column roots, following plain references back into its PARENTS.
+
+    `record_first_year` reads as `c.first_year` and says nothing. `c` is a parent model, and that
+    parent published `first_year` as `min(year)`. One lookup against the already-derived parent
+    settles what no amount of judgment about this model's own text could.
+    """
+    import sqlglot
+    from sqlglot import exp as _exp
+
+    roots = dict(d.resolved_roots or d.output_roots)
+    by_rel = {}
+    for parent in project.models[uid].parents:
+        rel = schema.relation.get(parent)
+        if rel:
+            by_rel[rel.lower()] = schema.columns(parent).roots
+
+    for name, root in list(roots.items()):
+        if root != "column":
+            continue
+        try:
+            e = sqlglot.parse_one(d.output_exprs.get(name, ""), dialect="duckdb")
+        except Exception:                                    # noqa: BLE001,S112
+            continue
+        if not isinstance(e, _exp.Column) or not e.table:
+            continue
+        rel = (d.alias_relation.get(e.table.lower()) or "").lower()
+        parent_roots = by_rel.get(rel)
+        if parent_roots:
+            roots[name] = parent_roots.get(e.name.lower(), root)
+    return roots
+
+
 def derive_columns(project, digests: dict[str, Digest], schema: Schema,
                    dialect: str = "duckdb") -> dict:
     """Walk the DAG parents-first, expanding stars with what the parents were found to offer."""
@@ -142,7 +180,7 @@ def derive_columns(project, digests: dict[str, Digest], schema: Schema,
                 cols = list(d.output_columns)
 
         if cols:
-            schema.by_uid[uid] = Columns(cols, "derived")
+            schema.by_uid[uid] = Columns(cols, "derived", _resolve_roots(d, schema, uid, project))
             stats["from_sql"] += 1
             continue
 

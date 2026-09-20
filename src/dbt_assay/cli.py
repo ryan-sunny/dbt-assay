@@ -325,7 +325,7 @@ def calibrate(
         raise typer.Exit(1)
 
     store = Store(store_path)
-    exact = over = under = wrong = 0
+    exact = over = under = wrong = unsure = 0
     rows = []
     for uid, cand in work:
         state = contracts.build_state(uid, project, digests, schema, cand, declared, cfg.vocab)
@@ -338,11 +338,16 @@ def calibrate(
             break
         g = contracts.key_from_answers(cand, answers)
         got, want = {x.lower() for x in g.columns}, set(declared[uid])
+        # A disagreement only on columns the judgment FLAGGED as unresolved is not a wrong answer,
+        # it is an unanswered one. Counting it as wrong hides that the model told you so.
         verdict = ("exact" if got == want else
+                   "uncertain" if (got - want) and (got - want) <= set(g.uncertain) else
                    "superset" if want < got else
                    "subset" if got < want else "wrong")
         if verdict == "exact":
             exact += 1
+        elif verdict == "uncertain":
+            unsure += 1
         elif verdict == "superset":
             over += 1
         elif verdict == "subset":
@@ -351,11 +356,12 @@ def calibrate(
             wrong += 1
         rows.append((project.models[uid].name, verdict, sorted(got), sorted(want)))
 
-    n = max(exact + over + under + wrong, 1)
+    n = max(exact + over + under + wrong + unsure, 1)
     t = Table(title="\ngrain judgment vs the project's own declared keys", header_style="bold")
     t.add_column("outcome"); t.add_column("n", justify="right"); t.add_column("%", justify="right")
-    for label, v in (("exact", exact), ("kept too many", over),
-                     ("dropped too many", under), ("disagrees", wrong)):
+    for label, v in (("exact", exact), ("flagged uncertain", unsure),
+                     ("kept too many", over), ("dropped too many", under),
+                     ("disagrees", wrong)):
         t.add_row(label, str(v), f"{100 * v // n}%")
     console.print(t)
     console.print(f"[dim]code alone was exact on {code_exact}/{len(work)}; "

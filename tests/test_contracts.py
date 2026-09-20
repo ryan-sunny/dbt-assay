@@ -81,3 +81,17 @@ def test_an_unanswered_column_is_kept_rather_than_silently_dropped():
     cand = GrainCandidate(["a", "b"], "group_by", "")
     g = contracts.key_from_answers(cand, {"key__a": {"kind": "noul", "answer": "0.9"}})
     assert g.columns == ["a", "b"]
+
+
+def test_an_uncertain_answer_is_recorded_as_uncertain_not_as_yes():
+    """A noul near 0.5 means similar probability either way. A single 0.5 cut turns 'I do not
+    know' into 'yes', which is the worst of the three available answers."""
+    cand = GrainCandidate(["wdid", "first_year", "years_total"], "group_by", "")
+    g = contracts.key_from_answers(cand, {
+        "key__wdid": {"kind": "noul", "answer": "0.80"},
+        "key__first_year": {"kind": "noul", "answer": "0.53"},
+        "key__years_total": {"kind": "noul", "answer": "0.15"},
+    })
+    assert g.columns == ["wdid", "first_year"]     # kept: narrowing on absent evidence is worse
+    assert g.uncertain == ["first_year"]           # but recorded as unresolved
+    assert g.dropped == ["years_total"]

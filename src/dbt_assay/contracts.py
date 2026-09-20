@@ -60,7 +60,8 @@ class Grain:
     columns: list[str] = field(default_factory=list)
     route: str = "unknown"
     source: str = "code"          # code | declared | judged
-    dropped: list[str] = field(default_factory=list)   # candidates a judgment ruled out
+    dropped: list[str] = field(default_factory=list)     # a judgment ruled these out
+    uncertain: list[str] = field(default_factory=list)   # it could not tell, and said so
 
 
 def candidates(uid: str, project, digests: dict[str, Digest], schema,
@@ -71,8 +72,19 @@ def candidates(uid: str, project, digests: dict[str, Digest], schema,
         return None
 
     if d.group_by_columns:
-        return GrainCandidate(list(d.group_by_columns), "group_by",
-                              "the model aggregates to these columns")
+        # *** AN AGGREGATE IS NEVER PART OF THE GRAIN OF THE QUERY THAT PRODUCED IT. ***
+        # Code decides this; asking a judgment spends tokens to learn what a parser already knows,
+        # and three real models answered ~0.53 on exactly these columns because the state did not
+        # carry the fact that settles them.
+        roots = {**(d.resolved_roots or {}), **schema.columns(uid).roots}
+        cols = [c for c in d.group_by_columns
+                if not str(roots.get(c, "")).startswith("agg:")]
+        dropped = [c for c in d.group_by_columns if c not in cols]
+        reason = "the model aggregates to these columns"
+        if dropped:
+            reason += f" (excluded as aggregates, which cannot identify a row: {dropped})"
+        if cols:
+            return GrainCandidate(cols, "group_by", reason)
 
     for w in d.windows:
         if w.position == "qualify" and w.partition_columns:
@@ -175,14 +187,31 @@ def _meaningful(desc: str | None) -> bool:
         "mart model", "staging model", "intermediate model", "todo", "tbd", "model"}
 
 
-def key_from_answers(cand: GrainCandidate, answers: dict, threshold: float = 0.5) -> Grain:
-    """Code composes the key from independent per-column answers. The model never sees the whole."""
-    keep, drop = [], []
+def key_from_answers(cand: GrainCandidate, answers: dict,
+                     high: float = 0.70, low: float = 0.35) -> Grain:
+    """Code composes the key from independent per-column answers, WITH A BAND.
+
+    *** A NOUL NEAR 0.5 MEANS SIMILAR PROBABILITY EITHER WAY. IT IS NOT A WEAK YES. ***
+    A single cut at 0.5 converts "I do not know" into "yes, it identifies", which is the worst of
+    the three available answers. Measured on real models: three of them answered 0.52-0.56 on
+    columns whose provenance lay in a SOURCE built outside dbt, so nothing in the state could
+    settle them -- and the model said exactly that. Banding keeps the column (narrowing a key on
+    absent evidence is worse than leaving it wide) and records that it is unresolved, which is what
+    a review queue reads.
+    """
+    keep, drop, unsure = [], [], []
     for col in cand.columns:
         a = answers.get(f"key__{col}")
         if a is None:
-            keep.append(col)                 # unanswered: keep it rather than silently narrowing
+            keep.append(col)                 # unanswered: keep rather than silently narrowing
             continue
-        (keep if float(a["answer"]) >= threshold else drop).append(col)
+        p = float(a["answer"])
+        if p >= high:
+            keep.append(col)
+        elif p <= low:
+            drop.append(col)
+        else:
+            keep.append(col)
+            unsure.append(col)
     return Grain(columns=keep or list(cand.columns), route=cand.route,
-                 source="judged", dropped=drop)
+                 source="judged", dropped=drop, uncertain=unsure)

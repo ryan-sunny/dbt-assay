@@ -64,3 +64,29 @@ def test_function_names_are_always_upper_case():
 def test_a_parse_failure_is_reported_not_raised():
     d = digest("this is not sql at all ((((", "broken")
     assert d.ok is False and d.error
+
+
+def test_candidates_are_reported_in_the_models_output_namespace():
+    """`group by name` where the select says `name as discovered_name` has a grain of
+    discovered_name to everyone downstream. Declared keys and tests live in that namespace."""
+    d = digest("select building_key, name as discovered_name, count(*) n "
+               "from t group by building_key, name")
+    assert d.alias_of["name"] == "discovered_name"
+    assert d.group_by_columns == ["building_key", "discovered_name"]
+
+
+def test_a_partition_key_is_translated_the_same_way():
+    d = digest("select k, raw_id as id from t "
+               "qualify row_number() over (partition by raw_id order by ts) = 1")
+    assert d.windows[0].partition_columns == ["id"]
+
+
+def test_an_output_column_is_resolved_one_hop_back_through_its_cte():
+    """`c.first_year` says nothing; `min(year)` settles the question without a judgment."""
+    d = digest("""
+        with c as (select wdid, min(year) as first_year, count(*) as n from raw group by wdid)
+        select c.wdid, c.first_year as record_first_year, c.n as record_n from c
+    """)
+    assert d.resolved_roots["record_first_year"] == "agg:min"
+    assert d.resolved_roots["record_n"] == "agg:count"
+    assert d.resolved_roots["wdid"] == "column"

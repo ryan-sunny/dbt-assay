@@ -80,6 +80,12 @@ def _resolve_group_by(group_exprs, select_exprs) -> list[str]:
     return [c for c in out if c]
 
 
+def _reprojected(e: exp.Expression) -> bool:
+    """Does this expression transform its geometry to another CRS before measuring?"""
+    return any(func_name(f) in ("ST_TRANSFORM", "ST_SETSRID")
+               for f in e.find_all(exp.Func))
+
+
 def _from_of(sel: exp.Select):
     """sqlglot renamed this arg from `from` to `from_` at v30.
 
@@ -187,6 +193,11 @@ class WindowFact:
     partition_columns: list[str] = field(default_factory=list)
     order_roots: list[str] = field(default_factory=list)  # what each order key roots in
     order_sql: list[str] = field(default_factory=list)
+    # *** A DISTANCE MEASURED AFTER A REPROJECTION IS IN METRES, NOT DEGREES. ***
+    # `ST_Distance(ST_Transform(p, 'EPSG:4326', 'EPSG:5070'), ..)` is CORRECT code. Flagging it is
+    # how a hand-written guard failed on its second attempt: it banned the function outright and
+    # caught the one model that had already done the right thing.
+    order_reprojected: list[bool] = field(default_factory=list)
 
 
 @dataclass
@@ -202,6 +213,21 @@ class Digest:
     # root: `not_null` on a column rooted in COALESCE with a literal fallback can never fail.
     output_exprs: dict = field(default_factory=dict)
     output_roots: dict = field(default_factory=dict)
+    # *** SOURCE COLUMN -> THE NAME THIS MODEL PUBLISHES IT UNDER. ***
+    # `select name as discovered_name ... group by name` has a grain of `discovered_name` to anyone
+    # downstream, and of `name` only inside this query. Declared keys, tests and every consumer live
+    # in the OUTPUT namespace, so a candidate expressed in the source namespace silently fails to
+    # match a key that is in fact correct.
+    alias_of: dict = field(default_factory=dict)
+    # *** AN OUTPUT COLUMN'S EXPRESSION, RESOLVED THROUGH THE CTEs IT CAME FROM. ***
+    # `record_first_year` reads as `c.first_year`, which says nothing. One hop back into the CTE it
+    # is `min(year)` -- and an AGGREGATE CAN NEVER BE PART OF THE GRAIN OF THE QUERY THAT PRODUCED
+    # IT. Unresolved, three models sent that judgment to Jev and it answered 0.53, correctly
+    # uncertain, because the state did not contain the fact that settles it.
+    resolved_roots: dict = field(default_factory=dict)
+    # alias -> the CTE name or physical relation it refers to. Cross-MODEL resolution needs the DAG
+    # and so happens in infer.py; this is the half a single query can answer on its own.
+    alias_relation: dict = field(default_factory=dict)
     referenced_columns: list[str] = field(default_factory=list)
     joins: list[JoinFact] = field(default_factory=list)
     windows: list[WindowFact] = field(default_factory=list)
@@ -274,11 +300,59 @@ def digest(sql: str, name: str = "", dialect: str = "duckdb") -> Digest:
             inner = e.this if isinstance(e, exp.Alias) else e
             d.output_exprs[nm.lower()] = inner.sql(dialect=dialect)[:300]
             d.output_roots[nm.lower()] = _classify(inner)
+            base = _base_column(inner)
+            if base and base != nm.lower():
+                d.alias_of.setdefault(base, nm.lower())
         d.distinct = bool(final.args.get("distinct"))
         g = final.args.get("group")
         if g:
             d.group_by = [x.sql(dialect=dialect) for x in g.expressions]
             d.group_by_columns = _resolve_group_by(g.expressions, final.expressions)
+
+    # CTE name -> {column: what it roots in}, so an outer reference can be followed one hop back.
+    cte_outputs: dict = {}
+    for c in tree.find_all(exp.CTE):
+        inner = c.this if isinstance(c.this, exp.Select) else c.this.find(exp.Select)
+        if inner is None:
+            continue
+        cte_outputs[c.alias.lower()] = {
+            e.alias_or_name.lower(): _classify(e.this if isinstance(e, exp.Alias) else e)
+            for e in inner.expressions if e.alias_or_name
+        }
+
+    # alias -> CTE name or physical relation, from every FROM and JOIN
+    alias_to_cte: dict = {}
+    for sel in tree.find_all(exp.Select):
+        src = _from_of(sel)
+        tables = [src.this] if src is not None else []
+        tables += [j.this for j in (sel.args.get("joins") or [])]
+        for t in tables:
+            if not isinstance(t, exp.Table) or not t.name:
+                continue
+            alias = (t.alias or t.name).lower()
+            if t.name.lower() in cte_outputs:
+                alias_to_cte[alias] = t.name.lower()
+            else:
+                d.alias_relation[alias] = _relname(t)
+
+    for out_name, sql_txt in list(d.output_exprs.items()):
+        root = d.output_roots.get(out_name, "")
+        if root != "column":
+            d.resolved_roots[out_name] = root
+            continue
+        try:
+            col = sqlglot.parse_one(sql_txt, dialect=dialect)
+        except Exception:                                    # noqa: BLE001,S112
+            continue
+        if not isinstance(col, exp.Column):
+            continue
+        cte = alias_to_cte.get((col.table or "").lower()) or (
+            col.table.lower() if col.table and col.table.lower() in cte_outputs else None)
+        inner_root = (cte_outputs.get(cte) or {}).get(col.name.lower()) if cte else None
+        d.resolved_roots[out_name] = inner_root or root
+
+    out_set = {c.lower() for c in d.output_columns}
+    d.group_by_columns = [c if c in out_set else d.alias_of.get(c, c) for c in d.group_by_columns]
 
     d.referenced_columns = sorted({c.name.lower() for c in tree.find_all(exp.Column) if c.name})
 
@@ -341,12 +415,15 @@ def digest(sql: str, name: str = "", dialect: str = "duckdb") -> Digest:
             anc = anc.parent
         order = w.args.get("order")
         parts = w.args.get("partition_by") or []
+        _out = {c.lower() for c in d.output_columns}
         d.windows.append(WindowFact(
             position=pos,
             partition_by=[p.sql(dialect=dialect) for p in parts],
-            partition_columns=[c for c in (_base_column(p) for p in parts) if c],
+            partition_columns=[c if c in _out else d.alias_of.get(c, c)
+                               for c in (_base_column(p) for p in parts) if c],
             order_roots=[root_of(o) for o in (order.expressions if order else [])],
             order_sql=[o.sql(dialect=dialect)[:90] for o in (order.expressions if order else [])],
+            order_reprojected=[_reprojected(o) for o in (order.expressions if order else [])],
         ))
 
     d.has_qualify = bool(list(tree.find_all(exp.Qualify)))

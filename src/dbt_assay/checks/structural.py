@@ -132,6 +132,10 @@ def ranks_by_degrees(project, digests: dict[str, Digest]) -> list[Finding]:
         for w in d.windows:
             for i, r in enumerate(w.order_roots):
                 ru = r.upper()   # root_of() may return "column"/"case" in lower case
+                # Reprojected first: the measure is in the target CRS's units, which is the correct
+                # pattern and must never be flagged.
+                if i < len(w.order_reprojected) and w.order_reprojected[i]:
+                    continue
                 if ru in DEGREE_FUNCS:
                     base, note = 3, (
                         "A degree of longitude compresses by cos(latitude) while a degree of "
