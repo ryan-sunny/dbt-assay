@@ -29,6 +29,22 @@ _TEMPORAL = re.compile(
 _MULTI_HOP = re.compile(
     r"\b(and then|after determining|once you have|first .{0,24}then|based on (?:your|the) "
     r"(?:answer|previous)|having established)\b", re.IGNORECASE)
+# *** ASKING WHETHER A NUMBER IS THE RIGHT SIZE IS ARITHMETIC IN DISGUISE. ***
+# TypeSafe: Jev "cannot reliably judge whether two values are near each other". Measured on
+# assay's OWN units family, which asked whether magnitudes were plausible for a unit: it called
+# 218,235 "acres" consistent at 0.82 and 4,073,925 "acre-feet" consistent at 0.54 -- wrong by
+# 43,560x and 325,851x. The instructions contained no arithmetic WORD, so the calculator rule
+# missed it entirely. Magnitude is its own trap.
+#
+# "how many" is NOT here. `severity_fit` asks how serious a violation is GIVEN a blast radius that
+# code already counted, and it was verified working -- 1.59 on a primary key twenty-four
+# dashboards read, 0.14 on a note column nobody reads. Code counts, the model judges consequence:
+# that is the correct pattern and the rule must not punish it.
+_MAGNITUDE = re.compile(
+    r"\b(magnitude|magnitudes|order of magnitude|plausible for|too (?:large|small|big|high|low)|"
+    r"how (?:large|big|small)|within range|in the right range|near each other|"
+    r"close to|bigger than|smaller than|greater than|less than|reasonable size|"
+    r"look like that unit)\b", re.IGNORECASE)
 _HEDGE = re.compile(r"\b(medium|average|moderate|somewhat|fairly|reasonable|appropriate|good|"
                     r"bad|nice|proper)\b", re.IGNORECASE)
 # Any option that lets the model decline. Measured cost of omitting one: the model must pick a
@@ -108,6 +124,13 @@ def lint_question(name: str, q: dict, shipped: dict | None = None) -> list[Issue
             "calculator. Measured here: asked whether a date expression implemented 'the last day "
             "of the second month following', it scored the CORRECT one 0.39 and a WRONG one 0.62. "
             "Settle arithmetic in SQL and ask about the meaning.")
+    if _MAGNITUDE.search(both):
+        add("error", "numeric_magnitude",
+            "this asks whether a NUMBER is the right size, which Jev cannot do -- TypeSafe say it "
+            "cannot reliably judge whether two values are near each other. Measured on assay's "
+            "own units family: 218,235 passed as plausible 'acres' at 0.82, and 4,073,925 as "
+            "'acre-feet' at 0.54, wrong by 43,560x and 325,851x. Compute the range in SQL and ask "
+            "the model only what KIND of thing the values are.")
     if len(_TEMPORAL.findall(instr)) >= 2:
         add("warn", "dates_are_text",
             "this leans on temporal ordering. Jev reads dates as TEXT, not as ordered quantities, "

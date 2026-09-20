@@ -2316,9 +2316,18 @@ def feeds(
                 if a and a["answer"] in ("holds_something_else", "mixed") and \
                         (a.get("confidence") or 0) >= 0.6:
                     findings.append((t.relation, c, a["answer"], a.get("confidence")))
+                # *** THE MODEL NAMES THE UNIT; CODE DECIDES IF THE NUMBERS FIT IT. ***
+                # Asking the model whether a magnitude was plausible passed 218,235 "acres" at
+                # 0.82. It now says only what the NAME claims, and `unit_range_conflict` compares
+                # that against the range the probe counted.
                 u = ans.get(f"unit__{c}")
-                if u and u["answer"] == "wrong_scale" and (u.get("confidence") or 0) >= 0.6:
-                    findings.append((t.relation, c, "wrong_scale", u.get("confidence")))
+                if u and u["answer"] not in ("no_unit_implied", "cannot_tell") \
+                        and (u.get("confidence") or 0) >= 0.6:
+                    why = feeds_mod.range_conflicts(u["answer"], profile, cols.index(c)
+                                                    if c in cols else None)
+                    if why:
+                        findings.append((t.relation, c, f"unit_range_conflict: {why}",
+                                         u.get("confidence")))
 
     if sentinels:
         console.print(f"\n[yellow]{len(sentinels)} placeholder value(s) found by counting, "

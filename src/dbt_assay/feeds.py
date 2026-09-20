@@ -98,3 +98,54 @@ def questions_for(cols: list, subject: FeedSubject) -> dict:
 
 def chunks(items: list, size: int = CHUNK) -> list[list]:
     return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+# *** THE HALF THE MODEL MUST NOT DO. ***
+# Verified: asked whether magnitudes were plausible for a unit, Jev passed 218,235 as "acres" at
+# 0.82 and 4,073,925 as "acre-feet" at 0.54 -- wrong by 43,560x and 325,851x. Comparing a number
+# against a range is arithmetic, it is exact, and it is free. The model says what the NAME claims;
+# this says whether the values can be that.
+#
+# The bounds are deliberately WIDE. They exist to catch a unit confusion of three or more orders
+# of magnitude, which is what a gallons/acre-feet or sqft/acres mix-up looks like. A merely large
+# parcel must not be a finding.
+# (max plausible, human name). Deliberately WIDE: these catch a unit confusion of three or more
+# orders of magnitude -- a gallons/acre-feet or sqft/acres mix-up -- never a merely large value.
+UNIT_MAX: dict[str, tuple[float, str]] = {
+    "acres":                 (2.0e5,  "acres"),      # the largest US ranches are ~1e6; a roll is not
+    "square_feet":           (5.0e9,  "square feet"),
+    "acre_feet":             (1.0e6,  "acre-feet"),  # Lake Powell is ~2.4e7
+    "gallons":               (1.0e12, "gallons"),
+    "cubic_feet_per_second": (1.0e6,  "cfs"),        # the Mississippi is ~6e5
+    "gallons_per_minute":    (1.0e7,  "gpm"),
+    "feet":                  (1.0e5,  "feet"),       # Everest is 2.9e4
+    "miles":                 (1.0e4,  "miles"),
+    "metres":                (1.0e5,  "metres"),
+    "currency":              (1.0e12, "a currency amount"),
+    "days":                  (1.0e6,  "days"),
+}
+
+
+def range_conflicts(unit_family: str, profile: dict, col_index: int | None) -> str | None:
+    """A plain-language reason the observed range cannot be the unit the name claims, or None.
+
+    Returns None whenever it cannot tell -- no profile, no index, no bounds for that family.
+    Silence here must mean "not checked", never "checked and fine", which is why the caller only
+    reports when a reason comes back.
+    """
+    if col_index is None or unit_family not in UNIT_MAX:
+        return None
+    hi, human = UNIT_MAX[unit_family]
+    try:
+        mx = profile.get(f"max_{col_index}")
+        mn = profile.get(f"min_{col_index}")
+        mx = float(mx) if mx is not None else None
+        mn = float(mn) if mn is not None else None
+    except (TypeError, ValueError):
+        return None
+    if mx is not None and mx > hi:
+        return (f"the name claims {human}, and the largest value is {mx:,.0f}, "
+                f"which is more than {hi:,.0f}")
+    if mn is not None and mn < 0 and unit_family not in ("currency", "feet", "metres"):
+        return f"the name claims {human}, and the smallest value is {mn:,.2f}, which is negative"
+    return None

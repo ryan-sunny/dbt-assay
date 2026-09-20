@@ -417,7 +417,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.4.0
+- uses: ryan-sunny/dbt-assay@v0.5.0
   with:
     target: target-head
     baseline: base/target

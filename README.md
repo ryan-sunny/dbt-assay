@@ -20,6 +20,10 @@ Jev](https://docs.typesafe.ai) reads the meaning. SQL does the rest.
 > Built while auditing a Colorado water rights warehouse, where a case number is only unique inside
 > a water division and nothing in the stack could tell me that.
 
+**[What has actually been verified](docs/VERIFICATION.md)** — per family, whether a person has read
+its findings against the real thing. Two families failed their own controls and were rewritten;
+five have not been verified at all, and it says which.
+
 **[Full overview](docs/OVERVIEW.md)** — what it is, what each tier finds, and how to run it as a
 standing part of your warehouse rather than a one-off audit.
 
@@ -95,7 +99,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.4.0
+- uses: ryan-sunny/dbt-assay@v0.5.0
   with:
     target: target-head
     baseline: base/target

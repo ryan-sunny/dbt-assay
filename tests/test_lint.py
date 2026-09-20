@@ -90,3 +90,24 @@ def test_options_described_alike_are_flagged_but_terse_ones_are_not():
         "cannot_tell": {"what": "The evidence does not settle it either way."}})
     assert "options_not_separated" in _rules(same)
     assert "options_not_separated" not in _rules(_bad())
+
+
+def test_asking_whether_a_number_is_the_right_size_is_refused():
+    """*** VERIFIED ON REAL VALUES, AND assay's OWN UNITS FAMILY FAILED IT. ***
+
+    v1 asked whether magnitudes were plausible for the unit a name implies. Against real warehouse
+    values it called 218,235 "acres" CONSISTENT at 0.82 and 4,073,925 "acre-feet" CONSISTENT at
+    0.54 -- wrong by 43,560x and 325,851x. TypeSafe publish the reason: the model cannot reliably
+    judge whether two values are near each other. The instructions held no arithmetic WORD, so the
+    calculator rule missed it entirely.
+    """
+    q = _bad(instructions={"question": "Do the magnitudes look plausible for that unit?"})
+    assert "numeric_magnitude" in _rules(q)
+
+
+def test_it_does_not_punish_code_counting_and_the_model_judging_consequence():
+    """`severity_fit` asks how serious a violation is GIVEN a blast radius code already counted,
+    and it was verified working: 1.59 on a primary key twenty-four dashboards read, 0.14 on a note
+    column nobody reads. That is the CORRECT pattern and must not be flagged."""
+    assert "numeric_magnitude" not in {i.rule for i in lint_question(
+        "severity_fit", SHIPPED["severity_fit"], SHIPPED)}

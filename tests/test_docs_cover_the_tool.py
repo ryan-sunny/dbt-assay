@@ -150,3 +150,21 @@ def test_the_vocabulary_really_does_reach_every_question():
     for mod in (align, columns, contracts, feeds, practices, rows, semantics):
         src = __import__("inspect").getsource(mod)
         assert 'state["vocabulary"] = vocab' in src or '"vocabulary"' in src, mod.__name__
+
+
+def test_every_question_family_has_a_verification_status():
+    """*** AN ANSWER IS NOT EVIDENCE THAT THE QUESTION WORKS. ***
+
+    Two families passed every test in this suite and failed when a person read their output
+    against real data. docs/VERIFICATION.md records which have had that done and which have not,
+    and a family missing from it is one whose status nobody can look up.
+    """
+
+    from dbt_assay.contracts import SHIPPED
+    p = ROOT / "docs" / "VERIFICATION.md"
+    if not (ROOT / "README.md").exists():
+        pytest.skip("no docs in a wheel install")
+    assert p.exists(), "the verification record is gone"
+    body = p.read_text()
+    missing = [f for f in SHIPPED if f"`{f}`" not in body]
+    assert not missing, missing

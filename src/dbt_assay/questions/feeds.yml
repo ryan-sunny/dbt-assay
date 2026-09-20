@@ -37,23 +37,61 @@ field_matches_its_name:
 units_are_what_the_column_claims:
   id_prefix: "unit"
   type: choice
-  prompt_version: "feed.units.v1"
+  prompt_version: "feed.units.v2"
+  # *** v1 ASKED WHETHER THE MAGNITUDES WERE PLAUSIBLE, AND JEV CANNOT DO THAT. ***
+  # Verified against real values: it called 218,235 "acres" CONSISTENT at 0.82 and 4,073,925
+  # "acre-feet" CONSISTENT at 0.54 -- wrong by 43,560x and 325,851x. TypeSafe publish the reason:
+  # the model cannot reliably judge whether two values are near each other. The instructions held
+  # no arithmetic word, so the calculator rule missed it and a `numeric_magnitude` rule now exists.
+  #
+  # So it asks what it CAN answer: what unit the NAME claims. That is language, and the sibling
+  # family that does the same job for names measured 0.92 to 0.99 on real columns. Comparing an
+  # observed range against that unit is arithmetic, and arithmetic is code's.
   instructions:
     question: >-
-      `column` is numeric and its name or documentation implies a unit. Do the values in `sample`,
-      and the range in `profile`, look like that unit?
+      What unit does the NAME of `column` claim its values are in? Judge the name and any
+      documentation only. Do not judge whether the sample values are the right size for it; that
+      is checked separately.
     note: >-
-      A feed that changes unit passes every schema and volume test ever written, because only the
-      magnitudes move.
+      Answer `no_unit_implied` whenever the name promises nothing about units. Most columns do not.
   criteria:
-    consistent:
-      what: "The magnitudes are plausible for the unit the name implies."
-    wrong_scale:
+    acres:
+      what: "The name claims acres."
+      examples: ["land_acres", "irrigated_acres", "acreage"]
+    square_feet:
+      what: "The name claims square feet."
+      examples: ["land_sqft", "building_area_sf", "footprint_square_feet"]
+    acre_feet:
+      what: "The name claims acre-feet."
+      examples: ["decreed_af", "amount_acre_feet", "storage_af"]
+    gallons:
+      what: "The name claims gallons."
+      examples: ["volume_gallons", "daily_gal"]
+    cubic_feet_per_second:
+      what: "The name claims cfs, a rate of flow."
+      examples: ["rate_cfs", "decreed_cfs"]
+    gallons_per_minute:
+      what: "The name claims gpm, a rate of flow."
+      examples: ["pump_gpm", "yield_gallons_per_minute"]
+    feet:
+      what: "The name claims feet, as a depth, height or length."
+      examples: ["well_depth_ft", "elevation_feet", "water_level_ft"]
+    miles:
+      what: "The name claims miles."
+      examples: ["reach_length_miles", "distance_mi"]
+    metres:
+      what: "The name claims metres."
+      examples: ["depth_m", "elevation_metres"]
+    currency:
+      what: "The name claims a currency amount."
+      examples: ["sale_price_usd", "assessed_value", "cost_dollars"]
+    days:
+      what: "The name claims a number of days."
+      examples: ["days_since_issued", "age_days"]
+    no_unit_implied:
       what: >-
-        The values are plausible for a DIFFERENT unit of the same quantity: gallons where
-        acre-feet are named, feet where miles are, cents where dollars are.
-      examples: ["a decreed acre-feet column whose median is in the hundreds of thousands"]
-    not_a_quantity:
-      what: "The values are a code or an identifier rather than a measurement at all."
+        The name promises no unit at all. A count, an identifier, a code, a flag, a name, a date,
+        or a measurement whose name does not say what it is measured in.
+      examples: ["permit_id", "county", "n_records", "is_completed", "amount", "value"]
     cannot_tell:
-      what: "The name implies no unit, or the sample does not settle it."
+      what: "The name is too abbreviated or ambiguous to say which unit it claims."
