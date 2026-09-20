@@ -613,3 +613,36 @@ def test_a_model_whose_columns_are_unknown_is_left_alone():
     d = SimpleNamespace(alias_of={}, output_exprs={})
     got = _in_this_models_own_names(GrainCandidate(["x"], "from_driver", ""), "u", {"u": d}, sch)
     assert got.not_emitted == []
+
+
+def test_the_mcp_findings_tool_returns_what_an_agent_needs_to_act():
+    """*** IT RETURNED FIVE FIELDS WHILE `--json` RETURNED NINE. ***
+
+    No file, so the agent could not open anything. No evidence, so three findings on one model
+    came back with IDENTICAL summaries and no way to tell which column each was about. No blast
+    radius, so a leaf looked like a model twenty-five marts read. All of it was already computed
+    and thrown away at the one interface an agent uses.
+    """
+    import inspect
+
+    from dbt_assay.mcp_server import Backend
+    src = inspect.getsource(Backend.findings)
+    for field in ('"file"', '"evidence"', '"downstream"', '"marts"'):
+        assert field in src, field
+    assert "must_stay_true" in src
+
+
+def test_an_agent_is_told_what_a_fix_must_not_break():
+    """A finding says what is wrong. `must_stay_true` says what was already RIGHT, which is the
+    half an agent needs in order not to trade one defect for another."""
+    import inspect
+
+    from dbt_assay.mcp_server import Backend
+    from dbt_assay.skilltext import SKILL_MD
+    src = inspect.getsource(Backend._constraints)
+    assert "claims_the_code_currently_supports" in src
+    assert "verdicts_a_person_recorded" in src
+    assert "source = 'human'" in src, "a label is not a person's ruling"
+    # and the procedure tells it to read them
+    assert "must_stay_true" in SKILL_MD
+    assert "assay regress" in SKILL_MD

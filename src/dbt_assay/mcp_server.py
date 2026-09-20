@@ -86,9 +86,62 @@ class Backend:
                 "consumers": [st.project.name_of(x) for x in st.project.models[uid].children]}
 
     def findings(self, model: str | None = None, limit: int = 20) -> dict:
-        fs = live.findings_for(self.state(), model)[:limit]
-        return {"findings": [{"check": f.check, "model": f.subject_name, "summary": f.summary,
-                              "detail": f.detail, "weight": round(f.weight, 2)} for f in fs]}
+        """Everything an agent needs to act, not a summary it has to re-derive.
+
+        *** THIS RETURNED FIVE FIELDS WHILE `--json` RETURNED NINE. ***
+        No file, so the agent could not open anything. No evidence, so three findings on one model
+        came back with IDENTICAL summaries and no way to tell which column each was about. No
+        blast radius, so it could not tell a leaf from a model twenty-five marts read. The data
+        was already computed and thrown away at the one interface an agent uses.
+
+        And the part neither surface had: WHAT MUST STAY TRUE. A fix is not judged by whether the
+        finding disappears -- it is judged by whether the claims this project makes about the
+        model are still true afterwards, and by whether a person's recorded verdict still holds.
+        An agent that cannot see those will satisfy the check and break the meaning.
+        """
+        st = self.state()
+        fs = live.findings_for(st, model)[:limit]
+        out = {"findings": [{"check": f.check, "model": f.subject_name,
+                             "file": f.file,
+                             "summary": f.summary, "detail": f.detail,
+                             "evidence": f.evidence or {},
+                             "downstream": f.descendants, "marts": f.marts,
+                             "weight": round(f.weight, 2)} for f in fs]}
+        if model:
+            out["must_stay_true"] = self._constraints(model)
+        return out
+
+    def _constraints(self, model: str) -> dict:
+        """The claims and rulings a fix to this model must not break.
+
+        A finding says what is wrong. This says what was already RIGHT, which is the half an agent
+        needs in order not to trade one defect for another.
+        """
+        c = self.claims(model)
+        claims = [x for x in c.get("claims", []) if x.get("code") == "supports"]
+        st = self._open_store()
+        verdicts: list = []
+        if st is not None:
+            try:
+                uid = next((u for u, m in self.state().project.models.items()
+                            if m.name == model), None)
+                if uid:
+                    rows = st.con.execute(
+                        "select family, answered, verdict from adjudications "
+                        "where source = 'human' and (subject = ? or subject like ?)",
+                        [uid, uid + "::%"]).fetchall()
+                    verdicts = [{"question": r[0], "answer": r[1], "a_person_said": r[2]}
+                                for r in rows]
+            finally:
+                st.close()
+        return {
+            "claims_the_code_currently_supports": [x["claim"] for x in claims][:12],
+            "verdicts_a_person_recorded": verdicts[:12],
+            "note": ("A fix is not finished when the finding goes away. It is finished when these "
+                     "are still true. If your change makes one of them false, change the claim "
+                     "too and say so -- `assay claims --extract` will pick it up, and "
+                     "`assay regress` will tell you which recorded verdicts your change moved."),
+        }
 
     def changed_contracts(self) -> dict:
         """What the working tree changed since the baseline. The self-check.

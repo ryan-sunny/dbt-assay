@@ -46,8 +46,18 @@ re-derive it by reading SQL, and do not guess.
 If it reports a grain change, stop. Either the change was unintended and you should undo it, or it
 was intended and it needs a version bump. Do not hand back work where the grain moved silently.
 
-7. `findings(model)` — the contradictions assay currently sees in what you just wrote, including
-   any claim your edit has just made false.
+7. `findings(model)` — the contradictions assay sees in what you just wrote, including any claim
+   your edit has just made false.
+
+   **Read `must_stay_true` before you change anything.** It lists the claims this project makes
+   that the code currently supports, and the verdicts a person has recorded. A fix is not finished
+   when the finding goes away — it is finished when those are still true. Satisfying a check while
+   making a claim false is a worse state than the one you started in, and it is the specific
+   failure an agent is most likely to produce.
+
+   Each finding carries `file`, `evidence`, `downstream` and `marts`. `evidence` names the exact
+   construct: the partition and sort keys of the window, the predicate, the columns. Use it to
+   find the code rather than re-deriving it, and use `marts` to decide how carefully to tread.
 
 ## Rules that are not negotiable
 
@@ -65,6 +75,9 @@ was intended and it needs a version bump. Do not hand back work where the grain 
   report it as a contradiction against your name.
 - **Do not add a claim you have not made true.** A sentence in a comment becomes a checked claim
   the next time anyone runs `assay claims --extract`.
+- **When you change what a model does, run `assay regress`.** It replays every answer a person
+  already agreed with and tells you which ones your edit moved. Nothing else in this project can
+  tell you that, and a moved verdict is a regression whichever direction it went.
 - **Report what assay said, not what you concluded from it.** If it was uncertain, say it was
   uncertain.
 

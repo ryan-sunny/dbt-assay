@@ -582,7 +582,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.9.6
+- uses: ryan-sunny/dbt-assay@v0.10.0
   with:
     target: target-head
     baseline: base/target
@@ -619,6 +619,24 @@ The MCP server gives an agent the **ability** to check itself: it can ask what a
 a column is, what the grain is, and what would break before it writes a line. The skill file gives
 it the **obligation** — without it an agent checks when it remembers, and with it, checking is the
 procedure.
+
+### What a finding hands the agent
+
+The point is not that assay writes the fix. It is that an agent asking `findings(model)` gets
+everything needed to write it, and everything needed **not to break something else**:
+
+| | |
+|---|---|
+| `file` | where to open |
+| `evidence` | the exact construct — the window's partition and sort keys, the predicate, the columns. Not a description of it |
+| `downstream`, `marts` | how carefully to tread. A leaf is not a model 19 marts read |
+| `detail` | why it is wrong, and what shape the fix takes |
+| **`must_stay_true`** | **the claims this project makes that the code currently supports, and the verdicts a person recorded** |
+
+That last row is the one that matters. **A fix is not finished when the finding goes away — it is
+finished when those are still true.** Satisfying a check while making a claim false is a worse
+state than the one you started in, and it is the specific failure an agent is most likely to
+produce. `assay regress` then says which recorded verdicts the edit moved.
 
 That is the "lead data engineer in the warehouse" part, literally. Your agent stops guessing what
 `building_key` is and asks. It stops writing a `not_null` test on a coalesced column because the
