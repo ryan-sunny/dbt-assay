@@ -81,3 +81,45 @@ def test_the_families_with_no_finding_are_marked_as_such_where_they_are_listed()
         row = next((ln for ln in table.splitlines() if f"`{fam}`" in ln), None)
         assert row, f"{fam} is not in the table"
         assert "—" in row or "-" in row.split("|")[-2], f"{fam} is not marked as feeding nothing"
+
+
+def test_every_command_and_flag_in_the_docs_actually_exists():
+    """*** A DOC THAT NAMES A FLAG THAT DOES NOT EXIST IS WORSE THAN NO DOC. ***
+
+    Caught twice by hand before this existed: `assay inventory --out` is `--html`, and
+    `assay backtest --commits` is `--limit`. Someone copying either one gets an error and stops
+    trusting the rest of the page.
+
+    Checked against the registered PARAMETERS, never against rendered help, which wraps.
+    """
+    import re
+
+    import typer.main
+
+    from dbt_assay.cli import app
+    docs = _docs()
+    if docs is None:
+        pytest.skip("no docs in a wheel install")
+
+    by_name = {(c.name or c.callback.__name__.removesuffix("_cmd").replace("_", "-")): c
+               for c in app.registered_commands}
+    bad, seen = [], 0
+    for block in re.findall(r"```bash\n(.*?)```", docs, re.DOTALL):
+        for raw in block.splitlines():
+            line = raw.split("#")[0].strip().replace("uvx dbt-assay", "assay")
+            if not line.startswith("assay "):
+                continue
+            seen += 1
+            parts = line.split()
+            cmd = by_name.get(parts[1])
+            if cmd is None:
+                bad.append(f"{parts[1]}: no such command")
+                continue
+            params = typer.main.get_params_convertors_ctx_param_name_from_function(
+                cmd.callback)[0]
+            flags = {o for p in params for o in getattr(p, "opts", [])}
+            for f in (p for p in parts[2:] if p.startswith("--")):
+                if f not in flags:
+                    bad.append(f"{parts[1]} {f}")
+    assert seen > 25, f"the doc reader found only {seen} commands; it is broken"
+    assert not bad, bad

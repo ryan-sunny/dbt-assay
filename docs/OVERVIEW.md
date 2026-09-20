@@ -232,6 +232,93 @@ Fifteen families ship. `assay config` shows how many verdicts each has and which
 `trace`, and ruling on them records evidence — but it moves no gate, and `assay review -i` says so
 before the keypresses start. That set is asserted by a test, so it cannot quietly become a lie.
 
+## Every command, and when you reach for it
+
+```bash
+assay onboard             # a project assay has never seen. Start here.
+assay onboard --compile   # ...and run `dbt compile` first, where models lack compiled SQL
+assay config              # what was resolved: provider, spend cap, where your key came from
+assay init                # write an audit.yml and nothing else
+```
+
+**Reading what you have** — no key, no network
+
+```bash
+assay scan                # parse coverage, and what could not be read
+assay check               # every finding, structural and judged, ranked by blast radius
+assay inventory           # what every model IS; --html writes a page you can commit
+assay trace <column>      # where one column's value actually came from
+assay tests               # tests that cannot fail, and what nothing asserts at all
+assay practices           # dbt-project-evaluator violations, with judged exceptions
+```
+
+**The judged tier** — needs a key
+
+```bash
+assay claims --extract    # turn your prose into claims
+assay verify              # check each claim against the code
+assay traverse            # judge every hop in the graph
+assay columns             # what each column MEANS
+assay semantics           # why each filter is there; whether descriptions still hold
+assay infer               # grain, where code could not settle it
+assay align               # two columns in different models that mean the same thing
+assay feeds               # has a source column changed its meaning? (needs the probe)
+assay adjudicate          # triage the rows a dbt test already failed
+```
+
+**Settling things by counting, through your own dbt**
+
+```bash
+assay probe --dry-run     # the SQL it would run, run nothing
+assay probe               # run it, via `dbt show --inline`. assay never holds a credential.
+```
+
+**Ruling on what it found**
+
+```bash
+assay review -i           # a / d / u / s, least certain first
+```
+
+**On a branch, and over time**
+
+```bash
+assay diff --baseline <main target>        # what changed about what models MEAN
+assay backtest --repo . --limit 200        # would this have caught YOUR past bugs?
+assay version-check --baseline <target>    # does anything owe a version bump?
+assay version-stamps                       # write the stamps
+assay watch                                # rerun on save; print only what your edit changed
+```
+
+**Wiring it in**
+
+```bash
+assay export <dir>        # the tables, as seeds your own models can join to
+assay mcp                 # the MCP server
+assay skill --write       # the procedure your agent follows
+```
+
+## Configuration: audit.yml
+
+`assay init` writes it commented, and every field is optional — the defaults are what runs without
+the file at all.
+
+| block | what it does |
+|---|---|
+| `jev:` | `provider`, `model`, `max_spend_usd`. The cap is per invocation and is estimated **before** the call, because a cap that fires after the spend is not a cap |
+| `gating:` | `min_adjudications` — human verdicts a question needs before it may fail a build. 20 **per question**, not overall |
+| `questions:` | per-**check** thresholds and actions. A key matching no check is reported, never silently ignored |
+| `practices:` | how each dbt-project-evaluator rule is treated: enforce, recommend, adjudicate, off |
+| `vocab:` | **what your words mean here.** Injected into the state for every question, which is why it improves answers to questions you never wrote |
+| `explanations:` | the domain options for row adjudication, per mart. This is where your domain knowledge lives |
+| `waivers:` | a reason is required and an expiry recommended. A waiver naming no real check is reported |
+
+**Your key is never in this file**, because this file belongs in git. It comes from the environment
+or a `.env`, and `assay config` says which.
+
+**`--store` is assay's own file, not your warehouse.** It defaults to `assay.duckdb` in the working
+directory and holds judgments, verdicts, claims and findings. `assay export` is how its contents
+become relations *in* your warehouse.
+
 ## Nothing gates until it has been measured
 
 This is the part most tools get wrong, and it is why `assay` is safe to put in CI on day one.
