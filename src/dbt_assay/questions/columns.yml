@@ -58,6 +58,21 @@ column_role:
 # (a not_null test, a coalesce over a literal, an inner join key) and is now decided before asking.
 # Only genuinely nullable columns reach this question, so "it cannot be NULL" is not an answer it
 # can give.
+# *** v2 IS NOT ENABLED BY DEFAULT, AND THE MEASUREMENT IS WHY. ***
+# v1 answered `unknown_value` 25 times out of 25. v2 dropped `impossible` (code decides that) and a
+# real spread appeared -- unknown_value 73%, cannot_tell 8%, means_zero 7%, not_yet 6%,
+# not_applicable 5% -- but MEDIAN CONFIDENCE WAS 0.49 across six options. That is a diffuse
+# distribution, which is the model saying the state does not settle it, and it is right: nothing in
+# the state says how often the column is actually NULL, nor what role the column plays.
+#
+# Both are obtainable and neither is a rewording:
+#   * the PROBE knows the null rate, and a count column that is 30% NULL reads very differently
+#     from one that is never NULL in practice;
+#   * `column_role` is answered in the SAME request, so it cannot be seen -- questions run in
+#     parallel and cannot read one another. Null meaning wants role in its state, which makes it a
+#     legitimate SECOND request, the case the docs describe as warranted.
+# Until it has that evidence it stays opt-in. A question asked without what it needs produces a
+# confident-looking answer to a worse question.
 null_meaning:
   type: choice
   prompt_version: "null.v2"

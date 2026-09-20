@@ -147,18 +147,23 @@ def build_state(uid: str, project, schema, facts: dict[str, ColumnFacts], cols: 
     return _prune(state)
 
 
-def questions_for(cols: list[str], facts: dict[str, ColumnFacts] | None = None) -> dict:
+def questions_for(cols: list[str], facts: dict[str, ColumnFacts] | None = None,
+                  ask_null: bool = False) -> dict:
     """Both families about the same chunk, in ONE call: they share a state, so the state is paid
     for once and each extra question costs only its own tokens.
 
     A column code has already shown cannot be NULL gets no null question. Asking one spends tokens
     to receive a confident answer to a hypothetical.
+
+    `ask_null` defaults to FALSE. Measured: without a null rate from the probe and without the
+    column's role, the family answers at median confidence 0.49 over six options. See the note
+    beside it in questions/columns.yml.
     """
     qs = {}
     for c in cols:
         qs[f"role__{c}"] = choice({"column": c, **ROLE_Q["instructions"]}, ROLE_Q["criteria"])
         f = (facts or {}).get(c)
-        if f is None or f.can_be_null:
+        if ask_null and (f is None or f.can_be_null):
             qs[f"null__{c}"] = choice({"column": c, **NULL_Q["instructions"]}, NULL_Q["criteria"])
     return qs
 

@@ -464,6 +464,10 @@ def columns(
     limit: int = typer.Option(0, "--limit", "-n", help="stop after N models"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     config_path: str = typer.Option(".", "--config"),
+    with_null: bool = typer.Option(False, "--with-null",
+                                   help="also ask what a NULL means. Off by default: without a "
+                                        "null rate from `assay probe` it answers at ~0.49 "
+                                        "confidence over six options."),
     control: bool = typer.Option(False, "--control",
                                  help="ask only about columns the project already labels, and "
                                       "report agreement"),
@@ -506,7 +510,7 @@ def columns(
             st = columns_mod.build_state(uid, project, schema, facts, chunk, grain, cfg.vocab)
             console.print(f"\n[bold]{project.models[uid].name}[/]")
             console.print(_json.dumps({"state": st,
-                                       "questions": columns_mod.questions_for(chunk, facts)},
+                                       "questions": columns_mod.questions_for(chunk, facts, with_null)},
                                       indent=1, default=str)[:2600])
         raise typer.Exit(0)
 
@@ -522,7 +526,7 @@ def columns(
         for chunk in columns_mod.chunks(cols):
             st = columns_mod.build_state(uid, project, schema, facts, chunk, grain, cfg.vocab)
             try:
-                answers = decide(store, client, st, columns_mod.questions_for(chunk, facts),
+                answers = decide(store, client, st, columns_mod.questions_for(chunk, facts, with_null),
                                  decision_key=uid,
                                  prompt_version=f"{columns_mod.ROLE_VERSION}+{columns_mod.NULL_VERSION}",
                                  caller="assay.columns")

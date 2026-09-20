@@ -13,7 +13,7 @@ def _load(project_dir):
 
 
 def test_both_families_are_asked_about_one_chunk_in_one_call():
-    qs = columns.questions_for(["a", "b"])
+    qs = columns.questions_for(["a", "b"], ask_null=True)
     assert sorted(qs) == ["null__a", "null__b", "role__a", "role__b"]
     assert all(q["type"] == "choice" for q in qs.values())
 
@@ -21,7 +21,7 @@ def test_both_families_are_asked_about_one_chunk_in_one_call():
 def test_every_choice_carries_a_no_match_option():
     """The 97CW0059 division bug surfaced only because the model could say the answer was not
     on the list."""
-    qs = columns.questions_for(["a"])
+    qs = columns.questions_for(["a"], ask_null=True)
     assert "cannot_tell" in qs["null__a"]["criteria"]
     assert "other" in qs["role__a"]["criteria"]
 
@@ -86,3 +86,14 @@ def test_the_reason_a_column_can_never_be_null_is_stated_in_the_state(project_di
     st = columns.build_state("model.p.stg_bad_notnull", p, sch, facts, ["amount"])
     e = st["columns_under_judgement"][0]
     assert e["can_be_null"] is False and e["never_null_because"]
+
+
+def test_the_null_family_is_off_unless_asked_for(project_dir):
+    """Measured at median confidence 0.49 over six options without a null rate or a known role.
+    A question asked without what it needs answers a worse question confidently."""
+    p, d, sch, decl = _load(project_dir)
+    facts = columns.facts_for("model.p.int_ok_unique", p, d, sch, decl)
+    default = columns.questions_for(["section_id"], facts)
+    assert not any(q.startswith("null__") for q in default)
+    opted_in = columns.questions_for(["section_id"], facts, ask_null=True)
+    assert "null__section_id" in opted_in
