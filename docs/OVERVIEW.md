@@ -205,6 +205,33 @@ fires after the spend is not a cap.
 
 ---
 
+## Every question, and what rests on it
+
+Fifteen families ship. `assay config` shows how many verdicts each has and which can gate;
+`rests_on` on a finding names the family it derives from, and these are those names.
+
+| family | type | finding it feeds |
+|---|---|---|
+| `claim_alignment` | choice | `code_contradicts_a_claim` |
+| `sentence_is_a_claim` | choice | — *extraction: it decides what to ask* |
+| `edge_preserves_the_grain` | choice | `hop_multiplies_rows` |
+| `column_role` | choice | `identifier_outside_grain`, `measure_inside_grain` |
+| `column_is_part_of_the_key` | noul | `grain_contradicts_test`, `grain_unresolved` |
+| `description_contradicts_the_code` | noul | `description_contradicts_the_code` |
+| `null_meaning` | choice | — |
+| `predicate_intent` | choice | — |
+| `same_concept` | score | — |
+| `severity_fit` | score | — |
+| `practice_exception` | choice | — |
+| `field_matches_its_name` | choice | — *needs the probe* |
+| `units_are_what_the_column_claims` | choice | — *needs the probe* |
+| `row_explanation` | choice | — *needs warehouse rows* |
+| `row_is_internally_coherent` | noul | — *needs warehouse rows* |
+
+**A dash means no finding rests on it yet.** Those answers still fill the inventory, the page and
+`trace`, and ruling on them records evidence — but it moves no gate, and `assay review -i` says so
+before the keypresses start. That set is asserted by a test, so it cannot quietly become a lie.
+
 ## Nothing gates until it has been measured
 
 This is the part most tools get wrong, and it is why `assay` is safe to put in CI on day one.
@@ -253,7 +280,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.3.0
+- uses: ryan-sunny/dbt-assay@v0.3.3
   with:
     target: target-head
     baseline: base/target

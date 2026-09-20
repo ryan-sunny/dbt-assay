@@ -78,6 +78,12 @@ was intended and it needs a version bump. Do not hand back work where the grain 
   and check each one against the code.
 - `assay traverse` — judge every hop in the graph for a fan-out nobody declared.
 
+## When `changed_contracts` is noisy
+
+`rebase()` takes a fresh baseline. Use it when you have deliberately changed what several models
+mean and have already reported that, so the next check compares against your new normal rather
+than repeating what you have already said.
+
 ## What assay is not
 
 It reads code and rows, never intent. It cannot tell you whether a business rule is correct, only
