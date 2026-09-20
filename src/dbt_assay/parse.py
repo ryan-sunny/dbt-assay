@@ -55,6 +55,31 @@ def _relname(t: exp.Table) -> str:
     return ".".join(p for p in (t.catalog, t.db, t.name) if p)
 
 
+def _base_column(e: exp.Expression) -> str | None:
+    """The single column an expression rests on, if there is exactly one."""
+    if isinstance(e, exp.Alias):
+        e = e.this
+    cols = list(e.find_all(exp.Column)) if isinstance(e, exp.Expression) else []
+    return cols[0].name.lower() if len(cols) == 1 else None
+
+
+def _resolve_group_by(group_exprs, select_exprs) -> list[str]:
+    out = []
+    for g in group_exprs:
+        if isinstance(g, exp.Literal) and g.is_int:
+            i = int(g.this) - 1                      # ordinals are 1-based
+            if 0 <= i < len(select_exprs):
+                sel = select_exprs[i]
+                out.append((_base_column(sel) or sel.alias_or_name or "").lower())
+                continue
+        if isinstance(g, exp.Column):
+            out.append(g.name.lower())
+            continue
+        base = _base_column(g)
+        out.append(base or g.sql().lower())
+    return [c for c in out if c]
+
+
 def _from_of(sel: exp.Select):
     """sqlglot renamed this arg from `from` to `from_` at v30.
 
@@ -156,6 +181,10 @@ class JoinFact:
 class WindowFact:
     position: str                   # qualify | projection
     partition_by: list[str] = field(default_factory=list)
+    # Partition keys resolved to base columns. `partition by lower(coalesce(city, ''))` split on a
+    # dot yields "''))" which is not a column, and a grain built from it is nonsense rather than
+    # merely wrong.
+    partition_columns: list[str] = field(default_factory=list)
     order_roots: list[str] = field(default_factory=list)  # what each order key roots in
     order_sql: list[str] = field(default_factory=list)
 
@@ -178,6 +207,11 @@ class Digest:
     windows: list[WindowFact] = field(default_factory=list)
     functions: list[tuple[str, str]] = field(default_factory=list)   # (name, position)
     group_by: list[str] = field(default_factory=list)
+    # *** GROUP BY RESOLVED TO REAL COLUMN NAMES. ***
+    # `group by 1, 2` is an ORDINAL into the select list, and reading it literally yields a grain of
+    # ['1','2'], which is not a column and silently loses the model's actual grain. `group by
+    # trim(wdid)` has the same problem one level in. Both are resolved here so no caller has to.
+    group_by_columns: list[str] = field(default_factory=list)
     distinct: bool = False
     predicates: list[str] = field(default_factory=list)
     has_qualify: bool = False
@@ -244,6 +278,7 @@ def digest(sql: str, name: str = "", dialect: str = "duckdb") -> Digest:
         g = final.args.get("group")
         if g:
             d.group_by = [x.sql(dialect=dialect) for x in g.expressions]
+            d.group_by_columns = _resolve_group_by(g.expressions, final.expressions)
 
     d.referenced_columns = sorted({c.name.lower() for c in tree.find_all(exp.Column) if c.name})
 
@@ -305,9 +340,11 @@ def digest(sql: str, name: str = "", dialect: str = "duckdb") -> Digest:
                 break
             anc = anc.parent
         order = w.args.get("order")
+        parts = w.args.get("partition_by") or []
         d.windows.append(WindowFact(
             position=pos,
-            partition_by=[p.sql(dialect=dialect) for p in (w.args.get("partition_by") or [])],
+            partition_by=[p.sql(dialect=dialect) for p in parts],
+            partition_columns=[c for c in (_base_column(p) for p in parts) if c],
             order_roots=[root_of(o) for o in (order.expressions if order else [])],
             order_sql=[o.sql(dialect=dialect)[:90] for o in (order.expressions if order else [])],
         ))
