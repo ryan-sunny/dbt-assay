@@ -12,6 +12,7 @@ from rich.table import Table
 
 from . import __version__, contracts, relate
 from . import columns as columns_mod
+from . import inventory as inv_mod
 from . import probe as probe_mod
 from .checks import run_all
 from .config import DEFAULT_YML, Config
@@ -618,3 +619,112 @@ def review(
         console.print(f"  [dim]{key.split('.')[-1]}[/]  {q} = [bold]{ans}[/]{cf}")
     console.print("\n[dim]assay review --subject <key> --question <q> --verdict agree|disagree[/]")
     store.close()
+
+
+@app.command()
+def inventory(
+    target: str = typer.Option(None, "--target", "-t"),
+    model: str = typer.Option(None, "--model", "-m", help="render one model as a document"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    json_out: bool = typer.Option(False, "--json"),
+    write: str = typer.Option(None, "--write",
+                              help="write contracts to a SEPARATE yaml file. Never touches "
+                                   "your schema.yml."),
+    everything: bool = typer.Option(False, "--include-unadjudicated",
+                                    help="with --write, include entries nobody has ruled on"),
+    limit: int = typer.Option(40, "--limit", "-n"),
+):
+    """What every model in this project actually IS.
+
+    Works with no API key: grain where code can settle it, provenance for every column, edges and
+    blast radius. A judgment fills in role and sharpens grain; it is not the price of entry.
+    """
+    tdir = _find_target(target)
+    project, digests, _failures, schema, _sstats = _load(tdir)
+    store = Store(store_path) if Path(store_path).exists() else None
+    observed = probe_mod.read(store) if store else {}
+    entries = inv_mod.build(project, digests, schema, store, observed)
+
+    if model:
+        e = next((x for x in entries if x.name == model), None)
+        if not e:
+            console.print(f"[red]no model named {model}[/]")
+            raise typer.Exit(1)
+        console.print(f"\n[bold]{e.name}[/]  [dim]{e.path}[/]")
+        console.print(f"[dim]{e.materialized} · reads {', '.join(e.reads[:6]) or 'nothing'} · "
+                      f"{e.descendants} downstream, {e.marts} marts[/]\n")
+        console.print(inv_mod.describe(e))
+        console.print(f"\n  grain  {e.grain.render() if e.grain else '[yellow]unsettled[/]'}\n")
+        t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        t.add_column("column"); t.add_column("role"); t.add_column("value comes from")
+        t.add_column("null means")
+        for c in e.columns[:60]:
+            t.add_row(("[bold]" + c.name + "[/]") if c.in_key else c.name,
+                      c.role.render() if c.role else "[dim]-[/]",
+                      c.provenance.render(),
+                      c.null_meaning.render() if c.null_meaning else "[dim]-[/]")
+        console.print(t)
+        if store:
+            store.close()
+        raise typer.Exit(0)
+
+    if json_out:
+        print(_json.dumps({
+            "models": [{"name": e.name, "layer": e.layer, "grain": e.grain.value if e.grain else None,
+                        "grain_source": e.grain.source if e.grain else None,
+                        "grain_confidence": e.grain.confidence if e.grain else None,
+                        "columns": [{"name": c.name, "role": c.role.value if c.role else None,
+                                     "provenance": c.provenance.value,
+                                     "in_key": c.in_key} for c in e.columns],
+                        "descendants": e.descendants, "marts": e.marts} for e in entries],
+        }, indent=2, default=str))
+        raise typer.Exit(0)
+
+    settled = sum(1 for e in entries if e.grain)
+    by_source = {}
+    for e in entries:
+        if e.grain:
+            by_source[e.grain.source] = by_source.get(e.grain.source, 0) + 1
+    ncols = sum(len(e.columns) for e in entries)
+    roles = sum(1 for e in entries for c in e.columns if c.role)
+
+    console.print(f"[bold]{len(entries)}[/] models, [bold]{ncols:,}[/] columns")
+    console.print(f"grain settled for [bold]{settled}[/]  "
+                  + "  ".join(f"[dim]{k}[/] {v}" for k, v in sorted(by_source.items())))
+    console.print(f"column roles judged for [bold]{roles:,}[/]"
+                  + ("" if roles else "  [dim](run `assay columns`)[/]"))
+
+    t = Table(title="\ninventory", header_style="bold")
+    t.add_column("model"); t.add_column("layer"); t.add_column("grain")
+    t.add_column("from"); t.add_column("cols", justify="right"); t.add_column("reach", justify="right")
+    shown = [e for e in entries if not e.unreadable][:limit]
+    for e in shown:
+        g = ", ".join(e.grain.value) if e.grain and isinstance(e.grain.value, list) else (
+            str(e.grain.value) if e.grain else "[yellow]unsettled[/]")
+        src = e.grain.source if e.grain else "-"
+        if e.grain and e.grain.confidence is not None:
+            src += f" {e.grain.confidence:.2f}"
+        t.add_row(e.name, e.layer, g[:46], src, str(len(e.columns)),
+                  f"{e.descendants}/{e.marts}")
+    console.print(t)
+    if len(entries) > limit:
+        console.print(f"[dim]... {len(entries) - limit} more. --limit, --json, "
+                      f"or --model <name> for one in full.[/]")
+
+    if write:
+        adjudicated = set()
+        if store:
+            for subj, q in store.con.execute(
+                    "select subject, question from adjudications").fetchall():
+                adjudicated.add((subj, q))
+                adjudicated.add((subj, "grain"))
+        import yaml as _yaml
+        data = inv_mod.to_yaml_dict(entries, not everything, adjudicated)
+        Path(write).write_text(_yaml.safe_dump(data, sort_keys=False, width=100))
+        console.print(f"\nwrote [bold]{write}[/] with {len(data['models'])} models. "
+                      f"[dim]Separate file; your schema.yml is untouched.[/]")
+
+    if store:
+        run_id = uuid.uuid4().hex[:12]
+        inv_mod.write_store(store, run_id, entries)
+        store.close()

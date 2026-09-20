@@ -20,6 +20,21 @@ Jev](https://docs.typesafe.ai) reads the meaning. SQL does the rest.
 
 Early. The no-key tier works; the judgment tier is landing next.
 
+## The inventory
+
+```bash
+assay inventory                     # every model: grain, columns, reach
+assay inventory --model water_rights  # one model, in full
+assay inventory --write contracts.yml # a SEPARATE file; your schema.yml is never touched
+```
+
+Not a findings list. *Here is what every model in your project actually is.* On a 356-model
+warehouse: grain settled for 250, 4,684 columns classified.
+
+**Every cell says where it came from.** `declared` (a human wrote it), `observed` (the probe counted
+it), `derived` (code worked it out) or `judged` (with the probability). A fact resting on an
+unresolved premise says so rather than inheriting confidence it did not earn.
+
 ## Install
 
 ```bash
