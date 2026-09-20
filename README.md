@@ -46,6 +46,26 @@ Column knowledge is built parents-first through the DAG, so a `select *` is expa
 parents were found to offer. `target/catalog.json` is used when present and every column list says
 whether it was derived from SQL, read from the catalog, or declared in `schema.yml`.
 
+## Counting what SQL cannot settle
+
+Grain propagates through the DAG parents-first and has no base case: a model reads a source, the
+source declares no key, and propagation stops. `assay probe` settles it by counting.
+
+```bash
+assay probe --dry-run          # print the SQL it would run, run nothing
+assay probe                    # run it through YOUR dbt
+assay probe --emit > probe.sql # or run it yourself and --load the results
+```
+
+It shells out to `dbt show --inline`, so **assay never sees a credential** and every adapter and
+auth scheme your dbt already handles works unchanged. One statement per relation, one scan, and
+`count(*)`, `count(col)` and `count(distinct col)` together, because `count(distinct)` ignores NULLs
+and a mostly-null column would otherwise look unique.
+
+A result says `unique`, `has_duplicates`, `has_nulls` or `unknown`. A permissions error, a missing
+table or a timeout records **unknown**, never "not unique". And an observation is stored with its
+row count and timestamp, because unique in today's data is not a constraint.
+
 ## What the judgment tier adds
 
 Grain, units, null semantics, time semantics, provenance, and whether your descriptions still

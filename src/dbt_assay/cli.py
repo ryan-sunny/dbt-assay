@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__, contracts, relate
+from . import probe as probe_mod
 from .checks import run_all
 from .config import DEFAULT_YML, Config
 from .infer import Schema, derive_columns
@@ -64,6 +65,10 @@ def _coverage_panel(project, digests, failures) -> None:
     t.add_row("models", f"{cov['models']}   sources {cov['sources']}   tests {cov['tests']}   edges {cov['edges']}")
     t.add_row("compiled SQL", f"{cov['readable']} read  ({cov['from_disk']} from disk, "
                               f"{cov['from_manifest']} from manifest)")
+    if cov.get("conflicting_copies"):
+        t.add_row("[yellow]ambiguous[/]",
+                  f"[yellow]{cov['conflicting_copies']} models have a DIFFERENT compiled body in "
+                  f"another target dir. The canonical copy was audited.[/]")
     if cov["unreadable"]:
         t.add_row("[yellow]not audited[/]",
                   f"[yellow]{cov['unreadable']} models have no compiled SQL. "
@@ -216,11 +221,16 @@ def init(force: bool = typer.Option(False, "--force", help="overwrite an existin
     console.print(f"wrote [bold]{p}[/]. Nothing in it enables spend; the judgment tier is opt-in.")
 
 
-def _grain_setup(target: str | None):
+def _grain_setup(target: str | None, store_path: str | None = None):
     tdir = _find_target(target)
     project, digests, _fail, schema, _sstats = _load(tdir)
     declared = relate.declared_keys(project)
-    proposed = contracts.propose_all(project, digests, schema, declared)
+    observed = {}
+    if store_path and Path(store_path).exists():
+        s = Store(store_path)
+        observed = probe_mod.read(s)
+        s.close()
+    proposed = contracts.propose_all(project, digests, schema, declared, observed)
     return tdir, project, digests, schema, declared, proposed
 
 
@@ -235,7 +245,7 @@ def infer(
 ):
     """Infer each model's grain. Code proposes the candidates; a judgment picks the key."""
     cfg = Config.load(config_path)
-    _tdir, project, digests, schema, declared, proposed = _grain_setup(target)
+    _tdir, project, digests, schema, declared, proposed = _grain_setup(target, store_path)
 
     # Only models with SURPLUS candidates need a judgment at all. A single-column candidate set has
     # nothing to eliminate, so asking about it spends tokens to learn what code already knew.
@@ -307,7 +317,7 @@ def calibrate(
     only thing that ever earns a question the right to fail a build.
     """
     cfg = Config.load(config_path)
-    _tdir, project, digests, schema, declared, proposed = _grain_setup(target)
+    _tdir, project, digests, schema, declared, proposed = _grain_setup(target, store_path)
     work = [(uid, c) for uid, c in proposed.items()
             if uid in declared and len(c.columns) > 1]
     if limit:
@@ -370,4 +380,76 @@ def calibrate(
                   f"${client.spent_usd:.4f}[/]")
     for name, v, got, want in [r for r in rows if r[1] != "exact"][:10]:
         console.print(f"  [yellow]{v}[/] {name}: got {got}  declared {want}")
+    store.close()
+
+
+@app.command()
+def probe(
+    target: str = typer.Option(None, "--target", "-t"),
+    project_dir: str = typer.Option(".", "--project-dir",
+                                    help="the dbt project to run `dbt show` from"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    dialect: str = typer.Option("duckdb", "--dialect"),
+    dbt_bin: str = typer.Option("dbt", "--dbt-bin",
+                                help='how to invoke dbt, e.g. "uv run dbt"'),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="print the SQL that would run, and run nothing"),
+    emit: bool = typer.Option(False, "--emit",
+                              help="write the SQL to stdout for you to run yourself"),
+    load: str = typer.Option(None, "--load", help="a JSON file of results from --emit"),
+    limit: int = typer.Option(0, "--limit", "-n"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+):
+    """Count what the SQL cannot settle. Runs through YOUR dbt; assay never sees a credential."""
+    _tdir, project, digests, schema, declared, proposed = _grain_setup(target, store_path)
+    known = {uid: [c.lower() for c in c_.columns] for uid, c_ in proposed.items()}
+    tg = probe_mod.targets(project, digests, schema, declared, known)
+    if limit:
+        tg = tg[:limit]
+
+    console.print(f"[bold]{len(tg)}[/] relations have no settled grain and are read by a model.")
+    if not tg:
+        raise typer.Exit(0)
+
+    if emit:
+        print(probe_mod.emit(tg, dialect))
+        raise typer.Exit(0)
+
+    if dry_run:
+        for t_ in tg[:8]:
+            console.print(f"\n[bold]{t_.relation}[/]  [dim]{t_.why}[/]")
+            console.print(f"  [dim]{probe_mod.build_sql(t_, dialect)[:220]}[/]")
+        console.print(f"\n[dim]{len(tg)} statements, one scan each. Nothing was run.[/]")
+        raise typer.Exit(0)
+
+    store = Store(store_path)
+    if load:
+        payload = _json.loads(Path(load).read_text())
+        obs = []
+        for t_ in tg:
+            row = payload.get(t_.relation)
+            if row:
+                obs += probe_mod.interpret(t_, row)
+        probe_mod.write(store, obs, via="loaded")
+        console.print(f"loaded {len(obs)} observations")
+        store.close()
+        raise typer.Exit(0)
+
+    ok = unknown = 0
+    found = []
+    for t_ in tg:
+        obs, _sql = probe_mod.run_via_dbt(t_, project_dir, profiles_dir, dialect,
+                                          dbt_bin=dbt_bin)
+        probe_mod.write(store, obs)
+        for o in obs:
+            if o.status == "unknown":
+                unknown += 1
+            else:
+                ok += 1
+            if o.status == "unique":
+                found.append(o)
+    console.print(f"observed [bold]{ok}[/] columns, [yellow]{unknown} unknown[/] "
+                  f"(a failure is recorded as unknown, never as 'not unique')")
+    for o in found[:15]:
+        console.print(f"  [green]unique[/] {o.relation}.{o.column}  [dim]{o.detail}[/]")
     store.close()

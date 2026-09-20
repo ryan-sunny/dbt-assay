@@ -58,6 +58,10 @@ class Model:
     children: list[str] = field(default_factory=list)
     compiled: str | None = None
     compiled_from: str = "none"   # disk | manifest | none
+    compiled_path: str | None = None
+    # Other target dirs held a DIFFERENT compiled body for this model. Which one you audit changes
+    # the answer, so the disagreement is recorded rather than resolved by luck.
+    compiled_conflicts: list = field(default_factory=list)
 
     @property
     def readable(self) -> bool:
@@ -160,27 +164,47 @@ class Project:
         self._attach_compiled()
 
     def _attach_compiled(self) -> None:
-        """Disk first, manifest second. See the module docstring."""
+        """The CANONICAL copy first, then the manifest. Disagreements are recorded, never resolved
+        by whichever directory happened to sort first.
+
+        *** THIS WAS A FIRST-MATCH BUG AND IT CHANGED THE ANSWER. ***
+        Orchestrators (Dagster's dbt integration among them) write per-run `target-*` directories
+        beside the main one, each holding its own compiled copy of some models. Taking the first hit
+        in glob order meant the audited body depended on directory sort order: the same project read
+        295 models one way and 265 the other, with different findings. The canonical
+        `target/compiled/<project>` now wins, a sibling is used ONLY where the canonical copy is
+        absent, and a sibling whose body DIFFERS is recorded on the model so the ambiguity is
+        visible instead of silent.
+        """
         nodes = self.raw.get("nodes", {})
-        roots = [self.target_dir / "compiled" / self.project_name]
-        # Orchestrators (Dagster's dbt integration among them) write per-run target dirs beside the
-        # main one. Any of them may hold the only compiled copy of a given model, so all are searched.
-        for extra in sorted(self.target_dir.parent.glob("target*/compiled")):
-            cand = extra / self.project_name
-            if cand.is_dir() and cand not in roots:
-                roots.append(cand)
+        canonical = self.target_dir / "compiled" / self.project_name
+        siblings = [d / self.project_name
+                    for d in sorted(self.target_dir.parent.glob("target*/compiled"))
+                    if (d / self.project_name).is_dir() and (d / self.project_name) != canonical]
 
         for uid, m in self.models.items():
-            for root in roots:
-                p = root / m.path
-                if p.exists():
-                    m.compiled, m.compiled_from = p.read_text(), "disk"
-                    break
+            primary = canonical / m.path
+            if primary.exists():
+                m.compiled, m.compiled_from = primary.read_text(), "disk"
+                m.compiled_path = str(primary)
+            else:
+                for root in siblings:
+                    p = root / m.path
+                    if p.exists():
+                        m.compiled, m.compiled_from = p.read_text(), "disk"
+                        m.compiled_path = str(p)
+                        break
+
             if m.compiled:
+                for root in siblings:
+                    p = root / m.path
+                    if str(p) != m.compiled_path and p.exists() and p.read_text() != m.compiled:
+                        m.compiled_conflicts.append(str(p))
                 continue
+
             code = (nodes.get(uid) or {}).get("compiled_code")
             if code:
-                m.compiled, m.compiled_from = code, "manifest"
+                m.compiled, m.compiled_from, m.compiled_path = code, "manifest", "<manifest>"
 
     # ---------- graph ----------
 
@@ -245,4 +269,5 @@ class Project:
             "unreadable": len(self.models) - len(readable),
             "from_disk": sum(1 for m in readable if m.compiled_from == "disk"),
             "from_manifest": sum(1 for m in readable if m.compiled_from == "manifest"),
+            "conflicting_copies": sum(1 for m in readable if m.compiled_conflicts),
         }

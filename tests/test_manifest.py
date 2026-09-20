@@ -37,3 +37,30 @@ def test_unreadable_models_are_counted_not_skipped(project_dir):
     (project_dir / "compiled" / "p" / "models" / "staging" / "stg_bad_tilde.sql").unlink()
     p = Project.load(project_dir)
     assert p.coverage()["unreadable"] == 1
+
+
+def test_the_canonical_compiled_copy_wins_and_a_conflict_is_recorded(project_dir, tmp_path):
+    """Which compiled body you audit must not depend on directory sort order."""
+    rel = "models/staging/stg_bad_notnull.sql"
+    other = tmp_path / "target-run2" / "compiled" / "p" / rel
+    other.parent.mkdir(parents=True, exist_ok=True)
+    other.write_text("select id, coalesce(amount, other) as amount from raw.t")   # a DIFFERENT body
+
+    p = Project.load(project_dir)
+    m = p.models["model.p.stg_bad_notnull"]
+    assert "coalesce(amount, 0)" in m.compiled            # the canonical copy, not the sibling
+    assert m.compiled_conflicts                            # and the disagreement is visible
+    assert p.coverage()["conflicting_copies"] == 1
+
+
+def test_a_sibling_copy_is_used_only_when_the_canonical_one_is_absent(project_dir, tmp_path):
+    rel = "models/staging/stg_ok_tilde.sql"
+    (project_dir / "compiled" / "p" / rel).unlink()
+    other = tmp_path / "target-run2" / "compiled" / "p" / rel
+    other.parent.mkdir(parents=True, exist_ok=True)
+    other.write_text("select id from raw.t where name ~ '.*X.*'")
+
+    p = Project.load(project_dir)
+    m = p.models["model.p.stg_ok_tilde"]
+    assert m.readable and "run2" in (m.compiled_path or "")
+    assert not m.compiled_conflicts

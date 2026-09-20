@@ -65,7 +65,8 @@ class Grain:
 
 
 def candidates(uid: str, project, digests: dict[str, Digest], schema,
-               known: dict[str, list[str]], declared: dict[str, list[str]]) -> GrainCandidate | None:
+               known: dict[str, list[str]], declared: dict[str, list[str]],
+               observed: dict | None = None) -> GrainCandidate | None:
     """What COULD be one row of this. A judgment only ever picks from what code found here."""
     d = digests.get(uid)
     if not d or not d.ok:
@@ -94,6 +95,7 @@ def candidates(uid: str, project, digests: dict[str, Digest], schema,
     drivers = [x for x in (schema.uid_of.get(r.lower()) for r in d.from_relations) if x]
     if not drivers:
         return None
+    observed = observed or {}
     for j in d.joins:
         if j.target_aggregates or j.kind == "CROSS" or not j.target_relation:
             continue
@@ -108,15 +110,26 @@ def candidates(uid: str, project, digests: dict[str, Digest], schema,
         if g:
             return GrainCandidate(list(g), "from_driver",
                                   f"inherited from {project.name_of(drv)}; no join inflates it")
+        # *** THE BASE CASE. ***
+        # Propagation stops at a relation nothing declares -- typically a source. A probe settles
+        # it by counting, which is exact and needs no judgment, and this is the whole reason the
+        # probe exists: a judgment cannot pick an option that was never on the list.
+        rel = (schema.relation.get(drv) or "").lower()
+        seen = observed.get(rel) or {}
+        uniques = sorted(col for col, o in seen.items() if o.status == "unique")
+        if len(uniques) == 1:
+            return GrainCandidate(uniques, "from_probe",
+                                  f"observed unique in {project.name_of(drv)} "
+                                  f"({seen[uniques[0]].detail})")
     return None
 
 
-def propose_all(project, digests, schema, declared) -> dict[str, GrainCandidate]:
+def propose_all(project, digests, schema, declared, observed=None) -> dict[str, GrainCandidate]:
     """Walk the DAG parents-first so a child can inherit what its parents were found to be."""
     known: dict[str, list[str]] = {}
     out: dict[str, GrainCandidate] = {}
     for uid in project.topological():
-        c = candidates(uid, project, digests, schema, known, declared)
+        c = candidates(uid, project, digests, schema, known, declared, observed)
         if c:
             out[uid] = c
             known[uid] = [x.lower() for x in c.columns]
