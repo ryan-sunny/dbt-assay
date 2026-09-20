@@ -559,3 +559,56 @@ That is the sharpest statement of the architecture anyone has made, and it is no
 the overview says about the two tiers: **the structural tier is what makes the judged tier safe.**
 `marts` being exact and free is why a judged finding can be ranked without trusting the judgment,
 and why `patch` can refuse a proposal by counting rather than by asking.
+
+# Fourth report: the agent is the executor, and MCP gives it no way to act
+
+The framing in the docs is that assay cannot generate a question, decide its criteria are right, or
+rule on its own findings — and that all three need a person. That is true of assay-the-CLI and it
+undersells the architecture, because **the agent is the thing that does those three**, and MCP is
+how it gets the context to do them well.
+
+One night on this warehouse, everything below came from an agent reading assay's output:
+
+```
+15 vocab terms      each measured in the warehouse before being written
+ 3 question families one replacing a shipped family, two via `ask`
+ 8 verdicts          every non-default answer read against the SQL
+ 2 waivers           measured first, reason recorded
+ 1 real bug fixed    a fact table's grain that lived only in a comment
+```
+
+That is the loop working. It was not automated and it did not persist through the tool — it
+happened because a human-facing CLI was available in the same session.
+
+## The blocker: all ten MCP tools are read-only
+
+`contract`, `lineage`, `blast_radius`, `findings`, `changed_contracts`, `practices`, `rebase`,
+`violations`, `claims`, `traversal`. An agent can see every finding, read every contract, check its
+own edits — and **record nothing**. The eight verdicts above went in through the CLI. An agent with
+only MCP cannot record one.
+
+Which means the binding constraint — ruling, the number no release can improve, 0 of 69 models
+here — is the one thing the agent could scale and the one thing it cannot reach.
+
+## The schema is already right for it
+
+`adjudications` carries `decided_by` and `source`, and CLI rulings land as `source='human'`. So an
+agent tier can accrue without contaminating the baseline: **`regress` keeps anchoring on
+`source='human'`**, a thousand agent rulings and eight human ones stay distinguishable, and the
+agent tier becomes the thing a person spot-checks rather than the thing anyone trusts blind. That
+property is what makes agent writes safe, and it exists today.
+
+## Four writes, in value order
+
+- **`rule(subject, question, verdict, note)`** — by far the highest value. It is the only write that
+  moves the number nothing else can, and the note field already exists to carry the reasoning.
+- **`propose_vocab(term, means, implies, evidence)`** — with evidence required, the way a waiver
+  requires a reason. Vocab reaches every question, so a wrong term steers every answer at once;
+  requiring the measurement is what stops an agent writing plausible-sounding domain knowledge.
+- **`ask(family, select, limit)`** — running a question family is CLI-only today, so an agent can
+  write a question and never see it answered.
+- **`waive(model, question, reason, until)`** — same reason-required discipline as the config.
+
+Every one of those is a decision a person should be able to review afterwards, which is what
+`decided_by` and `source` already make possible. The read tools make an agent well-informed. These
+four make it useful.
