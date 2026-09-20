@@ -110,3 +110,25 @@ def test_the_action_captures_an_exit_code_rather_than_reading_it_through_a_pipe(
         return
     body = p.read_text()
     assert 'echo "code=$?" >> "$GITHUB_OUTPUT"' in body
+
+
+def test_an_unwritable_store_is_an_error_message_not_a_traceback():
+    """*** A READ-ONLY WORKING DIRECTORY IS AN ORDINARY CI SETUP. ***
+
+    It surfaced as a full traceback through the store's own internals, which reads as "assay is
+    broken" rather than "this path is wrong".
+    """
+    import pytest
+
+    from dbt_assay.store import Store, StoreUnwritable
+    with pytest.raises(StoreUnwritable) as e:
+        Store("/nope/definitely/not/writable.duckdb")
+    assert "--store" in str(e.value)
+
+
+def test_the_console_script_points_at_the_handler_and_not_at_the_app():
+    """Pointing at `app` directly means nothing catches the expected failures."""
+    data = _pyproject()
+    if data is None:
+        return
+    assert data["project"]["scripts"]["assay"] == "dbt_assay.cli:main"

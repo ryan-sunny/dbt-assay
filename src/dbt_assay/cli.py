@@ -628,8 +628,24 @@ def version():
     console.print(f"assay {__version__}")
 
 
+def main() -> None:
+    """*** AN EXPECTED FAILURE MUST NOT LOOK LIKE A CRASH. ***
+
+    A read-only working directory and a missing API key are ordinary situations, and both reached
+    the terminal as a full traceback through assay's own internals, which reads as "the tool is
+    broken" rather than "this path is wrong". The entry point names them and exits 1.
+    """
+    from .jev import NoProvider
+    from .store import StoreUnwritable
+    try:
+        app()
+    except (StoreUnwritable, NoProvider) as e:
+        console.print(f"[red]{e}[/]")
+        raise SystemExit(1) from e
+
+
 if __name__ == "__main__":
-    app()
+    main()
 
 
 @app.command()

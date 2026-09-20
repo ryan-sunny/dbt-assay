@@ -90,10 +90,23 @@ create table if not exists unreadable (
 """
 
 
+class StoreUnwritable(RuntimeError):
+    """The store cannot be opened for writing. Says which path and why, rather than a traceback."""
+
+
 class Store:
     def __init__(self, path: str | Path = "assay.duckdb"):
         self.path = str(path)
-        self.con = duckdb.connect(self.path)
+        try:
+            self.con = duckdb.connect(self.path)
+        except Exception as e:
+            # *** A READ-ONLY WORKING DIRECTORY IS AN ORDINARY CI SETUP, NOT A BUG REPORT. ***
+            # duckdb raises an IOException that surfaces as a full traceback through the store's
+            # own internals, which reads like assay broke rather than like a path being wrong.
+            raise StoreUnwritable(
+                f"cannot open the assay store at {self.path!r}: {e}. "
+                f"Pass --store with a writable path, or run from a writable directory. "
+                f"The structural checks work without a store at all.") from e
         self.con.execute(DDL)
         self._migrate()
 

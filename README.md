@@ -20,6 +20,9 @@ Jev](https://docs.typesafe.ai) reads the meaning. SQL does the rest.
 > Built while auditing a Colorado water rights warehouse, where a case number is only unique inside
 > a water division and nothing in the stack could tell me that.
 
+**[Full overview](docs/OVERVIEW.md)** — what it is, what each tier finds, and how to run it as a
+standing part of your warehouse rather than a one-off audit.
+
 ## One command
 
 ```bash
@@ -67,7 +70,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.1.0
+- uses: ryan-sunny/dbt-assay@v0.2.0
   with:
     target: target-head
     baseline: base/target
