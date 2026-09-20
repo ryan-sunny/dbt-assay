@@ -1,3 +1,6 @@
+<!-- logo: docs/logo.png -- 96px, top-left. Palette: a warm ochre (#C8892B) against near-black
+     (#14110E), with a single alert red (#B3402A) reserved for anything that gates a build. -->
+
 # assay
 
 **Recover the semantics your warehouse never wrote down.**
