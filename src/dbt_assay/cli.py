@@ -622,8 +622,10 @@ def onboard(
         sp.write_text(SKILL_MD)
         console.print(f"   wrote [bold]{sp}[/] [dim](the procedure an agent follows when it edits "
                       "a model)[/]")
-        console.print("   [dim]MCP: claude mcp add assay -- assay mcp --target "
-                      f"{tdir}[/]")
+        # markup=False, because rich reads `[mcp]` as a style tag and silently drops it -- which
+        # would print an install line that installs no mcp.
+        console.print(f"   MCP: claude mcp add assay -- uvx --from 'dbt-assay[mcp]' "
+                      f"assay mcp --target {tdir}", style="dim", markup=False)
 
     console.print("\n[bold]6. next[/]")
     steps = []
@@ -2504,6 +2506,20 @@ def mcp(
     what reading four models costs it today.
     """
     tdir = _find_target(target)
+    # *** CHECK BEFORE THE TRANSPORT OPENS, OR THE ERROR GOES NOWHERE. ***
+    # `uvx dbt-assay mcp` skips the optional extra. The guard inside `serve` raised the right
+    # message, but stdio already owned the channel, so the client saw CONNECTION_CLOSED and the
+    # explanation was never printed anywhere a person could read it.
+    try:
+        mcp_server.server_class()
+    except RuntimeError as e:
+        # *** rich EATS `[mcp]` AS A STYLE TAG. ***
+        # The message telling you to install the optional extra printed
+        # `uvx --from 'dbt-assay'` -- without the extra. The instruction was broken by the exact
+        # defect it was written to fix, and there is already a note about this in inventory.py.
+        # `markup=False` prints the string, which is the only thing this line needs to do.
+        console.print(str(e), style="red", markup=False)
+        raise typer.Exit(1) from e
     try:
         mcp_server.serve(str(tdir), store_path if Path(store_path).exists() else None)
     except RuntimeError as e:

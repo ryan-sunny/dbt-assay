@@ -105,6 +105,19 @@ def plan(patches: list, held: dict, version: str, out_dir: Path) -> list[Patch]:
                              skipped="NOT COUNTED -- and an uncounted grain is not a passing one"))
             continue
         n, d = counted
+        if n == 0:
+            # *** AN EMPTY TABLE PASSES ANY UNIQUENESS TEST. ***
+            # 0 rows and 0 distinct satisfies `d >= n`, so this wrote a file that passes because
+            # there is nothing in it. Committed, it is indistinguishable in the repo from a
+            # verified one -- which is precisely the ambiguity `test_cannot_fail` exists to find,
+            # and that check is 50 of one real project's 87 findings. assay would have generated
+            # the defect it is best at detecting.
+            #
+            # The count was already in hand. Only the conclusion drawn from it was wrong.
+            out.append(Patch(name, target, "", list(cols), n, d,
+                             skipped="the table is EMPTY, so any uniqueness test on it passes "
+                                     "for the wrong reason. Build the model and run this again"))
+            continue
         if d < n:
             out.append(Patch(name, target, "", list(cols), n, d,
                              skipped=f"it does not hold: {n:,} rows, {d:,} distinct "

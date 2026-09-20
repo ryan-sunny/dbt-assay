@@ -522,3 +522,40 @@ transport so the error lands on the terminal instead of down the pipe.
 (Also: `uvx dbt-assay <cmd>` needs `--from`, since the package name and the console script differ.
 `uvx dbt-assay skill` prints *"Use `uvx --from dbt-assay assay` instead"*, which is good — the MCP
 line in the docs is the one place that guidance is missing.)
+
+---
+
+## Eighth report: two from running it, and one found by the fix
+
+- **`patch` offered to write tests for EMPTY tables.** 0 rows and 0 distinct satisfies
+  `distinct >= rows`, so two of the three it would have written pass because there is nothing in
+  the table. Committed, such a file is indistinguishable from a verified one — **which is exactly
+  the ambiguity `test_cannot_fail` exists to find, and that check is 50 of this project's 87
+  findings.** assay would have generated the defect it is best at detecting. The count was already
+  in hand; only the conclusion drawn from it was wrong.
+- **The documented MCP line could not start.** `uvx dbt-assay mcp` skips the optional extra, the
+  import guard raised the right message, and stdio already owned the channel — so the client saw
+  `CONNECTION_CLOSED` and the explanation went nowhere. The check moved out of `serve` and runs
+  before the transport opens, so the error lands on a terminal. The documented line is
+  `uvx --from 'dbt-assay[mcp]' assay mcp`.
+- **And the fix for that was broken by rich.** The message naming `dbt-assay[mcp]` printed
+  `dbt-assay` — rich read `[mcp]` as a style tag and dropped it. An instruction destroyed by the
+  defect it was written to fix, with a note about square brackets already sitting in
+  `inventory.py`.
+
+### assaying assay
+
+`tests/test_assay_on_assay.py` applies assay's own rules to assay, because every one of them was a
+real defect here first. On its first run it found the same `[mcp]` bug in a second place I had
+missed — and three false positives, where `models[uid]` in an f-string is Python subscripting that
+rich never sees. Narrowed, which is the same lesson as always: a guard that matches too much is the
+mirror of one that matches nothing.
+
+> "Every place tonight where the tool was right, code did the deciding and judgment did the
+> noticing — including the two empty tables, where the count was already in hand and only the
+> conclusion drawn from it was wrong."
+
+That is the sharpest statement of the architecture anyone has made, and it is now the first thing
+the overview says about the two tiers: **the structural tier is what makes the judged tier safe.**
+`marts` being exact and free is why a judged finding can be ranked without trusting the judgment,
+and why `patch` can refuse a proposal by counting rather than by asking.

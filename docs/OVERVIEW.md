@@ -582,7 +582,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.10.1
+- uses: ryan-sunny/dbt-assay@v0.10.2
   with:
     target: target-head
     baseline: base/target
@@ -612,7 +612,9 @@ assay onboard --agent
 writes `.claude/skills/dbt-assay/SKILL.md` and prints the MCP line:
 
 ```bash
-claude mcp add assay -- assay mcp --target target
+claude mcp add assay -- uvx --from 'dbt-assay[mcp]' assay mcp --target target
+# the --from matters: a bare `uvx dbt-assay` skips the optional extra and the
+# server exits before it can tell you why
 ```
 
 The MCP server gives an agent the **ability** to check itself: it can ask what a model means, what

@@ -298,21 +298,40 @@ TOOLS = [
 ]
 
 
+def server_class():
+    """The MCP server class, or a RuntimeError naming the fix.
+
+    *** SEPARATED FROM `serve` SO THE FAILURE LANDS ON A TERMINAL. ***
+    Reported from the field: `uvx dbt-assay mcp` skips the optional extra, this guard raised the
+    right message, and stdio already owned the channel -- so the client saw CONNECTION_CLOSED and
+    the explanation went nowhere. An error nobody can read is the same as no error.
+
+    The caller checks this BEFORE opening the transport.
+    """
+    try:
+        from mcp.server.mcpserver import MCPServer as Server  # mcp >= 2
+        return Server
+    except ImportError:
+        pass
+    try:
+        from mcp.server.fastmcp import FastMCP as Server  # mcp 1.x
+        return Server
+    except ImportError as e:
+        raise RuntimeError(
+            "the MCP server needs the optional extra, and a bare `uvx dbt-assay` does not "
+            "install it.\n"
+            "  uvx --from 'dbt-assay[mcp]' assay mcp --target target\n"
+            "  claude mcp add assay -- uvx --from 'dbt-assay[mcp]' assay mcp --target target\n"
+            "Installed instead of uvx: `uv add 'dbt-assay[mcp]'` or `pip install 'dbt-assay[mcp]'`."
+        ) from e
+
+
 def serve(target: str, store_path: str | None = None) -> None:
     # *** THE SDK RENAMED ITS SERVER CLASS AT v2. ***
     # `FastMCP` became `MCPServer`. Importing only one spelling means this command dies on
     # whichever major the user happens to have, with a traceback instead of an explanation, so
     # both are tried and the failure says what to install.
-    try:
-        from mcp.server.mcpserver import MCPServer as Server  # mcp >= 2
-    except ImportError:
-        try:
-            from mcp.server.fastmcp import FastMCP as Server  # mcp 1.x
-        except ImportError as e:
-            raise RuntimeError(
-                "the MCP server needs the optional extra: `uv add 'dbt-assay[mcp]'` "
-                "or `pip install mcp`") from e
-
+    Server = server_class()
     be = Backend(target, store_path)
     app = Server("assay")
 

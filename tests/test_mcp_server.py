@@ -61,5 +61,12 @@ def test_both_sdk_majors_are_tried_before_giving_up():
 
     from dbt_assay import mcp_server
     src = inspect.getsource(mcp_server.serve)
+    # the import moved into `server_class`, so the failure can be raised BEFORE stdio owns the
+    # terminal -- a bare `uvx dbt-assay` skipped the extra and the client saw CONNECTION_CLOSED
+    # while the explanation went nowhere.
+    from dbt_assay.mcp_server import server_class
+    src = inspect.getsource(server_class)
     assert "mcp.server.mcpserver" in src and "mcp.server.fastmcp" in src
-    assert "pip install mcp" in src
+    # the message names the EXTRA now, not the bare package: a bare `uvx dbt-assay`
+    # installs no mcp and the old wording did not say so.
+    assert "pip install" in src and "dbt-assay[mcp]" in src

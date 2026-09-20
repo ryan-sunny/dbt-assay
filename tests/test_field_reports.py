@@ -678,3 +678,45 @@ def test_every_mcp_tool_description_is_still_indexed_correctly():
     src = inspect.getsource(mcp_server.serve)
     for i, (name, _d) in enumerate(mcp_server.TOOLS):
         assert f"TOOLS[{i}][1])\n    def {name}(" in src, f"{name} is not registered at index {i}"
+
+
+def test_an_empty_table_is_not_a_verified_grain():
+    """*** assay WOULD HAVE GENERATED THE DEFECT IT IS BEST AT DETECTING. ***
+
+    0 rows and 0 distinct satisfies `distinct >= rows`, so two of three files it offered to write
+    were tests that pass because the table is empty. Committed, such a file is indistinguishable
+    in the repo from a verified one -- which is exactly the ambiguity `test_cannot_fail` exists to
+    find, and that check is 50 of one real project's 87 findings.
+
+    The count was already in hand. Only the conclusion drawn from it was wrong.
+    """
+    from pathlib import Path
+
+    from dbt_assay import patch as pm
+
+    plans = pm.plan([("empty", ["id"], "derived", 1, [])], {"empty": (0, 0)}, "1.0.0",
+                    Path("/tmp/_x"))
+    assert not plans[0].sql
+    assert "EMPTY" in plans[0].skipped
+
+
+def test_the_mcp_extra_instruction_survives_rich():
+    """*** rich EATS `[mcp]` AS A STYLE TAG. ***
+
+    The message telling you to install the optional extra printed `uvx --from 'dbt-assay'` --
+    without the extra. The instruction was broken by the exact defect it was written to fix, and
+    there is already a note about square brackets in inventory.py.
+    """
+    import inspect
+
+    from dbt_assay.cli import mcp
+    from dbt_assay.mcp_server import server_class
+
+    src = inspect.getsource(mcp)
+    assert "markup=False" in src, "rich must not be allowed to parse this message"
+    assert "mcp_server.server_class()" in src, "check the import BEFORE opening the transport"
+
+    try:
+        server_class()
+    except RuntimeError as e:
+        assert "dbt-assay[mcp]" in str(e), "the extra must be in the instruction"
