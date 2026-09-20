@@ -807,7 +807,7 @@ def claims(
             m = project.models[uid]
             for chunk in [cs[i:i + claims_mod.CHUNK]
                           for i in range(0, len(cs), claims_mod.CHUNK)]:
-                st = claims_mod.kind_state(m.name, chunk, m.description or "")
+                st = claims_mod.kind_state(m.name, chunk, m.description or "", cfg.vocab)
                 try:
                     ans = decide(store, client, st, claims_mod.kind_questions(chunk),
                                  contexts={f"claim__{i}": c.text[:120]
@@ -908,7 +908,7 @@ def verify(
             c = claims_mod.Claim(r["claim_id"], r["subject"], r["subject_name"], r["text"],
                                  r["source_kind"], r["source_ref"], citation=r["citation"] or "")
             try:
-                ans = decide(store, client, claims_mod.align_state(c, ev),
+                ans = decide(store, client, claims_mod.align_state(c, ev, cfg.vocab),
                              claims_mod.align_question(),
                              contexts={"align": f"{c.subject_name}: {c.text[:120]}"},
                              decision_key=f"{c.subject}::claim::{c.claim_id}",
@@ -1006,6 +1006,8 @@ def traverse(
             st = {k: v for k, v in st.items() if v}
             st["parent"] = {k: v for k, v in st["parent"].items() if v}
             st["child"] = {k: v for k, v in st["child"].items() if v}
+            if cfg.vocab:
+                st["vocabulary"] = cfg.vocab
             try:
                 ans = decide(store, client, st,
                              {"edge": choice_q("edge_preserves_the_grain")},

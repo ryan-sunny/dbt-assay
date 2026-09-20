@@ -159,11 +159,14 @@ def kind_questions(items: list[Claim]) -> dict:
             for i, c in enumerate(items)}
 
 
-def kind_state(model_name: str, items: list[Claim], purpose: str = "") -> dict:
+def kind_state(model_name: str, items: list[Claim], purpose: str = "",
+               vocab: dict | None = None) -> dict:
     st: dict = {"model": model_name,
                 "sentences_under_judgement": [c.text for c in items]}
     if purpose:
         st["what_this_model_is_for"] = purpose[:300]
+    if vocab:
+        st["vocabulary"] = vocab
     return st
 
 
@@ -171,7 +174,7 @@ def align_question() -> dict:
     return {"align": choice(ALIGN_Q["instructions"], ALIGN_Q["criteria"])}
 
 
-def align_state(claim: Claim, evidence: dict) -> dict:
+def align_state(claim: Claim, evidence: dict, vocab: dict | None = None) -> dict:
     """*** THE SMALLEST STATE THAT CAN ANSWER THE QUESTION. ***
 
     Measured on one question: the structural claim alone read 0.96, and the same claim plus one
@@ -179,8 +182,15 @@ def align_state(claim: Claim, evidence: dict) -> dict:
     TypeSafe say it outright -- unrelated detail acts as a distractor -- so this sends one claim
     and only the evidence bearing on it.
     """
-    return {"model": claim.subject_name, "claim": claim.text,
-            "evidence": {k: v for k, v in evidence.items() if v}}
+    st = {"model": claim.subject_name, "claim": claim.text,
+          "evidence": {k: v for k, v in evidence.items() if v}}
+    # *** `assay config` SAYS THE VOCABULARY GOES TO EVERY QUESTION. ***
+    # It went to seven families and not to the two added this week, which made that line false.
+    # A claim is exactly where a project's own words matter most: "division" means something
+    # specific here, and a judgment that does not know it is guessing.
+    if vocab:
+        st["vocabulary"] = vocab
+    return st
 
 
 # Only these kinds are claims worth checking. The rest are real sentences doing other jobs, and

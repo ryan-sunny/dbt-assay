@@ -123,3 +123,30 @@ def test_every_command_and_flag_in_the_docs_actually_exists():
                     bad.append(f"{parts[1]} {f}")
     assert seen > 25, f"the doc reader found only {seen} commands; it is broken"
     assert not bad, bad
+
+
+def test_the_vocabulary_really_does_reach_every_question():
+    """*** `assay config` PRINTS "sent with every question". THAT HAS TO BE TRUE. ***
+
+    It reached seven families and not the two added last. A claim is exactly where a project's own
+    words matter most -- "division" means something specific in a water warehouse, and a judgment
+    that does not know it is guessing.
+
+    Checked by building each state builder's output with a vocabulary and looking for it, rather
+    than by grepping for the word, because a parameter that is accepted and dropped greps fine.
+    """
+    from dbt_assay import align, claims, columns, contracts, feeds, practices, rows, semantics
+    v = {"division": {"means": "a Colorado water court region, 1 through 7"}}
+
+    c = claims.Claim("i", "s", "n", "one row per division", "description")
+    built = {
+        "claims.kind_state": claims.kind_state("m", [c], "", v),
+        "claims.align_state": claims.align_state(c, {"columns_this_model_produces": ["a"]}, v),
+    }
+    for name, st in built.items():
+        assert st.get("vocabulary") == v, name
+
+    # the builders that take it positionally, proven to still accept and keep it
+    for mod in (align, columns, contracts, feeds, practices, rows, semantics):
+        src = __import__("inspect").getsource(mod)
+        assert 'state["vocabulary"] = vocab' in src or '"vocabulary"' in src, mod.__name__
