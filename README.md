@@ -65,9 +65,14 @@ follows.
 ## Status
 
 Both tiers work. **Run it with a key.** The structural tier needs nothing but your manifest and is
-genuinely useful — it found 38 tests that cannot fail in a 356-model warehouse — but it is a very
+genuinely useful — it found 50 tests that cannot fail in a 357-model warehouse — but it is a very
 good linter, and a linter is not the point. The point is a warehouse that knows what it means, and
 meaning is the half a parser cannot reach.
+
+Ten of sixteen question families have had their findings read against real data by a person; two
+failed that and were rewritten; [docs/VERIFICATION.md](docs/VERIFICATION.md) says which, and which
+five have not been checked at all. Nothing gates a build until you have ruled on it, and `assay`
+refuses rather than warns.
 
 Nothing gates a build in either tier until a question has recorded your verdicts, and `assay`
 refuses rather than warns.
@@ -102,7 +107,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.7.0
+- uses: ryan-sunny/dbt-assay@v0.9.2
   with:
     target: target-head
     baseline: base/target

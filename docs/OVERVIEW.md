@@ -123,7 +123,7 @@ Every one of those shapes this tool: arithmetic and dates are settled by sqlglot
 never asked, states are the smallest thing that can answer the question, and there is one noul per
 rule rather than one over a list of them. The [README](../README.md) carries the measurements.
 
-Twelve question families ship. The one worth seeing first:
+Sixteen question families ship. The one worth seeing first:
 
 ### Does the description still describe the code?
 
@@ -207,7 +207,7 @@ fires after the spend is not a cap.
 
 ## Every question, and what rests on it
 
-Fifteen families ship. `assay config` shows how many verdicts each has and which can gate;
+Sixteen families ship. `assay config` shows how many verdicts each has and which can gate;
 `rests_on` on a finding names the family it derives from, and these are those names.
 
 | family | type | finding it feeds |
@@ -536,7 +536,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.7.0
+- uses: ryan-sunny/dbt-assay@v0.9.2
   with:
     target: target-head
     baseline: base/target

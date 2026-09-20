@@ -23,6 +23,7 @@ Verified on a 357-model Colorado water-rights warehouse and two public dbt repos
 | `same_concept` | negative controls | `section_id ~ case_number` **0.02**, `owner_name ~ contact_name` **0.13**, `wdid ~ wdid` **1.98**. The project's own 14 joined pairs: 14/14 |
 | `severity_fit` | two planted cases | a not-null on a primary key 24 dashboards read scored **1.59**; the same on a note column nobody reads scored **0.14** |
 | `units_are_what_the_column_claims` | **8 real column names, after a rewrite** | 8/8 at confidence **1.00**. It failed first — see below |
+| `row_explanation` | **a finding read in the field** | called wells `genuinely_wrong` at 0.50–0.70 on a **290-foot well with a water level of 26,018 feet**. The `accepted_range` test that surfaced them catches 12 rows; the real invariant `water_level_ft <= well_depth_ft` holds on **708**. It found a data defect *and* an inadequate test, from a sample of six rows |
 | `test_cannot_fail` | findings read on two public repos | found `'BA' as sigla_uf` carrying a `not_null` test in `basedosdados` |
 
 ### Where `same_concept` is ambiguous rather than wrong
@@ -106,6 +107,24 @@ dedups on `partition by name_key, city` and then does `select * exclude (name_ke
 That is a defect assay does not yet name: *a model that dedups on a column it then drops*, so
 nothing downstream can verify its own uniqueness.
 
+### `null_meaning` is weak, and its documented remedy does not work
+
+The bank says it answers at ~0.49 over six options without a null rate from `assay probe`, which
+implies a rate fixes it. **Measured on three real columns, with and without a true rate:**
+
+| column | null rate | without the rate | with it |
+|---|---|---|---|
+| `water_parcels.zoning` | 87.0% | `unknown_value` @0.75 | @0.78 |
+| `water_parcels.land_acres` | 37.3% | `not_applicable` @0.29 | @0.34 |
+| `water_rights.last_decree_case` | 0.3% | `not_applicable` @0.17 | **@0.14** |
+
+The rate moves almost nothing and made the third case *worse*. Confidence ranges 0.14 to 0.78
+across three columns, and the middle two are the wrong answer — a parcel with no recorded area is
+`unknown_value`, not `not_applicable`.
+
+So the remedy in the docs is not supported by measurement. Use this family's answers as a prompt to
+look, never as a determination, and do not expect `assay probe` to fix it.
+
 ### The grain findings need column roles first
 
 `measure_inside_grain` did not fire on `int_water_diversions`, whose grain is
@@ -119,12 +138,21 @@ surface it.
 
 | family | why not |
 |---|---|
-| `null_meaning` | no finding rests on it, and without a null rate from `assay probe` it answers at ~0.49 over six options. The bank says so at the call site |
-| `practice_exception` | needs `dbt-project-evaluator` built, which the test warehouse does not have |
-| `row_explanation` | needs `store_failures` rows; the audit schema exists but no finding has been read |
-| `row_is_internally_coherent` | as above |
+| `practice_exception` | needs `dbt-project-evaluator` built. It IS installed on the field warehouse, so this one is closeable there and has not been |
+| `row_is_internally_coherent` | needs `store_failures` rows; the audit schema exists on the field warehouse and no finding has been read |
 | `options_overlap` | verified against the pair that prompted it, and it independently flagged `predicate_intent` — the family already proven weak by hand. Not yet read against a question it should PASS but does not |
 | `sentence_is_a_claim` | extraction was read by hand on one model (16 sentences, every high-confidence answer correct, every low-confidence one a genuinely ambiguous header) — but only one model |
+
+### `options_overlap` has a known false negative
+
+An option whose description **routes to another option by name** — "the answer is `<other>`, not
+this" — is read by the judged check as a disjointness guarantee. Measured in the field: that
+question scored `no_overlap` 0.63 against an overlap mass of 0.35, while the answering model put
+one subject under both options at 0.55 and 0.63.
+
+The judged check still misses this. `option_routes_to_another` catches the known cause statically,
+where no model is asked to be consistent about anything, and it does flag the question that
+prompted it. Treat `--judge` as one of two checks, not as the check.
 
 **Nine of fifteen families have no finding resting on them**, so ruling on them records evidence and
 moves no gate. `assay config` marks which, and `assay review -i` says so before the keypresses

@@ -87,20 +87,26 @@ def _coverage_panel(project, digests, failures, show_errors: bool = True) -> Non
                          f"{project.adapter_type or 'adapter unknown'} "
                          f"\u2192 {project.dialect})")
     t.add_row("models", f"{cov['models']}   sources {cov['sources']}   tests {cov['tests']}   edges {cov['edges']}")
-    t.add_row("compiled SQL", f"{cov['readable']} read  ({cov['from_disk']} from disk, "
-                              f"{cov['from_manifest']} from manifest)")
+    # *** "1615 read (0 from disk, 0 from manifest)" IS THREE NUMBERS THAT DO NOT ADD UP. ***
+    # A stranger cannot reconcile it, and the missing term is the one that matters: those 1615
+    # came from STRIPPED Jinja, which is not a compile. Every source is named, always.
+    srcs = [f"{cov['from_disk']} compiled, from disk" if cov["from_disk"] else "",
+            f"{cov['from_manifest']} compiled, from the manifest" if cov["from_manifest"] else "",
+            f"[yellow]{cov['from_stripped']} stripped, NOT compiled[/]"
+            if cov.get("from_stripped") else ""]
+    t.add_row("SQL assay read", f"{cov['readable']} of {cov['models']} model(s)  ("
+                                + ", ".join(x for x in srcs if x) + ")")
     if cov.get("from_stripped"):
-        t.add_row("[yellow]stripped[/]",
-                  f"[yellow]{cov['from_stripped']} model(s) had no compiled SQL, so their Jinja "
-                  f"was stripped instead. That is not a compile.[/]")
+        t.add_row("", "[yellow]Stripped means the Jinja was removed and the rest parsed. It is "
+                      "not a compile, and it is why some answers below are thinner.[/]")
     if cov.get("conflicting_copies"):
         t.add_row("[yellow]ambiguous[/]",
                   f"[yellow]{cov['conflicting_copies']} models have a DIFFERENT compiled body in "
                   f"another target dir. The canonical copy was audited.[/]")
     if cov["unreadable"]:
-        t.add_row("[yellow]not audited[/]",
-                  f"[yellow]{cov['unreadable']} models have no compiled SQL. "
-                  f"Run `dbt compile` to include them.[/]")
+        t.add_row("[yellow]not read at all[/]",
+                  f"[yellow]{cov['unreadable']} model(s) have no SQL assay could reach, so they "
+                  f"are absent from everything below.[/]")
     t.add_row("parsed", f"{ok}/{len(digests)}" + (f"   [yellow]{len(failures)} failed[/]" if failures else ""))
     console.print(t)
     if not show_errors:
@@ -409,12 +415,21 @@ def _onboard_judge(project, digests, schema, findings, config_path: str, store_p
         console.print(f"   [dim]{len(subs)} documented model(s) are waiting for it. This is the "
                       f"family a parser cannot do: it reads the description against the code and "
                       f"says whether they still agree.[/]")
-        # *** SHOW THE QUESTION, NOT A SALES PITCH. ***
-        # Someone deciding whether the tier is worth a key should see the actual state and the
-        # actual question, on their own model, for free.
+        # *** SHOW THE QUESTION AND THE PRICE, NOT A WALL OF SOMEONE ELSE'S PROSE. ***
+        # Someone deciding whether the tier is worth a key wants two things: what would be asked
+        # about THEIR model, and what it costs. A 400-character dump of a description they already
+        # wrote is neither.
         st = sem_mod.description_state(picked[0], cfg.vocab)
-        console.print(f"   [dim]what it would ask about [bold]{picked[0].name}[/bold]:[/]")
-        console.print(f"   [dim]{_json.dumps(st, default=str)[:400]}...[/]")
+        from .contracts import QUESTIONS
+        from .jev import USD_PER_INPUT_TOKEN
+        est = (len(_json.dumps(st, default=str)) / 4 * USD_PER_INPUT_TOKEN) * len(picked)
+        q = QUESTIONS["description_contradicts_the_code"]["instructions"]["question"]
+        console.print(f'   [dim]the question: "{" ".join(q.split())[:150]}"[/]')
+        per = est / max(len(picked), 1)
+        console.print(f"   [dim]asked once per model. A first run covers {len(picked)} of them "
+                      f"(--judge-limit) for about [bold]${est:.3f}[/bold]; all {len(subs)} would "
+                      f"be about [bold]${per * len(subs):.2f}[/bold].[/]")
+        console.print("   [dim]`assay onboard --judge-limit 20` tries twenty first.[/]")
         return None if has_key else False
 
     stale, asked = [], 0
@@ -523,15 +538,14 @@ def onboard(
                           f"({now} still without compiled SQL)[/]"
                           if now < before else
                           f"   [yellow]compiled, but {now} model(s) still have none.[/]")
-    elif missing and not compile_first:
-        console.print(f"[dim]{missing} model(s) have no compiled SQL. `--compile` runs "
-                      f"`dbt compile` for you; it needs your warehouse connection.[/]")
-
     console.print("\n[bold]1. what assay found[/]")
     _coverage_panel(project, digests, failures, show_errors=False)
     if not project.adapter_type:
         console.print("   [yellow]this manifest names no adapter, so the dialect was assumed to be "
                       "duckdb. Pass --dialect if that is wrong.[/]")
+    if missing and not compile_first:
+        console.print("   [dim]`assay onboard --compile` runs `dbt compile` for you and re-reads "
+                      "them. It needs your warehouse connection.[/]")
     console.print("\n[bold]2. what it can see[/]")
     _schema_panel(schema, sstats)
 
@@ -608,8 +622,10 @@ def onboard(
         steps.append(("assay columns --limit 25",
                       "the same tier over every column: what each one MEANS, adjudicated"))
     elif judged is False:
-        steps.append(("export TYPESAFE_API_KEY=... (or OPENROUTER_API_KEY)",
-                      ("section 4 is what a key buys; everything above it ran without one")))
+        steps.append(("export OPENROUTER_API_KEY=...",
+                      ("section 4 is what a key buys, and everything above ran without one. "
+                       "openrouter.ai, or TYPESAFE_API_KEY from docs.typesafe.ai. A full judged "
+                       "pass over a 265-model warehouse cost $0.0026.")))
     from .contracts import user_bank_dir as _ubd
     if _ubd():
         steps.append(("assay banks",

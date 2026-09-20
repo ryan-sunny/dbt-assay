@@ -168,3 +168,53 @@ def test_every_question_family_has_a_verification_status():
     body = p.read_text()
     missing = [f for f in SHIPPED if f"`{f}`" not in body]
     assert not missing, missing
+
+
+def test_the_docs_do_not_state_a_family_count_that_is_wrong():
+    """*** "TWELVE QUESTION FAMILIES SHIP" SURVIVED FOUR FAMILIES BEING ADDED. ***
+
+    A number written in prose is a copy of a fact, and it drifts silently because nothing reads it.
+    Spelled-out numbers are checked because that is how they are written here.
+    """
+    import re
+
+    from dbt_assay.contracts import load_all_banks
+    docs = _docs()
+    if docs is None:
+        pytest.skip("no docs in a wheel install")
+    words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven",
+             8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen",
+             14: "fourteen", 15: "fifteen", 16: "sixteen", 17: "seventeen", 18: "eighteen",
+             19: "nineteen", 20: "twenty"}
+    right = words.get(len(load_all_banks()), str(len(load_all_banks())))
+    # *** ONLY THE SENTENCES THAT CLAIM THE TOTAL. ***
+    # A first version matched "two families sharing a prefix" and "nine families satisfied
+    # nothing", which are counts of SUBSETS and correct. A guard that matches too much is the
+    # mirror of one that matches nothing, and it gets deleted just as fast.
+    # "N families ship" is the only phrasing that unambiguously claims the TOTAL. "nine of ten
+    # families satisfied nothing" is a historical subset and correct; matching it made this guard
+    # fail on true sentences, which is how a guard gets deleted.
+    totals = re.compile(r"\b([A-Za-z]+|\d+) (?:question )?famil(?:ies|y) ship\b", re.IGNORECASE)
+    seen, wrong = 0, []
+    for m in totals.finditer(docs):
+        said = m.group(1).lower()
+        if said not in {v for v in words.values()} | {str(k) for k in words}:
+            continue
+        seen += 1
+        if said != right:
+            wrong.append(docs[max(0, m.start() - 40):m.start() + 50].replace("\n", " "))
+    assert seen, "the reader found no total at all; it is broken"
+    assert not wrong, wrong
+
+
+def test_the_version_the_action_example_pins_is_the_current_one():
+    """A README pinning an old tag hands every new user a version behind the docs around it."""
+    import re
+
+    import dbt_assay
+    docs = _docs()
+    if docs is None:
+        pytest.skip("no docs in a wheel install")
+    pinned = set(re.findall(r"dbt-assay@v(\d+\.\d+\.\d+)", docs))
+    assert pinned, "the action example is gone"
+    assert pinned == {dbt_assay.__version__}, (pinned, dbt_assay.__version__)

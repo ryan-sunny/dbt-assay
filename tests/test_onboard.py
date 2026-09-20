@@ -46,14 +46,31 @@ def test_it_runs_with_nothing_configured_and_writes_a_config(project_dir, tmp_pa
         assert section in flat(r.output)
 
 
-def test_without_a_key_it_shows_the_question_rather_than_selling_the_tier(project_dir, tmp_path):
-    """Someone deciding whether a key is worth it should see the real state and the real question,
-    on their own model, for free."""
+def test_without_a_key_it_shows_the_question_and_the_price(project_dir, tmp_path):
+    """*** WHAT CONVERTS IS THE QUESTION AND THE COST, NOT A WALL OF THEIR OWN PROSE. ***
+
+    It printed 400 characters of the reader's own model description, escaped to `\u00e7` for
+    anyone not writing in English. Someone deciding whether a key is worth it wants to know what
+    would be asked about THEIR model and what it would cost.
+    """
     r = runner.invoke(app, ["onboard", "-t", str(project_dir), "--config", str(tmp_path)])
     assert r.exit_code == 0, r.output
-    assert "no API key" in flat(r.output)
-    assert ("would ask about" in flat(r.output)
-            or "no model in this project carries a description" in flat(r.output))
+    out = flat(r.output)
+    assert "no API key" in out
+    assert ("the question:" in out
+            or "no model in this project carries a description" in out)
+    if "the question:" in out:
+        assert "$" in out, "a price is half the pitch"
+
+
+def test_the_state_preview_is_not_escaped_for_anyone_not_writing_in_english():
+    r"""A Portuguese description rendered as `A tabela de Operações`. That is not a
+    preview of anything."""
+    import inspect
+
+    from dbt_assay import cli
+    src = inspect.getsource(cli._onboard_judge)
+    assert "ensure_ascii=False" in src or "the question:" in src
 
 
 def test_no_judge_asks_nothing_even_where_a_key_exists(project_dir, tmp_path, monkeypatch):
