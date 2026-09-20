@@ -10,7 +10,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import __version__, contracts, relate
+from . import __version__, contracts, provenance, relate
 from . import columns as columns_mod
 from . import export as export_mod
 from . import inventory as inv_mod
@@ -136,6 +136,7 @@ def check(
                                    help="the DuckDB file to read judgments from and write to"),
     limit: int = typer.Option(25, "--limit", "-n", help="how many findings to print"),
     check_name: str = typer.Option(None, "--check", help="only this check"),
+    config_path: str = typer.Option(".", "--config", help="directory holding audit.yml"),
 ):
     """Run the structural checks. No network, no API key, no spend."""
     tdir = _find_target(target)
@@ -155,6 +156,18 @@ def check(
     findings.sort(key=lambda f: -f.weight)
     if check_name:
         findings = [f for f in findings if f.check == check_name]
+
+    # *** audit.yml NOW DOES SOMETHING. ***
+    # Thresholds, plain actions, waivers and scoping are applied here to BOTH streams. A config
+    # that parses but is never consulted implies a control that does not exist, which is worse
+    # than having none.
+    cfg = Config.load(config_path)
+    _st = Store(store_path) if Path(store_path or "").exists() else None
+    policed, waived = judged_mod.apply_policy(findings, cfg, _st, project)
+    if _st:
+        _st.close()
+    findings = [f for f, _a, _w in policed]
+    actions = {(f.check, f.subject): a for f, a, _w in policed}
 
     if json_out:
         print(_json.dumps({
@@ -185,12 +198,22 @@ def check(
         console.print()
         for f in findings[:limit]:
             reach = f"{f.descendants} downstream, {f.marts} marts" if f.descendants else "leaf"
+            act = actions.get((f.check, f.subject), "annotate")
+            colour = {"fail": "red", "queue": "yellow"}.get(act, "dim")
             console.print(f"[bold]{f.subject_name}[/]  [dim]{f.file}[/]")
-            console.print(f"  {f.check}: {f.summary}  [dim]({reach})[/]")
+            console.print(f"  [{colour}]{act}[/]  {f.check}: {f.summary}  [dim]({reach})[/]")
             console.print(f"  [dim]{f.detail}[/]\n")
         if len(findings) > limit:
             console.print(f"[dim]... {len(findings) - limit} more. --limit to see them, "
                           f"--json for all.[/]")
+
+    if waived:
+        console.print(f"[dim]{len(waived)} finding(s) suppressed by audit.yml: "
+                      + ", ".join(sorted({w for _f, w in waived}))[:160] + "[/]")
+
+    failing = [f for f, a, _w in policed if a == "fail"]
+    if failing:
+        console.print(f"\n[red]{len(failing)} finding(s) configured to fail.[/]")
 
     if store_path:
         run_id = uuid.uuid4().hex[:12]
@@ -213,6 +236,9 @@ def check(
                 console.print(f"  [green]-[/] {n}: {sm}")
         s.close()
         console.print(f"\n[dim]run {run_id} written to {store_path}[/]")
+
+    if failing:
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -781,3 +807,41 @@ def export(
                       f"and an example query in {ex.name}")
     console.print(f"\n[dim]now: dbt seed --select {export_mod.PREFIX}*[/]")
     store.close()
+
+
+@app.command()
+def trace(
+    column: str = typer.Argument(..., help="model.column, e.g. water_rights.decreed_af"),
+    target: str = typer.Option(None, "--target", "-t"),
+):
+    """Where did this number come from?
+
+    Follows a column back through the DAG until the first hop that actually did something to the
+    value, and stops there rather than guessing further. The trail ends honestly at a source: what
+    produced a column outside dbt is not knowable from a manifest.
+    """
+    if "." not in column:
+        console.print("[red]pass model.column[/]")
+        raise typer.Exit(1)
+    model_name, col = column.rsplit(".", 1)
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir)
+    uid = next((u for u, m in project.models.items() if m.name == model_name), None)
+    if not uid:
+        console.print(f"[red]no model named {model_name}[/]")
+        raise typer.Exit(1)
+
+    hops = provenance.trace(col, uid, project, digests, schema)
+    if not hops:
+        console.print(f"[yellow]{col} is not an output column of {model_name}[/]")
+        raise typer.Exit(1)
+
+    t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    t.add_column("model"); t.add_column("column"); t.add_column("what happened there")
+    for name, c, kind, why in hops:
+        t.add_row(name, c, f"{kind}  [dim]{why}[/]")
+    console.print(t)
+    last = hops[-1][2]
+    if last == "from_source":
+        console.print("\n[dim]The trail ends at a source. What produced this value happened "
+                      "outside this project, and assay will not guess at it.[/]")

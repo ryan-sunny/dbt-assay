@@ -150,20 +150,40 @@ def run_all(project, entries, declared) -> list[Finding]:
     return sorted((_weightless(f, project) for f in out), key=lambda f: -f.weight)
 
 
-def apply_policy(findings, cfg, store) -> list[tuple]:
-    """(finding, action) for each, with `fail` refused while the question is unmeasured."""
+def apply_policy(findings, cfg, store, project=None) -> tuple[list, list]:
+    """(kept, waived). Each kept item is (finding, action, why).
+
+    Runs over BOTH streams. A waiver removes a finding and is recorded so the count is visible; an
+    expired waiver is not a waiver. `fail` is refused for a JUDGED question without enough recorded
+    verdicts and downgraded to `queue`, in code, not in documentation.
+    """
+    from .selector import resolve
+
     counts = store.adjudication_counts() if store else {}
-    out = []
+    kept, waived = [], []
+    scope_cache: dict = {}
+
     for f in findings:
         q = cfg.for_question(f.check)
-        if cfg.waived(f.subject_name, f.check):
+        if not q.enabled:
+            waived.append((f, "disabled in audit.yml"))
             continue
-        # A judged finding carries a probability; a structural one does not, and its configured
-        # action stands on the check's own base severity instead.
+        w = cfg.waived(f.subject_name, f.check)
+        if w:
+            waived.append((f, f"waived: {w.reason}"))
+            continue
+        if q.select and project is not None:
+            if q.select not in scope_cache:
+                scope_cache[q.select] = resolve(project, q.select)
+            scope = scope_cache[q.select]
+            if scope is not None and f.subject not in scope:
+                waived.append((f, f"out of scope for `{q.select}`"))
+                continue
+
         conf = f.evidence.get("confidence")
-        answer = {"kind": "noul", "answer": str(conf)} if conf is not None else None
-        act = None
-        if answer and q.act:
-            act = q.action_for(answer, counts.get(f.check, 0), cfg.min_adjudications)
-        out.append((f, act or ("queue" if f.base >= 3 else "annotate")))
-    return out
+        judged_answer = {"kind": "noul", "answer": str(conf)} if conf is not None else None
+        act = q.action_for(judged_answer if q.act else None,
+                           counts.get(f.check, 0), cfg.min_adjudications)
+        why = "audit.yml" if act else "default by severity"
+        kept.append((f, act or ("queue" if f.base >= 3 else "annotate"), why))
+    return kept, waived

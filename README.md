@@ -135,6 +135,39 @@ Nothing, until you turn the judgment tier on.
 - `--print-state` on any command renders exactly what would be sent, without sending it.
 - The warehouse connection is opened read-only.
 
+## Configuration actually configures
+
+`assay init` writes an `audit.yml`. It scopes questions, waives findings, and decides what an
+answer is allowed to *do*:
+
+```yaml
+questions:
+  ranks_by_degrees:
+    action: fail            # EXACT check: a parser decided it, so it may gate immediately
+  grain_contradicts_test:
+    when: { select: "path:models/water+" }
+    act:
+      queue: "p > 0.60"     # JUDGED: written as an expression, so its direction is readable
+      fail:  "p > 0.85"     # ...and refused until the question has recorded verdicts
+
+waivers:
+  int_water_section_county:
+    - question: ranks_by_degrees
+      reason: "ST_AREA among candidates at one latitude preserves the ordering"
+```
+
+`assay check` exits non-zero only when something earns `fail`. A selector assay does not understand
+is an **error**, never a silent match-all.
+
+## Where did this number come from
+
+```bash
+assay trace water_rights.water_right_id
+```
+
+Follows a column back through the DAG to the first hop that did something to the value, and stops
+honestly at a source, because what happened outside dbt is not knowable from a manifest.
+
 ## Maintenance
 
 Maintained for my own use. PRs read when convenient, issues may sit, fork freely.

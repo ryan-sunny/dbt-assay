@@ -101,10 +101,22 @@ class QuestionConfig:
     name: str
     enabled: bool = True
     select: str | None = None            # dbt selector syntax, applied to the subject
-    act: dict = field(default_factory=dict)      # action -> Threshold
+    act: dict = field(default_factory=dict)      # action -> Threshold, for JUDGED findings
+    # *** AN EXACT CHECK MAY GATE WITHOUT ADJUDICATIONS. A JUDGED ONE MAY NOT. ***
+    # A parser decided it; there is no probability to threshold and no calibration to wait for.
+    # `min_adjudications` exists because a judgment's error rate is unknown until measured, which
+    # is simply not true of "this test cannot fail".
+    action: str | None = None            # annotate | queue | fail, for STRUCTURAL findings
 
-    def action_for(self, answer: dict, adjudications: int, min_adjudications: int) -> str | None:
-        """The strongest action this answer earns. `fail` is refused while unmeasured."""
+    def action_for(self, answer: dict | None, adjudications: int,
+                   min_adjudications: int) -> str | None:
+        """The strongest action this answer earns. `fail` is refused while unmeasured.
+
+        An answer of None is a structural finding: exact, no probability, so the configured plain
+        `action` stands and no calibration is waited for.
+        """
+        if answer is None:
+            return self.action
         for act in ("fail", "queue", "annotate"):
             t = self.act.get(act)
             if t is None or not t.holds(answer):
@@ -160,9 +172,17 @@ class Config:
                     raise ThresholdError(
                         f"question `{name}`: unknown action `{a}`. Use one of {ACTIONS}.")
                 act[a] = Threshold(str(expr))
+            action = q.get("action")
+            if action and action not in ACTIONS:
+                raise ThresholdError(
+                    f"question `{name}`: unknown action `{action}`. Use one of {ACTIONS}.")
+            sel = (q.get("when") or {}).get("select")
+            if sel:
+                from .selector import validate as _validate
+                _validate(sel)
             cfg.questions[name] = QuestionConfig(
                 name=name, enabled=q.get("enabled", True),
-                select=(q.get("when") or {}).get("select"), act=act)
+                select=sel, act=act, action=action)
 
         for model, meta in (data.get("waivers") or {}).items():
             out = []
@@ -206,6 +226,15 @@ gating:
   min_adjudications: 20
 
 questions:
+  # An EXACT check has no probability to threshold, so it takes a plain action and may gate
+  # immediately: a parser decided it, and there is no error rate to measure first.
+  duckdb_full_match:
+    action: queue
+  # `when.select` scopes a question. assay errors on syntax it does not understand rather than
+  # silently matching everything.
+  #  when:
+  #    select: "path:models/water+"
+
   column_is_part_of_the_key:
     # A threshold is an EXPRESSION, so its direction is readable at a glance, and per ACTION,
     # because the cost of being wrong differs between annotating and failing a build.
