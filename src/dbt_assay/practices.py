@@ -209,16 +209,46 @@ def primary_key_patches(project, entries) -> list[tuple]:
 #
 # AND A PROPOSAL THAT DOES NOT HOLD IS THE STRONGER FINDING. The model has no uniqueness test AND
 # nobody knows what one row of it is, which is worse than a missing test and was invisible.
+def fanout(n: int, d: int) -> str:
+    """`n / d`, written so it cannot read as a smaller problem -- or a bigger one -- than it is.
+
+    *** 1.56x PRINTED AS `2x`. *** Reported from the field on `business_leads`: 73,608 rows over
+    47,144 distinct. Rounding overstates a number somebody acts on, and the opposite rounding is
+    worse -- 1.004 reading as `1x` says the grain holds when it does not. So a ratio above one
+    never prints as one, however close it is.
+    """
+    if d <= 0:
+        return "?"
+    r = n / d
+    if r >= 10:
+        return f"{r:,.0f}x"
+    for places in (2, 3, 4):
+        s = f"{r:.{places}f}".rstrip("0").rstrip(".")
+        if r <= 1 or float(s) > 1:
+            return f"{s}x"
+    return f"{r:.4f}x"
+
+
 def verify_grains(patches: list, project, probe_mod, project_dir: str,
-                  profiles_dir: str | None, dbt_bin: str, batch: int = 60) -> dict:
+                  profiles_dir: str | None, dbt_bin: str, batch: int = 60, schema=None) -> dict:
     """{model_name: (rows, distinct)} for every proposal that could be counted.
 
     A model absent from the result was not counted, and an absent count must never read as a pass:
     the caller reports `could not check` rather than `holds`.
+
+    *** A CUSTOM SCHEMA MADE EVERY MODEL IN IT UNCOUNTABLE. ***
+    Reported from the field: everything in `main` counted and everything in `main_water` and
+    `main_water_az` came back `(not counted)` -- including the 149x case the release leads with.
+    A bare model name resolves to the default schema, so the count did not fail loudly, it failed
+    as an absence, which is the shape this codebase keeps having to catch. dbt's `+schema:` is
+    ordinary past a certain project size and the manifest carries the qualified relation per node,
+    which `Schema.relation` already holds. Pass it and the name is only the fallback.
     """
+    rel_of = dict(getattr(schema, "relation", None) or {})
     by_name = {}
-    for e in project.models.values():
-        by_name[e.name] = getattr(e, "relation_name", None) or e.name
+    for uid, e in project.models.items():
+        by_name[e.name] = (rel_of.get(uid) or getattr(e, "relation_name", None)
+                           or e.name).replace('"', "")
     todo = [(name, cols) for name, cols, _src, _m, _d in patches if cols and name in by_name]
     out: dict = {}
 

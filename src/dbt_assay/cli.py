@@ -1555,7 +1555,8 @@ def patch(
 
     console.print(f"[bold]{len(patches)}[/] model(s) with no uniqueness test. Counting each "
                   f"proposed grain before writing anything...")
-    held = prac_mod.verify_grains(patches, project, probe_mod, project_dir, profiles_dir, dbt_bin)
+    held = prac_mod.verify_grains(patches, project, probe_mod, project_dir, profiles_dir,
+                                  dbt_bin, schema=_sch)
     if not held:
         console.print("[yellow]could not count a single grain[/] [dim]-- the models may not be "
                       "built, or --dbt / --project-dir may be wrong. Nothing will be written, "
@@ -3196,7 +3197,7 @@ def practices(
     held: dict = {}
     if verify and patches:
         held = prac_mod.verify_grains(patches, project, probe_mod, project_dir, profiles_dir,
-                                      dbt_bin)
+                                      dbt_bin, schema=_sch)
         if not held:
             console.print("[yellow]could not count any proposed grain[/] [dim]-- the models may "
                           "not be built, or `--dbt`/`--project-dir` may be wrong. Nothing below "
@@ -3237,7 +3238,7 @@ def practices(
             for name, cols, marts, (n, d) in sorted(would_fail, key=lambda x: -(x[3][0] / max(x[3][1], 1))):
                 console.print(f"  [bold]{name}[/]  [dim]{marts} marts · {', '.join(cols)[:40]} "
                               f"gives {d:,} distinct over {n:,} rows "
-                              f"([bold]{n / max(d, 1):.0f}x[/bold])[/]")
+                              f"([bold]{prac_mod.fanout(n, d)}[/bold])[/]")
         if inexpressible:
             # *** THE GRAIN IS NOT IN THE OUTPUT, SO NOTHING CAN ASSERT IT. ***
             # A model that dedups on a column and then drops it cannot have its own uniqueness

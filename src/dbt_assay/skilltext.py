@@ -85,6 +85,15 @@ was intended and it needs a version bump. Do not hand back work where the grain 
    Rule only on what you actually read. A ruling with no reason is refused, and one with a
    reason you did not form by reading the SQL is worse than none.
 
+   If a **person** told you the answer, pass their name as `decided_by`. It records who decided
+   it, so a reviewer can tell "the agent thinks" from "they said, and the agent typed it". It is
+   still filed as an agent ruling: a person's ruling is their own keypress in `assay review -i`,
+   which is one keystroke once your reason is on screen.
+
+10. `review_queue()` — **what is still waiting for a person**, agent-read items first. Call it
+    before ruling, to see whether a subject has already been read, and after, to see the queue you
+    are building. Your ruling never clears an item from it.
+
 ## Rules that are not negotiable
 
 - **Never guess a model's grain.** Ask for the contract. A wrong grain assumption is how an

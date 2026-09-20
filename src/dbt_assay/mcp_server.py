@@ -33,12 +33,34 @@ class Backend:
     def _open_store(self):
         """Read-only use of the store, opened lazily: an agent that never asks for claims should
         not pay for a connection, and a missing store is an absence rather than an error."""
-        if not self.store_path or not Path(self.store_path).exists():
-            return None
+        return self._store_or_why()[0]
+
+    def _store_or_why(self):
+        """(store, why_not). *** A LOCKED STORE REPORTED ITSELF AS A MISSING ONE. ***
+
+        Reported from the field: a session had the store open, so every write from the agent came
+        back "no store to write to. Run any judged command once to create one" -- advice that
+        cannot work, for a file that is right there. The agent then ran the judged command, which
+        is the one thing guaranteed to fail for the same reason.
+
+        DuckDB is single-writer. That is the actual fact, the fix is to close the other session,
+        and an error that names the wrong cause sends a reader to the wrong place.
+        """
+        if not self.store_path:
+            return None, "no --store was given, so there is nowhere to write."
+        if not Path(self.store_path).exists():
+            return None, (f"there is no store at {self.store_path}. Run any judged command once "
+                          f"(`assay infer --judge`) to create one.")
         try:
-            return Store(self.store_path)
-        except Exception:                                               # noqa: BLE001
-            return None
+            return Store(self.store_path), ""
+        except Exception as e:                                          # noqa: BLE001
+            msg = str(e).lower()
+            if "lock" in msg or "being used" in msg or "conflicting" in msg:
+                return None, (f"the store at {self.store_path} is LOCKED by another process. "
+                              f"DuckDB allows one writer: close the other `assay` session or CLI "
+                              f"command and call this again. The store is fine and nothing was "
+                              f"lost.")
+            return None, f"the store at {self.store_path} could not be opened: {e}"
 
     def _manifest_mtime(self) -> float:
         p = Path(self.target) / "manifest.json"
@@ -172,12 +194,24 @@ class Backend:
         patches = prac.primary_key_patches(st.project, st.entries)
         if model:
             patches = [p for p in patches if p[0] == model]
-        return {"missing_uniqueness_tests": [
-            {"model": n, "grain_a_test_should_cover": cols, "grain_source": src, "marts": m}
-            for n, cols, src, m in patches[:40]]}
+        # *** A 5-TUPLE UNPACKED AS FOUR, AND NO TEST TOUCHED IT. ***
+        # `primary_key_patches` grew `not_emitted` when the field found 9 of 15 proposed grains
+        # naming a column the model does not emit. The CLI was updated; this tool was not, so the
+        # MCP call raised ValueError while 375 tests passed -- the same shape as the circular
+        # import that killed the binary. The guard below exercises the tool, not the source.
+        out = []
+        for n, cols, src, m, not_emitted in patches[:40]:
+            row = {"model": n, "grain_a_test_should_cover": cols, "grain_source": src, "marts": m}
+            if not_emitted:
+                # The stronger finding: nothing downstream can assert this model's own uniqueness.
+                row["but_the_model_does_not_emit"] = list(not_emitted)
+                row["so"] = ("no test can assert this grain. The model groups or dedups on a "
+                             "column it then drops, so its uniqueness is unassertable downstream")
+            out.append(row)
+        return {"missing_uniqueness_tests": out}
 
     def rule(self, subject: str, question: str, verdict: str, why: str,
-             correction: str = "") -> dict:
+             correction: str = "", decided_by: str = "") -> dict:
         """*** RULINGS ARE THE ONLY THING IN THIS SYSTEM THAT DO NOT COMPOUND. ***
 
         More checks find more. Better states judge better. The warehouse accrues. None of that
@@ -191,14 +225,25 @@ class Backend:
 
         A reason is required, exactly as it is for a waiver. A ruling with no reason is one nobody
         can check, which is the thing this whole tool exists to object to.
+
+        *** `decided_by` NAMES A PERSON. IT DOES NOT MAKE THE RULING THEIRS. ***
+        Asked for from the field, for the real case where somebody is sitting there saying "that
+        one is wrong, it is a union". Their name is worth recording: a reviewer reading the queue
+        later can tell "the agent thinks" from "Ryan said, and the agent typed it".
+
+        What it deliberately does NOT do is file the ruling as human. The agent is the only thing
+        in the loop that could write a hundred of these, so a field it fills in itself cannot be
+        the field that decides whether a question may fail a build. The person re-rules it in
+        `assay review -i`, where their own keypress is the evidence, and that takes one keystroke
+        because the reason is already on screen.
         """
         if verdict not in ("agree", "disagree", "unclear"):
             return {"error": "verdict must be agree, disagree or unclear"}
         if not (why or "").strip():
             return {"error": "a reason is required. A ruling nobody can check is not evidence."}
-        st = self._open_store()
+        st, why = self._store_or_why()
         if st is None:
-            return {"error": "no store to write to. Run any judged command once to create one."}
+            return {"error": f"nothing was recorded: {why}"}
         try:
             answered = ""
             row = st.con.execute(
@@ -210,14 +255,15 @@ class Backend:
             # reaching back into it is a circular import that kills the binary while the test
             # suite -- which imports in a different order -- stays green.
             from .contracts import family_of
+            who = (decided_by or "").strip()[:60]
             st.adjudicate(subject, question, family_of(question) or question.split("__")[0],
-                          answered, verdict,
-                          correction=correction, note=why.strip(), who="agent", source="agent")
+                          answered, verdict, correction=correction, note=why.strip(),
+                          who=f"agent, relaying {who}" if who else "agent", source="agent")
             human = len(st.ruled_subjects())
             mine = len(st.agent_rulings())
         finally:
             st.close()
-        return {
+        out = {
             "recorded": True, "subject": subject, "verdict": verdict,
             "agent_rulings_now": mine, "models_a_person_has_ruled_on": human,
             "what_this_does": ("It puts this in front of whoever reviews next, ranked above what "
@@ -228,6 +274,56 @@ class Backend:
                                       "not anchor `assay regress`. Those all require a person, on "
                                       "purpose."),
         }
+        if (decided_by or "").strip():
+            out["relayed_from"] = decided_by.strip()[:60]
+            out["and_still_an_agent_ruling"] = (
+                f"{out['relayed_from']} is recorded as who decided it, so a reviewer can tell "
+                f"this from your own conclusion. It is still filed as `agent`: a person's ruling "
+                f"is their keypress in `assay review -i`, which is one keystroke now that your "
+                f"reason is on screen.")
+        return out
+
+    def review_queue(self, limit: int = 20) -> dict:
+        """What is waiting for a PERSON, with the agent's reading already attached.
+
+        *** A RULING THAT NOBODY EVER SEES AGAIN IS NOT TRIAGE. ***
+        `rule` says it "puts this in front of whoever reviews next" and there was no way, from
+        MCP, to see that queue -- so an agent could write a hundred rulings and never tell whether
+        any of them had been read, or whether it was about to rule a second time on the same
+        subject. Ranked by marts downstream, because that is the order a person should read in.
+        """
+        st = self.state()
+        fs = live.findings_for(st, None)
+        store, why = self._store_or_why()
+        ruled: set = set()
+        mine: dict = {}
+        if store is not None:
+            try:
+                ruled = store.ruled_subjects()
+                for r in store.agent_rulings():
+                    mine.setdefault(str(r["subject"]).split("::")[0], r)
+            finally:
+                store.close()
+        rows = []
+        for f in fs:
+            if f.subject in ruled:
+                continue
+            a = mine.get(str(f.subject).split("::")[0])
+            rows.append({"check": f.check, "model": f.subject_name, "file": f.file,
+                         "summary": f.summary, "marts": f.marts,
+                         "an_agent_already_said": (
+                             {"verdict": a["verdict"], "because": a["note"]} if a else None)})
+        rows.sort(key=lambda r: (r["an_agent_already_said"] is None, -r["marts"]))
+        out = {
+            "waiting_for_a_person": rows[:limit],
+            "already_ruled_by_a_person": len(ruled),
+            "note": ("Findings an agent has read are first: a person confirming a reading is one "
+                     "keypress, and a finding nobody has looked at is a cold start. Nothing here "
+                     "is resolved -- an agent ruling never clears an item from this queue."),
+        }
+        if store is None and why:
+            out["and_no_rulings_could_be_read"] = why
+        return out
 
     def violations(self, model: str = "", config_path: str = ".") -> dict:
         """What would actually fail, under this project's own policy.
@@ -353,6 +449,9 @@ TOOLS = [
                 "claim. Call this BEFORE editing: the claims are what the edit must keep true.")),
     ("traversal", ("How a model's parents reach it, and whether any hop multiplies rows without "
                    "declaring it. The defect class no single-model check can see.")),
+    ("review_queue", ("What is waiting for a PERSON to rule on, agent-read items first, with the "
+                      "reason already attached. Call it before `rule` to see whether a subject "
+                      "has been read, and after, to see the queue you are building.")),
 ]
 
 
@@ -418,8 +517,10 @@ def serve(target: str, store_path: str | None = None) -> None:
         return json.dumps(be.practices(model), default=str)
 
     @app.tool(description=TOOLS[7][1])
-    def rule(subject: str, question: str, verdict: str, why: str, correction: str = "") -> str:
-        return json.dumps(be.rule(subject, question, verdict, why, correction), default=str)
+    def rule(subject: str, question: str, verdict: str, why: str, correction: str = "",
+             decided_by: str = "") -> str:
+        return json.dumps(be.rule(subject, question, verdict, why, correction, decided_by),
+                          default=str)
 
     @app.tool(description=TOOLS[8][1])
     def violations(model: str = "") -> str:
@@ -432,6 +533,10 @@ def serve(target: str, store_path: str | None = None) -> None:
     @app.tool(description=TOOLS[10][1])
     def traversal(model: str) -> str:
         return json.dumps(be.traversal(model), default=str)
+
+    @app.tool(description=TOOLS[11][1])
+    def review_queue(limit: int = 20) -> str:
+        return json.dumps(be.review_queue(limit), default=str)
 
     @app.tool(description=TOOLS[6][1])
     def rebase() -> str:

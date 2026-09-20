@@ -834,3 +834,41 @@ az_section_summary.n_water_level             96,624 of   114,305  (85%)  0
 Nine of ten are at least a third default. The sub-case has its own name now too:
 `water_outreach_agents.contact_role` is a CASE with one branch and no ELSE, so its
 `accepted_values` test cannot fail **by construction** rather than by today's data.
+
+### Items 4 and 5 of the same report
+
+**A custom schema made every model in it uncountable.** 192 of that project's 358 models live in
+`main_water`, `main_water_az` or `main_elementary`, and a bare model name resolves to the default
+schema — so the count did not fail loudly, it failed as an absence, which is the shape this
+codebase keeps having to catch. `Schema.relation` already held the qualified name. Measured, same
+warehouse, same command:
+
+```
+OLD (bare names): counted  6 of 12   (0 in a custom schema)
+NEW (qualified):  counted 12 of 12   (6 in a custom schema)
+```
+
+The 149× case the release leads with was one of the six.
+
+**A ratio that does not hold printed as one that does.** `business_leads` is 73,608 rows over
+47,144 distinct and printed `2x`; `int_water_call_exposure_basis` is 172,695 over 132,175 and
+printed **`1x`** — a grain that fails, rendered as a grain that holds. Rounding up overstates a
+number somebody acts on and rounding down hides the finding, so a ratio above one now never prints
+as one, however close: `1.56x`, `1.31x`, `5.81x`, `149x`.
+
+**The MCP `practices` tool raised ValueError while 378 tests passed.** `primary_key_patches` grew
+a fifth element for the not-emitted case, the CLI was updated and the tool was not. Same shape as
+the circular import that killed the binary: a surface nothing calls is a surface nothing checks.
+Its guard now calls the tool.
+
+**A locked store reported itself as a missing one.** "no store to write to. Run any judged command
+once to create one" — advice that cannot work, for a file that is right there, and the judged
+command fails for the same reason. DuckDB is single-writer; the message says so and names the fix.
+
+**`rule(..., decided_by='<name>')` and `review_queue()`.** A person sitting there saying "that one
+is wrong, it is a union" is worth recording by name, so a reviewer can tell *the agent thinks*
+from *they said and the agent typed it*. It is still filed as `agent`: the one field an agent fills
+in itself cannot be the field that decides authority. And `rule` claimed to put things "in front of
+whoever reviews next" with no way to see that queue, so an agent could write a hundred rulings and
+never learn whether one had been read. Agent-read items rank first, because confirming a reading is
+one keypress and a cold finding is not.

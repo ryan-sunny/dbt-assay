@@ -5,12 +5,17 @@ Twelve disagrees: ten were a union member read as a fan-out, two were a tessella
 approximated circle. Both discriminators are readable from the AST with no judgment and no call,
 which is the point -- the judgment was allowed to be wrong about something code settles exactly.
 """
+from pathlib import Path
+from types import SimpleNamespace
+
 from dbt_assay.checks.structural import (
     cannot_fail_by_construction,
     default_literal,
     default_share_sql,
 )
 from dbt_assay.parse import digest
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_a_union_member_cannot_multiply():
@@ -106,3 +111,158 @@ def test_the_unclear_findings_carry_what_a_ruling_needs():
     from dbt_assay.judged import _collapse_note, _prose_judged
     assert "no group by, distinct or union was found" in inspect.getsource(_collapse_note)
     assert "schema_yml_description" in inspect.getsource(_prose_judged)
+
+
+def test_the_mcp_practices_tool_actually_runs():
+    """*** A TOOL NOTHING CALLS IS A TOOL NOTHING CHECKS. ***
+
+    `primary_key_patches` grew a fifth element and `mcp_server.Backend.practices` still unpacked
+    four, so the MCP call raised ValueError while the whole suite passed. Asserting on the source
+    would have missed it the same way. This calls the tool.
+    """
+    from dbt_assay import mcp_server
+    from dbt_assay import practices as prac
+
+    b = mcp_server.Backend.__new__(mcp_server.Backend)
+    b.state = lambda: SimpleNamespace(project=SimpleNamespace(tests=[]), entries=[])
+    assert b.practices() == {"missing_uniqueness_tests": []}
+
+    real = prac.primary_key_patches
+    prac.primary_key_patches = lambda *_a: [("m", ["a"], "derived", 3, ["dropped_key"])]
+    try:
+        row = b.practices()["missing_uniqueness_tests"][0]
+    finally:
+        prac.primary_key_patches = real
+    assert row["model"] == "m" and row["but_the_model_does_not_emit"] == ["dropped_key"]
+
+
+def test_a_fanout_above_one_never_prints_as_one():
+    """1.56x printed as `2x`, and the opposite rounding is worse: `1x` reads as 'it holds'."""
+    from dbt_assay.practices import fanout
+
+    assert fanout(73608, 47144) == "1.56x"
+    assert fanout(2, 1) == "2x"
+    assert fanout(1045, 7) == "149x"
+    assert fanout(500, 500) == "1x"
+    assert fanout(1_000_400, 1_000_000) != "1x", "a grain that does not hold must not read as one"
+    assert fanout(5, 0) == "?"
+
+
+def test_verify_grains_counts_a_model_in_a_custom_schema():
+    """Everything in `main` counted; everything in `main_water` came back `(not counted)`."""
+    from dbt_assay import practices as prac
+
+    seen = []
+
+    class _Probe:
+        @staticmethod
+        def run_sql(sql, *_a, **_k):
+            seen.append(sql)
+            return [{"m": "stg_water", "n": 149, "d": 1}]
+
+    proj = SimpleNamespace(models={"model.p.stg_water": SimpleNamespace(name="stg_water")})
+    sch = SimpleNamespace(relation={"model.p.stg_water": '"db"."main_water"."stg_water"'})
+    held = prac.verify_grains([("stg_water", ["k"], "derived", 1, [])], proj, _Probe,
+                              ".", None, "dbt", schema=sch)
+    assert held == {"stg_water": (149, 1)}
+    assert "db.main_water.stg_water" in seen[0], seen[0]
+
+
+def test_a_locked_store_does_not_report_itself_as_a_missing_one():
+    """The advice was "run any judged command once", which is the one thing that fails the same
+    way. DuckDB is single-writer; that is the actual fact and it names the actual fix."""
+    from dbt_assay.mcp_server import Backend
+
+    b = Backend.__new__(Backend)
+    b.store_path = None
+    assert "nowhere to write" in b._store_or_why()[1]
+
+    b.store_path = str(ROOT / "pyproject.toml")          # exists, is not a duckdb store
+    got = b.rule("m", "q", "agree", "because")
+    assert "nothing was recorded" in got["error"]
+
+    class _Boom:
+        def __init__(self, *_a):
+            raise RuntimeError("Could not set lock on file: Conflicting lock is held")
+
+    import dbt_assay.mcp_server as mod
+    real = mod.Store
+    mod.Store = _Boom
+    try:
+        why = b._store_or_why()[1]
+    finally:
+        mod.Store = real
+    assert "LOCKED" in why and "one writer" in why
+    assert "Run any judged command" not in why, "it told the reader to do the thing that fails"
+
+
+def test_a_relayed_ruling_names_the_person_and_is_still_an_agent_ruling():
+    """*** THE ONE FIELD AN AGENT FILLS IN ITSELF CANNOT BE THE ONE THAT DECIDES AUTHORITY. ***"""
+    from dbt_assay.mcp_server import Backend
+
+    wrote = {}
+
+    class _Store:
+        con = SimpleNamespace(execute=lambda *_a, **_k: SimpleNamespace(fetchone=lambda: None))
+
+        def adjudicate(self, *a, **k):
+            wrote.update(k)
+
+        def ruled_subjects(self):
+            return set()
+
+        def agent_rulings(self):
+            return []
+
+        def close(self):
+            pass
+
+    b = Backend.__new__(Backend)
+    b._store_or_why = lambda: (_Store(), "")
+    got = b.rule("model.p.m::edge::x", "hop__multiplies", "disagree", "it is a union",
+                 decided_by="Ryan")
+    assert wrote["source"] == "agent", "a relayed ruling must never be filed as human"
+    assert "Ryan" in wrote["who"]
+    assert got["relayed_from"] == "Ryan" and "still filed as `agent`" in \
+        got["and_still_an_agent_ruling"]
+
+
+def test_the_review_queue_puts_read_findings_first_and_hides_nothing():
+    """An agent could write a hundred rulings and never see whether one had been read."""
+    from dbt_assay.mcp_server import Backend
+
+    fs = [SimpleNamespace(check="a", subject="model.p.big", subject_name="big", file="b.sql",
+                          summary="s", marts=30),
+          SimpleNamespace(check="b", subject="model.p.read", subject_name="read", file="r.sql",
+                          summary="s", marts=1),
+          SimpleNamespace(check="c", subject="model.p.done", subject_name="done", file="d.sql",
+                          summary="s", marts=99)]
+
+    class _Store:
+        @staticmethod
+        def ruled_subjects():
+            return {"model.p.done"}
+
+        @staticmethod
+        def agent_rulings():
+            return [{"subject": "model.p.read", "verdict": "disagree", "note": "a union"}]
+
+        @staticmethod
+        def close():
+            pass
+
+    b = Backend.__new__(Backend)
+    b.state = lambda: None
+    b._store_or_why = lambda: (_Store(), "")
+    from dbt_assay import live
+    real = live.findings_for
+    live.findings_for = lambda *_a, **_k: fs
+    try:
+        got = b.review_queue()
+    finally:
+        live.findings_for = real
+    names = [r["model"] for r in got["waiting_for_a_person"]]
+    assert "done" not in names, "a person already ruled on it"
+    assert names[0] == "read", "a finding an agent has read is one keypress; it goes first"
+    assert got["waiting_for_a_person"][0]["an_agent_already_said"]["because"] == "a union"
+    assert got["already_ruled_by_a_person"] == 1
