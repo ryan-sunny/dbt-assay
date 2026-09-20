@@ -52,6 +52,31 @@ A contract is fifteen lines where the SQL is two hundred, so an agent can hold a
 in about what reading four models costs it now. `changed_contracts` is the self-check to run after
 an edit and before moving on: *did that change what anything MEANS?*
 
+## The rest of the bank
+
+```bash
+assay feeds --project-dir transform    # has a source changed its mind while its schema held still?
+assay align                            # do two columns in different models mean the same thing?
+assay tests --gaps-only                # what is a model exposed to that nothing asserts? (no key)
+assay adjudicate                       # rows a dbt test flagged: does the row explain itself?
+```
+
+**feeds** samples ~20 rows per source, because the defect is uniform across a load. Half of it is
+arithmetic and never asked: a numeric column spiking at `-9999`, or a date whose max sits years in
+the future, is a placeholder found by counting.
+
+**align** calibrates itself. Every join in your project is somebody asserting two columns hold the
+same concept, so the labels are already written: measured **100/100 agreement** against pairs a
+real project already joins. Routed by rounding to the nearest level, no threshold to tune.
+
+**tests** finds coverage gaps with no API key at all — 182 on a real project, the worst being a
+model with 24 marts downstream exposed to a fan-out that nothing asserts against. Severity fit is
+a judgment, and your current `severity:` setting is the weak label it argues with.
+
+**adjudicate** reads `dbt_test__audit`, so `store_failures` is the candidate generator. A test
+returning 3,229 rows becomes a triage list instead of a reason to switch the test off. The
+explanation options are domain knowledge: `explanations:` in audit.yml holds one set per mart.
+
 ## It becomes part of your warehouse
 
 ```bash

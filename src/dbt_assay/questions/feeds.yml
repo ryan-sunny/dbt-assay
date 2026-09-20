@@ -1,0 +1,57 @@
+# The input layer: has the feed changed its mind?
+#
+# *** THIS CATCHES THE CLASS THAT POISONS EVERYTHING DOWNSTREAM. ***
+# A column whose NAME, TYPE and ROW COUNT all held steady while its CONTENT changed kind passes
+# every schema test and every volume monitor ever written. A `county` column that starts carrying
+# city names, a `water_source` that switches from names to codes, a feed that quietly changes unit.
+#
+# Half of this family is CODE and is not asked: a numeric profile spiking at -9999, or a date whose
+# maximum sits years in the future, is a sentinel found by counting. Only meaning is asked.
+version: 1
+
+field_matches_its_name:
+  type: choice
+  prompt_version: "feed.name.v1"
+  instructions:
+    question: >-
+      Do the values in `sample` look like what a column called `column` should hold in a table
+      called `relation`?
+    note: >-
+      The sample is a handful of real values. Judge the KIND of thing they are, not whether any one
+      of them is correct.
+  criteria:
+    matches:
+      what: "The values are the kind of thing the name promises."
+    holds_something_else:
+      what: "The values are consistently a DIFFERENT kind of thing from what the name says."
+      examples: ["a column called county holding city names",
+                 "a column called water_source holding numeric codes",
+                 "a column called date holding free text"]
+    mixed:
+      what: "Some values match the name and others are a different kind entirely."
+      examples: ["ids in some rows and names in others, from two merged feeds"]
+    cannot_tell:
+      what: "The sample does not settle it. Choose this rather than guess."
+
+units_are_what_the_column_claims:
+  type: choice
+  prompt_version: "feed.units.v1"
+  instructions:
+    question: >-
+      `column` is numeric and its name or documentation implies a unit. Do the values in `sample`,
+      and the range in `profile`, look like that unit?
+    note: >-
+      A feed that changes unit passes every schema and volume test ever written, because only the
+      magnitudes move.
+  criteria:
+    consistent:
+      what: "The magnitudes are plausible for the unit the name implies."
+    wrong_scale:
+      what: >-
+        The values are plausible for a DIFFERENT unit of the same quantity: gallons where
+        acre-feet are named, feet where miles are, cents where dollars are.
+      examples: ["a decreed acre-feet column whose median is in the hundreds of thousands"]
+    not_a_quantity:
+      what: "The values are a code or an identifier rather than a measurement at all."
+    cannot_tell:
+      what: "The name implies no unit, or the sample does not settle it."

@@ -139,6 +139,9 @@ class Config:
     questions: dict = field(default_factory=dict)
     waivers: dict = field(default_factory=dict)     # model name -> [Waiver]
     vocab: dict = field(default_factory=dict)
+    # Per-mart options for the row-adjudication family. THE OPTIONS ARE THE DOMAIN KNOWLEDGE and
+    # there is one set per mart; this is the part of the file worth maintaining.
+    explanations: dict = field(default_factory=dict)
     provider: str = "auto"
     model: str = "jev-latest"
     max_spend_usd: float = 1.0
@@ -163,6 +166,7 @@ class Config:
         cfg.max_spend_usd = float(j.get("max_spend_usd", 1.0))
         cfg.min_adjudications = int((data.get("gating") or {}).get("min_adjudications", 20))
         cfg.vocab = data.get("vocab") or {}
+        cfg.explanations = data.get("explanations") or {}
 
         for name, q in (data.get("questions") or {}).items():
             q = q or {}
@@ -241,6 +245,13 @@ questions:
     act:
       annotate: "p > 0.50"
       queue:    "p > 0.75"
+
+# explanations: options for the row-adjudication family, per model. The generic set is always
+# available; these are added to it, and they are where the domain knowledge lives.
+explanations: {}
+#  water_rights:
+#    conditional_right: >-
+#      a claim on water not yet diverted, so its structure legitimately does not exist yet
 
 # vocab: what the words mean here. Injected into state for EVERY question, which is why it improves
 # answers to questions you never wrote.

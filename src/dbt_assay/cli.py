@@ -11,15 +11,19 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__, contracts, mcp_server, provenance, relate
+from . import align as align_mod
 from . import backtest as backtest_mod
 from . import columns as columns_mod
 from . import diff as diff_mod
 from . import export as export_mod
+from . import feeds as feeds_mod
 from . import inventory as inv_mod
 from . import judged as judged_mod
 from . import live as live_mod
 from . import probe as probe_mod
+from . import rows as rows_mod
 from . import semantics as sem_mod
+from . import testing as testing_mod
 from . import versioning as ver_mod
 from .checks import run_all
 from .config import DEFAULT_YML, Config
@@ -1323,4 +1327,304 @@ def semantics(
             console.print(f"  [bold]{name}[/]  [dim]@{p:.2f}[/]")
     elif do_desc:
         console.print("\n[green]no description contradicts its code.[/]")
+    store.close()
+
+
+def _entries(tdir, store):
+    project, digests, _f, schema, _s = _load(tdir)
+    obs = probe_mod.read(store) if store else {}
+    return project, digests, schema, inv_mod.build(project, digests, schema, store, obs)
+
+
+@app.command()
+def feeds(
+    target: str = typer.Option(None, "--target", "-t"),
+    project_dir: str = typer.Option(".", "--project-dir"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    dbt_bin: str = typer.Option("dbt", "--dbt-bin", help='e.g. "uv run dbt"'),
+    sample: int = typer.Option(20, "--sample", help="rows per relation; the defect is uniform "
+                                                    "across a load, so twenty answer it"),
+    limit: int = typer.Option(10, "--limit", "-n", help="how many sources to sample"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+):
+    """Has a feed changed its mind while its schema held still?
+
+    A column whose name, type and row count all held steady while its CONTENT changed kind passes
+    every schema test and volume monitor ever written.
+    """
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    store = Store(store_path) if Path(store_path).exists() else None
+    project, digests, schema, _entries_unused = _entries(tdir, store)
+    declared = relate.declared_keys(project)
+    known = {}
+    tg = probe_mod.targets(project, digests, schema, declared, known)[:limit]
+    console.print(f"[bold]{len(tg)}[/] source relations to sample")
+    if not tg:
+        raise typer.Exit(0)
+
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if store is None:
+        store = Store(store_path)
+    sentinels, findings = [], []
+    for t in tg:
+        cols = feeds_mod.columns_to_sample(schema, t.uid, t.columns)
+        prof_rows = probe_mod.run_sql(probe_mod.profile_sql(t.relation, cols),
+                                      project_dir, profiles_dir, dbt_bin, limit=1)
+        profile = prof_rows[0] if prof_rows else {}
+        sent = probe_mod.sentinel_findings(t.relation, cols, profile)
+        sentinels += [(t.relation, c, v, w) for c, v, w in sent]
+        rows = probe_mod.run_sql(probe_mod.sample_sql(t.relation, cols, sample),
+                                 project_dir, profiles_dir, dbt_bin, limit=sample)
+        if not rows:
+            continue
+        subj = feeds_mod.FeedSubject(relation=t.relation, uid=t.uid, columns=cols,
+                                     sample=rows, profile=profile, sentinels=sent)
+        if not client.available:
+            continue
+        for chunk in feeds_mod.chunks(cols):
+            st = feeds_mod.build_state(subj, chunk, cfg.vocab)
+            try:
+                ans = decide(store, client, st, feeds_mod.questions_for(chunk, subj),
+                             decision_key=f"{t.uid}::feed",
+                             prompt_version=feeds_mod.NAME_VERSION, caller="assay.feeds")
+            except BudgetExceeded as e:
+                console.print(f"[yellow]stopped: {e}[/]")
+                break
+            for c in chunk:
+                a = ans.get(f"name__{c}")
+                if a and a["answer"] in ("holds_something_else", "mixed") and \
+                        (a.get("confidence") or 0) >= 0.6:
+                    findings.append((t.relation, c, a["answer"], a.get("confidence")))
+                u = ans.get(f"unit__{c}")
+                if u and u["answer"] == "wrong_scale" and (u.get("confidence") or 0) >= 0.6:
+                    findings.append((t.relation, c, "wrong_scale", u.get("confidence")))
+
+    if sentinels:
+        console.print(f"\n[yellow]{len(sentinels)} placeholder value(s) found by counting, "
+                      f"no judgment needed:[/]")
+        for rel, c, v, w in sentinels[:10]:
+            console.print(f"  [bold]{rel}.{c}[/] = {v}  [dim]{w}[/]")
+    if findings:
+        console.print(f"\n[yellow]{len(findings)} column(s) whose content does not match "
+                      f"their name:[/]")
+        for rel, c, what, conf in findings[:10]:
+            console.print(f"  [bold]{rel}.{c}[/]  {what}  [dim]@{conf:.2f}[/]")
+    elif client.available:
+        console.print("\n[green]no column's content disagrees with its name.[/]")
+    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}[/]")
+    store.close()
+
+
+@app.command()
+def align(
+    target: str = typer.Option(None, "--target", "-t"),
+    select: str = typer.Option(None, "--select", "-s"),
+    max_pairs: int = typer.Option(120, "--max-pairs"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+):
+    """Do two columns in different models mean the same thing?
+
+    Every join in this project is somebody asserting two columns hold the same concept, so the
+    labels are already written. Routed by rounding to the nearest level, with no threshold to tune.
+    """
+    from .selector import resolve
+
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    store = Store(store_path) if Path(store_path).exists() else None
+    project, digests, schema, entries = _entries(tdir, store)
+    scope = resolve(project, select)
+    if scope is not None:
+        entries = [e for e in entries if e.uid in scope]
+
+    joined = align_mod.joined_pairs(project, digests, schema)
+    pairs = align_mod.candidates(entries, joined, max_pairs=max_pairs)
+    labelled = [p for p in pairs if p.label]
+    console.print(f"[bold]{len(pairs)}[/] candidate pairs · "
+                  f"[bold]{len(labelled)}[/] already asserted same by a join in this project")
+    if not pairs:
+        raise typer.Exit(0)
+
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        console.print("[yellow]no API key.[/]")
+        raise typer.Exit(1)
+    if store is None:
+        store = Store(store_path)
+
+    routed, agree, checked = {}, 0, 0
+    for chunk in [pairs[i:i + 10] for i in range(0, len(pairs), 10)]:
+        st = align_mod.build_state(chunk, cfg.vocab)
+        try:
+            ans = decide(store, client, st, align_mod.questions_for(chunk),
+                         decision_key=f"align::{hash(tuple(p.key for p in chunk)) & 0xffffff}",
+                         prompt_version=align_mod.ALIGN_VERSION, caller="assay.align")
+        except BudgetExceeded as e:
+            console.print(f"[yellow]stopped: {e}[/]")
+            break
+        for i, p in enumerate(chunk):
+            a = ans.get(f"align__{i}")
+            if not a:
+                continue
+            r = align_mod.route(a)
+            routed.setdefault(r, []).append((p, a.get("confidence")))
+            if p.label == "same":
+                checked += 1
+                agree += (r == "same")
+
+    t = Table(title="\nsame concept?", header_style="bold")
+    t.add_column("route"); t.add_column("n", justify="right"); t.add_column("example")
+    for k in ("same", "review", "different"):
+        if routed.get(k):
+            p, _c = routed[k][0]
+            t.add_row(k, str(len(routed[k])), f"{p.column_a} ~ {p.column_b}")
+    console.print(t)
+    if checked:
+        console.print(f"[dim]against pairs this project already joins: {agree}/{checked} agree "
+                      f"({100 * agree // checked}%)[/]")
+    for p, c in routed.get("same", [])[:10]:
+        if not p.label:
+            console.print(f"  [yellow]same concept, never joined[/] "
+                          f"{p.model_a}.{p.column_a} ~ {p.model_b}.{p.column_b}")
+    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}[/]")
+    store.close()
+
+
+@app.command("tests")
+def tests_cmd(
+    target: str = typer.Option(None, "--target", "-t"),
+    gaps_only: bool = typer.Option(False, "--gaps-only",
+                                   help="coverage only. Pure code, no API key, no spend."),
+    limit: int = typer.Option(80, "--limit", "-n", help="how many tests to judge"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+):
+    """Is each test's severity right, and what is a model exposed to that nothing asserts?"""
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    store = Store(store_path) if Path(store_path).exists() else None
+    project, digests, _schema, entries = _entries(tdir, store)
+
+    gaps = testing_mod.coverage_gaps(project, digests, entries)
+    console.print(f"[bold]{len(gaps)}[/] coverage gap(s) [dim]found by code alone[/]")
+    t = Table(title="\nexposed, and nothing asserts it", header_style="bold")
+    t.add_column("model"); t.add_column("marts", justify="right"); t.add_column("exposure")
+    t.add_column("would be caught by")
+    for g in gaps[:15]:
+        t.add_row(g.model, str(g.marts), g.exposure[:44], ", ".join(g.would_catch)[:34])
+    console.print(t)
+    if gaps_only:
+        if store:
+            store.close()
+        raise typer.Exit(0)
+
+    subs = [s for s in testing_mod.subjects(project, entries) if s.marts][:limit]
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        console.print("\n[yellow]no API key; severity needs one. --gaps-only needs none.[/]")
+        raise typer.Exit(1)
+    if store is None:
+        store = Store(store_path)
+
+    wrong = []
+    for chunk in [subs[i:i + testing_mod.CHUNK] for i in range(0, len(subs), testing_mod.CHUNK)]:
+        st = testing_mod.build_state(chunk, cfg.vocab)
+        try:
+            ans = decide(store, client, st, testing_mod.questions_for(chunk),
+                         decision_key=f"sev::{hash(tuple(s.test_name for s in chunk)) & 0xffffff}",
+                         prompt_version=testing_mod.SEV_VERSION, caller="assay.tests")
+        except BudgetExceeded as e:
+            console.print(f"[yellow]stopped: {e}[/]")
+            break
+        for i, s in enumerate(chunk):
+            a = ans.get(f"sev__{i}")
+            if not a:
+                continue
+            m = testing_mod.mismatch(s, a)
+            if m:
+                wrong.append((s, m, a.get("confidence")))
+
+    if wrong:
+        console.print(f"\n[yellow]{len(wrong)} test(s) whose severity looks wrong:[/]")
+        for s, (lvl, why), conf in sorted(wrong, key=lambda x: -(x[2] or 0))[:12]:
+            console.print(f"  [bold]{s.model}[/] {s.test_name[:46]}  [dim]{why} @{conf:.2f}[/]")
+    else:
+        console.print("\n[green]no test's severity disagrees with what it protects.[/]")
+    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}[/]")
+    store.close()
+
+
+@app.command()
+def adjudicate(
+    target: str = typer.Option(None, "--target", "-t"),
+    project_dir: str = typer.Option(".", "--project-dir"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    dbt_bin: str = typer.Option("dbt", "--dbt-bin"),
+    per_test: int = typer.Option(10, "--per-test", help="rows sampled per failing test"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+):
+    """Rows a dbt test flagged: does the rest of the row explain it?
+
+    dbt already built the candidate generator. `store_failures` writes every failing row, and a
+    test returning 3,229 rows becomes a triage list instead of a reason to switch the test off.
+    """
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    store = Store(store_path) if Path(store_path).exists() else None
+    project, _digests, _schema, entries = _entries(tdir, store)
+
+    rows, skipped = rows_mod.collect(project, entries, probe_mod, project_dir, profiles_dir,
+                                     dbt_bin, per_test)
+    console.print(f"[bold]{len(rows)}[/] failing row(s) to adjudicate · "
+                  f"[dim]{len(skipped)} test(s) had nothing stored[/]")
+    if not rows:
+        console.print("[dim]dbt writes these only with store_failures on. "
+                      "`dbt test --store-failures` then run this again.[/]")
+        raise typer.Exit(0)
+
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        console.print("[yellow]no API key.[/]")
+        raise typer.Exit(1)
+    if store is None:
+        store = Store(store_path)
+
+    verdicts, incoherent = {}, []
+    explanations = getattr(cfg, "explanations", None) or {}
+    for i, fr in enumerate(rows):
+        st = rows_mod.build_state(fr, cfg.vocab)
+        try:
+            ans = decide(store, client, st, rows_mod.questions_for(fr, explanations),
+                         decision_key=f"{fr.model_uid}::row::{i}",
+                         prompt_version=rows_mod.EXPL_VERSION, caller="assay.adjudicate")
+        except BudgetExceeded as e:
+            console.print(f"[yellow]stopped: {e}[/]")
+            break
+        a = ans.get("explanation")
+        if a:
+            verdicts.setdefault(a["answer"], []).append((fr, a.get("confidence")))
+        c = ans.get("coherent")
+        if c and float(c["answer"]) < 0.4:
+            incoherent.append((fr, float(c["answer"])))
+
+    t = Table(title="\nwhat the flagged rows actually are", header_style="bold")
+    t.add_column("verdict"); t.add_column("n", justify="right"); t.add_column("example")
+    for k in sorted(verdicts, key=lambda k: -len(verdicts[k])):
+        fr, _c = verdicts[k][0]
+        t.add_row(k, str(len(verdicts[k])), f"{fr.model}: {fr.rule[:36]}")
+    console.print(t)
+    real = verdicts.get("genuinely_wrong", [])
+    if real:
+        console.print(f"\n[red]{len(real)} row(s) nothing explains:[/]")
+        for fr, conf in sorted(real, key=lambda x: -(x[1] or 0))[:8]:
+            console.print(f"  [bold]{fr.model}[/] {fr.rule}  [dim]@{conf:.2f}[/]")
+    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}[/]")
     store.close()

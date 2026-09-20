@@ -1,0 +1,55 @@
+# The data layer: a cheap exact rule narrows, and a judgment adjudicates what survives.
+#
+# *** ASSERTIONS FIND; JUDGMENTS EXPLAIN. ***
+# A deterministic rule over a mart is cheap and exact, and its output is almost never a defect
+# list. Measured on a real warehouse: a rule flagging "a conditional amount on a structure that
+# does not exist" returned 3,229 rows and every one was NORMAL -- that is the definition of a
+# conditional right. An unconditional rule raises 3,229 alarms and is switched off within a week.
+#
+# So the judgment's job is not to find the anomaly. Code finds it. The judgment says whether the
+# rest of the row EXPLAINS it.
+#
+# *** ASK FOR THE EXPLANATION, NOT FOR A PLAUSIBILITY SCORE. ***
+# Measured on the same rows: a `figure_is_plausible` noul read 0.46-0.49 on rows that were
+# entirely normal and barely separated a pond from a reservoir, because "plausible" is a continuous
+# judgment against nothing. A choice whose options NAME CONCRETE SITUATIONS separates cleanly.
+version: 1
+
+row_explanation:
+  type: choice
+  prompt_version: "row.v1"
+  instructions:
+    question: >-
+      A deterministic rule flagged this row. Does the rest of `row` explain why it looks that way?
+    note: >-
+      `rule` is what fired and `model_purpose` is what this table is for. The options after
+      `nothing_odd` are situations in which the flag is entirely normal.
+  criteria:
+    nothing_odd:
+      what: "Read in full, the row is unremarkable and the rule is simply too broad here."
+    normal_for_this_kind_of_row:
+      what: >-
+        The row is of a kind where this pattern is expected, and another field in the row says so.
+      examples: ["a claim on water not yet diverted, so its structure legitimately does not exist"]
+    explained_by_another_field:
+      what: "Some other value in the row accounts for it directly."
+    genuinely_wrong:
+      what: "Nothing in the row explains it. This looks like a real defect."
+    cannot_tell:
+      what: "The row does not carry enough to say. Choose this rather than guess."
+
+row_is_internally_coherent:
+  type: noul
+  prompt_version: "row.coh.v1"
+  instructions:
+    question: "Do the values in `row` agree with one another?"
+    note: >-
+      Ask this BESIDE the explanation, never instead of it. Measured: on rows that were entirely
+      normal, coherence read 0.29-0.32 -- correctly seeing that the fields contradict -- while the
+      explanation said why that contradiction is expected. Coherence DETECTS; explanation EXCUSES.
+      Collapsing them loses one or the other.
+  criteria:
+    "true":
+      what: "The fields are mutually consistent."
+    "false":
+      what: "Two or more fields contradict each other, whether or not that contradiction is normal."

@@ -1,0 +1,24 @@
+# Do two columns in different models mean the same thing?
+#
+# *** THE PROJECT ALREADY LABELLED THIS AND NOBODY NOTICED. ***
+# If a model joins `a.county = b.county_name`, somebody asserted those are the same concept. That
+# is a free positive label set, the same trick the declared keys gave grain, and it is what makes
+# this family measurable on day one.
+#
+# Shaped as the entity-alignment cookbook: an ORDERED score, routed by rounding to the nearest
+# level rather than by a threshold somebody tuned.
+version: 1
+
+same_concept:
+  type: score
+  prompt_version: "align.v1"
+  instructions:
+    question: >-
+      Do `column_a` and `column_b` hold the same kind of thing about the same kind of entity?
+    note: >-
+      Judge the CONCEPT, not whether the values would join cleanly today. Two columns can be the
+      same concept and disagree on spelling.
+  criteria:
+    - "They describe different things. Joining them would be a mistake."
+    - "They are related and might be the same thing, but the state does not settle it."
+    - "They are the same concept under two names, and a value in one means the same as a value in the other."

@@ -1,0 +1,22 @@
+# Is this test's severity right for what it protects?
+#
+# *** THE TEAM'S CURRENT SETTING IS A WEAK LABEL, SO DISAGREEMENT IS THE FINDING. ***
+# Ordered levels, so this is a SCORE: a choice over ordered options throws the ordering away and
+# cannot express "slightly too strong". Each level describes a concrete situation and stands on its
+# own, because "medium" describes nothing.
+version: 1
+
+severity_fit:
+  type: score
+  prompt_version: "sev.v1"
+  instructions:
+    question: >-
+      Given what `test` protects on `model`, and how far the model reaches, how serious is a
+      violation?
+    note: >-
+      `blast_radius` is arithmetic over the DAG, not an opinion: how many models read this one and
+      how many of those are marts.
+  criteria:
+    - "Cosmetic. A violation would not change a number anyone reads, and stopping a build over it wastes an engineer's morning."
+    - "Worth knowing about. Somebody should look this week, but the numbers downstream are still usable."
+    - "A violation silently corrupts a figure that reaches a mart. Shipping it is worse than failing the build."

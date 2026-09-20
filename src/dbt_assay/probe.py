@@ -233,6 +233,72 @@ def read(store) -> dict[str, dict[str, Observation]]:
     return out
 
 
+def sample_sql(relation: str, columns: list[str], n: int = 20, dialect: str = "duckdb") -> str:
+    """A handful of real values per column. The feed layer judges the KIND of thing they are.
+
+    *** NO LIMIT CLAUSE. ***
+    `dbt show` appends its own, so a statement carrying one renders as `limit 8 limit 5` and dies
+    on a parser error -- silently, because a failed sample just looks like an empty table. The row
+    count comes from `--limit` instead.
+    """
+    cols = ", ".join(sqlglot.parse_one(c, dialect=dialect).sql(dialect=dialect) for c in columns)
+    rel = exp.to_table(relation).sql(dialect=dialect)
+    return f"select {cols} from {rel}"
+
+
+def profile_sql(relation: str, columns: list[str], dialect: str = "duckdb") -> str:
+    """*** HALF THE FEED LAYER IS ARITHMETIC AND IS NEVER ASKED. ***
+
+    A numeric column spiking at -9999, or a date whose maximum sits years in the future, is a
+    sentinel found by counting. Only meaning goes to a judgment.
+    """
+    parts = ["count(*) as row_count"]
+    for i, c in enumerate(columns):
+        col = sqlglot.parse_one(c, dialect=dialect).sql(dialect=dialect)
+        parts += [f"min(try_cast({col} as double)) as min_{i}",
+                  f"max(try_cast({col} as double)) as max_{i}",
+                  f"count(try_cast({col} as double)) as num_{i}"]
+    rel = exp.to_table(relation).sql(dialect=dialect)
+    return f"select {', '.join(parts)} from {rel}"
+
+
+def run_sql(sql: str, project_dir: str, profiles_dir: str | None = None,
+            dbt_bin: str = "dbt", limit: int = 50, timeout: int = 300) -> list[dict]:
+    """Any read-only statement, through the project's own dbt. assay never holds a credential."""
+    cmd = [*dbt_bin.split(), "show", "--inline", sql, "--output", "json", "--limit", str(limit)]
+    if profiles_dir:
+        cmd += ["--profiles-dir", profiles_dir]
+    try:
+        p = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True,
+                           timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return ((parse_dbt_show(p.stdout or "") or {}).get("show") or [])
+
+
+# Far-future or far-past dates, and the numeric placeholders feeds reach for instead of NULL.
+SENTINELS = (-9999, -999, -1, 9999, 99999, -99999, 0.0)
+
+
+def sentinel_findings(relation: str, columns: list[str], profile: dict) -> list[tuple]:
+    """(column, value, why) for numeric extremes that are placeholders, not measurements."""
+    out = []
+    for i, c in enumerate(columns):
+        lo, hi = profile.get(f"min_{i}"), profile.get(f"max_{i}")
+        for v in (lo, hi):
+            if v is None:
+                continue
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                continue
+            if fv in SENTINELS and fv not in (0.0,):
+                why = ("a placeholder a feed writes instead of NULL; it must be NULLed, "
+                       "never clamped")
+                out.append((c, fv, why))
+    return out
+
+
 def emit(targets_: list[Target], dialect: str = "duckdb") -> str:
     """The offline path, for anyone who will not let a subprocess touch their warehouse."""
     blocks = []
