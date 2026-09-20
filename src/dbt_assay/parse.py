@@ -486,9 +486,15 @@ def digest(sql: str, name: str = "", dialect: str = "duckdb") -> Digest:
             if txt and txt not in bucket:
                 bucket.append(txt)
 
-    for node in tree.find_all(exp.RegexpFullMatch):
-        pat = node.expression
-        if isinstance(pat, exp.Literal) and isinstance(pat.this, str):
-            d.full_match_patterns.append(pat.this)
+    # *** THE NODE TYPE DOES NOT EXIST BEFORE sqlglot 28. ***
+    # Referencing it unconditionally makes assay fail to parse ANY model on an older sqlglot,
+    # which is worse than losing one dialect check. The declared floor is 28 for this reason and
+    # the fallback keeps a narrower floor viable for anyone who pins deliberately.
+    full_match = getattr(exp, "RegexpFullMatch", None)
+    if full_match is not None:
+        for node in tree.find_all(full_match):
+            pat = node.expression
+            if isinstance(pat, exp.Literal) and isinstance(pat.this, str):
+                d.full_match_patterns.append(pat.this)
 
     return d

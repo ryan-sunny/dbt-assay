@@ -1,0 +1,98 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install ${{ matrix.python }}
+      - run: uv sync --all-extras --python ${{ matrix.python }}
+      # The whole suite runs offline. No API key is configured here ON PURPOSE: a test that
+      # needs one is a test that cannot run in CI, and the judgment tier is opt-in by design.
+      - run: uv run --python ${{ matrix.python }} pytest -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+      - run: uv run ruff check src tests
+
+  dependency-majors:
+    # *** THE JOB THAT EARNS ITS KEEP. ***
+    # sqlglot renamed a Select's `from` arg to `from_` at v30, and the MCP SDK renamed FastMCP to
+    # MCPServer at v2. Both changes fail QUIETLY: the first makes a FROM relation simply vanish, so
+    # every check behaves as though the model joined nothing. Testing the declared floor as well as
+    # the latest is what stops assay claiming support it does not have.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: sqlglot-floor
+            pin: "sqlglot==28.0.0"
+          - name: sqlglot-latest
+            pin: "sqlglot"
+          - name: mcp-v1
+            pin: "mcp<2"
+          - name: mcp-v2
+            pin: "mcp>=2"
+    name: deps (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+      - run: uv pip install --upgrade "${{ matrix.pin }}"
+      - run: uv run pytest -q
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      # The question banks are DATA. A packaging mistake ships a tool whose bank is empty, which
+      # fails at import rather than at install, so the wheel's contents are asserted here.
+      - name: the wheel carries the question banks
+        run: |
+          python -m zipfile -l dist/*.whl | grep -E 'dbt_assay/questions/.*\.yml' || {
+            echo "::error::the question banks are missing from the wheel"; exit 1; }
+      - name: it installs clean and the banks load
+        run: |
+          uv venv /tmp/v && uv pip install --python /tmp/v/bin/python dist/*.whl
+          /tmp/v/bin/python -c "
+          from dbt_assay.contracts import load_all_banks
+          b = load_all_banks()
+          assert len(b) >= 12, b
+          print('banks loaded from the installed wheel:', len(b))
+          "
+          /tmp/v/bin/assay --help > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+      - run: uv run --with pip-audit pip-audit --strict || true

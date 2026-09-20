@@ -18,7 +18,11 @@ classifiers = [
 # fighting every user's environment and breaking on every dbt release. Reading the JSON means
 # assay works across dbt versions and adapters, and can never break someone's dbt.
 dependencies = [
-  "sqlglot>=25",
+  # 28 is the real floor: `exp.RegexpFullMatch` does not exist before it, and the
+  # declared >=25 was a claim of support assay did not have. CI tests the floor
+  # and the latest on every push, because both of sqlglot's recent renames failed
+  # QUIETLY rather than loudly.
+  "sqlglot>=28",
   "duckdb>=1.0",
   "typer>=0.12",
   "rich>=13",
@@ -49,10 +53,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/dbt_assay"]
 
-# The question bank is DATA and must ship inside the wheel: a user has to be able to read
-# what assay asks, and contracts.py loads it at import time.
-[tool.hatch.build.targets.wheel.force-include]
-"src/dbt_assay/questions" = "dbt_assay/questions"
+# The question bank is DATA and must ship inside the wheel: a user has to be able to read what
+# assay asks, and contracts.py loads it at import time. It needs no force-include -- it already
+# lives inside the package directory, and adding one makes hatchling add every file TWICE and
+# refuse to build. tests/test_packaging.py asserts the banks load from wherever assay is
+# installed, and CI asserts they are present in the wheel itself.
 
 [tool.ruff]
 line-length = 100
