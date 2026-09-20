@@ -22,6 +22,7 @@ from . import feeds as feeds_mod
 from . import inventory as inv_mod
 from . import judged as judged_mod
 from . import live as live_mod
+from . import patch as patch_mod
 from . import practices as prac_mod
 from . import probe as probe_mod
 from . import render as render_mod
@@ -1503,6 +1504,82 @@ def regress(
                   "whichever direction it went. If the new answer is right, re-rule it; if the "
                   "old one was, the change that moved it is the defect.[/]")
     raise typer.Exit(1)
+
+
+@app.command()
+def patch(
+    out_dir: str = typer.Argument("tests/assay", help="where to write, e.g. transform/tests/assay"),
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    project_dir: str = typer.Option(".", "--project-dir"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    dbt_bin: str = typer.Option("dbt", "--dbt", help="the dbt command, e.g. 'uv run dbt'"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="print what it would write, write none"),
+    dialect: str = typer.Option(None, "--dialect"),
+):
+    """Write the uniqueness tests assay can prove will pass.
+
+    *** A GENERATED TEST THAT FAILS ON ITS FIRST RUN IS WORSE THAN NO TEST. ***
+    Every grain is COUNTED through your own dbt before a file is written -- `count(*)` against
+    `count(distinct <grain>)`, batched. A grain that was not counted, or was counted and did not
+    hold, does not become a file and the reason is printed. That is the whole difference between
+    a patch and a nag.
+
+    Singular tests, not schema.yml entries: on a real project 344 of 358 models already had a
+    schema yml entry, and a second entry for the same model is a dbt compilation error. A `.sql`
+    file needs no entry anywhere, collides with nothing, and needs no dbt_utils.
+    """
+    import dbt_assay as _pkg
+    tdir = _find_target(target)
+    store = Store(store_path) if Path(store_path).exists() else None
+    project, _d, _sch, entries = _entries(tdir, store, dialect)
+    patches = prac_mod.primary_key_patches(project, entries)
+    if store:
+        store.close()
+    if not patches:
+        console.print("[green]every model with a settled grain already has a uniqueness test.[/]")
+        raise typer.Exit(0)
+
+    console.print(f"[bold]{len(patches)}[/] model(s) with no uniqueness test. Counting each "
+                  f"proposed grain before writing anything...")
+    held = prac_mod.verify_grains(patches, project, probe_mod, project_dir, profiles_dir, dbt_bin)
+    if not held:
+        console.print("[yellow]could not count a single grain[/] [dim]-- the models may not be "
+                      "built, or --dbt / --project-dir may be wrong. Nothing will be written, "
+                      "because an uncounted grain is not a passing one.[/]")
+        raise typer.Exit(1)
+
+    plans = patch_mod.plan(patches, held, _pkg.__version__, Path(out_dir))
+    writable = [x for x in plans if x.sql]
+    skipped = [x for x in plans if not x.sql]
+
+    if writable:
+        t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        t.add_column("model"); t.add_column("one row per", overflow="fold")
+        t.add_column("counted", justify="right")
+        for x in writable[:20]:
+            t.add_row(x.model, ", ".join(x.columns), f"{x.rows:,} rows, {x.distinct:,} distinct")
+        console.print(t)
+    if skipped:
+        console.print(f"\n[yellow]{len(skipped)} not written[/]")
+        for x in skipped[:10]:
+            console.print(f"  [dim]{x.model}: {x.skipped}[/]")
+
+    if dry_run:
+        console.print(f"\n[dim]--dry-run: {len(writable)} file(s) would be written to "
+                      f"{out_dir}[/]")
+        raise typer.Exit(0)
+    if not writable:
+        console.print("\n[yellow]nothing to write.[/] [dim]Every proposal was uncounted or did "
+                      "not hold, and assay will not write a test it cannot prove passes.[/]")
+        raise typer.Exit(0)
+
+    n, blocked = patch_mod.write(plans, Path(out_dir))
+    console.print(f"\n[green]wrote {n} test(s)[/] to [bold]{out_dir}[/]")
+    for x in blocked:
+        console.print(f"  [yellow]left alone:[/] {x.path.name} [dim]-- {x.skipped}[/]")
+    console.print(f"[dim]Run them: dbt test --select path:{Path(out_dir).name}. Each one passes "
+                  f"today; it is there to catch the day it stops.[/]")
 
 
 @app.command()

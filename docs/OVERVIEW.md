@@ -253,6 +253,7 @@ assay inventory           # what every model IS; --html writes a page you can co
 assay trace <column>      # where one column's value actually came from
 assay tests               # tests that cannot fail, and what nothing asserts at all
 assay practices           # dbt-project-evaluator violations, with judged exceptions
+assay patch tests/assay   # WRITE the uniqueness tests it can prove will pass
 ```
 
 **The judged tier** — needs a key
@@ -472,6 +473,51 @@ like a working check for weeks.
 ruled on tells you whether it is right — and the linter was itself calibrated that way: run against
 assay's own fifteen hand-tuned banks it flagged four, and all four were the linter being wrong.
 
+## From flagging to changing something
+
+Most of assay tells you. One part of it writes:
+
+```bash
+assay patch tests/assay --dry-run   # what it would write, and why it refuses the rest
+assay patch tests/assay             # write them
+dbt test --select path:assay        # they pass today
+```
+
+**Every grain is counted through your own dbt before a file exists.** `count(*)` against
+`count(distinct <grain>)`, batched. A grain that was not counted, or was counted and did not hold,
+does not become a file and the reason is printed:
+
+```
+  water_rights: it does not hold: 1,045 rows, 7 distinct (149x). A test here fails on its first run
+  int_azcc_owners: NOT COUNTED -- and an uncounted grain is not a passing one
+  fact_sale: the grain names parcel_id, which the model does not emit
+```
+
+That is the whole difference between a patch and a nag. Before the counting landed, a real project
+got 15 proposals and **0 of them held**.
+
+**Singular tests, not `schema.yml` entries.** On that project 344 of 358 models already had a
+schema yml entry, and a second entry for the same model is a dbt compilation error — a `schema.yml`
+patcher would have broken 96% of what it touched. A `.sql` file needs no entry anywhere, collides
+with nothing, and needs no `dbt_utils`.
+
+**It never overwrites a file it did not write.** Every generated file carries a marker; one without
+it is left alone and reported. The only thing worse than a bad generated test is one that ate a
+good handwritten one.
+
+And each file says what justified it, so whoever finds it in six months can judge it without
+finding assay:
+
+```sql
+-- assay proposed this grain and COUNTED it before writing this file: 412,889 rows,
+-- 412,889 distinct. It held, so this test passes today. It is here to catch the day it
+-- stops holding.
+--
+-- assay did not decide this was the RIGHT grain -- it inferred it from the SQL and checked
+-- the arithmetic. If one row is something else, delete this file and say so in the model's
+-- own documentation, where `assay claims` will pick it up.
+```
+
 ## Nothing gates until it has been measured
 
 This is the part most tools get wrong, and it is why `assay` is safe to put in CI on day one.
@@ -536,7 +582,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.9.5
+- uses: ryan-sunny/dbt-assay@v0.9.6
   with:
     target: target-head
     baseline: base/target
