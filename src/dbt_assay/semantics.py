@@ -95,8 +95,30 @@ class Subject:
     comments: str | None = None
 
 
+def boilerplate(project) -> set[str]:
+    """*** A DESCRIPTION 32 MODELS SHARE IS NOT A CLAIM ABOUT ANY OF THEM. ***
+
+    Measured on a 265-model warehouse: 84 of 343 descriptions were shared by two or more models,
+    and they produced 8 of the 16 description findings on a first judged run. Every one was the
+    same shape -- "Staging model: light cleanup of one raw source" against a model that also
+    filters to commercial permits -- which reads as a contradiction because generic prose never
+    mentions what the model does. The finding is true and worthless: the fix is to write a
+    description, not to change the code.
+
+    `_meaningful` already carries a hardcoded list of placeholders, and a hardcoded list only ever
+    catches the ones whoever wrote it thought of. Repetition is the general form, it needs no
+    vocabulary, and it holds in any warehouse: prose applied by a template says nothing specific
+    BECAUSE it was applied by a template.
+    """
+    from collections import Counter
+    c = Counter((m.description or "").strip() for m in project.models.values()
+                if (m.description or "").strip())
+    return {text for text, n in c.items() if n > 1}
+
+
 def subjects(project, digests, schema, entries, limit_predicates: int = 12) -> list[Subject]:
     by_uid = {e.uid: e for e in entries}
+    shared = boilerplate(project)
     out = []
     for uid, d in digests.items():
         if not d.ok or uid not in project.models:
@@ -107,7 +129,9 @@ def subjects(project, digests, schema, entries, limit_predicates: int = 12) -> l
         head = header_comment(m.compiled or "")
         out.append(Subject(
             uid=uid, name=m.name, path=m.path,
-            purpose=m.description.strip()[:900] if _meaningful(m.description) else None,
+            purpose=(m.description.strip()[:900]
+                     if _meaningful(m.description) and m.description.strip() not in shared
+                     else None),
             header=head[:2400] if len(head) > 40 else None,
             comments=all_comments(m.compiled or "")[:6000] or None,
             predicates=preds,

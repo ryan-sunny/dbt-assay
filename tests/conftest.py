@@ -6,6 +6,16 @@ from pathlib import Path
 
 import pytest
 
+# One real description, and one boilerplate applied to three models so the repetition rule has
+# something to catch. A project where every description is unique cannot test it.
+_BOILER = "Staging model: light cleanup of one raw source toward the common lead schema."
+DESCRIPTIONS = {
+    "stg_bad_notnull": "One row per id, with amount never null because it is coalesced to zero.",
+    "stg_ok_notnull": _BOILER,
+    "stg_bad_accepted": _BOILER,
+    "stg_bad_tilde": _BOILER,
+}
+
 
 def _model(uid: str, name: str, path: str, **kw) -> dict:
     return {"resource_type": "model", "name": name, "original_file_path": path,
@@ -65,7 +75,7 @@ def project_dir(tmp_path: Path) -> Path:
         layer = LAYER.get(name.split("_")[0], "marts")
         path = f"models/{layer}/{name}.sql"
         uid = f"model.p.{name}"
-        nodes[uid] = _model(uid, name, path)
+        nodes[uid] = _model(uid, name, path, description=DESCRIPTIONS.get(name, ""))
         parent_map[uid], child_map[uid] = [], []
         f = tmp_path / "target" / "compiled" / "p" / path
         f.parent.mkdir(parents=True, exist_ok=True)

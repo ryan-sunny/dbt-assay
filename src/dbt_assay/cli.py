@@ -287,6 +287,99 @@ def check(
         raise typer.Exit(1)
 
 
+def _onboard_judge(project, digests, schema, findings, config_path: str, store_path: str,
+                   judge: bool, judge_limit: int) -> bool:
+    """The judged tier, on a first run, bounded.
+
+    *** LEADS WITH THE DESCRIPTION FAMILY, AND ONLY THAT. ***
+    It is one call per model, so the cost is legible and the latency is linear. It needs no probe,
+    no catalog, no store and no prior verdicts, so it works on a project assay has never seen. And
+    its finding reads as English to someone who has never used this tool: your prose says one thing
+    and your SQL does another. The column, predicate and grain families are all worth running and
+    none of them opens as well, which is what `next` is for.
+
+    *** WHICH MODELS: THE DOCUMENTED ONES, NEAREST THE MARTS. ***
+    A model with no description cannot contradict one, so it is not a candidate at all. Among those
+    that have prose, the ones with the most downstream are where a false description does the most
+    damage, so a bounded pass spends its calls there rather than alphabetically.
+    """
+    console.print("\n[bold]4. what only judgment can see[/]")
+    cfg = Config.load(config_path)
+
+    store = Store(store_path) if Path(store_path).exists() else None
+    entries = inv_mod.build(project, digests, schema, store,
+                            probe_mod.read(store) if store else {})
+    subs = [x for x in sem_mod.subjects(project, digests, schema, entries) if x.purpose]
+    if store:
+        store.close()
+
+    if not subs:
+        console.print("   [dim]no model in this project carries a description of its own, so "
+                      "there is nothing for the description family to contradict. `assay columns` "
+                      "and `assay semantics --families predicates` need no prose.[/]")
+        return False
+
+    subs.sort(key=lambda x: -len(project.descendants(x.uid)))
+    picked, capped = subs[:judge_limit], len(subs) > judge_limit
+
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not judge or not client.available:
+        why = ("--no-judge was passed" if not judge else
+               "no API key. Set TYPESAFE_API_KEY or OPENROUTER_API_KEY")
+        console.print(f"   [yellow]not run:[/] {why}.")
+        console.print(f"   [dim]{len(subs)} documented model(s) are waiting for it. This is the "
+                      f"family a parser cannot do: it reads the description against the code and "
+                      f"says whether they still agree.[/]")
+        # *** SHOW THE QUESTION, NOT A SALES PITCH. ***
+        # Someone deciding whether the tier is worth a key should see the actual state and the
+        # actual question, on their own model, for free.
+        st = sem_mod.description_state(picked[0], cfg.vocab)
+        console.print(f"   [dim]what it would ask about [bold]{picked[0].name}[/bold]:[/]")
+        console.print(f"   [dim]{_json.dumps(st, default=str)[:400]}...[/]")
+        return False
+
+    stale, asked = [], 0
+    with console.status(f"judging {len(picked)} description(s)..."):
+        st_store = Store(store_path)
+        for sub in picked:
+            st = sem_mod.description_state(sub, cfg.vocab)
+            if not st:
+                continue
+            try:
+                ans = decide(st_store, client, st, sem_mod.description_question(),
+                             decision_key=f"{sub.uid}::desc",
+                             prompt_version=sem_mod.DESC_VERSION, caller="assay.onboard")
+            except BudgetExceeded as e:
+                console.print(f"   [yellow]stopped at the spend cap: {e}[/]")
+                break
+            asked += 1
+            a = ans.get("desc")
+            if a and float(a["answer"]) >= 0.6:
+                stale.append((sub.name, float(a["answer"]), len(project.descendants(sub.uid))))
+        st_store.close()
+
+    console.print(f"   [dim]{asked} description(s) judged"
+                  + (f" of {len(subs)} (--judge-limit {judge_limit})" if capped else "")
+                  + f" · {client.calls} calls, {client.input_tokens:,} tokens, "
+                    f"${client.spent_usd:.4f}[/]")
+
+    if not stale:
+        console.print("   [green]every description judged still describes its code.[/]")
+        return True
+    console.print(f"   [bold]{len(stale)}[/] description(s) no longer describe their code:")
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    for name, p_, desc in sorted(stale, key=lambda x: -x[1])[:10]:
+        t.add_row(f"[bold]{name}[/]", f"[dim]{p_:.2f}[/]",
+                  f"[dim]{desc} model(s) downstream[/]" if desc else "")
+    console.print(t)
+    # `assay trace` takes a COLUMN, not a model. Printing it here was a pointer at a command that
+    # does something else, which is the same defect this family exists to find.
+    console.print("   [dim]`assay semantics --families descriptions` re-reads any of them in full, "
+                  "and `assay review -i` records whether you agree. Nothing here gates "
+                  "anything.[/]")
+    return True
+
+
 @app.command()
 def onboard(
     target: str = typer.Option(None, "--target", "-t", help="a dbt target dir, or a project root"),
@@ -294,6 +387,10 @@ def onboard(
     config_path: str = typer.Option(".", "--config", help="where audit.yml should live"),
     agent: bool = typer.Option(False, "--agent",
                                help="also write the agent skill file and print the MCP config"),
+    judge: bool = typer.Option(True, "--judge/--no-judge",
+                               help="run the judgment tier when a key is present"),
+    judge_limit: int = typer.Option(120, "--judge-limit",
+                                    help="how many models the first judged pass covers"),
     dialect: str = typer.Option(None, "--dialect",
                                 help="override; read from the manifest by default"),
 ):
@@ -304,6 +401,14 @@ def onboard(
     compiled SQL, no catalog, a dialect it guessed. Every one of those degrades the answers without
     changing how confident the output looks, so onboard says which of them is true here BEFORE it
     shows a single finding, and it prints the command that fixes each one.
+
+    *** AND IT JUDGES, BECAUSE THE STRUCTURAL TIER IS THE PART ANYONE COULD WRITE. ***
+    A first run that only ran the parser sells assay as a linter. The description family is what it
+    leads with: one call per model, nothing else in a warehouse can answer it, and the finding is
+    legible without any assay vocabulary. The first one it found on the author\'s own warehouse was
+    a staging model whose description claimed residential permits were filtered out. 14,150 rows
+    survived that filter; 373 were non-residential and 157 were explicitly multifamily. Valid SQL,
+    passing tests, false prose, and a lead product selling residential roofing jobs as commercial.
     """
     tdir = _find_target(target)
     project, digests, failures, schema, sstats = _load(tdir, dialect)
@@ -338,7 +443,10 @@ def onboard(
         console.print(t)
         console.print("   [dim]`assay check --check <name>` reads one of them in full.[/]")
 
-    console.print("\n[bold]4. config[/]")
+    judged = _onboard_judge(project, digests, schema, findings, config_path, store_path,
+                            judge, judge_limit)
+
+    console.print("\n[bold]5. config[/]")
     p = Path(config_path) / "audit.yml"
     if p.exists():
         console.print(f"   [dim]{p} already exists; left alone.[/]")
@@ -359,7 +467,7 @@ def onboard(
         console.print("   [dim]MCP: claude mcp add assay -- assay mcp --target "
                       f"{tdir}[/]")
 
-    console.print("\n[bold]5. next[/]")
+    console.print("\n[bold]6. next[/]")
     steps = []
     if cov["unreadable"] or cov.get("from_stripped"):
         n_raw = cov["unreadable"] + cov.get("from_stripped", 0)
@@ -374,14 +482,14 @@ def onboard(
     if findings:
         steps.append((f"assay check --check {by.most_common(1)[0][0]}",
                       "the finding there is most of"))
-    from .jev import Client as _C
-    if not _C(provider=None).available:
-        steps.append(("export TYPESAFE_API_KEY=... (or OPENROUTER_API_KEY)",
-                      ("the judgment tier is off until a key exists; all of the above ran "
-                       "without one")))
-    else:
+    if judged:
         steps.append(("assay columns --limit 25",
-                      "the judged tier: what each column MEANS, adjudicated"))
+                      "the same tier over every column: what each one MEANS, adjudicated"))
+        steps.append(("assay semantics --families predicates",
+                      "why each filter is there: domain logic, or a patch over a bad feed"))
+    else:
+        steps.append(("export TYPESAFE_API_KEY=... (or OPENROUTER_API_KEY)",
+                      ("section 4 is what a key buys; everything above it ran without one")))
     if not agent:
         steps.append(("assay onboard --agent",
                       "writes the agent skill file and prints the MCP line"))
