@@ -102,7 +102,7 @@ class Store:
     # applied on open; adding a column is cheap, safe and keeps every row that was already there.
     ADDED_COLUMNS = {
         "adjudications": [("source", "varchar")],
-        "model_decisions": [("input_tokens", "integer")],
+        "model_decisions": [("input_tokens", "integer"), ("context", "varchar")],
     }
 
     def _migrate(self) -> None:
@@ -214,7 +214,8 @@ class Store:
         """Judgments nobody has ruled on yet."""
         self.con.execute(DDL)
         return self.con.execute(
-            """select d.decision_key, d.question, d.answer, d.confidence, d.prompt_version
+            """select d.decision_key, d.question, d.answer, d.confidence, d.prompt_version,
+                      coalesce(d.context, '')
                from model_decisions d
                left join adjudications a
                  on a.subject = d.decision_key and a.question = d.question

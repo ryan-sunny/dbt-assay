@@ -64,8 +64,11 @@ def test_the_gate_reads_real_adjudication_counts(tmp_path):
     from dbt_assay.store import Store
 
     s = Store(tmp_path / "a.duckdb")
-    s.con.execute("""insert into model_decisions values
-        ('m','role__x','choice','dimension',0.9,'{}','h','v1','jev','c','t',10,current_timestamp)""")
+    # named, not positional: a positional insert breaks the moment a column is added
+    s.con.execute("""insert into model_decisions
+        (decision_key, question, kind, answer, confidence, probabilities, state_hash,
+         prompt_version, model_version, caller, decided_at)
+        values ('m','role__x','choice','dimension',0.9,'{}','h','v1','jev','t',current_timestamp)""")
     assert s.adjudication_counts() == {}
     s.adjudicate("m", "role__x", "column_role", "dimension", "agree", note="ok", who="t")
     assert s.adjudication_counts()["column_role"] == 1

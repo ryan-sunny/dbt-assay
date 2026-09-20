@@ -71,9 +71,28 @@ recorded verdicts, and assay refuses to anyway.
 assay review -i
 ```
 
-`a` agree, `d` disagree, `u` unclear, `s` skip. The gate discipline is theoretical until this is
-fast: a hundred verdicts is roughly what a question needs before it may fail a build, and a
-hundred invocations of a flag is not a thing anyone does.
+```
+column_role  zip_tiers
+  role = measure  confidence 1.00
+  models/marts/zip_tiers.sql · 0 downstream, 0 marts
+  monthly_price = CAST(GREATEST(5, ROUND(12 * a.leads_per_week * pr.price_multiplier))
+  comes from: computed — derived here by an expression
+```
+
+`a` agree, `d` disagree, `u` unclear, `s` skip. Least certain first, because a verdict on an answer
+already given at 0.99 teaches almost nothing and one on a 0.45 is where the question is actually
+being decided.
+
+The evidence is on screen because a verdict nobody can reach in five seconds does not get given.
+
+```bash
+assay review --from-labels     # verdicts from assertions already in your project
+```
+
+A `unique` test says a column is an identifier; a declared key says what one row is; a join says two
+columns are the same concept. Those are real human judgments, made earlier, and they are recorded
+as `label` rather than `human` — evidence about a question, never permission for it to fail a
+build, because the label can itself be the thing that is wrong.
 
 ## While you type, and for your agent
 

@@ -668,7 +668,7 @@ def review(
         store.close()
         raise typer.Exit(0)
     if interactive:
-        _review_loop(store, limit)
+        _review_loop(store, limit, target, dialect)
         store.close()
         raise typer.Exit(0)
     if verdict:
@@ -704,9 +704,9 @@ def review(
 
     rows = store.pending(limit)
     console.print(f"\n[bold]{len(rows)}[/] judgments awaiting a verdict:")
-    for key, q, ans, conf, _pv in rows:
+    for key, q, ans, conf, _pv, about in rows:
         cf = f"  conf {conf:.2f}" if conf is not None else ""
-        console.print(f"  [dim]{key.split('.')[-1]}[/]  {q} = [bold]{ans}[/]{cf}")
+        console.print(f"  [dim]{about or key.split('.')[-1]}[/]  {q} = [bold]{ans}[/]{cf}")
     console.print("\n[dim]assay review --subject <key> --question <q> --verdict agree|disagree[/]")
     store.close()
 
@@ -1343,6 +1343,8 @@ def semantics(
                 st = sem_mod.build_state(s, chunk, cfg.vocab)
                 try:
                     ans = decide(store, client, st, sem_mod.predicate_questions(chunk),
+                             contexts={f"pred__{i}": f"{s.name}: {p}"
+                                       for i, p in enumerate(chunk)},
                                  decision_key=f"{s.uid}::pred::{hash(tuple(chunk)) & 0xffff}",
                                  prompt_version=sem_mod.PRED_VERSION, caller="assay.semantics")
                 except BudgetExceeded as e:
@@ -1528,7 +1530,10 @@ def align(
         try:
             ans = decide(store, client, st, align_mod.questions_for(chunk),
                          decision_key=f"align::{hash(tuple(p.key for p in chunk)) & 0xffffff}",
-                         prompt_version=align_mod.ALIGN_VERSION, caller="assay.align")
+                         prompt_version=align_mod.ALIGN_VERSION, caller="assay.align",
+                         contexts={f"align__{i}":
+                                   f"{x.model_a}.{x.column_a} ~ {x.model_b}.{x.column_b}"
+                                   for i, x in enumerate(chunk)})
         except BudgetExceeded as e:
             console.print(f"[yellow]stopped: {e}[/]")
             break
@@ -1865,20 +1870,70 @@ def _keypress() -> str:
     return (line.strip()[:1] or "q").lower()
 
 
-def _review_loop(store, limit: int) -> None:
+def _review_context(target, dialect: str):
+    """Everything needed to rule on a judgment WITHOUT going to open the model.
+
+    *** A VERDICT NOBODY CAN REACH IN FIVE SECONDS DOES NOT GET GIVEN. ***
+    The loop showed `role__address = dimension @0.43` and nothing else, so ruling on it meant
+    finding the model and reading it. Four verdicts existed. The evidence has to be in front of
+    the person.
+    """
+    try:
+        tdir = _find_target(target)
+        project, digests, _f, schema, _s = _load(tdir, dialect)
+    except Exception:                                                   # noqa: BLE001
+        return None
+    from . import provenance as prov
+    return {"project": project, "digests": digests, "schema": schema,
+            "prov": {uid: prov.classify(uid, project, digests, schema) for uid in project.models}}
+
+
+def _show_evidence(ctx, key: str, question: str) -> None:
+    if not ctx or key not in ctx["project"].models:
+        return
+    m = ctx["project"].models[key]
+    d = ctx["digests"].get(key)
+    b = ctx["project"].blast_radius(key)
+    col = question.split("__", 1)[1] if "__" in question else None
+    console.print(f"  [dim]{m.path} · {b['descendants']} downstream, {b['marts']} marts[/]")
+    if col and d:
+        expr = (d.output_exprs.get(col.lower()) or "").strip()
+        p = (ctx["prov"].get(key) or {}).get(col.lower())
+        if expr:
+            console.print(f"  [dim]{col} =[/] {expr[:110]}")
+        if p:
+            console.print(f"  [dim]comes from: {p.kind} — {p.evidence[:70]}[/]")
+    elif d and d.predicates_atomic:
+        console.print(f"  [dim]filters: {', '.join(d.predicates_atomic[:2])[:110]}[/]")
+
+
+def _review_loop(store, limit: int, target=None, dialect: str = "duckdb") -> None:
     rows = store.pending(limit)
     if not rows:
         console.print("[green]nothing is waiting for a verdict.[/]")
         return
-    console.print(f"[bold]{len(rows)}[/] to rule on.  "
+    # *** MOST UNCERTAIN FIRST. ***
+    # A verdict on an answer the model already gave at 0.99 teaches almost nothing. One on a 0.45
+    # is where the question is actually being decided, so that is what a person should spend their
+    # attention on.
+    def informativeness(r):
+        conf = r[3]
+        return abs((conf if conf is not None else 0.5) - 0.5)
+    rows = sorted(rows, key=informativeness)
+
+    ctx = _review_context(target, dialect)
+    if ctx is None and target:
+        console.print("[yellow]could not read the project, so no evidence will be shown.[/]")
+    console.print(f"[bold]{len(rows)}[/] to rule on, least certain first.  "
                   "[dim]a agree · d disagree · u unclear · s skip · q quit[/]\n")
     done = 0
-    for key, q, ans, conf, _pv in rows:
+    for key, q, ans, conf, _pv, about in rows:
         fam = _family_of(q)
-        subject = key.split(".")[-1]
+        subject = about or key.split(".")[-1]
         cf = f"  [dim]confidence {conf:.2f}[/]" if conf is not None else ""
         console.print(f"[dim]{fam}[/]  [bold]{subject}[/]")
-        console.print(f"  {q}  =  [bold]{ans}[/]{cf}")
+        console.print(f"  {q.split('__')[0]}  =  [bold]{ans}[/]{cf}")
+        _show_evidence(ctx, key, q)
         ch = _keypress()
         if ch == "q":
             break

@@ -61,6 +61,11 @@ create table if not exists model_decisions (
     model_version  varchar,      -- what ANSWERED, never what was asked for
     call_id        varchar,
     caller         varchar,
+    -- *** WHAT THE JUDGMENT WAS ABOUT, IN WORDS. ***
+    -- A decision key is a cache key, and for a batched family it is a hash of the whole batch, so
+    -- the store could not say WHICH pair `align__4` referred to. A verdict nobody can reach in
+    -- five seconds does not get given, so every answer carries a line a person can read.
+    context        varchar,
     input_tokens   integer,
     decided_at     timestamp,
     primary key (decision_key, question, prompt_version, model_version)
@@ -207,7 +212,7 @@ def unpack(ans: dict) -> tuple:
 
 
 def decide(store, client: Client, state, questions: dict, *, decision_key: str,
-           prompt_version: str, caller: str = "assay") -> dict:
+           prompt_version: str, caller: str = "assay", contexts: dict | None = None) -> dict:
     """Cached judgments. Returns {question: {kind, answer, confidence, probabilities, cached}}."""
     store.con.execute(DDL)
     sh = state_hash(state)
@@ -241,10 +246,11 @@ def decide(store, client: Client, state, questions: dict, *, decision_key: str,
             hits[q] = {"kind": kind, "answer": answer, "confidence": conf,
                        "probabilities": json.loads(probs), "cached": False}
             rows.append([decision_key, q, kind, answer, conf, probs, sh,
-                         prompt_version, served, call_id, caller, used])
+                         prompt_version, served, call_id, caller,
+                         (contexts or {}).get(q, ""), used])
         store.con.executemany(
             """insert or replace into model_decisions
                (decision_key, question, kind, answer, confidence, probabilities, state_hash,
-                prompt_version, model_version, call_id, caller, input_tokens, decided_at)
-               values (?,?,?,?,?,?,?,?,?,?,?,?, current_timestamp)""", rows)
+                prompt_version, model_version, call_id, caller, context, input_tokens, decided_at)
+               values (?,?,?,?,?,?,?,?,?,?,?,?,?, current_timestamp)""", rows)
     return hits
