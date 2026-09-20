@@ -363,8 +363,22 @@ def judge_overlap(banks: dict, client, store=None) -> list[Issue]:
             continue                      # two options cannot overlap without being identical
         state = {"the_question": (bank.get("instructions") or {}).get("question", ""),
                  "options": {k: _text(v) for k, v in crit.items()}}
+        # *** A PROBABILITY AGAINST A THRESHOLD FLAPS, AND THIS IS MEANT FOR CI. ***
+        # Reported from the field: seven warnings on one run, six on the next, over an UNCHANGED
+        # set of banks. A family sitting near the line will flip forever and no one will trust the
+        # check. `decide` caches on a hash of the state, so an unchanged question keeps its answer
+        # and only a REWORDED one is asked again -- which is exactly when it should be.
         try:
-            ans = client.ask(state, q, caller="assay.banks")["answers"]["overlap"]
+            if store is not None:
+                from .jev import decide
+                got = decide(store, client, state, q,
+                             decision_key=f"bank::{name}",
+                             prompt_version=spec["prompt_version"], caller="assay.banks")
+                a = got.get("overlap") or {}
+                ans = {"choice": a.get("answer"), "confidence": a.get("confidence"),
+                       "probabilities": a.get("probabilities") or {}}
+            else:
+                ans = client.ask(state, q, caller="assay.banks")["answers"]["overlap"]
         except Exception as e:                                      # noqa: BLE001
             out.append(Issue(name, "warn", "options_overlap", f"could not be judged: {e}"))
             continue

@@ -267,3 +267,41 @@ def test_ask_estimates_before_it_spends_and_refuses_over_the_cap():
     src = inspect.getsource(ask)
     assert "refused before spending anything" in src
     assert "--dry-run" in src, "the escape hatch must be named where the refusal happens"
+
+
+def test_every_subject_says_what_one_row_of_its_model_is():
+    """*** THE RESIDUE AFTER FIXING THE CRITERIA IS IN THE STATE, NOT THE WORDING. ***
+
+    Reported from the field, and it is the sharpest observation made about this tool: a window
+    subject carried the model name, the partition, the order by and the position -- and nothing
+    saying what the ROWS ARE. No phrasing of the options can settle "is this ranking rights or
+    sections" when the state never says. The author rewrote the criteria to exclude a case in
+    plain words and the model still answered it at 0.55 and 0.63.
+
+    assay already knew: 239 of 356 models on the test warehouse carry a declared key.
+    """
+    import inspect
+
+    from dbt_assay import subjects
+    src = inspect.getsource(subjects._add_what_a_row_is)
+    assert "declared_keys" in src
+    assert "group_by_columns" in src, "a model with no declared key still has its own grouping"
+    assert "schema.columns" in src, "118 of 356 have neither; the columns are the fallback"
+    # and it is applied to EVERY kind, not just the one that prompted it
+    assert "_add_what_a_row_is(out" in inspect.getsource(subjects.build)
+
+
+def test_the_judged_lint_is_cached_so_it_cannot_flap_in_ci():
+    """*** SEVEN WARNINGS ON ONE RUN, SIX ON THE NEXT, OVER AN UNCHANGED SET OF BANKS. ***
+
+    A probability against a threshold flaps, and a family sitting near the line will flip forever
+    until nobody trusts the check. `decide` caches on a hash of the state, so an unchanged
+    question keeps its answer and only a REWORDED one is asked again. Verified live: run one made
+    ten calls, runs two and three made zero and produced byte-identical output.
+    """
+    import inspect
+
+    from dbt_assay.lint import judge_overlap
+    src = inspect.getsource(judge_overlap)
+    assert "decide(store, client" in src
+    assert 'prompt_version=spec["prompt_version"]' in src, "the cache must invalidate on a reword"

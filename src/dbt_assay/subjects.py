@@ -42,6 +42,7 @@ def build(kind: str, project, digests: dict, schema, limit: int = 0) -> list[Sub
     fn = {"model": _models, "edge": _edges, "column": _columns,
           "predicate": _predicates, "expression": _expressions, "window": _windows}[kind]
     out = fn(project, digests, schema)
+    _add_what_a_row_is(out, project, digests, schema)
     # Most reachable first: a limit should spend itself where a defect costs most.
     out.sort(key=lambda s: -project.blast_radius(s.uid)["descendants"])
     return out[:limit] if limit else out
@@ -174,6 +175,57 @@ def _windows(project, digests, schema) -> list[Subject]:
                               "the_model_filters": [x for x in (d.predicates_atomic or [])
                                                     if x.strip() not in ("1 = 1",)][:8]})))
     return out
+
+
+def _add_what_a_row_is(subs: list[Subject], project, digests, schema) -> None:
+    """*** THE RESIDUE AFTER FIXING THE CRITERIA IS IN THE STATE, NOT THE WORDING. ***
+
+    Reported from the field, and it is the sharpest thing said about this tool: a window subject
+    carried the model name, the partition, the order by and the position -- and nothing saying
+    what the ROWS ARE. No phrasing of the options can settle "is this ranking water rights or
+    sections" when the state never says. The author rewrote the criteria to exclude a case in
+    plain words and the model still answered it at 0.55 and 0.63, because the answer was not in
+    the state to be found.
+
+    assay already knows. `relate.declared_keys` has what a person wrote down, and the inventory
+    has what code worked out. Both go in, labelled by which is which, because a declared key is a
+    human judgment and an inferred grain is not.
+    """
+    from . import relate
+    try:
+        declared = relate.declared_keys(project)
+    except Exception:                                               # noqa: BLE001
+        declared = {}
+    for s in subs:
+        m = project.models.get(s.uid)
+        if m is None:
+            continue
+        what: dict = {}
+        if declared.get(s.uid):
+            what["a_row_is_one"] = list(declared[s.uid])
+            what["and_that_was"] = "declared by a test in this project"
+        else:
+            d = digests.get(s.uid)
+            gb = list(getattr(d, "group_by_columns", None) or []) if d is not None else []
+            if gb:
+                what["a_row_is_probably_one"] = gb[:6]
+                what["and_that_was"] = "inferred from the model's own group by, not declared"
+        if not what:
+            # *** 118 OF 356 MODELS HAVE NEITHER A DECLARED KEY NOR A GROUP BY. ***
+            # For those the columns are the only thing that says what the rows are, and a window
+            # ranking `wildfire_pct` over `section_id` is obviously about sections the moment they
+            # are in the state. Capped hard, because unrelated detail is a distractor.
+            try:
+                cols = [c for c in schema.columns(s.uid).names][:14]
+            except Exception:                                       # noqa: BLE001
+                cols = []
+            if cols:
+                what["the_model_produces"] = cols
+                what["and_that_was"] = "read off its columns; no key is declared for it"
+        if m.layer:
+            what["the_model_is_in"] = m.layer
+        if what:
+            s.state.setdefault("what_one_row_of_this_model_is", what)
 
 
 class _Blank:

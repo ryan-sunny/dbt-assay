@@ -1101,6 +1101,9 @@ def banks(
                                help="also ask whether any two options of a question could both be "
                                     "right about the same subject. Needs a key; about a cent."),
     config_path: str = typer.Option(".", "--config"),
+    store_path: str = typer.Option("assay.duckdb", "--store",
+                                   help="caches --judge, so an unchanged question keeps its "
+                                        "answer and the check does not flap in CI"),
 ):
     """Every question assay will ask, where it came from, and whether its shape is sound.
 
@@ -1178,8 +1181,14 @@ def banks(
             console.print("[yellow]--judge needs a key.[/] [dim]`assay config` shows what was "
                           "resolved. Everything above ran without one.[/]")
         else:
-            issues += judge_overlap(all_banks, client)
-            console.print(f"[dim]{client.calls} calls, ${client.spent_usd:.4f}[/]")
+            st = Store(store_path)
+            try:
+                issues += judge_overlap(all_banks, client, st)
+            finally:
+                st.close()
+            console.print(f"[dim]{client.calls} call(s), ${client.spent_usd:.4f}"
+                          + ("  (cached answers cost nothing)" if client.calls < len(all_banks)
+                             else "") + "[/]")
     if not issues:
         console.print("\n[green]every question has a shape Jev answers well.[/] "
                       "[dim]That is a check on the SHAPE. Only running it against cases you have "

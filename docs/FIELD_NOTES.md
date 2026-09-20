@@ -178,3 +178,32 @@ Three more, all fixed in 0.7.1.
   share a SITUATION and not a vocabulary. `assay banks --judge` now asks Jev whether any two
   options could both be right about one subject. It catches your pair, and it independently
   flagged `predicate_intent`, which had already been proven weak by hand.
+
+---
+
+## Third report, and what it changed
+
+- **The state, not the wording** — the best observation made about this tool. A window subject
+  carried the model, partition, order-by and position, and nothing saying what the ROWS ARE. Every
+  subject now carries `what_one_row_of_this_model_is`: a declared key where one exists (239 of 356
+  models on the test warehouse), else the model's own `group by`, else its columns. Measured on
+  the wildfire case: `something_else` fell 0.79 → 0.67 and `not_a_seniority_order` rose 0.21 →
+  0.32. **It helps and it does not settle that case.** The residue is real.
+- **The judged lint flapping** — fixed and proven. It routes through the cache now, keyed on a hash
+  of the question. Run one made ten calls; runs two and three made zero and produced byte-identical
+  output. Only a reworded question is asked again, which is exactly when it should be.
+- **The false negative on your own pair** — *not reproduced.* A reconstruction of v4 from your
+  description flags at p=0.83–0.88 across five consecutive runs, and the v5 wording with the
+  exclusion still flags at 0.74. The difference must be in wording not in the report. Paste the
+  YAML and it can be run directly.
+
+### And the thing worth underlining from that report
+
+> 8/8 verdicts survived a criteria rewrite. That's the first time tonight I changed a question and
+> could tell immediately that I hadn't broken what already worked — and it only cost eight
+> `assay review` calls.
+
+That is the whole argument for `min_adjudications`, made better than the docs make it. A verdict is
+usually described as what earns a question the right to gate. It is also, and sooner, **a
+regression test for the question itself** — the only way to change criteria and know what you broke.
+Eight keypresses bought that.

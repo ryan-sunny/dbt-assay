@@ -327,7 +327,8 @@ become relations *in* your warehouse.
 ```bash
 assay banks              # every question, where it came from, and whether its shape is sound
 assay banks --strict     # exit non-zero on a warning too
-assay banks --judge      # also ask whether any two options could both be right. ~a cent.
+assay banks --judge      # also ask whether any two options could both be right. ~a cent,
+                         #   cached on the question, so it cannot flap in CI.
 ```
 
 **Put a `.yml` in `assay_questions/`** — here or in any parent, or wherever `ASSAY_QUESTIONS`
@@ -491,6 +492,11 @@ column_role  zip_tiers
 already given at 0.99 teaches almost nothing and one at 0.45 is where the question is actually
 being decided. The evidence is on screen because a verdict nobody can reach in five seconds does
 not get given.
+
+**A verdict is a regression test for the question, before it is ever a licence to gate.** Reported
+from the field: after rewriting a question's criteria, 8 of 8 recorded verdicts still agreed — the
+first time that session could change a question and know immediately what it had *not* broken. That
+cost eight keypresses. `min_adjudications` is the second reason to record them; this is the first.
 
 `assay config` shows how far each question is from its floor. **Three of the twelve families have a
 finding resting on them today**; the other nine fill the inventory and the page but move no gate
