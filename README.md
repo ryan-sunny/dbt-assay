@@ -68,9 +68,26 @@ row count and timestamp, because unique in today's data is not a constraint.
 
 ## What the judgment tier adds
 
-Grain, units, null semantics, time semantics, provenance, and whether your descriptions still
-describe your code. It is opt-in and costs a fraction of a cent per model, cached so an unchanged
-model is free forever.
+**Provenance needs no judgment at all.** Every column is classified as constant, defaulted, ranked,
+aggregated, computed, carried or from_source, from the AST and the DAG. `assay` traces a column
+back through the graph until it reaches the hop that actually did something to the value, which is
+the answer to "where did this number come from" that no warehouse can give you today.
+
+**Grain**, where code proposes the candidate columns and one noul per column decides which of them
+identify a row. **Column role** and **null meaning**, chunked so repeated criteria stay inside the
+token budget.
+
+Opt-in, cached so an unchanged model is free forever, and roughly a third of a cent for sixty
+models.
+
+## Nothing gates until it has been measured
+
+`assay review` records human verdicts, and config **refuses** to let a question fail a build until
+that question has enough of them. Not a warning in the docs, an actual downgrade to `queue`.
+
+Two families can be calibrated on day one against tests the project already contains, and the
+measurement is honest about its own limits: role agreed with 57 of 61 such labels, and reading the
+four disagreements showed three were the *label* being wrong.
 
 ## What leaves your machine
 

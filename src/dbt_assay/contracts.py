@@ -43,7 +43,18 @@ def _load_bank(path: Path) -> dict:
     return data
 
 
-QUESTIONS = _load_bank(Path(__file__).parent / "questions" / "grain.yml")
+def load_all_banks(directory: Path | None = None) -> dict:
+    """Every .yml in the questions directory. A user's own bank loads the same way."""
+    directory = directory or (Path(__file__).parent / "questions")
+    out: dict = {}
+    for f in sorted(directory.glob("*.yml")):
+        for name, q in _load_bank(f).items():
+            if name != "version":
+                out[name] = q
+    return out
+
+
+QUESTIONS = load_all_banks()
 KEY_Q = QUESTIONS["column_is_part_of_the_key"]
 PROMPT_VERSION = KEY_Q["prompt_version"]
 

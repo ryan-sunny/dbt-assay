@@ -57,3 +57,29 @@ def test_an_expired_waiver_is_not_a_waiver():
 def test_an_unknown_action_is_rejected():
     with pytest.raises(ThresholdError):
         Config.from_dict({"questions": {"q": {"act": {"explode": "p > 0.5"}}}})
+
+
+def test_the_gate_reads_real_adjudication_counts(tmp_path):
+    """The refusal to gate is wired to the store, not to a constant."""
+    from dbt_assay.store import Store
+
+    s = Store(tmp_path / "a.duckdb")
+    s.con.execute("""insert into model_decisions values
+        ('m','role__x','choice','dimension',0.9,'{}','h','v1','jev','c','t',10,current_timestamp)""")
+    assert s.adjudication_counts() == {}
+    s.adjudicate("m", "role__x", "column_role", "dimension", "agree", note="ok", who="t")
+    assert s.adjudication_counts()["column_role"] == 1
+    acc = s.accuracy("column_role")
+    assert acc["n"] == 1 and acc["agreement"] == 1.0
+    assert s.pending() == []          # ruled on, so no longer pending
+    s.close()
+
+
+def test_an_unknown_verdict_is_rejected(tmp_path):
+    import pytest as _pytest
+
+    from dbt_assay.store import Store
+    s = Store(tmp_path / "b.duckdb")
+    with _pytest.raises(ValueError):
+        s.adjudicate("m", "q", "fam", "a", "looks_fine")
+    s.close()

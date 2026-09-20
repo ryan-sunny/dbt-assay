@@ -18,7 +18,9 @@ from pathlib import Path
 
 import duckdb
 
-DDL = """
+from .jev import DDL as JEV_DDL
+
+DDL = JEV_DDL + """
 create table if not exists runs (
     run_id       varchar primary key,
     started_at   timestamp,
@@ -50,6 +52,23 @@ create table if not exists findings (
     marts        integer,
     evidence     varchar,
     primary key (run_id, check_name, subject, summary)
+);
+create table if not exists adjudications (
+    -- *** THE LABELLED SET, MANUFACTURED BY USE. ***
+    -- Every human verdict recorded here is one row of evidence about a QUESTION, not just about a
+    -- finding. It is the only thing that ever earns a question the right to fail a build, which is
+    -- why config refuses to gate below min_adjudications. A tool without this loop ships flag-only
+    -- forever and gets muted.
+    subject      varchar,     -- model unique_id, or model::column
+    question     varchar,     -- the question id, e.g. role__amount
+    family       varchar,     -- the bank entry, e.g. column_role
+    answered     varchar,     -- what assay said
+    verdict      varchar,     -- agree | disagree | unclear
+    correction   varchar,     -- what it should have been, when known
+    note         varchar,
+    decided_by   varchar,
+    decided_at   timestamp,
+    primary key (subject, question)
 );
 create table if not exists edge_facts (
     run_id varchar, parent varchar, child varchar, parent_name varchar, child_name varchar,
@@ -102,6 +121,46 @@ class Store:
             self.con.executemany(
                 "insert or replace into unreadable values (?,?,?,?,?)",
                 [[run_id, *r] for r in rows])
+
+    def adjudicate(self, subject: str, question: str, family: str, answered: str,
+                   verdict: str, correction: str = "", note: str = "",
+                   who: str = "") -> None:
+        if verdict not in ("agree", "disagree", "unclear"):
+            raise ValueError("verdict must be agree, disagree or unclear")
+        self.con.execute(
+            "insert or replace into adjudications values (?,?,?,?,?,?,?,?,?)",
+            [subject, question, family, answered, verdict, correction, note,
+             who or "unknown", datetime.now(timezone.utc)])
+
+    def adjudication_counts(self) -> dict:
+        """How many verdicts exist PER FAMILY. Config reads this before allowing a gate."""
+        self.con.execute(DDL)
+        return dict(self.con.execute(
+            "select family, count(*) from adjudications group by 1").fetchall())
+
+    def accuracy(self, family: str | None = None) -> dict:
+        """Agreement rate, and the denominator, because a rate without one says nothing."""
+        q = "select verdict, count(*) from adjudications"
+        args = []
+        if family:
+            q += " where family = ?"
+            args.append(family)
+        rows = dict(self.con.execute(q + " group by 1", args).fetchall())
+        n = sum(rows.values())
+        return {"n": n, "agree": rows.get("agree", 0), "disagree": rows.get("disagree", 0),
+                "unclear": rows.get("unclear", 0),
+                "agreement": (rows.get("agree", 0) / n) if n else None}
+
+    def pending(self, limit: int = 25) -> list:
+        """Judgments nobody has ruled on yet."""
+        self.con.execute(DDL)
+        return self.con.execute(
+            """select d.decision_key, d.question, d.answer, d.confidence, d.prompt_version
+               from model_decisions d
+               left join adjudications a
+                 on a.subject = d.decision_key and a.question = d.question
+               where a.subject is null
+               order by d.decided_at desc limit ?""", [limit]).fetchall()
 
     def previous_run(self, project_name: str, before: str) -> str | None:
         r = self.con.execute(

@@ -1,0 +1,89 @@
+# Column semantics: the two families that need meaning, after code has taken its share.
+#
+# Bump prompt_version whenever instructions or criteria change. The cache is keyed on it, and a
+# reworded criterion is a different question.
+version: 1
+
+column_role:
+  type: choice
+  prompt_version: "role.v1"
+  instructions:
+    question: >-
+      What job does `column` do in this model? Judge the column named in `column`, using its
+      expression and the model's other columns as context.
+    note: >-
+      `provenance` states what code already established about how the value is produced. Use it;
+      it is fact, not a hint.
+  criteria:
+    identifier:
+      what: "Names WHICH row this is. Together with the other identifiers it picks out one row."
+      not_for: "A reference to some OTHER entity, which is foreign_key."
+      examples: ["order_id in an orders table", "section_id in one-row-per-section"]
+    foreign_key:
+      what: "Points at a DIFFERENT entity that lives somewhere else."
+      not_for: "The identity of this row itself."
+      examples: ["customer_id on an order", "building_key on an inspection"]
+    measure:
+      what: "A quantity you would sum, average or compare. Arithmetic on it is meaningful."
+      not_for: "A number that is really a code or an id, where arithmetic is nonsense."
+      examples: ["amount", "days_since", "acre_feet", "a count of something"]
+    dimension:
+      what: "A category or label you would group or filter by."
+      not_for: "Free prose, and anything time-valued."
+      examples: ["county", "license_type", "status band"]
+    event_time:
+      what: "When the real-world thing happened."
+      not_for: "When the ROW was written or loaded, which is audit_time."
+      examples: ["appropriation_date", "inspection_date", "issue_date"]
+    audit_time:
+      what: "When this record was created, loaded or last refreshed by a pipeline."
+      not_for: "When the real-world event happened."
+      examples: ["_loaded_at", "dbt_updated_at", "scraped_at"]
+    status_flag:
+      what: "A state, a boolean, or a small closed set describing a condition."
+      examples: ["is_active", "has_both_termini", "result"]
+    free_text:
+      what: "Prose meant for a human to read; not reliably groupable."
+      examples: ["notes", "description", "a concatenated contact blob"]
+    geometry:
+      what: "A spatial value: a point, line, polygon, or an encoding of one."
+      examples: ["geom", "geom_json", "a lat/lon PAIR is two measures, not this"]
+    other:
+      what: "None of the above fits. Choose this rather than forcing a poor match."
+
+# *** `impossible` IS NOT AN OPTION HERE, AND THAT IS THE WHOLE POINT. ***
+# v1 offered it, and on its first live run this question answered `unknown_value` for 25 of 25
+# columns -- a question that returns one answer for everything carries nothing. The cause was two
+# judgments hiding in one: CAN this be NULL, and IF it is, what does that mean. The first is code
+# (a not_null test, a coalesce over a literal, an inner join key) and is now decided before asking.
+# Only genuinely nullable columns reach this question, so "it cannot be NULL" is not an answer it
+# can give.
+null_meaning:
+  type: choice
+  prompt_version: "null.v2"
+  instructions:
+    question: >-
+      A NULL is possible in `column`. When one occurs, what does it mean about the real world?
+    note: >-
+      Judge what a NULL would MEAN, not how often one occurs, and not whether one can. `provenance`
+      says how the value is produced, which frequently settles it.
+  criteria:
+    unknown_value:
+      what: "The fact exists in the world but this pipeline does not have it."
+      not_for: "A fact that does not apply to this row at all."
+      examples: ["a phone number nobody recorded", "an owner name the feed omitted"]
+    not_applicable:
+      what: "The fact does not apply to this kind of row, so there is nothing to know."
+      examples: ["a diversion structure on a right that is not a diversion",
+                 "a terminus on a right that has no reach"]
+    not_yet:
+      what: "It will have a value later; the event has not happened yet."
+      examples: ["an adjudication date on a pending filing",
+                 "a built structure on a conditional right"]
+    means_zero:
+      what: >-
+        NULL is standing in for a real zero or none, so an aggregate over it silently under-reports.
+        This is usually a DEFECT rather than a meaning.
+      examples: ["a count column that is NULL instead of 0 where nothing was found"]
+    cannot_tell:
+      what: "The state does not contain enough to distinguish these. Choose this rather than guess."

@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__, contracts, relate
+from . import columns as columns_mod
 from . import probe as probe_mod
 from .checks import run_all
 from .config import DEFAULT_YML, Config
@@ -452,4 +453,164 @@ def probe(
                   f"(a failure is recorded as unknown, never as 'not unique')")
     for o in found[:15]:
         console.print(f"  [green]unique[/] {o.relation}.{o.column}  [dim]{o.detail}[/]")
+    store.close()
+
+
+@app.command()
+def columns(
+    target: str = typer.Option(None, "--target", "-t"),
+    print_state: bool = typer.Option(False, "--print-state",
+                                     help="render exactly what would be sent, and send nothing"),
+    limit: int = typer.Option(0, "--limit", "-n", help="stop after N models"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    control: bool = typer.Option(False, "--control",
+                                 help="ask only about columns the project already labels, and "
+                                      "report agreement"),
+):
+    """Judge each column's role and what a NULL in it would mean."""
+    cfg = Config.load(config_path)
+    _tdir, project, digests, schema, declared, proposed = _grain_setup(target, store_path)
+    labels = columns_mod.free_labels(project)
+
+    work = []
+    for uid in project.models:
+        if uid not in digests or not digests[uid].ok:
+            continue
+        facts = columns_mod.facts_for(uid, project, digests, schema, declared)
+        cols = [c for c in facts]
+        if control:
+            # *** ASK ABOUT WHAT IS ALREADY KNOWN. ***
+            # A not_null test declares NULL impossible; a unique test declares an identifier.
+            # Agreement on those is measurable today, with no human labelling at all.
+            # *** ONLY THE ROLE FAMILY HAS USABLE FREE LABELS. ***
+            # A not_null test says a column cannot be NULL, which code now decides, so it is not
+            # evidence about what a NULL would MEAN. Using it as such measured 0/25 and measured
+            # the wrong thing.
+            cols = [c for c in cols if (uid, c) in labels.role]
+        if cols:
+            grain = [x.lower() for x in (proposed[uid].columns if uid in proposed else
+                                         declared.get(uid) or [])]
+            work.append((uid, facts, cols, grain))
+    if limit:
+        work = work[:limit]
+
+    calls = sum(len(columns_mod.chunks(c)) for _u, _f, c, _g in work)
+    ncols = sum(len(c) for _u, _f, c, _g in work)
+    console.print(f"[bold]{ncols}[/] columns across [bold]{len(work)}[/] models, "
+                  f"{calls} calls at {columns_mod.CHUNK} columns each")
+
+    if print_state:
+        for uid, facts, cols, grain in work[:2]:
+            chunk = columns_mod.chunks(cols)[0]
+            st = columns_mod.build_state(uid, project, schema, facts, chunk, grain, cfg.vocab)
+            console.print(f"\n[bold]{project.models[uid].name}[/]")
+            console.print(_json.dumps({"state": st,
+                                       "questions": columns_mod.questions_for(chunk, facts)},
+                                      indent=1, default=str)[:2600])
+        raise typer.Exit(0)
+
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        console.print("[yellow]no API key.[/] --print-state shows exactly what would be sent.")
+        raise typer.Exit(1)
+
+    store = Store(store_path)
+    agree = disagree = 0
+    disagreements = []
+    for uid, facts, cols, grain in work:
+        for chunk in columns_mod.chunks(cols):
+            st = columns_mod.build_state(uid, project, schema, facts, chunk, grain, cfg.vocab)
+            try:
+                answers = decide(store, client, st, columns_mod.questions_for(chunk, facts),
+                                 decision_key=uid,
+                                 prompt_version=f"{columns_mod.ROLE_VERSION}+{columns_mod.NULL_VERSION}",
+                                 caller="assay.columns")
+            except BudgetExceeded as e:
+                console.print(f"[yellow]stopped: {e}[/]")
+                store.close()
+                raise typer.Exit(0) from None
+            for c in chunk:
+                for fam, qid, lab in (("column_role", f"role__{c}", labels.role.get((uid, c))),
+                                      ("null_meaning", f"null__{c}",
+                                       labels.null_meaning.get((uid, c)))):
+                    a = answers.get(qid)
+                    if not a or lab is None:
+                        continue
+                    if a["answer"] == lab:
+                        agree += 1
+                    else:
+                        disagree += 1
+                        disagreements.append(
+                            (project.models[uid].name, c, fam, a["answer"], lab,
+                             a.get("confidence")))
+
+    n = agree + disagree
+    console.print(f"\n[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}[/]")
+    if n:
+        console.print(f"[bold]against the project's own tests:[/] {agree}/{n} agree "
+                      f"({100 * agree // n}%)")
+        for name, c, fam, got, want, conf in disagreements[:12]:
+            cf = f" @{conf:.2f}" if conf is not None else ""
+            console.print(f"  [yellow]{fam}[/] {name}.{c}: said [bold]{got}[/]{cf}, "
+                          f"the project's test says [bold]{want}[/]")
+    store.close()
+
+
+@app.command()
+def review(
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    limit: int = typer.Option(20, "--limit", "-n"),
+    subject: str = typer.Option(None, "--subject", help="the decision key to rule on"),
+    question: str = typer.Option(None, "--question"),
+    verdict: str = typer.Option(None, "--verdict", help="agree | disagree | unclear"),
+    correction: str = typer.Option("", "--correction", help="what it should have been"),
+    note: str = typer.Option("", "--note"),
+    who: str = typer.Option("", "--by"),
+):
+    """List judgments nobody has ruled on, or record a verdict.
+
+    *** THIS LOOP IS WHAT MANUFACTURES THE LABELLED SET. ***
+    Until a question has verdicts, config refuses to let it fail a build. There is no way to skip
+    this and still gate on anything honestly.
+    """
+    store = Store(store_path)
+    if verdict:
+        if not (subject and question):
+            console.print("[red]--verdict needs --subject and --question[/]")
+            raise typer.Exit(1)
+        row = store.con.execute(
+            "select answer from model_decisions where decision_key = ? and question = ?"
+            " order by decided_at desc limit 1", [subject, question]).fetchone()
+        fam = question.split("__")[0]
+        fam = {"role": "column_role", "null": "null_meaning",
+               "key": "column_is_part_of_the_key"}.get(fam, fam)
+        store.adjudicate(subject, question, fam, row[0] if row else "",
+                         verdict, correction, note, who)
+        acc = store.accuracy(fam)
+        console.print(f"recorded. [bold]{fam}[/] now has {acc['n']} verdicts, "
+                      f"{acc['agree']} agreeing.")
+        store.close()
+        raise typer.Exit(0)
+
+    counts = store.adjudication_counts()
+    if counts:
+        t = Table(title="verdicts recorded", header_style="bold")
+        t.add_column("family"); t.add_column("n", justify="right")
+        t.add_column("agreement", justify="right")
+        for fam, n in sorted(counts.items()):
+            a = store.accuracy(fam)
+            t.add_row(fam, str(n),
+                      f"{100 * a['agreement']:.0f}%" if a["agreement"] is not None else "-")
+        console.print(t)
+    else:
+        console.print("[dim]no verdicts yet. Nothing can gate a build until there are.[/]")
+
+    rows = store.pending(limit)
+    console.print(f"\n[bold]{len(rows)}[/] judgments awaiting a verdict:")
+    for key, q, ans, conf, _pv in rows:
+        cf = f"  conf {conf:.2f}" if conf is not None else ""
+        console.print(f"  [dim]{key.split('.')[-1]}[/]  {q} = [bold]{ans}[/]{cf}")
+    console.print("\n[dim]assay review --subject <key> --question <q> --verdict agree|disagree[/]")
     store.close()
