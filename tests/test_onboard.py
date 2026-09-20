@@ -13,6 +13,16 @@ from dbt_assay.cli import app
 runner = CliRunner()
 
 
+def flat(output: str) -> str:
+    """*** NEVER MATCH A SUBSTRING AGAINST RENDERED TERMINAL OUTPUT. ***
+
+    rich wraps to the terminal width, so a phrase that is contiguous on my 100-column terminal is
+    split across a line break on CI's narrower one. These tests passed locally and failed in CI
+    for exactly that, and the release gate caught it. Collapse the whitespace first.
+    """
+    return " ".join(output.split())
+
+
 @pytest.fixture(autouse=True)
 def _no_spend(monkeypatch):
     """*** THE TESTS MUST NOT BILL A DEVELOPER WHO HAPPENS TO HAVE A KEY. ***
@@ -33,7 +43,7 @@ def test_it_runs_with_nothing_configured_and_writes_a_config(project_dir, tmp_pa
     assert (cfg / "audit.yml").exists()
     for section in ("what assay found", "what it can see", "no key and no spend",
                     "what only judgment can see", "next"):
-        assert section in r.output
+        assert section in flat(r.output)
 
 
 def test_without_a_key_it_shows_the_question_rather_than_selling_the_tier(project_dir, tmp_path):
@@ -41,9 +51,9 @@ def test_without_a_key_it_shows_the_question_rather_than_selling_the_tier(projec
     on their own model, for free."""
     r = runner.invoke(app, ["onboard", "-t", str(project_dir), "--config", str(tmp_path)])
     assert r.exit_code == 0, r.output
-    assert "no API key" in r.output
-    assert "would ask about" in r.output or "no model in this project carries a description" \
-        in r.output
+    assert "no API key" in flat(r.output)
+    assert ("would ask about" in flat(r.output)
+            or "no model in this project carries a description" in flat(r.output))
 
 
 def test_no_judge_asks_nothing_even_where_a_key_exists(project_dir, tmp_path, monkeypatch):
@@ -51,7 +61,7 @@ def test_no_judge_asks_nothing_even_where_a_key_exists(project_dir, tmp_path, mo
     r = runner.invoke(app, ["onboard", "-t", str(project_dir), "--config", str(tmp_path),
                             "--no-judge"])
     assert r.exit_code == 0, r.output
-    assert "--no-judge was passed" in r.output
+    assert "--no-judge was passed" in flat(r.output)
 
 
 def test_it_does_not_clobber_an_audit_yml_that_is_already_there(project_dir, tmp_path):
@@ -68,7 +78,7 @@ def test_it_names_the_dialect_it_is_about_to_parse_with(project_dir, tmp_path):
     panel, before it shows anything it found."""
     r = runner.invoke(app, ["onboard", "-t", str(project_dir), "--config", str(tmp_path)])
     assert r.exit_code == 0, r.output
-    assert "duckdb" in r.output
+    assert "duckdb" in flat(r.output)
 
 
 def test_the_agent_flag_writes_the_skill_where_an_agent_will_look(project_dir, tmp_path, monkeypatch):
@@ -79,7 +89,7 @@ def test_the_agent_flag_writes_the_skill_where_an_agent_will_look(project_dir, t
     p = Path(tmp_path) / ".claude/skills/dbt-assay/SKILL.md"
     assert p.exists()
     assert "assay" in p.read_text()
-    assert "claude mcp add assay" in r.output
+    assert "claude mcp add assay" in flat(r.output)
 
 
 def test_a_description_many_models_share_is_not_judged(project_dir):
@@ -120,8 +130,8 @@ def test_it_does_not_tell_you_to_export_a_key_you_already_have(project_dir, tmp_
     r = runner.invoke(app, ["onboard", "-t", str(project_dir), "--config", str(tmp_path),
                             "--no-judge"])
     assert r.exit_code == 0, r.output
-    assert "export TYPESAFE_API_KEY" not in r.output
-    assert "--no-judge was passed" in r.output
+    assert "export TYPESAFE_API_KEY" not in flat(r.output)
+    assert "--no-judge was passed" in flat(r.output)
 
 
 def test_compiling_is_offered_and_never_automatic(project_dir, tmp_path):
@@ -133,15 +143,21 @@ def test_compiling_is_offered_and_never_automatic(project_dir, tmp_path):
     r = runner.invoke(app, ["onboard", "-t", str(project_dir), "--config", str(tmp_path),
                             "--no-judge"])
     assert r.exit_code == 0, r.output
-    assert "compiling:" not in r.output         # never without the flag
+    assert "compiling:" not in flat(r.output)   # never without the flag
 
     # ...and the fixture has no gap, so the offer correctly stays silent too. The offer is tied to
     # the gap, not printed unconditionally: a project with nothing missing should hear nothing.
-    assert "have no compiled SQL" not in r.output
+    assert "have no compiled SQL" not in flat(r.output)
 
-    h = runner.invoke(app, ["onboard", "--help"])
-    assert "--compile" in h.output
-    assert "never automatic" in " ".join(h.output.split())
+    # *** NEVER ASSERT ON RENDERED HELP TEXT. ***
+    # It wraps to the terminal width, so `--compile` split across a line break in CI and passed
+    # locally only because my terminal is wider. The PARAMETER is the fact; its rendering is not.
+    import typer.main
+    cmd = next(c for c in app.registered_commands if c.callback.__name__ == "onboard")
+    params = {p.name: p for p in
+              typer.main.get_params_convertors_ctx_param_name_from_function(cmd.callback)[0]}
+    assert "compile_first" in params
+    assert params["compile_first"].default is False        # opt-in, always
 
 
 def test_it_refuses_to_compile_where_there_is_no_project():
