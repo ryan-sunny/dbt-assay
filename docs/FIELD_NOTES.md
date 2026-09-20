@@ -344,3 +344,35 @@ Three fixes, all in 0.9.3:
 - **A partially built `dbt_project_evaluator` read as a clean project.** `collect` already returned
   the checks it could not reach and the caller threw them away as `_missing`. The same defect as a
   guard that scans nothing, in the one place that reports on other people's standards.
+
+## 0.9.3 follow-up: the intersection is right, and "can be written" is not "would pass"
+
+Re-ran `practices --keys-only` on the same warehouse. The fix works exactly as intended: the eight
+whose grain is not in their own output are now their own finding, with the reason stated, and
+`business_leads` annotates the partial case inline — *"geography, building_key (and business_key,
+which it does not emit)"*. That reads better than anything I suggested.
+
+Then checked the twelve it now says a test **can be written** for, against the built tables:
+
+```
+int_azcc_owners                owner_key                        0 rows   EMPTY
+stg_pm_properties              building_key                     0 rows   EMPTY
+int_water_call_exposure_basis  wdid                       172,695 rows   FANS OUT 1.31x
+business_leads                 geography, building_key     73,608 rows   FANS OUT 1.56x
+az_section_parcel_sales        section_id, county, …      944,604 rows   FANS OUT 2.23x
+fact_permit                    permit_id                   45,959 rows   FANS OUT 5.81x
+stg_water_resume_entry_facts   water_division               1,045 rows   FANS OUT 149.29x
+```
+
+**0 of 7 hold.** Somebody following this writes seven tests and five fail on the first run.
+`water_division` proposed as the grain of a 1,045-row model is the clearest: seven distinct values.
+
+**The batching already exists.** `which_have_failures` asks `count(*)` across hundreds of relations
+in one statement. The same shape over `count(*)` versus `count(distinct <proposed grain>)` verifies
+every proposal for free wherever the model is built, and turns the output into "here is a test that
+would pass".
+
+**And a proposed grain that does NOT hold is the stronger finding.** The model has no uniqueness
+test and nobody knows what one row is — worse than a missing test, and currently invisible because
+it is printed as a recommendation. That also makes the 149x case impossible to hand over as a
+patch, which is the point of the command.
