@@ -247,6 +247,9 @@ assay init                # write an audit.yml and nothing else
 ```bash
 assay scan                # parse coverage, and what could not be read
 assay check               # every finding, structural and judged, ranked by blast radius
+assay check --verify      # ...and COUNT each flagged hop's join key through your own
+                          #   dbt. A join onto a key that is unique IN THE DATA cannot
+                          #   fan out, and dbt only knows which keys are DECLARED unique.
 assay check --json        # an OBJECT, not a list: {coverage, parse_failures,
                           #   unevaluable_tests, findings}. Iterate `["findings"]`.
 assay inventory           # what every model IS; --html writes a page you can commit
@@ -617,7 +620,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.14.0
+- uses: ryan-sunny/dbt-assay@v0.15.0
   with:
     target: target-head
     baseline: base/target

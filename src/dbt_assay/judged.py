@@ -299,6 +299,16 @@ def hop_multiplies_rows(project, entries) -> list[Finding]:
             if e.union_parents and any(
                     f" {p_name} " in f" {ctx} " for p_name in e.union_parents):
                 continue
+            # *** A JOIN ONTO A UNIQUE KEY CANNOT FAN OUT EITHER. ***
+            # The other two of the twelve, and the ruling named the blind spot itself: "these
+            # parents carry no declared uniqueness test, which is why assay cannot see it".
+            # `int_water_streamflow_summary` is 2,387 rows over 2,387 distinct `abbrev` and
+            # nothing in the project says so. Declared uniqueness is free and counted uniqueness
+            # comes from `--verify`; both land here, and both settle exactly what the judgment
+            # was allowed to be wrong about.
+            if e.unique_key_parents and any(
+                    f" {p_name} " in f" {ctx} " for p_name in e.unique_key_parents):
+                continue
             out.append(Finding(
                 check="hop_multiplies_rows",
                 rests_on="edge_preserves_the_grain",

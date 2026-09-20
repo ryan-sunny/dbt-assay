@@ -103,6 +103,11 @@ class ModelEntry:
     # Parents this model reads as one arm of a UNION. Such a hop cannot multiply, so a
     # `silently_multiplied` judgment about it is refused by code rather than believed.
     union_parents: set = field(default_factory=set)
+    # Parents whose join key into this model is UNIQUE, so the hop cannot fan out. Declared
+    # uniqueness is free; counted uniqueness arrives from `--verify` and is the larger set.
+    unique_key_parents: set = field(default_factory=set)
+    # {parent_name: [join columns]}, so a hop can be counted without rebuilding the edge facts.
+    join_keys: dict = field(default_factory=dict)
     # {parent: [keys]} for parents collapsed inside a subquery before being joined.
     pre_aggregated_parents: dict = field(default_factory=dict)
     description: str = ""
@@ -141,10 +146,17 @@ def _judgments(store, uid: str) -> dict:
     return out
 
 
-def build(project, digests, schema, store=None, observed=None) -> list[ModelEntry]:
+def build(project, digests, schema, store=None, observed=None, facts=None) -> list[ModelEntry]:
     declared = relate.declared_keys(project)
     proposed = contracts.propose_all(project, digests, schema, declared, observed)
     observed = observed or {}
+    if facts is None:
+        facts, _ = relate.run_all(project, digests, schema)
+    by_child: dict = {}
+    for f in facts:
+        if f.joined_on:
+            by_child.setdefault(f.child, {})[f.parent_name] = list(f.joined_on)
+    name_to_uid = {m.name: uid for uid, m in project.models.items()}
     out = []
 
     for uid in project.topological():
@@ -159,6 +171,16 @@ def build(project, digests, schema, store=None, observed=None) -> list[ModelEntr
             entry.union_parents = set(_d.union_members)
         if _d is not None and getattr(_d, "pre_aggregated", None):
             entry.pre_aggregated_parents = dict(_d.pre_aggregated)
+        for pname, cols in (by_child.get(uid) or {}).items():
+            entry.join_keys[pname] = cols
+            # *** A JOIN ONTO A UNIQUE KEY CANNOT FAN OUT, AND dbt ALREADY SAYS WHICH KEYS ARE. ***
+            # Two of twelve disagreements on a hand-ruled warehouse were this, and the ruling said
+            # exactly where the tool was blind: "these parents carry no declared uniqueness test,
+            # which is why assay cannot see it". The declared half is free and applies here; the
+            # counted half needs the warehouse and arrives from `--verify`.
+            pk = declared.get(name_to_uid.get(pname, ""))
+            if pk and cols and {c.lower() for c in pk} <= {c.lower() for c in cols}:
+                entry.unique_key_parents.add(pname)
         entry.description = (m.description or "").strip()
 
         # ---- grain, strongest evidence first ----

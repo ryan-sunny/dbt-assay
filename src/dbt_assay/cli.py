@@ -217,6 +217,13 @@ def check(
     config_path: str = typer.Option(".", "--config", help="directory holding audit.yml"),
     dialect: str = typer.Option(None, "--dialect",
                                 help="override; read from the manifest by default"),
+    verify: bool = typer.Option(False, "--verify",
+                                help="count each flagged hop's join key through your own dbt. "
+                                     "A join onto a key that is unique IN THE DATA cannot fan "
+                                     "out, and dbt only knows which keys are DECLARED unique."),
+    project_dir: str = typer.Option(".", "--project-dir"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
 ):
     """Run the structural checks. No network, no API key, no spend."""
     tdir = _find_target(target)
@@ -227,14 +234,37 @@ def check(
     # Structural and judged findings were in separate worlds: `check` saw only the parser's, and
     # nothing from `infer` or `columns` ever reached the store. "What is wrong with this model"
     # needs a single answer.
+    n_retired = 0
     if Path(store_path or "").exists():
         _s = Store(store_path)
         _obs = probe_mod.read(_s)
-        _entries = inv_mod.build(project, digests, schema, _s, _obs)
+        _entries = inv_mod.build(project, digests, schema, _s, _obs, facts=facts)
+        if verify:
+            # *** THE COUNT IS THE ONLY THING THAT SETTLES THIS, AND IT IS ONE STATEMENT. ***
+            # Two of twelve disagreements on a hand-ruled warehouse were a join onto a lookup
+            # that IS unique and is not declared to be. Same batched arithmetic `practices`
+            # already uses, pointed at the parent of a flagged hop.
+            # *** COUNT WHAT DISAPPEARED, NOT WHAT MATCHED. ***
+            # The first version reported parents marked unique and called them hops retired: 9
+            # against 2 findings actually removed, because a parent can match a hop the union
+            # rule already refused. A number that reads like a result has to be one.
+            _before = len(judged_mod.hop_multiplies_rows(project, _entries))
+            prac_mod.verify_join_keys(_entries, project, probe_mod, project_dir,
+                                      profiles_dir, dbt_bin, schema=schema)
+            n_retired = _before - len(judged_mod.hop_multiplies_rows(project, _entries))
+            if n_retired and not json_out:
+                # *** `--json` IS MACHINE-READABLE AND ONE LINE OF PROSE ENDS THAT. ***
+                # This printed before the document and every parser downstream got
+                # `Expecting value: line 1 column 1`. The same class as rich eating `[mcp]` out
+                # of the instruction telling somebody to install it.
+                console.print(f"[dim]--verify: {n_retired} hop(s) retired -- the join key is "
+                              f"unique in the data, so the hop cannot fan out. Nothing in the "
+                              f"project declared it.[/]")
         findings += judged_mod.run_all(project, _entries, relate.declared_keys(project),
                                       digests)
         _s.close()
     findings.sort(key=lambda f: -f.weight)
+    _verified = {"hops_retired_by_counting": n_retired} if verify else {}
     if check_name:
         findings = [f for f in findings if f.check == check_name]
 
@@ -257,6 +287,7 @@ def check(
             "parse_failures": [{"model": n, "error": e} for _, n, _, e in failures],
             "unevaluable_tests": [{"model": m, "test": t, "column": c, "why": w}
                                   for m, t, c, w in unevaluable_tests(project, digests)],
+            **({"verified": _verified} if _verified else {}),
             "findings": [{"check": f.check, "model": f.subject_name, "file": f.file,
                           "summary": f.summary, "detail": f.detail, "weight": round(f.weight, 2),
                           "descendants": f.descendants, "marts": f.marts, "evidence": f.evidence}

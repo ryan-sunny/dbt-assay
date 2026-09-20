@@ -964,3 +964,44 @@ off, because a floor set before anything was measured is a guess wearing a numbe
 
 An unmeasured rate arrives as `None` and cannot refuse anything. An absent measurement must never
 read as a failing one.
+
+---
+
+## The third structural blind spot, found by the effectiveness number on its first run
+
+`assay effectiveness` put `hop_multiplies_rows` at 0 agreed out of 10. Reading the reasons, eight
+were the union case fixed in 0.12.0 and two were this, written by the agent that ruled them:
+
+> FALSE POSITIVE, MEASURED. The flagged hop is a LEFT JOIN to a lookup that is unique on the join
+> key: `int_water_streamflow_summary` 2,387 rows / 2,387 distinct abbrev; `geo_places` 726/726
+> zip5; `city_aliases` 6/6; `freshness_windows` 25/25 lead_category. A join onto a unique key does
+> not fan out. **These parents carry no declared uniqueness test, which is why assay cannot see
+> it.**
+
+That last sentence is the defect stated exactly. assay believed the PROJECT instead of the
+WAREHOUSE, and the machinery to settle it was already in the codebase: `verify_grains` batches
+`count(*)` against `count(distinct key)` through the project's own dbt. The same arithmetic pointed
+at the parent of a flagged hop is `practices.verify_join_keys`.
+
+Two halves, and only one costs anything:
+
+- **Declared uniqueness is free and always applies.** `relate.declared_keys` already reads every
+  `unique` and `unique_combination_of_columns` test. If the parent's declared key is covered by the
+  join columns, the hop cannot fan out and the finding is refused.
+- **Counted uniqueness needs the warehouse**, so it is `assay check --verify`. An uncounted key is
+  not a unique one, which is the rule this codebase keeps relearning in the other direction.
+
+On the field warehouse: **34 hop findings to 32**, retiring
+`stg_cdss_surfacewater_stations -> water_stream_gauges` (one of the two that were ruled) and
+`stg_wbd_huc8 -> water_eco_basin` (one nobody had read yet).
+
+### Two things went wrong building it, both in the reporting
+
+**It printed 9 hops retired against 2 findings removed.** The count was of parents marked unique,
+and a parent can match a hop the union rule already refused. A number that reads like a result has
+to be one, so the caller measures the finding delta instead.
+
+**And the message broke `--json`.** It printed before the document and every parser downstream got
+`Expecting value: line 1 column 1`. Exactly the class of rich eating `[mcp]` out of the instruction
+telling somebody to install it. The count now rides INSIDE the document as `verified`, where a
+machine can read it, and the guard parses the output rather than grepping the source.

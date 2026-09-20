@@ -451,3 +451,92 @@ def test_the_rate_gate_ignores_verdicts_about_an_older_version_of_the_check():
     s.adjudicate("b", "hop", "hop_multiplies_rows", "x", "agree", prompt_version="assay.0.12.0")
     got = s.accuracy_by_family({}, default="assay.0.12.0")
     assert got["hop_multiplies_rows"] == (1.0, 1), "an older release's verdicts leaked in"
+
+
+# --- a join onto a unique key cannot fan out ------------------------------------------------
+
+def _entry(**kw):
+    from dbt_assay.inventory import ModelEntry
+    e = ModelEntry(uid="model.p.child", name="child", path="c.sql", layer="marts",
+                   materialized="table")
+    e.marts = 9
+    e.fanout_hops = [("lookup -> child", 0.81)]
+    e.join_keys = {"lookup": ["abbrev"]}
+    for k, v in kw.items():
+        setattr(e, k, v)
+    return e
+
+
+def test_a_hop_onto_a_declared_unique_key_is_refused_without_touching_the_warehouse():
+    """dbt already says which keys are declared unique, and that half costs nothing."""
+    from dbt_assay.judged import hop_multiplies_rows
+
+    assert len(hop_multiplies_rows(None, [_entry()])) == 1
+    assert hop_multiplies_rows(None, [_entry(unique_key_parents={"lookup"})]) == []
+
+
+def test_a_key_that_counts_unique_retires_the_hop_and_one_that_cannot_be_counted_does_not():
+    """*** assay BELIEVED THE PROJECT INSTEAD OF THE WAREHOUSE. ***
+
+    Two of twelve disagreements were a LEFT JOIN onto a lookup that IS unique and carries no
+    uniqueness test: `int_water_streamflow_summary`, 2,387 rows over 2,387 distinct `abbrev`.
+    And an uncounted key must never read as a unique one.
+    """
+    from dbt_assay import practices as prac
+
+    proj = SimpleNamespace(models={"model.p.lookup": SimpleNamespace(name="lookup")})
+
+    class _Unique:
+        @staticmethod
+        def run_sql(*_a, **_k):
+            return [{"m": "lookup", "n": 2387, "d": 2387}]
+
+    e = _entry()
+    assert prac.verify_join_keys([e], proj, _Unique, ".", None, "dbt") == 1
+    assert e.unique_key_parents == {"lookup"}
+
+    class _NotUnique:
+        @staticmethod
+        def run_sql(*_a, **_k):
+            return [{"m": "lookup", "n": 2387, "d": 40}]
+
+    e2 = _entry()
+    assert prac.verify_join_keys([e2], proj, _NotUnique, ".", None, "dbt") == 0
+    assert e2.unique_key_parents == set()
+
+    class _Dead:
+        @staticmethod
+        def run_sql(*_a, **_k):
+            return []
+
+    e3 = _entry()
+    assert prac.verify_join_keys([e3], proj, _Dead, ".", None, "dbt") == 0
+    assert e3.unique_key_parents == set(), "an uncounted key is not a unique one"
+
+
+def test_json_output_survives_the_verify_message(project_dir, tmp_path, monkeypatch):
+    """*** `--json` IS MACHINE-READABLE AND ONE LINE OF PROSE ENDS THAT. ***
+
+    The retire message printed before the document and every parser downstream got
+    `Expecting value: line 1 column 1`. Same class as rich eating `[mcp]` out of the instruction
+    telling somebody to install it. This PARSES the output rather than grepping the source, which
+    is the only version that would have caught it.
+    """
+    import json as _j
+
+    from typer.testing import CliRunner
+
+    from dbt_assay import practices as prac
+    from dbt_assay.cli import app
+    from dbt_assay.store import Store
+
+    store = tmp_path / "s.duckdb"
+    Store(store).close()
+    # Force the retire path: any non-zero count must still leave the document parseable.
+    monkeypatch.setattr(prac, "verify_join_keys", lambda *a, **k: 3)
+
+    got = CliRunner().invoke(app, ["check", "--target", str(project_dir), "--store", str(store),
+                                   "--json", "--verify", "--project-dir", str(tmp_path)])
+    assert got.exit_code == 0, got.output
+    doc = _j.loads(got.stdout)
+    assert "findings" in doc and "verified" in doc

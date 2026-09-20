@@ -229,6 +229,85 @@ def fanout(n: int, d: int) -> str:
     return f"{r:.4f}x"
 
 
+def verify_join_keys(entries, project, probe_mod, project_dir: str, profiles_dir: str | None,
+                     dbt_bin: str, schema=None, batch: int = 40) -> int:
+    """Count whether each flagged hop's join key is unique IN THE DATA, and refuse the finding.
+
+    *** dbt KNOWS WHICH KEYS ARE DECLARED UNIQUE. IT DOES NOT KNOW WHICH KEYS ARE. ***
+    Two of twelve disagreements on a hand-ruled warehouse were a LEFT JOIN onto a lookup that is
+    unique on the join key and carries no uniqueness test. The ruling named the blind spot
+    exactly: assay believed the project instead of the warehouse. `int_water_streamflow_summary`
+    is 2,387 rows over 2,387 distinct `abbrev`, and a join onto that cannot multiply anything.
+
+    The machinery already existed. `verify_grains` batches `count(*)` against
+    `count(distinct key)` in one statement, and this is the same arithmetic pointed at the parent
+    of a flagged hop instead of at a proposed grain. Returns how many PARENTS it newly
+    established as unique, which is NOT the number of findings it retires: a parent can match a
+    hop the union rule already refused, and on a real warehouse that was 9 against 2. The caller
+    measures the finding delta rather than printing a number that reads like one.
+
+    A parent it could NOT count stays flagged. An uncounted key is not a unique one, which is the
+    rule this codebase keeps relearning in the other direction.
+    """
+    rel_of = dict(getattr(schema, "relation", None) or {})
+    by_name = {}
+    for uid, m in project.models.items():
+        by_name[m.name] = (rel_of.get(uid) or m.name).replace('"', "")
+    todo: dict = {}
+    for e in entries:
+        for ctx, _p in e.fanout_hops:
+            for pname, cols in (e.join_keys or {}).items():
+                if pname in e.unique_key_parents or pname not in by_name or not cols:
+                    continue
+                if f" {pname} " in f" {ctx} ":
+                    todo[(pname, tuple(cols))] = by_name[pname]
+    if not todo:
+        return 0
+    items = sorted(todo.items())
+    unique: set = set()
+
+    def ask(chunk) -> bool:
+        parts = []
+        for (pname, cols), rel in chunk:
+            keys = ", ".join(f'"{c}"' for c in cols)
+            parts.append(f"select '{pname}' as m, count(*) as n, "
+                         f"count(distinct ({keys})) as d from {rel}")
+        got = probe_mod.run_sql(" union all ".join(parts), project_dir, profiles_dir, dbt_bin,
+                                limit=len(chunk) + 1)
+        if not got:
+            return False
+        for row in got:
+            vals = list(row.values())
+            try:
+                m, n, d = str(row.get("m", vals[0])), int(row.get("n", vals[1])), \
+                    int(row.get("d", vals[2]))
+            except (TypeError, ValueError, IndexError):
+                continue
+            if n and d >= n:
+                unique.add(m)
+        return True
+
+    def walk(chunk) -> None:
+        if not chunk or ask(chunk):
+            return
+        if len(chunk) == 1:
+            return                        # uncounted, and an uncounted key is not a unique one
+        mid = len(chunk) // 2
+        walk(chunk[:mid])
+        walk(chunk[mid:])
+
+    for i in range(0, len(items), batch):
+        walk(items[i:i + batch])
+
+    marked = 0
+    for e in entries:
+        for pname in list(e.join_keys or {}):
+            if pname in unique and pname not in e.unique_key_parents:
+                e.unique_key_parents.add(pname)
+                marked += 1
+    return marked
+
+
 def grain_verdict(counted) -> tuple[str, str]:
     """What a counted grain MEANS, in one place, because two places disagreed about zero.
 
