@@ -1,3 +1,3 @@
 """assay: recover the semantics your warehouse never wrote down."""
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"

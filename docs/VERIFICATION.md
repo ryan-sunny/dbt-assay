@@ -88,6 +88,10 @@ business_rule           @0.29  [business_rule 0.44 / workaround 0.36]  gilbert: 
 data_quality_workaround @0.32  [workaround 0.46 / business_rule 0.39]  boulder:  issued_date
 ```
 
+**Corroborated independently.** `assay banks --judge` asks whether any two options of a question
+could both be right about the same subject, and it flagged this family at **p=0.85** without being
+told anything about the hand measurement below. Two methods, one conclusion.
+
 **The same predicate on two models gets opposite labels.** Confidences are 0.26–0.38 throughout, so
 the model is reporting that it cannot tell — which is honest, because the SQL cannot say *why* a
 null exists. Nothing is reported as a finding (the gate is 0.6), but the summary table prints these
@@ -119,6 +123,7 @@ surface it.
 | `practice_exception` | needs `dbt-project-evaluator` built, which the test warehouse does not have |
 | `row_explanation` | needs `store_failures` rows; the audit schema exists but no finding has been read |
 | `row_is_internally_coherent` | as above |
+| `options_overlap` | verified against the pair that prompted it, and it independently flagged `predicate_intent` — the family already proven weak by hand. Not yet read against a question it should PASS but does not |
 | `sentence_is_a_claim` | extraction was read by hand on one model (16 sentences, every high-confidence answer correct, every low-confidence one a genuinely ambiguous header) — but only one model |
 
 **Nine of fifteen families have no finding resting on them**, so ruling on them records evidence and

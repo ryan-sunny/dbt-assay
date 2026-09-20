@@ -319,6 +319,9 @@ CALLERS: dict[str, tuple[str, str, str]] = {
     "units_are_what_the_column_claims": ("feeds",      "assay feeds",     "a column name"),
     "row_explanation":                  ("rows",       "assay adjudicate", "one failing row"),
     "row_is_internally_coherent":       ("rows",       "assay adjudicate", "one failing row"),
+    # assay's linter, asking about assay's own questions.
+    "options_overlap":                  ("lint",       "assay banks --judge",
+                                         "one question's own option set"),
 }
 
 
@@ -331,3 +334,60 @@ def caller_of(name: str, bank: dict | None = None) -> tuple[str, str, str] | Non
     if bank and bank.get("subject"):
         return ("subjects", "assay ask", f"one {bank['subject']}")
     return CALLERS.get(name)
+
+
+def judge_overlap(banks: dict, client, store=None) -> list[Issue]:
+    """Ask whether any two options of a question could both be right about the same subject.
+
+    *** THE STATIC RULE CANNOT SEE AN OVERLAP OF MEANING, AND THAT IS THE COMMON KIND. ***
+    Measured on a real pair: `not_a_seniority_order` and `something_else` both correctly describe
+    a window ranking wildfire percentiles. Word overlap scored them 0.25 against a 0.75 threshold
+    and passed them, because they share a SITUATION and not a vocabulary.
+
+    One call per choice question, so a fifteen-bank project costs about a cent. Opt-in, because
+    `assay banks` must stay free and runnable in CI with no key.
+    """
+    from .contracts import QUESTIONS
+    from .jev import choice
+
+    spec = QUESTIONS.get("options_overlap")
+    if spec is None:
+        return []
+    q = {"overlap": choice(spec["instructions"], spec["criteria"])}
+    out: list[Issue] = []
+    for name, bank in sorted(banks.items()):
+        if bank.get("type") != "choice" or name == "options_overlap":
+            continue
+        crit = bank.get("criteria") or {}
+        if len(crit) < 3:
+            continue                      # two options cannot overlap without being identical
+        state = {"the_question": (bank.get("instructions") or {}).get("question", ""),
+                 "options": {k: _text(v) for k, v in crit.items()}}
+        try:
+            ans = client.ask(state, q, caller="assay.banks")["answers"]["overlap"]
+        except Exception as e:                                      # noqa: BLE001
+            out.append(Issue(name, "warn", "options_overlap", f"could not be judged: {e}"))
+            continue
+        # *** SUM THE DISTRIBUTION, DO NOT GATE ON CONFIDENCE. ***
+        # `two_overlap` and `several_overlap` are two ways of saying YES, so a clear answer splits
+        # its mass across them and CONFIDENCE FALLS. Measured on the pair that prompted this
+        # check: 0.58 + 0.28 = 0.86 that an overlap exists, at confidence 0.47. Gating on
+        # confidence missed it -- the exact mistake TypeSafe warn about and this repo documents:
+        # confidence is a statistic about the shape of the distribution, never evidence strength.
+        probs = ans.get("probabilities") or {}
+        overlap = float(probs.get("two_overlap", 0)) + float(probs.get("several_overlap", 0))
+        through = float(probs.get("a_case_falls_through", 0))
+        if overlap >= 0.6:
+            worst = "several" if probs.get("several_overlap", 0) >= probs.get("two_overlap", 0) \
+                else "one pair"
+            out.append(Issue(
+                name, "warn", "options_overlap",
+                f"two or more options could both be correct about the same subject (p={overlap:.2f}, "
+                f"{worst}). Which one comes back is then arbitrary for those cases. The static "
+                f"rule cannot see this: it compares words, and an overlap of MEANING shares a "
+                f"situation rather than a vocabulary."))
+        if through >= 0.6:
+            out.append(Issue(
+                name, "warn", "options_fall_through",
+                f"a realistic subject fits NO option and there is no way to decline (p={through:.2f})."))
+    return out

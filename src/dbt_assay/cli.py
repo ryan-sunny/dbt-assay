@@ -1097,6 +1097,10 @@ def banks(
     lint: bool = typer.Option(True, "--lint/--no-lint",
                               help="check every question against the rules Jev's shape imposes"),
     strict: bool = typer.Option(False, "--strict", help="exit non-zero on a warning too"),
+    judge: bool = typer.Option(False, "--judge",
+                               help="also ask whether any two options of a question could both be "
+                                    "right about the same subject. Needs a key; about a cent."),
+    config_path: str = typer.Option(".", "--config"),
 ):
     """Every question assay will ask, where it came from, and whether its shape is sound.
 
@@ -1163,6 +1167,19 @@ def banks(
             console.print(f"  [cyan]ack[/]  [bold]{a.question}[/]  [dim]{a.rule}[/]")
             console.print(f"    {a.detail}")
     issues = lint_all(all_banks, SHIPPED)
+    if judge:
+        # *** THE LINTER USING THE TOOL'S OWN ARGUMENT ON ITSELF. ***
+        # A parser settles what it can; whether two descriptions pick out the same case is a
+        # question about meaning, and the static rule measured 0.25 on a real overlap.
+        from .lint import judge_overlap
+        cfg = Config.load(config_path)
+        client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+        if not client.available:
+            console.print("[yellow]--judge needs a key.[/] [dim]`assay config` shows what was "
+                          "resolved. Everything above ran without one.[/]")
+        else:
+            issues += judge_overlap(all_banks, client)
+            console.print(f"[dim]{client.calls} calls, ${client.spent_usd:.4f}[/]")
     if not issues:
         console.print("\n[green]every question has a shape Jev answers well.[/] "
                       "[dim]That is a check on the SHAPE. Only running it against cases you have "

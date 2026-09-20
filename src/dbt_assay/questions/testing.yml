@@ -21,3 +21,45 @@ severity_fit:
     - "Cosmetic. A violation would not change a number anyone reads, and stopping a build over it wastes an engineer's morning."
     - "Worth knowing about. Somebody should look this week, but the numbers downstream are still usable."
     - "A violation silently corrupts a figure that reaches a mart. Shipping it is worse than failing the build."
+
+# *** THE STATIC RULE CANNOT SEE AN OVERLAP OF MEANING, AND THAT IS THE COMMON KIND. ***
+# Reported from the field: `not_a_seniority_order` ("ranks rows by a column that is not a priority
+# date") and `something_else` ("ranks something that is not a water right by a column that is not a
+# priority") both correctly describe a window ranking wildfire percentiles. The lint's word-overlap
+# rule scored them 0.25 against a 0.75 threshold and passed them, because they share a SITUATION
+# and not a vocabulary.
+#
+# So assay's own linter uses assay's own argument: a parser settles what it can, and whether two
+# descriptions pick out the same case is a question about meaning.
+options_overlap:
+  id_prefix: "overlap"
+  type: choice
+  prompt_version: "overlap.v1"
+  instructions:
+    question: >-
+      `options` are the answers a single question offers, and exactly one of them must be chosen
+      for any subject. Is there a realistic subject that TWO OR MORE of these options would both
+      correctly describe?
+    note: >-
+      Judge whether they could both be RIGHT about one subject, not whether they sound similar.
+      Two options that name genuinely different situations are fine however alike they read, and
+      two that read very differently can still both cover the same case.
+  criteria:
+    no_overlap:
+      what: >-
+        Every option names a situation the others exclude. For any subject, exactly one of them
+        is the correct answer.
+    two_overlap:
+      what: >-
+        One pair of options could both be correct about the same subject, so which one comes back
+        is arbitrary for those cases.
+      examples: ["'not a seniority order' and 'something else' both fit a window ranking wildfire
+                  percentiles by a non-priority column"]
+    several_overlap:
+      what: "More than one pair overlaps, or one option is a subset of another."
+    a_case_falls_through:
+      what: >-
+        The opposite problem: there is a realistic subject that NO option describes, and there is
+        no way to decline.
+    cannot_tell:
+      what: "The options are too abstract to judge against any concrete subject."

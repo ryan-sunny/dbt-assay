@@ -150,3 +150,49 @@ def test_a_rule_can_be_acknowledged_with_a_reason_and_not_without_one():
 
     silent = dict(q, acknowledge={"multi_hop": ""})
     assert "acknowledge" in {i.rule for i in lint_question("q", silent)}
+
+
+def test_the_overlap_check_sums_the_distribution_instead_of_gating_on_confidence():
+    """*** CONFIDENCE IS DISTRIBUTION CONCENTRATION, NOT EVIDENCE STRENGTH. ***
+
+    `two_overlap` and `several_overlap` are two ways of saying YES, so a clear answer splits its
+    mass across them and confidence FALLS. Measured on the pair that prompted this check:
+    0.58 + 0.28 = 0.86 that an overlap exists, at confidence 0.47. Gating on confidence missed it
+    -- the exact mistake TypeSafe warn about and this repo documents in its own README.
+    """
+    from dbt_assay.lint import judge_overlap
+
+    class _Client:
+        def __init__(self, probs):
+            self.probs = probs
+
+        def ask(self, _state, _q, caller=""):
+            return {"answers": {"overlap": {
+                "choice": max(self.probs, key=self.probs.get),
+                "confidence": 0.47,                    # low, because the mass is SPLIT
+                "probabilities": self.probs}}}
+
+    bank = {"q": {"type": "choice", "instructions": {"question": "?"},
+                  "criteria": {"a": {"what": "one"}, "b": {"what": "two"},
+                               "cannot_tell": {"what": "three"}}}}
+
+    split = _Client({"several_overlap": 0.58, "two_overlap": 0.28, "no_overlap": 0.13})
+    assert [i.rule for i in judge_overlap(bank, split)] == ["options_overlap"]
+
+    clean = _Client({"no_overlap": 0.91, "two_overlap": 0.05, "several_overlap": 0.02})
+    assert judge_overlap(bank, clean) == []
+
+    through = _Client({"a_case_falls_through": 0.72, "no_overlap": 0.2})
+    assert [i.rule for i in judge_overlap(bank, through)] == ["options_fall_through"]
+
+
+def test_a_two_option_question_is_not_asked_about_overlap():
+    """Two options cannot overlap without being identical, and the static rule catches that."""
+    from dbt_assay.lint import judge_overlap
+
+    class _Boom:
+        def ask(self, *_a, **_k):
+            raise AssertionError("should not have been asked")
+
+    bank = {"q": {"type": "choice", "criteria": {"a": {"what": "x"}, "b": {"what": "y"}}}}
+    assert judge_overlap(bank, _Boom()) == []

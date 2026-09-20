@@ -227,6 +227,7 @@ Fifteen families ship. `assay config` shows how many verdicts each has and which
 | `units_are_what_the_column_claims` | choice | — *needs the probe* |
 | `row_explanation` | choice | — *needs warehouse rows* |
 | `row_is_internally_coherent` | noul | — *needs warehouse rows* |
+| `options_overlap` | choice | — *lints a question, not a project: `assay banks --judge`* |
 
 **A dash means no finding rests on it yet.** Those answers still fill the inventory, the page and
 `trace`, and ruling on them records evidence — but it moves no gate, and `assay review -i` says so
@@ -326,6 +327,7 @@ become relations *in* your warehouse.
 ```bash
 assay banks              # every question, where it came from, and whether its shape is sound
 assay banks --strict     # exit non-zero on a warning too
+assay banks --judge      # also ask whether any two options could both be right. ~a cent.
 ```
 
 **Put a `.yml` in `assay_questions/`** — here or in any parent, or wherever `ASSAY_QUESTIONS`
@@ -457,6 +459,7 @@ like a working check for weeks.
 | `multi_hop` | one lumped question over three rules read 0.64 where the split rule that applied read 0.85 |
 | `no_match_option` | without one the model must pick a wrong answer. A real division bug surfaced **only** because it could say "not on the list" |
 | `options_not_separated` | two options described alike give the model nothing to cut on; assay's own pair sat at 0.36–0.39 until they were merged |
+| `options_overlap` *(`--judge`)* | the static rule compares WORDS. Two options can share a **situation** and no vocabulary: a real pair scored 0.25 against a 0.75 threshold and passed, while both correctly described the same window. This asks Jev instead, and it independently flagged `predicate_intent` — already proven weak by hand |
 | `state_size` | unrelated detail is a distractor: one correct extra sentence took a claim from 0.96 to 0.47 |
 | `id_prefix` | two families sharing a prefix means one silently absorbs the other's verdicts |
 | `level_names_nothing` | a score answer can land **between** levels, so "medium" describes nothing |

@@ -171,3 +171,10 @@ Three more, all fixed in 0.7.1.
 - **`subject: expression` yields thousands of subjects where `window` yields tens.**
   `assay ask` now prints the count and a cost estimate per family before asking anything, and
   refuses outright above `jev.max_spend_usd`.
+
+- **The overlap you recorded rather than fixed**: `something_else` and `not_a_seniority_order` both
+  fitting a window that ranks wildfire percentiles. You noted the lint has a rule that would catch
+  it. **It does not** — word overlap scored that pair 0.25 against a 0.75 threshold, because they
+  share a SITUATION and not a vocabulary. `assay banks --judge` now asks Jev whether any two
+  options could both be right about one subject. It catches your pair, and it independently
+  flagged `predicate_intent`, which had already been proven weak by hand.
