@@ -1,0 +1,69 @@
+# Two families that read MEANING out of things no parser can settle.
+version: 1
+
+# *** WHY THIS IS WORTH ASKING AT ALL. ***
+# A `where` clause is either domain logic that must be preserved, a patch over a bad feed that
+# should be fixed upstream, or the thing that makes the model mean what it means. Those are
+# completely different objects and the SQL is identical for all three. Nothing else in a warehouse
+# tells them apart, and the cost of confusing them is deleting a rule or keeping a hack for years.
+predicate_intent:
+  type: choice
+  prompt_version: "pred.v1"
+  instructions:
+    question: >-
+      Why is the filter in `predicate` here? Judge only this one condition; the model's other
+      filters are given as context.
+    note: >-
+      `model_purpose` is what the author wrote about this model, when they wrote anything. Weigh it,
+      but the SQL is what runs.
+  criteria:
+    business_rule:
+      what: "Domain logic. The world works this way and the filter encodes it."
+      not_for: "A filter that exists because the incoming data is unreliable."
+      examples: ["only rights whose structure still exists",
+                 "exclude filings that were withdrawn"]
+    data_quality_workaround:
+      what: >-
+        The feed is wrong or dirty and this patches around it. The real fix is upstream, and the
+        filter will quietly go stale when the feed improves.
+      examples: ["where name is not null and trim(name) <> ''",
+                 "excluding a sentinel the source writes instead of NULL",
+                 "dropping rows a known-broken load produced"]
+    scope_limit:
+      what: >-
+        It defines what this model is ABOUT. Removing it would not fix anything; it would make a
+        different model.
+      examples: ["where state = 'CO'", "where division = 1", "only commercial parcels"]
+    performance_prefilter:
+      what: >-
+        Narrowing purely to make the query cheaper, where a later step does the exact test anyway.
+      examples: ["a bounding box before an exact distance test"]
+    cannot_tell:
+      what: "The state does not distinguish these. Choose this rather than guess."
+
+# *** DESCRIPTIONS ROT, AND NOTHING NOTICES. ***
+# A description is written once and the SQL changes forty times. Phrased as the DEFECT, so a high
+# probability means the prose is wrong -- mixing polarity across a bank is how a threshold gets
+# applied backwards.
+description_contradicts_the_code:
+  type: noul
+  prompt_version: "desc.v1"
+  instructions:
+    question: >-
+      Does the documentation -- `description` and `documentation_in_the_file` together -- assert
+      something about this model that the code in `contract` and `filters` does not do?
+    note: >-
+      Judge CONTRADICTION, not completeness. A summary is not a contradiction of the thing it
+      summarises: prose that is brief, or silent about some column, or that describes the model's
+      main purpose while the model also emits supporting columns, is NOT wrong. Say yes only if
+      something the documentation claims is not true of the code.
+  criteria:
+    "true":
+      what: "The description states something the code does not do, or states the opposite."
+      examples: ["says one row per section where the model groups by section and year",
+                 "says it excludes withdrawn filings where no such filter exists",
+                 "describes a column the model no longer produces"]
+    "false":
+      what: >-
+        Everything the description claims is true of the code. It may be incomplete, terse, or
+        silent about details; that is not a contradiction.

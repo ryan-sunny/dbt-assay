@@ -19,6 +19,7 @@ from . import inventory as inv_mod
 from . import judged as judged_mod
 from . import live as live_mod
 from . import probe as probe_mod
+from . import semantics as sem_mod
 from . import versioning as ver_mod
 from .checks import run_all
 from .config import DEFAULT_YML, Config
@@ -1204,3 +1205,122 @@ def version_stamps(
                 console.print(f"  [dim]{n}[/]")
     if drift:
         raise typer.Exit(1)
+
+
+@app.command()
+def semantics(
+    target: str = typer.Option(None, "--target", "-t"),
+    select: str = typer.Option(None, "--select", "-s",
+                               help="scope it, e.g. \"path:models/water\""),
+    families: str = typer.Option("both", "--families",
+                                 help="predicates | descriptions | both"),
+    print_state: bool = typer.Option(False, "--print-state"),
+    limit: int = typer.Option(0, "--limit", "-n", help="stop after N models"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+):
+    """Why is that filter there, and does the description still describe the code?
+
+    A `where` clause is either domain logic, a patch over a bad feed, or the thing that makes the
+    model mean what it means. The SQL is identical for all three and nothing else tells them apart.
+    """
+    from .selector import resolve
+
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir)
+    store = Store(store_path) if Path(store_path).exists() else None
+    entries = inv_mod.build(project, digests, schema, store,
+                            probe_mod.read(store) if store else {})
+    subs = sem_mod.subjects(project, digests, schema, entries)
+
+    scope = resolve(project, select)
+    if scope is not None:
+        subs = [s for s in subs if s.uid in scope]
+    if limit:
+        subs = subs[:limit]
+
+    do_pred = families in ("both", "predicates")
+    do_desc = families in ("both", "descriptions")
+    n_pred = sum(len(sem_mod.chunks(s.predicates)) for s in subs if s.predicates) if do_pred else 0
+    n_desc = sum(1 for s in subs if s.purpose) if do_desc else 0
+    console.print(f"[bold]{len(subs)}[/] models · "
+                  f"{sum(len(s.predicates) for s in subs)} filters in {n_pred} calls · "
+                  f"{n_desc} descriptions to check")
+
+    if print_state:
+        s0 = next((x for x in subs if x.predicates and x.purpose), None)
+        if s0:
+            console.print(_json.dumps(
+                {"state": sem_mod.build_state(s0, s0.predicates[:2], cfg.vocab),
+                 "questions": sem_mod.predicate_questions(s0.predicates[:2])},
+                indent=1, default=str)[:2400])
+        if store:
+            store.close()
+        raise typer.Exit(0)
+
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        console.print("[yellow]no API key.[/] --print-state shows what would be sent.")
+        raise typer.Exit(1)
+
+    if store is None:
+        store = Store(store_path)
+    intents, stale = {}, []
+    for s in subs:
+        if do_pred and s.predicates:
+            for chunk in sem_mod.chunks(s.predicates):
+                st = sem_mod.build_state(s, chunk, cfg.vocab)
+                try:
+                    ans = decide(store, client, st, sem_mod.predicate_questions(chunk),
+                                 decision_key=f"{s.uid}::pred::{hash(tuple(chunk)) & 0xffff}",
+                                 prompt_version=sem_mod.PRED_VERSION, caller="assay.semantics")
+                except BudgetExceeded as e:
+                    console.print(f"[yellow]stopped: {e}[/]")
+                    do_pred = do_desc = False
+                    break
+                for i, p in enumerate(chunk):
+                    a = ans.get(f"pred__{i}")
+                    if a:
+                        intents.setdefault(a["answer"], []).append(
+                            (s.name, p, a.get("confidence")))
+        if do_desc and s.purpose:
+            st = sem_mod.description_state(s, cfg.vocab)
+            try:
+                ans = decide(store, client, st, sem_mod.description_question(),
+                             decision_key=f"{s.uid}::desc",
+                             prompt_version=sem_mod.DESC_VERSION, caller="assay.semantics")
+            except BudgetExceeded as e:
+                console.print(f"[yellow]stopped: {e}[/]")
+                break
+            a = ans.get("desc")
+            if a and float(a["answer"]) >= 0.6:
+                stale.append((s.name, float(a["answer"])))
+
+    console.print(f"\n[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}[/]")
+
+    if intents:
+        t = Table(title="\nwhy the filters are there", header_style="bold")
+        t.add_column("intent"); t.add_column("n", justify="right"); t.add_column("example")
+        for k in sorted(intents, key=lambda k: -len(intents[k])):
+            name, pred, conf = intents[k][0]
+            t.add_row(k, str(len(intents[k])), f"{name}: {pred[:44]}")
+        console.print(t)
+        # A classification at 0.3 is the model declining to commit, not a finding. Listing it
+        # as one is how a findings list earns its reputation.
+        hacks = [h for h in intents.get("data_quality_workaround", []) if (h[2] or 0) >= 0.6]
+        if hacks:
+            console.print(f"\n[yellow]{len(hacks)} filter(s) read as a patch over a bad feed.[/] "
+                          f"[dim]The real fix is upstream, and the filter goes stale when the "
+                          f"feed improves.[/]")
+            for name, pred, conf in sorted(hacks, key=lambda x: -(x[2] or 0))[:8]:
+                console.print(f"  [bold]{name}[/]  {pred[:70]}  [dim]@{conf:.2f}[/]")
+
+    if stale:
+        console.print(f"\n[yellow]{len(stale)} description(s) contradict their code:[/]")
+        for name, p in sorted(stale, key=lambda x: -x[1])[:10]:
+            console.print(f"  [bold]{name}[/]  [dim]@{p:.2f}[/]")
+    elif do_desc:
+        console.print("\n[green]no description contradicts its code.[/]")
+    store.close()

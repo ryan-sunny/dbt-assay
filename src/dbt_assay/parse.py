@@ -80,6 +80,36 @@ def _resolve_group_by(group_exprs, select_exprs) -> list[str]:
     return [c for c in out if c]
 
 
+def _is_scalar_scoped(where: exp.Expression) -> bool:
+    """Does this WHERE shape only ONE COLUMN, rather than the model's rows?
+
+    Scoping by nesting depth was wrong: a CTE's filter genuinely shapes the output and belongs to
+    the model. What does not is a SCALAR subquery in a select list -- `(select count(*) from z
+    where amount = 0) as years_diverting_nothing` -- whose condition describes that one value. Shown
+    as a model filter, it makes a diversion summary look like it keeps only rows where nothing was
+    diverted.
+    """
+    node = where.parent
+    while node is not None:
+        parent = node.parent
+        if isinstance(node, exp.Subquery) and parent is not None and not isinstance(
+                parent, (exp.From, exp.Join, exp.CTE)):
+            return True
+        if isinstance(node, exp.Filter):
+            return True
+        node = parent
+    return False
+
+
+def _conjuncts(e: exp.Expression) -> list:
+    """The top-level ANDed parts of a predicate. An OR stays whole: its branches are one decision."""
+    if isinstance(e, exp.And):
+        return _conjuncts(e.this) + _conjuncts(e.expression)
+    if isinstance(e, exp.Paren):
+        return _conjuncts(e.this)
+    return [e]
+
+
 def _reprojected(e: exp.Expression) -> bool:
     """Does this expression transform its geometry to another CRS before measuring?"""
     return any(func_name(f) in ("ST_TRANSFORM", "ST_SETSRID")
@@ -240,6 +270,18 @@ class Digest:
     group_by_columns: list[str] = field(default_factory=list)
     distinct: bool = False
     predicates: list[str] = field(default_factory=list)
+    # *** ONE PREDICATE PER JUDGMENT, AND ONLY THE MODEL'S OWN. ***
+    # A WHERE is usually several independent decisions ANDed together, so the top-level conjuncts
+    # are split out to be judged one at a time.
+    #
+    # And only the OUTERMOST select's filters count as the model's. Collecting every WHERE in the
+    # tree presents a subquery's condition as though the model applied it: one real model computes
+    # `years_diverting_nothing` from a subquery filtered to `coalesce(acre_feet, 0) = 0`, and
+    # showing that as a model filter makes a diversion summary look like it keeps only the rows
+    # where nothing was diverted. A judgment shown that will call the description a lie, correctly,
+    # about evidence that was never true.
+    predicates_atomic: list[str] = field(default_factory=list)
+    predicates_nested: list[str] = field(default_factory=list)   # subquery / CTE filters
     has_qualify: bool = False
     # Relations in a FROM clause. A model's driving table is NOT something it joins to, and a check
     # that conflates the two reports a fan-out against the table the model is simply reading.
@@ -438,6 +480,11 @@ def digest(sql: str, name: str = "", dialect: str = "duckdb") -> Digest:
 
     for wclause in tree.find_all(exp.Where):
         d.predicates.append(wclause.this.sql(dialect=dialect)[:300])
+        bucket = d.predicates_nested if _is_scalar_scoped(wclause) else d.predicates_atomic
+        for leaf in _conjuncts(wclause.this):
+            txt = leaf.sql(dialect=dialect).strip()[:220]
+            if txt and txt not in bucket:
+                bucket.append(txt)
 
     for node in tree.find_all(exp.RegexpFullMatch):
         pat = node.expression
