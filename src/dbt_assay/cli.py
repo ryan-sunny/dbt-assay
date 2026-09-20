@@ -1972,15 +1972,13 @@ def _record_from_labels(store, target, dialect: str) -> None:
     are recorded as `label` and never count toward a gate. Measured: reading four role
     disagreements by hand showed three were the LABEL being wrong.
     """
-    from . import align as al
     from . import columns as cm
     from . import relate
 
     tdir = _find_target(target)
-    project, digests, _f, schema, _s = _load(tdir, dialect)
+    project, _digests, _f, _schema, _s = _load(tdir, dialect)
     declared = relate.declared_keys(project)
     labels = cm.free_labels(project)
-    joined = {tuple(sorted(p)) for p in al.joined_pairs(project, digests, schema)}
 
     rows = store.con.execute(
         "select decision_key, question, answer from model_decisions").fetchall()

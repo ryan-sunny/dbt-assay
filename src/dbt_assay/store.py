@@ -15,6 +15,7 @@ import json
 import platform
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import ClassVar
 
 import duckdb
 
@@ -100,7 +101,7 @@ class Store:
     # A store written by an older assay keeps its old shape forever, and the next insert fails with
     # a column-count error on somebody's machine rather than on mine. Columns added since are
     # applied on open; adding a column is cheap, safe and keeps every row that was already there.
-    ADDED_COLUMNS = {
+    ADDED_COLUMNS: ClassVar[dict] = {
         "adjudications": [("source", "varchar")],
         "model_decisions": [("input_tokens", "integer"), ("context", "varchar")],
     }
@@ -111,7 +112,7 @@ class Store:
                 have = {r[0] for r in self.con.execute(
                     f"select column_name from information_schema.columns "
                     f"where table_name = '{table}'").fetchall()}
-            except Exception:                                           # noqa: BLE001
+            except Exception:                                    # noqa: BLE001,S112
                 continue
             if not have:
                 continue
