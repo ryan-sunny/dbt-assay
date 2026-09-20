@@ -418,3 +418,41 @@ assay gets better; this moves when you read SQL.
 And the same reframe turned back on this project, where it is not flattering: **eight rulings, one
 family of sixteen.** `assay regress` automates the catching. Nothing automates the ruling, and
 nothing will.
+
+## 0.9.4: the counting works, and misses every model in a custom schema
+
+Verified on the same warehouse. The new section fires and matches a hand count exactly:
+
+```
+2 model(s) where nobody knows what one row is
+  fact_permit      14 marts · permit_id gives 7,910 distinct over 45,959 rows
+  business_leads    9 marts · geography, building_key gives 47,144 over 73,608
+```
+
+**But three proposals came back `(not counted)`, and the split is by schema:**
+
+```
+counted        fact_permit, business_leads, int_azcc_owners, stg_pm_properties   main
+not counted    stg_water_resume_entry_facts, int_water_call_exposure_basis       main_water
+               az_section_parcel_sales                                           main_water_az
+```
+
+dbt's `+schema:` config puts those in custom schemas and the count resolves against the default, so
+every one of them is unverifiable. **The 149x case this release leads with is among them** — it is
+`stg_water_resume_entry_facts`, in `main_water`. On any project that separates domains by schema —
+which is most of them past a certain size — the section is blind to exactly the models it was built
+for. The manifest carries `schema` per node.
+
+Two smaller ones from the same run:
+
+- `holds: 0 rows, 0 distinct` on two empty tables. An empty table satisfies any grain; it is the
+  vacuous pass, printed in the column a reader scans for green. `empty -- nothing to count` says
+  the true thing.
+- `business_leads ... (2x)` is 73,608 over 47,144, which is **1.56x**. Rounding up overstates a
+  number someone acts on.
+
+And the failure message earned its keep: when this project's dbt could not parse at all — a schema
+YAML I had broken myself — it said *"could not count any proposed grain ... Nothing below has been
+verified"* and marked every row `(not counted)`. Not one was reported as holding. That is the sixth
+instance of the absent-reads-as-pass defect this codebase has found, and the first one where the
+code already got it right before anyone looked.
