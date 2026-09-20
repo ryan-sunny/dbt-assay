@@ -31,6 +31,8 @@ import os
 import time
 from dataclasses import dataclass, field
 
+from dotenv import find_dotenv, load_dotenv
+
 # $0.042 per million INPUT tokens; output is free. A 300-model sweep at ~1k tokens of state each is
 # about 1.2 cents, and nothing at all once the cache is warm.
 USD_PER_INPUT_TOKEN = 0.042 / 1_000_000
@@ -104,14 +106,48 @@ def score(instructions, levels: list) -> dict:
     return {"type": "score", "instructions": instructions, "criteria": list(levels)}
 
 
+_KEY_NAMES = ("TYPESAFE_API_KEY", "OPENROUTER_API_KEY")
+_DOTENV_PATH: str | None = None
+_FROM_ENV: set | None = None
+
+
 def state_hash(state) -> str:
     """Stable across dict ordering, because a re-serialised state is not a changed one."""
     return hashlib.sha256(
         json.dumps(state, sort_keys=True, default=str).encode()).hexdigest()[:32]
 
 
+def key_source(env_name: str) -> str:
+    """Where the key came from, so `assay config` can say rather than imply."""
+    if env_name in _FROM_ENV:
+        return "environment"
+    return f"{_DOTENV_PATH}" if _DOTENV_PATH else "environment"
+
+
+def load_env() -> None:
+    """*** A KEY IN A .env IS A KEY, AND assay CALLED IT ABSENT. ***
+
+    Ported from a repo whose client did read `.env`; the loader was dropped on the way across, so
+    every judged command printed "no API key found" while the key sat one directory up. That is the
+    worst shape a capability check can take: the tier was off, the tool said so plainly, and it was
+    wrong.
+
+    `override=False`, so an exported variable always beats a file. The shell is the more deliberate
+    of the two statements and a stale file must not win over what someone just typed.
+    """
+    global _DOTENV_PATH, _FROM_ENV
+    if _FROM_ENV is not None:
+        return
+    _FROM_ENV = {n for n in _KEY_NAMES if os.environ.get(n)}
+    found = find_dotenv(usecwd=True)
+    if found:
+        _DOTENV_PATH = found
+        load_dotenv(found, override=False)
+
+
 def resolve_provider(name: str = "auto") -> tuple[str, dict, str]:
     """Whichever key is actually present. TypeSafe direct is waitlisted; OpenRouter is not."""
+    load_env()
     order = ["typesafe", "openrouter"] if name == "auto" else [name]
     for p in order:
         spec = PROVIDERS.get(p)
@@ -121,8 +157,9 @@ def resolve_provider(name: str = "auto") -> tuple[str, dict, str]:
         if key:
             return p, spec, key
     raise NoProvider(
-        "no API key found. Set OPENROUTER_API_KEY (available now) or TYPESAFE_API_KEY "
-        "(direct, waitlisted). The structural checks need neither: run `assay check`.")
+        "no API key found. Set TYPESAFE_API_KEY or OPENROUTER_API_KEY, in your environment or in "
+        "a .env in this directory or above it. `assay config` shows what assay resolved. The "
+        "structural checks need neither: run `assay check`.")
 
 
 @dataclass

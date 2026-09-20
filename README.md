@@ -190,6 +190,13 @@ No install step, no API key, no configuration. `onboard` reads the project, says
 cannot see, shows what it found for free, writes an `audit.yml` that gates nothing, and prints the
 next command. `--agent` also writes the skill file your coding agent follows.
 
+**The key is never in a config file.** assay reads `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` from
+the environment or from a `.env` in your project or any parent directory, and an exported variable
+always beats the file. `assay config` prints what it resolved and where the key came from;
+`assay config --check` makes one real call to prove it works, for about $0.00001. This existed as a
+bug first: assay read only `os.environ`, so a key sitting in a `.env` was invisible and every judged
+command reported the tier as off.
+
 **You do not pass a dialect.** `manifest.json` carries `metadata.adapter_type`, so assay parses
 Snowflake as Snowflake and BigQuery as BigQuery on its own; `--dialect` is an override for the rare
 project whose manifest does not say. This was a flag once, and forgetting it was expensive: parsed

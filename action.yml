@@ -18,9 +18,19 @@ inputs:
     required: false
     default: ""
   dialect:
-    description: "snowflake | bigquery | postgres | redshift | databricks | duckdb"
+    description: >-
+      Override the SQL dialect. Leave empty: assay reads `metadata.adapter_type` from your own
+      manifest, so it parses Snowflake as Snowflake without being told. A default of `duckdb` here
+      silently misparsed every other warehouse.
     required: false
-    default: duckdb
+    default: ""
+  store:
+    description: >-
+      The assay store holding judged answers. Commit it, or restore it from cache before this
+      step, and the judged findings appear in the comment beside the structural ones. Without it
+      only the structural tier runs, which is the part that needs no key.
+    required: false
+    default: "assay.duckdb"
   config:
     description: "directory holding audit.yml"
     required: false
@@ -58,6 +68,10 @@ runs:
         FAIL: ${{ inputs.fail-on-findings }}
       run: |
         set -uo pipefail
+        DIALECT=""
+        [ -n "${{ inputs.dialect }}" ] && DIALECT="--dialect ${{ inputs.dialect }}"
+        STORE=""
+        [ -f "${{ inputs.store }}" ] && STORE="--store ${{ inputs.store }}"
         {
           echo "## assay"
           echo
@@ -69,7 +83,8 @@ runs:
           echo '<details><summary>findings in the branch</summary>'
           echo
           echo '```'
-          assay check --target "${{ inputs.target }}" --dialect "${{ inputs.dialect }}" \
+          # shellcheck disable=SC2086
+          assay check --target "${{ inputs.target }}" $DIALECT $STORE \
                       --config "${{ inputs.config }}" --limit 15 2>&1 | head -80
           echo '```'
           echo '</details>'
@@ -77,7 +92,8 @@ runs:
         # *** THE EXIT CODE IS CAPTURED, NEVER READ THROUGH A PIPE. ***
         # `cmd | head` reports head's status, so a gate written that way passes no matter what the
         # command did.
-        assay check --target "${{ inputs.target }}" --dialect "${{ inputs.dialect }}" \
+        # shellcheck disable=SC2086
+        assay check --target "${{ inputs.target }}" $DIALECT $STORE \
                     --config "${{ inputs.config }}" --limit 0 > /dev/null 2>&1
         echo "code=$?" >> "$GITHUB_OUTPUT"
         cat assay-comment.md

@@ -44,7 +44,12 @@ summary::-webkit-details-marker{display:none}
 .grain{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
 .reach{color:var(--dim);font-size:12px;margin-left:auto}
 .body{padding:0 16px 16px}
-.desc{color:var(--dim);margin:2px 0 14px;max-width:80ch}
+.desc{color:var(--dim);margin:2px 0 14px}
+.warn{margin:2px 0 12px;padding:8px 11px;border-left:3px solid #d29922;background:#2b220c;
+ border-radius:0 5px 5px 0;color:#e3b341}
+.warn b{color:#f0c674;font-weight:600}
+.dflag{font-size:11px;padding:2px 7px;border-radius:99px;background:#2b220c;color:#e3b341;
+ border:1px solid #6b4f10}
 table{border-collapse:collapse;width:100%;font-size:13px}
 th{text-align:left;color:var(--dim);font-weight:500;padding:5px 10px 5px 0;
 border-bottom:1px solid var(--line)}
@@ -77,6 +82,8 @@ def inventory_html(entries, project_name: str, describe) -> str:
             counts.get(e.grain.source if e.grain else "unsettled", 0) + 1
     ncols = sum(len(e.columns) for e in entries)
     roles = sum(1 for e in entries for c in e.columns if c.role)
+    drift = sum(1 for e in entries
+                if e.doc_conflict and (e.doc_conflict.confidence or 0) >= 0.6)
 
     cards = []
     for e in sorted(entries, key=lambda x: (-x.marts, x.name)):
@@ -94,13 +101,22 @@ def inventory_html(entries, project_name: str, describe) -> str:
             rows.append(
                 f"<tr><td class='col'>{nm}</td><td>{role}</td>"
                 f"<td>{html.escape(str(c.provenance.value))}</td><td>{null}</td></tr>")
+        # *** THE PROSE WARNING BELONGS BESIDE THE PROSE. ***
+        # A reader who opens this page to find out what a model means is exactly the reader who
+        # must be told that its description has stopped being true. Put it anywhere else and they
+        # read the sentence above it and believe it.
+        dc = e.doc_conflict
+        flag = (f'<p class="warn">Its description no longer matches its code '
+                f'<b>&middot; judged {dc.confidence:.2f}</b></p>'
+                if dc and (dc.confidence or 0) >= 0.6 else "")
         hay = " ".join([e.name, e.layer, grain] + [c.name for c in e.columns]).lower()
         cards.append(f"""<details data-hay="{html.escape(hay)}">
 <summary><span class="name">{html.escape(e.name)}</span>
 <span class="grain">{html.escape(grain)}</span>
 {_pill(e.grain.source, e.grain.confidence) if e.grain else _pill("unknown")}
+{'<span class="dflag">description drift</span>' if flag else ''}
 <span class="reach">{e.descendants} downstream &middot; {e.marts} marts</span></summary>
-<div class="body"><p class="desc">{html.escape(describe(e))}</p>
+<div class="body">{flag}<p class="desc">{html.escape(describe(e))}</p>
 <table><tr><th>column</th><th>role</th><th>value comes from</th><th>null means</th></tr>
 {''.join(rows)}</table></div></details>""")
 
@@ -115,7 +131,8 @@ def inventory_html(entries, project_name: str, describe) -> str:
 <div class="wrap"><input id="q" type="search" placeholder="filter by model, column or grain">
 <div class="counts"><div><b>{len(entries)}</b><span>models</span></div>
 <div><b>{ncols:,}</b><span>columns</span></div>
-<div><b>{roles:,}</b><span>roles judged</span></div>{chips}</div>
+<div><b>{roles:,}</b><span>roles judged</span></div>
+{f'<div><b>{drift}</b><span>descriptions drifted</span></div>' if drift else ''}{chips}</div>
 {''.join(cards)}</div>
 <footer>Every cell says where it came from. <b>declared</b> means a human wrote it down,
 <b>observed</b> means the probe counted it, <b>derived</b> means code worked it out from the SQL and

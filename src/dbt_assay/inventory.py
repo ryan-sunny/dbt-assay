@@ -96,6 +96,11 @@ class ModelEntry:
     marts: int = 0
     reads: list = field(default_factory=list)
     unreadable: bool = False
+    # *** A JUDGMENT THAT ONLY ITS OWN COMMAND CAN SEE IS NOT PART OF THE TOOL. ***
+    # The description family answered, stored, and then reached nothing: not `check`, not the JSON,
+    # not the HTML, not the pull request. It printed once, where it was asked, and was gone. A
+    # finding has to land in the same stream as every other finding or nobody acts on it twice.
+    doc_conflict: Fact | None = None
 
     @property
     def confidence_floor(self) -> str:
@@ -107,12 +112,16 @@ class ModelEntry:
 
 
 def _judgments(store, uid: str) -> dict:
-    """Stored answers for one model, keyed by question id."""
+    """Stored answers for one model, keyed by question id.
+
+    The key is the MODEL for column and grain questions, and `<uid>::<family>` for the families
+    that ask once per model. Both are read here so a caller never has to know which is which.
+    """
     if store is None:
         return {}
     rows = store.con.execute(
         """select question, answer, confidence from model_decisions
-           where decision_key = ?""", [uid]).fetchall()
+           where decision_key = ? or decision_key like ?""", [uid, uid + "::%"]).fetchall()
     return {q: {"answer": a, "confidence": c} for q, a, c in rows}
 
 
@@ -132,6 +141,12 @@ def build(project, digests, schema, store=None, observed=None) -> list[ModelEntr
 
         # ---- grain, strongest evidence first ----
         judged = _judgments(store, uid)
+        if (d := judged.get("desc")) is not None:
+            try:
+                entry.doc_conflict = Fact(value=float(d["answer"]), source="judged",
+                                          confidence=float(d["answer"]))
+            except (TypeError, ValueError):
+                pass
         if uid in proposed:
             entry.derived_grain = [c.lower() for c in proposed[uid].columns]
         if uid in declared:

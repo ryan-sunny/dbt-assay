@@ -166,7 +166,38 @@ def unresolved_judgment(project, entries) -> list[Finding]:
     return out
 
 
-CHECKS = (measure_inside_the_grain, unresolved_judgment)
+def description_contradicts_the_code(project, entries) -> list[Finding]:
+    """The prose claims something the code does not do.
+
+    *** THE ONE FAMILY WHOSE FINDING NEEDS NO assay VOCABULARY TO READ. ***
+    Everything else here is about grain, provenance and keys, and lands on someone who already
+    thinks in those words. This one says: your description says X, your SQL does Y. It is what a
+    first run leads with, so it has to reach the same places every other finding reaches.
+
+    Gated at 0.6 because below that the family is declining to commit, and a noul near 0.5 means
+    similar probability either way rather than a weak yes.
+    """
+    out = []
+    for e in entries:
+        f = e.doc_conflict
+        if not f or (f.confidence or 0) < 0.6:
+            continue
+        out.append(Finding(
+            check="description_contradicts_the_code",
+            subject=e.uid, subject_name=e.name, file=e.path,
+            summary="the description claims something the code does not do",
+            detail=("A description is written once and the SQL changes around it. Nothing in a "
+                    "warehouse tests prose, so this drifts silently and is read as true by "
+                    "everyone downstream. Re-read both, and either fix the code or fix the "
+                    "sentence."),
+            base=2,
+            evidence={"probability": f.confidence, "downstream": e.descendants,
+                      "marts": e.marts},
+        ))
+    return out
+
+
+CHECKS = (measure_inside_the_grain, unresolved_judgment, description_contradicts_the_code)
 
 
 def run_all(project, entries, declared, digests=None) -> list[Finding]:

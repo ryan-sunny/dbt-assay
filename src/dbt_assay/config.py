@@ -221,6 +221,12 @@ DEFAULT_YML = """\
 # assay configuration. Every field is optional; the defaults below are what runs without this file.
 
 jev:
+  # THE KEY IS NEVER IN THIS FILE, because this file belongs in git. assay reads
+  # TYPESAFE_API_KEY or OPENROUTER_API_KEY from the environment, or from a .env here or in any
+  # parent directory. An exported variable always beats the file.
+  #   `assay config`          shows what was resolved and where the key came from
+  #   `assay config --check`  makes one real call to prove it works (about $0.00001)
+  #
   # auto prefers TypeSafe direct and falls back to OpenRouter, so direct is used the moment
   # a TYPESAFE_API_KEY is present. Pin one explicitly with `typesafe` or `openrouter`.
   provider: auto

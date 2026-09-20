@@ -477,8 +477,8 @@ def onboard(
     if not schema.catalog_present:
         steps.append(("dbt docs generate",
                       "gives assay real column lists for your sources instead of inferring them"))
-    steps.append(("assay inventory --out inventory.html",
-                  "one page per model: columns, provenance, tests, findings"))
+    steps.append(("assay inventory --html inventory.html",
+                  "one page per model: columns, provenance, and any description that drifted"))
     if findings:
         steps.append((f"assay check --check {by.most_common(1)[0][0]}",
                       "the finding there is most of"))
@@ -497,6 +497,70 @@ def onboard(
     for cmd, why in steps:
         t.add_row(f"[bold cyan]{cmd}[/]", f"[dim]{why}[/]")
     console.print(t)
+
+
+@app.command()
+def config(
+    config_path: str = typer.Option(".", "--config", help="directory holding audit.yml"),
+    check: bool = typer.Option(False, "--check",
+                               help="also make one real call to prove the key works"),
+):
+    """What assay resolved: the config file, the provider, where the key came from, the cap.
+
+    *** "NO API KEY FOUND" WAS WRONG FOR WEEKS AND NOTHING COULD SHOW IT. ***
+    assay read only `os.environ`, so a key in a `.env` was invisible, and every judged command
+    reported the tier as off. A capability check that can be wrong needs a way to see what it
+    decided, otherwise the only way to debug it is to read the source.
+    """
+    from .jev import key_source, load_env
+    load_env()
+    cfg = Config.load(config_path)
+
+    p = Path(config_path) / "audit.yml"
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    # *** A PATH THAT GETS ELLIPSISED ANSWERS NOTHING. ***
+    # The whole point of this command is to say WHERE the key came from, and rich truncates a long
+    # cell by default, so the one fact worth printing is the first thing to disappear.
+    t.add_column(no_wrap=True)
+    t.add_column(overflow="fold")
+    t.add_row("audit.yml", f"[bold]{p}[/]" if p.exists()
+                           else f"[dim]{p} -- absent, so every default below is in force[/]")
+    t.add_row("provider", cfg.provider)
+    t.add_row("model", cfg.model)
+    t.add_row("spend cap", f"${cfg.max_spend_usd:.2f} per invocation")
+    t.add_row("gate floor", f"{cfg.min_adjudications} human verdicts before a question may fail "
+                            f"a build")
+
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if client.available:
+        name, spec, _k = client._conn()
+        t.add_row("key", f"[green]found[/] for [bold]{name}[/]  "
+                         f"[dim]{spec['env']} from {key_source(spec['env'])}[/]")
+    else:
+        t.add_row("key", "[yellow]none.[/] [dim]Set TYPESAFE_API_KEY or OPENROUTER_API_KEY in "
+                         "your environment, or put it in a .env here or above.[/]")
+    console.print(t)
+
+    if cfg.vocab:
+        console.print(f"\n[dim]vocabulary: {len(cfg.vocab)} term(s), sent with every question[/]")
+    if cfg.waivers:
+        console.print(f"[dim]waivers: {sum(len(v) for v in cfg.waivers.values())}[/]")
+
+    if not check:
+        console.print("\n[dim]`assay config --check` makes one real call to prove the key "
+                      "works.[/]")
+        return
+    if not client.available:
+        raise typer.Exit(1)
+    from .jev import noul
+    try:
+        client.ask({"sky": "blue"}, {"q": noul("Is the sky described as blue?")},
+                   caller="assay.config")
+    except Exception as e:
+        console.print(f"\n[red]the key did not work:[/] {e}")
+        raise typer.Exit(1) from e
+    console.print(f"\n[green]the key works.[/] [dim]1 call, {client.input_tokens} tokens, "
+                  f"${client.spent_usd:.5f}[/]")
 
 
 @app.command()
