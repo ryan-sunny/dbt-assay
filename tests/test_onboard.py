@@ -122,3 +122,45 @@ def test_it_does_not_tell_you_to_export_a_key_you_already_have(project_dir, tmp_
     assert r.exit_code == 0, r.output
     assert "export TYPESAFE_API_KEY" not in r.output
     assert "--no-judge was passed" in r.output
+
+
+def test_compiling_is_offered_and_never_automatic(project_dir, tmp_path):
+    """*** `dbt compile` NEEDS A WAREHOUSE CONNECTION AND CAN TAKE MINUTES. ***
+
+    Running it because assay felt like it, on someone else's first invocation, is how a tool gets
+    uninstalled. Without the flag, onboard says the option exists and does nothing.
+    """
+    r = runner.invoke(app, ["onboard", "-t", str(project_dir), "--config", str(tmp_path),
+                            "--no-judge"])
+    assert r.exit_code == 0, r.output
+    assert "compiling:" not in r.output         # never without the flag
+
+    # ...and the fixture has no gap, so the offer correctly stays silent too. The offer is tied to
+    # the gap, not printed unconditionally: a project with nothing missing should hear nothing.
+    assert "have no compiled SQL" not in r.output
+
+    h = runner.invoke(app, ["onboard", "--help"])
+    assert "--compile" in h.output
+    assert "never automatic" in " ".join(h.output.split())
+
+
+def test_it_refuses_to_compile_where_there_is_no_project():
+    """A manifest copied somewhere for inspection has no project above it, and running dbt in the
+    wrong directory is worse than not running it."""
+    from pathlib import Path
+
+    from dbt_assay.cli import _project_dir_for, _run_dbt_compile
+    ok, why = _run_dbt_compile(Path("/tmp"))
+    assert ok is False
+    assert "dbt_project.yml" in why
+    assert _project_dir_for(Path("/tmp")) is None
+
+
+def test_a_missing_dbt_binary_is_an_instruction_not_a_traceback(tmp_path):
+    (tmp_path / "dbt_project.yml").write_text("name: p\n")
+    t = tmp_path / "target"
+    t.mkdir()
+    from dbt_assay.cli import _run_dbt_compile
+    ok, why = _run_dbt_compile(t, dbt_bin="definitely-not-a-real-dbt")
+    assert ok is False
+    assert "--dbt" in why

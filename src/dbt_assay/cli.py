@@ -289,6 +289,48 @@ def check(
         raise typer.Exit(1)
 
 
+def _project_dir_for(target: Path) -> Path | None:
+    """The dbt project a target dir belongs to: the nearest parent holding dbt_project.yml.
+
+    Walked rather than assumed, because `target/` is conventionally a sibling of the project file
+    but a manifest copied somewhere for inspection has no project at all, and running dbt in the
+    wrong directory is worse than not running it.
+    """
+    for d in [target, *target.resolve().parents][:5]:
+        if (d / "dbt_project.yml").exists():
+            return d
+    return None
+
+
+def _run_dbt_compile(target: Path, dbt_bin: str = "dbt", profiles_dir: str | None = None,
+                     timeout: int = 900) -> tuple[bool, str]:
+    """*** NEVER SILENTLY. ***
+
+    `dbt compile` needs a warehouse connection on most adapters and can take minutes on a large
+    project. Running it because assay felt like it, on someone else's first invocation, is how a
+    tool gets uninstalled. It happens when asked for and the caller says what it bought.
+    """
+    import subprocess
+    pd = _project_dir_for(target)
+    if pd is None:
+        return False, ("no dbt_project.yml above this target, so there is no project to compile. "
+                       "Run `dbt compile` yourself in the project this manifest came from.")
+    cmd = [*dbt_bin.split(), "compile"]
+    if profiles_dir:
+        cmd += ["--profiles-dir", profiles_dir]
+    try:
+        r = subprocess.run(cmd, cwd=pd, capture_output=True, text=True,
+                           timeout=timeout, check=False)
+    except FileNotFoundError:
+        return False, f"{dbt_bin!r} is not on PATH. Pass --dbt with the command you use."
+    except subprocess.TimeoutExpired:
+        return False, f"`dbt compile` did not finish within {timeout}s."
+    if r.returncode != 0:
+        tail = (r.stdout or r.stderr or "").strip().splitlines()[-3:]
+        return False, "dbt compile failed: " + " / ".join(t.strip() for t in tail)
+    return True, str(pd)
+
+
 def _onboard_judge(project, digests, schema, findings, config_path: str, store_path: str,
                    judge: bool, judge_limit: int) -> bool | None:
     """The judged tier, on a first run, bounded.
@@ -393,6 +435,12 @@ def onboard(
     config_path: str = typer.Option(".", "--config", help="where audit.yml should live"),
     agent: bool = typer.Option(False, "--agent",
                                help="also write the agent skill file and print the MCP config"),
+    compile_first: bool = typer.Option(False, "--compile",
+                                       help="run `dbt compile` first when models have no "
+                                            "compiled SQL. Needs your warehouse connection and "
+                                            "can take minutes, so it is never automatic."),
+    dbt_bin: str = typer.Option("dbt", "--dbt", help="the dbt command, e.g. 'uv run dbt'"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
     judge: bool = typer.Option(True, "--judge/--no-judge",
                                help="run the judgment tier when a key is present"),
     judge_limit: int = typer.Option(120, "--judge-limit",
@@ -419,6 +467,29 @@ def onboard(
     tdir = _find_target(target)
     project, digests, failures, schema, sstats = _load(tdir, dialect)
     cov = project.coverage()
+
+    # *** COMPILED SQL IS THE SINGLE BIGGEST THING HOLDING assay BACK ON MOST PROJECTS. ***
+    # Every check reads the compiled body. Without it a model is either skipped or read from
+    # stripped Jinja, which is not a compile and says so. Offered, never assumed.
+    missing = cov["unreadable"] + cov.get("from_stripped", 0)
+    if compile_first and missing:
+        console.print(f"[dim]compiling: {missing} model(s) have no compiled SQL...[/]")
+        ok, why = _run_dbt_compile(tdir, dbt_bin, profiles_dir)
+        if not ok:
+            console.print(f"   [yellow]{why}[/]")
+        else:
+            before = missing
+            project, digests, failures, schema, sstats = _load(tdir, dialect)
+            cov = project.coverage()
+            now = cov["unreadable"] + cov.get("from_stripped", 0)
+            console.print(f"   [green]compiled in {why}[/] "
+                          f"[dim]{before - now} more model(s) readable "
+                          f"({now} still without compiled SQL)[/]"
+                          if now < before else
+                          f"   [yellow]compiled, but {now} model(s) still have none.[/]")
+    elif missing and not compile_first:
+        console.print(f"[dim]{missing} model(s) have no compiled SQL. `--compile` runs "
+                      f"`dbt compile` for you; it needs your warehouse connection.[/]")
 
     console.print("\n[bold]1. what assay found[/]")
     _coverage_panel(project, digests, failures, show_errors=False)
@@ -477,9 +548,9 @@ def onboard(
     steps = []
     if cov["unreadable"] or cov.get("from_stripped"):
         n_raw = cov["unreadable"] + cov.get("from_stripped", 0)
-        steps.append(("dbt compile",
+        steps.append(("assay onboard --compile",
                       (f"{n_raw} model(s) were read without compiled SQL, which is the single "
-                       f"biggest thing holding assay back here")))
+                       f"biggest thing holding assay back here. This runs `dbt compile` for you.")))
     if not schema.catalog_present:
         steps.append(("dbt docs generate",
                       "gives assay real column lists for your sources instead of inferring them"))
