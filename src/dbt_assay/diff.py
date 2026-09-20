@@ -135,7 +135,22 @@ def compare(before, after, project=None, digests=None) -> list[Change]:
             if rb and ra and rb != ra:
                 changes.append(Change(name, "role", column=col, before=rb, after=ra,
                                       marts=ea.marts))
-    return sorted(changes, key=lambda c: (-c.severity, c.model, c.kind))
+    # *** ONE EVENT, ONE LINE. ***
+    # The resolved grain and the SQL's grain usually move together, and reporting both says the
+    # same thing twice with different words. The SQL-level one is kept where they agree, because
+    # it names what the author actually edited.
+    seen_grain = {c.model for c in changes if c.kind == "grain_in_sql"}
+    deduped = [c for c in changes
+               if not (c.kind == "grain" and c.model in seen_grain
+                       and _same_end(c, changes))]
+    return sorted(deduped, key=lambda c: (-c.severity, c.model, c.kind))
+
+
+def _same_end(c: Change, changes: list[Change]) -> bool:
+    for other in changes:
+        if other.kind == "grain_in_sql" and other.model == c.model:
+            return sorted(other.after or []) == sorted(c.after or [])
+    return False
 
 
 def _plural(n: int, one: str, many: str) -> str:

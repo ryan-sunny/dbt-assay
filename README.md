@@ -35,6 +35,23 @@ warehouse: grain settled for 250, 4,684 columns classified.
 it), `derived` (code worked it out) or `judged` (with the probability). A fact resting on an
 unresolved premise says so rather than inheriting confidence it did not earn.
 
+## While you type, and for your agent
+
+```bash
+assay watch --compile --project-dir transform   # a pane that stays quiet until meaning moves
+assay mcp                                       # assay as tools an agent can call
+```
+
+`watch` diffs your working tree against a snapshot taken when it started, so a reformat, a renamed
+CTE or a join rewritten as a subquery says **nothing**. Break something and fix it before the next
+save and it never speaks, because nothing ended up different. A file that does not parse is "still
+typing", never a finding.
+
+`mcp` serves `contract`, `lineage`, `blast_radius`, `findings`, `changed_contracts` and `rebase`.
+A contract is fifteen lines where the SQL is two hundred, so an agent can hold a project's meaning
+in about what reading four models costs it now. `changed_contracts` is the self-check to run after
+an edit and before moving on: *did that change what anything MEANS?*
+
 ## It becomes part of your warehouse
 
 ```bash

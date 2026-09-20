@@ -10,13 +10,14 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import __version__, contracts, provenance, relate
+from . import __version__, contracts, mcp_server, provenance, relate
 from . import backtest as backtest_mod
 from . import columns as columns_mod
 from . import diff as diff_mod
 from . import export as export_mod
 from . import inventory as inv_mod
 from . import judged as judged_mod
+from . import live as live_mod
 from . import probe as probe_mod
 from .checks import run_all
 from .config import DEFAULT_YML, Config
@@ -1004,3 +1005,94 @@ def backtest(
         console.print(f"\n[yellow]{len(unread)} of {len(pairs)} comparable replays could not be "
                       f"read[/] [dim]({len(unread) / max(len(pairs), 1):.0%}), and are not counted "
                       f"as clean. A Jinja strip is not a compile.[/]")
+
+
+@app.command()
+def watch(
+    target: str = typer.Option(None, "--target", "-t"),
+    project_dir: str = typer.Option(".", "--project-dir", help="the dbt project to compile in"),
+    compile_on_save: bool = typer.Option(False, "--compile",
+                                         help="run `dbt compile --select <changed>+` on a save"),
+    dbt_bin: str = typer.Option("dbt", "--dbt-bin", help='e.g. "uv run dbt"'),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    interval: float = typer.Option(1.0, "--interval", help="seconds between checks"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+):
+    """Stay quiet until something in your working tree MEANS something different.
+
+    The baseline is a snapshot taken at start, not your previous save, so breaking something and
+    fixing it produces no alarm at all -- which is correct, because nothing ended up different.
+    A file that does not parse is "still typing", never a finding.
+    """
+    import subprocess
+    import time as _time
+
+    tdir = _find_target(target)
+    store = Store(store_path) if Path(store_path).exists() else None
+    obs = probe_mod.read(store) if store else {}
+
+    state = live_mod.read(tdir, store, obs)
+    baseline = live_mod.Snapshot.of(state.entries)
+    console.print(f"[bold]watching[/] {len(baseline.entries)} models. "
+                  f"[dim]baseline taken now; ctrl-c to stop.[/]")
+
+    seen = live_mod.sql_files(tdir, project_dir)
+    try:
+        while True:
+            _time.sleep(interval)
+            now = live_mod.sql_files(tdir, project_dir)
+            moved = [p for p, m in now.items() if seen.get(p) != m]
+            if not moved:
+                continue
+            seen = now
+            names = sorted({Path(p).stem for p in moved})
+            if compile_on_save:
+                sel = " ".join(f"{n}+" for n in names[:8])
+                cmd = [*dbt_bin.split(), "compile", "--select", *sel.split()]
+                if profiles_dir:
+                    cmd += ["--profiles-dir", profiles_dir]
+                subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, check=False)
+
+            state = live_mod.read(tdir, store, obs)
+            if state.unparsed:
+                console.print(f"[dim]still typing: {', '.join(state.unparsed[:4])}[/]")
+                continue
+            changes = live_mod.changes_since(baseline, state)
+            if not changes:
+                console.print(f"[dim]{', '.join(names[:4])} saved · nothing means anything "
+                              f"different[/]")
+                continue
+            console.print()
+            for c in changes[:8]:
+                colour = "red" if c.severity >= 3 else "yellow"
+                console.print(f"[{colour}]{c.kind}[/] [bold]{c.model}[/]  {c.detail or ''}")
+                if c.aggregating_consumers:
+                    console.print(f"  [red]{len(c.aggregating_consumers)} downstream models "
+                                  f"aggregate over it: "
+                                  f"{', '.join(c.aggregating_consumers[:4])}[/]")
+                elif c.consumers:
+                    console.print(f"  [dim]{len(c.consumers)} consumers, {c.marts} marts[/]")
+    except KeyboardInterrupt:
+        console.print("\n[dim]stopped[/]")
+    finally:
+        if store:
+            store.close()
+
+
+@app.command()
+def mcp(
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+):
+    """Serve assay as tools an agent can call instead of reading your SQL.
+
+    contract, lineage, blast_radius, findings, changed_contracts, rebase. A contract is fifteen
+    lines where the SQL is two hundred, so an agent can hold a whole project's meaning in about
+    what reading four models costs it today.
+    """
+    tdir = _find_target(target)
+    try:
+        mcp_server.serve(str(tdir), store_path if Path(store_path).exists() else None)
+    except RuntimeError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
