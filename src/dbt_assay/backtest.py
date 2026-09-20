@@ -73,9 +73,11 @@ def dejinja(sql: str) -> str:
     sql = _CONFIG.sub("", sql)
     sql = _BLOCK.sub("", sql)
     sql = _STANDALONE.sub("", sql)
-    # What is left is inline: a macro call or a var sitting inside an expression, where a literal
-    # keeps the statement parseable.
-    sql = _EXPR.sub("1", sql)
+    # *** AN IDENTIFIER, NOT A LITERAL. ***
+    # What is left is a macro call or a var. Substituting `1` only parses where a VALUE belongs,
+    # so anything standing in for a table name, a column or a clause died. Measured on a real
+    # Snowflake project assay had never seen: `1` parsed 14 of 25 models, an identifier parsed 21.
+    sql = _EXPR.sub("_jinja_", sql)
     return sql
 
 

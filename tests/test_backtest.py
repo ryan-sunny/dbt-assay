@@ -108,3 +108,13 @@ def test_compiled_sql_needs_no_jinja_strip():
     fired, skip = backtest._fire_compiled(
         "select row_number() over (order by ST_Distance(a, b)) rn from t", "m")
     assert not skip and "ranks_by_degrees" in fired
+
+
+def test_a_leftover_macro_becomes_an_identifier_not_a_literal():
+    """`1` only parses where a VALUE belongs, so anything standing in for a table name, a column
+    or a clause died. On a real Snowflake project: `1` parsed 14 of 25 models, an identifier 21."""
+    from dbt_assay.parse import digest
+    out = backtest.dejinja("select a from {{ some_macro() }} where b = 1")
+    assert digest(out).ok
+    out2 = backtest.dejinja("select {{ dbt_utils.star(from=ref('x')) }} from t")
+    assert digest(out2).ok

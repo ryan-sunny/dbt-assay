@@ -57,7 +57,7 @@ class Model:
     parents: list[str] = field(default_factory=list)
     children: list[str] = field(default_factory=list)
     compiled: str | None = None
-    compiled_from: str = "none"   # disk | manifest | none
+    compiled_from: str = "none"   # disk | manifest | stripped | none
     compiled_path: str | None = None
     # Other target dirs held a DIFFERENT compiled body for this model. Which one you audit changes
     # the answer, so the disagreement is recorded rather than resolved by luck.
@@ -82,9 +82,12 @@ class Source:
 class Project:
     """A dbt project, read from its manifest and its compiled output."""
 
-    def __init__(self, manifest: dict, target_dir: Path):
+    def __init__(self, manifest: dict, target_dir: Path, project_root: Path | None = None):
         self.raw = manifest
         self.target_dir = target_dir
+        # Where `original_file_path` is relative to, so the raw model can be read when there is no
+        # compiled output. Defaults to the parent of target/, which is the usual layout.
+        self.project_root = Path(project_root) if project_root else target_dir.parent
         self.project_name = manifest.get("metadata", {}).get("project_name", "")
         self.dbt_version = manifest.get("metadata", {}).get("dbt_version", "")
         self.models: dict[str, Model] = {}
@@ -95,14 +98,14 @@ class Project:
     # ---------- loading ----------
 
     @classmethod
-    def load(cls, target_dir: str | Path) -> Project:
+    def load(cls, target_dir: str | Path, project_root: str | Path | None = None) -> Project:
         target = Path(target_dir)
         mf = target / "manifest.json"
         if not mf.exists():
             raise FileNotFoundError(
                 f"no manifest at {mf}. Run `dbt parse` (or `dbt compile`) in your dbt project first."
             )
-        return cls(json.loads(mf.read_text()), target)
+        return cls(json.loads(mf.read_text()), target, project_root)
 
     def _build(self) -> None:
         nodes = self.raw.get("nodes", {})
@@ -163,6 +166,15 @@ class Project:
 
         self._attach_compiled()
 
+    def _raw_sql(self, m: Model) -> str | None:
+        if not self.project_root:
+            return None
+        p = self.project_root / m.path
+        try:
+            return p.read_text() if p.exists() else None
+        except OSError:
+            return None
+
     def _attach_compiled(self) -> None:
         """The CANONICAL copy first, then the manifest. Disagreements are recorded, never resolved
         by whichever directory happened to sort first.
@@ -205,6 +217,19 @@ class Project:
             code = (nodes.get(uid) or {}).get("compiled_code")
             if code:
                 m.compiled, m.compiled_from, m.compiled_path = code, "manifest", "<manifest>"
+                continue
+
+            # *** LAST RESORT: THE RAW MODEL, WITH ITS JINJA STRIPPED. ***
+            # Compiling needs a warehouse connection, and plenty of projects cannot be compiled by
+            # whoever wants to audit them -- a reviewer without credentials, a security team, a
+            # stranger evaluating the tool. Resolving ref() and source() and dropping control
+            # blocks is NOT a compile, and a macro-generated model will not survive it, so the
+            # fidelity is recorded on the model rather than assumed.
+            raw = self._raw_sql(m)
+            if raw:
+                from .backtest import dejinja
+                m.compiled, m.compiled_from = dejinja(raw), "stripped"
+                m.compiled_path = str(self.project_root / m.path) if self.project_root else m.path
 
     # ---------- graph ----------
 
@@ -269,5 +294,6 @@ class Project:
             "unreadable": len(self.models) - len(readable),
             "from_disk": sum(1 for m in readable if m.compiled_from == "disk"),
             "from_manifest": sum(1 for m in readable if m.compiled_from == "manifest"),
+            "from_stripped": sum(1 for m in readable if m.compiled_from == "stripped"),
             "conflicting_copies": sum(1 for m in readable if m.compiled_conflicts),
         }

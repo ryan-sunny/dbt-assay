@@ -53,13 +53,13 @@ def _find_target(given: str | None) -> Path:
         "could not find target/manifest.json. Pass --target, or run `dbt parse` in your project.")
 
 
-def _load(target: Path):
+def _load(target: Path, dialect: str = "duckdb"):
     project = Project.load(target)
     digests, failures = {}, []
     for uid, m in project.models.items():
         if not m.readable:
             continue
-        d = digest(m.compiled, m.name)
+        d = digest(m.compiled, m.name, dialect)
         digests[uid] = d
         if not d.ok:
             failures.append((uid, m.name, m.path, d.error))
@@ -79,6 +79,10 @@ def _coverage_panel(project, digests, failures) -> None:
     t.add_row("models", f"{cov['models']}   sources {cov['sources']}   tests {cov['tests']}   edges {cov['edges']}")
     t.add_row("compiled SQL", f"{cov['readable']} read  ({cov['from_disk']} from disk, "
                               f"{cov['from_manifest']} from manifest)")
+    if cov.get("from_stripped"):
+        t.add_row("[yellow]stripped[/]",
+                  f"[yellow]{cov['from_stripped']} model(s) had no compiled SQL, so their Jinja "
+                  f"was stripped instead. That is not a compile.[/]")
     if cov.get("conflicting_copies"):
         t.add_row("[yellow]ambiguous[/]",
                   f"[yellow]{cov['conflicting_copies']} models have a DIFFERENT compiled body in "
@@ -110,11 +114,16 @@ def _schema_panel(schema, stats: dict) -> None:
 
 
 @app.command()
-def scan(target: str = typer.Option(None, "--target", "-t", help="path to dbt target/ directory")):
+def scan(
+    target: str = typer.Option(None, "--target", "-t", help="path to dbt target/ directory"),
+    dialect: str = typer.Option("duckdb", "--dialect",
+                                help="snowflake | bigquery | postgres | redshift | databricks | "
+                                     "duckdb -- the SQL your warehouse speaks"),
+):
     """Read the project and report what can and cannot be audited."""
     tdir = _find_target(target)
     t0 = time.time()
-    project, digests, failures, schema, sstats = _load(tdir)
+    project, digests, failures, schema, sstats = _load(tdir, dialect)
     _coverage_panel(project, digests, failures)
     _schema_panel(schema, sstats)
 
@@ -147,10 +156,12 @@ def check(
     limit: int = typer.Option(25, "--limit", "-n", help="how many findings to print"),
     check_name: str = typer.Option(None, "--check", help="only this check"),
     config_path: str = typer.Option(".", "--config", help="directory holding audit.yml"),
+    dialect: str = typer.Option("duckdb", "--dialect",
+                                help="the SQL your warehouse speaks"),
 ):
     """Run the structural checks. No network, no API key, no spend."""
     tdir = _find_target(target)
-    project, digests, failures, schema, sstats = _load(tdir)
+    project, digests, failures, schema, sstats = _load(tdir, dialect)
     facts, edge_findings = relate.run_all(project, digests, schema)
     findings = run_all(project, digests) + edge_findings
     # *** ONE STREAM. ***

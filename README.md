@@ -315,7 +315,13 @@ honestly at a source, because what happened outside dbt is not knowable from a m
 
 Maintained for my own use. PRs read when convenient, issues may sit, fork freely.
 
-Developed against DuckDB. sqlglot handles the parsing for other dialects; untested elsewhere.
+Developed against DuckDB. Verified on Snowflake: a 25-model public package assay had never seen,
+parsed 21/25 from raw SQL with no warehouse connection at all. `--dialect snowflake | bigquery |
+postgres | redshift | databricks`.
+
+Where there is no compiled SQL, assay strips the Jinja and says so. That is not a compile, and a
+macro-generated model will not survive it, but it means a project can be audited by somebody with
+no credentials -- a reviewer, a security team, or you evaluating this tool.
 
 ## Licence
 
