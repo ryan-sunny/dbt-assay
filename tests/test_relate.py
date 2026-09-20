@@ -33,8 +33,34 @@ def test_declared_keys_come_from_the_projects_own_tests(project_dir):
     assert keys["model.p.int_bad_unique"] == ["section_id"]
 
 
-def test_partial_key_join_is_not_in_the_default_run(project_dir):
-    """It produced three false positives for three different reasons. See its docstring."""
+def test_fanout_check_is_skipped_without_a_schema(project_dir):
+    """Without resolved join targets the check cannot tell a join from a FROM relation."""
     p, d = _load(project_dir)
-    _, findings = relate.run_all(p, d)
-    assert all(f.check != "partial_key_join" for f in findings)
+    _, findings = relate.run_all(p, d, None)
+    assert all(f.check != "join_fans_out" for f in findings)
+
+
+def test_fanout_is_reported_only_for_an_actual_join_target(project_dir, tmp_path):
+    """The three false positives that killed the first version, as fixtures."""
+    from dbt_assay.parse import digest as dg
+    # FROM relation, not a join: must not fire
+    d1 = dg("select a.k, a.v from sunny.main.parent a")
+    assert not any(j.target_relation for j in d1.joins)
+    # join to an aggregating subquery: the target relation is not a table at all
+    d2 = dg("select x.k from sunny.main.driver d "
+            "join (select k, any_value(v) v from sunny.main.parent group by 1) x on x.k = d.k")
+    assert d2.joins[0].target_is_subquery and d2.joins[0].target_aggregates
+    assert d2.joins[0].target_relation is None
+    # a real join to a real table resolves, and only TARGET-side keys count
+    d3 = dg("select 1 from sunny.main.driver d join sunny.main.parent p on p.k = d.k and p.q = d.q")
+    j = d3.joins[0]
+    assert j.target_relation == "sunny.main.parent" and j.target_keys == ["k", "q"]
+
+
+def test_distinct_anywhere_marks_a_fanout_as_absorbed():
+    from dbt_assay.parse import digest as dg
+    assert dg("select distinct a from t").absorbs_fanout
+    assert dg("with c as (select distinct a from t) select a from c").absorbs_fanout
+    assert dg("select count(distinct a) from t").absorbs_fanout
+    assert dg("select string_agg(distinct a, ',') from t").absorbs_fanout
+    assert not dg("select a from t").absorbs_fanout

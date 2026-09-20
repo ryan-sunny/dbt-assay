@@ -12,6 +12,7 @@ from rich.table import Table
 
 from . import __version__, relate
 from .checks import run_all
+from .infer import Schema, derive_columns
 from .manifest import Project
 from .parse import digest
 from .store import Store
@@ -45,7 +46,12 @@ def _load(target: Path):
         digests[uid] = d
         if not d.ok:
             failures.append((uid, m.name, m.path, d.error))
-    return project, digests, failures
+    # Columns are derived parents-first so a `select *` can be expanded with what the parents were
+    # found to offer. Without this a starred model reports zero columns, which reads exactly like a
+    # model that genuinely offers none.
+    schema = Schema.load(project, target)
+    schema_stats = derive_columns(project, digests, schema)
+    return project, digests, failures, schema, schema_stats
 
 
 def _coverage_panel(project, digests, failures) -> None:
@@ -66,13 +72,30 @@ def _coverage_panel(project, digests, failures) -> None:
         console.print(f"   [yellow]parse failed[/] {name}: {err}")
 
 
+def _schema_panel(schema, stats: dict) -> None:
+    from collections import Counter
+    prov = Counter(schema.columns(u).source_of for u in schema.project.models)
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    t.add_row("columns known", f"{sum(v for k, v in prov.items() if k != 'unknown')}"
+                               f"/{len(schema.project.models)} models"
+                               f"   [dim](derived {prov['derived']}, catalog {prov['catalog']}, "
+                               f"declared {prov['declared']})[/]")
+    if stats["expanded"]:
+        t.add_row("star expansion", f"{stats['expanded']} models had `select *` expanded from their parents")
+    if not schema.catalog_present:
+        t.add_row("[dim]catalog.json[/]",
+                  "[dim]absent. `dbt docs generate` adds real column lists for sources.[/]")
+    console.print(t)
+
+
 @app.command()
 def scan(target: str = typer.Option(None, "--target", "-t", help="path to dbt target/ directory")):
     """Read the project and report what can and cannot be audited."""
     tdir = _find_target(target)
     t0 = time.time()
-    project, digests, failures = _load(tdir)
+    project, digests, failures, schema, sstats = _load(tdir)
     _coverage_panel(project, digests, failures)
+    _schema_panel(schema, sstats)
 
     feats = Table(title="\nstructure found", show_header=True, header_style="bold")
     feats.add_column("feature"); feats.add_column("count", justify="right")
@@ -104,8 +127,8 @@ def check(
 ):
     """Run the structural checks. No network, no API key, no spend."""
     tdir = _find_target(target)
-    project, digests, failures = _load(tdir)
-    facts, edge_findings = relate.run_all(project, digests)
+    project, digests, failures, schema, sstats = _load(tdir)
+    facts, edge_findings = relate.run_all(project, digests, schema)
     findings = run_all(project, digests) + edge_findings
     findings.sort(key=lambda f: -f.weight)
     if check_name:
@@ -123,6 +146,7 @@ def check(
         raise typer.Exit(0)
 
     _coverage_panel(project, digests, failures)
+    _schema_panel(schema, sstats)
 
     if not findings:
         console.print("\n[green]no structural findings[/]")

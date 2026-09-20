@@ -92,64 +92,90 @@ def declared_keys(project) -> dict[str, list[str]]:
     return keys
 
 
-def joins_parent_on_partial_key(project, digests: dict[str, Digest],
-                                facts: list[EdgeFact]) -> list[Finding]:
-    """NOT IN the default run. Needs per-join relation resolution first.
+def joins_parent_on_partial_key(project, digests: dict[str, Digest], schema) -> list[Finding]:
+    """A child JOINS a parent on only part of that parent's declared key.
 
-    *** ALL THREE FINDINGS INSPECTED ON ITS FIRST RUN WERE FALSE POSITIVES, EACH FOR A DIFFERENT
-    STRUCTURAL REASON. ***
-      1. the join target was a SUBQUERY that already aggregated (`select wdid, any_value(..)
-         group by 1`), so the grain was collapsed before the join and there was no fan-out;
-      2. the fan-out was deliberate and consumed by `count(distinct ...)`;
-      3. the "parent" was the model's FROM relation and was never joined to at all.
-
-    The shared cause is this function matching join keys GLOBALLY within a model instead of
-    resolving which relation each individual join targets. That resolution needs sqlglot's
-    `qualify()` fed a real schema, built from inferred output columns in DAG order. Until that
-    exists the check cannot tell a fan-out from an aggregate, and a check that cannot tell them
-    apart must not be shipped.
-
-    A child joins a parent on SOME of that parent's declared key. That is a fan-out.
+    *** THIS REPORTS A FACT, NOT A VERDICT, AND THAT IS DELIBERATE. ***
+    The fan-out itself is exact and code establishes it. Whether it is a DEFECT is not structurally
+    decidable, because a fan-out is frequently the mechanism rather than the mistake. Two real
+    examples from one project:
+      * a roll-up joins structures to parties on `wdid` alone ON PURPOSE, to reach one row per
+        (reach, party), and collapses the two grains separately afterwards -- correct, and its
+        header documents the double-count it already survived;
+      * another joins on `(building_key, geography)` while the parent's own test declares the key
+        as `(building_key, owner_key)`, with a comment asserting a third grain. Something there is
+        wrong and nothing in the SQL says which.
+    So severity is informational and the finding states the disagreement. Deciding it needs either
+    the data (is the parent unique on the joined columns?) or a judgment about whether the
+    downstream aggregation accounts for the inflation. That is the handoff to the judgment tier.
 
     The parent's own `unique_combination_of_columns` test says one row per (a, b). A child joining
-    on `a` alone therefore matches many parent rows per child row, and any aggregate over the result
-    is inflated. Every model in the chain reviews clean on its own; the defect lives on the edge.
+    on `a` alone matches several parent rows per child row, and any count or sum over the result is
+    inflated. Every model in the chain reviews clean on its own; the defect lives on the edge.
+
+    *** AN EARLIER VERSION OF THIS FUNCTION WAS WRONG AND THE FIX IS WHY THIS ONE TAKES `schema`. ***
+    It matched join keys GLOBALLY inside a model, which produced three false positives with three
+    different causes: a join to a subquery that had already aggregated, a fan-out deliberately
+    absorbed by `count(distinct ..)`, and a "parent" that was the model's FROM relation and was
+    never joined to at all. Each one is now excluded by construction:
+      * only relations that appear as an actual JOIN TARGET are considered, so a FROM relation and
+        an aggregating subquery (whose target relation is None) are both out;
+      * only the keys on the TARGET SIDE of that specific join count;
+      * `count(distinct ..)` anywhere in the model drops the severity, because the inflation is
+        absorbed rather than shipped.
     """
     keys = declared_keys(project)
-    by_child: dict[str, list[EdgeFact]] = defaultdict(list)
-    for f in facts:
-        by_child[f.child].append(f)
-
     found = []
+    seen: set = set()   # a model may join the same parent in several CTEs; that is one finding
     for uid, d in digests.items():
         if not d.ok:
             continue
         m = project.models[uid]
-        used = d.join_keys()
+        targets: dict[str, list] = defaultdict(list)
+        for j in d.joins:
+            if j.target_relation and not j.target_aggregates:
+                targets[j.target_relation.lower()].append(j)
+        if not targets:
+            continue
         refd = set(d.referenced_columns)
-        for f in by_child.get(uid, []):
-            key = keys.get(f.parent)
+
+        for parent in m.parents:
+            key = keys.get(parent)
             if not key or len(key) < 2:
                 continue
-            hit = {k for k in key if k in used}
-            missing = [k for k in key if k not in used]
-            # Joined on part of the key, and the rest is nowhere in this model at all. If the
-            # missing columns ARE referenced here the join may be qualified in a second clause,
-            # which the per-join view cannot see, so those are left alone rather than guessed at.
-            if hit and missing and not (set(missing) & refd):
+            rel = (schema.relation.get(parent) or "").lower()
+            for j in targets.get(rel, []):
+                on_target = set(j.target_keys)
+                hit = [k for k in key if k in on_target]
+                missing = [k for k in key if k not in on_target]
+                # If the missing key columns are referenced elsewhere in the model the join may be
+                # qualified by a second clause this per-join view cannot see. Left alone, not guessed.
+                if not hit or not missing or (set(missing) & refd):
+                    continue
+                sig = (uid, parent, tuple(hit))
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                absorbed = d.absorbs_fanout
                 found.append(Finding(
-                    check="partial_key_join",
+                    check="join_fans_out",
                     subject=uid, subject_name=m.name, file=m.path,
-                    summary=(f"joins `{f.parent_name}` on {sorted(hit)}, but its declared key is "
+                    summary=(f"joins `{project.name_of(parent)}` on {hit}, but its declared key is "
                              f"{key}"),
-                    detail=(f"`{f.parent_name}` declares one row per {key} via its own "
-                            f"unique_combination_of_columns test. This model joins on "
-                            f"{sorted(hit)} and never references {missing}, so each row here can "
-                            f"match several parent rows. Any count or sum over the result is "
-                            f"inflated by that factor."),
-                    base=3,
-                    evidence={"parent": f.parent_name, "declared_key": key,
-                              "joined_on": sorted(hit), "missing": missing},
+                    detail=(f"`{project.name_of(parent)}` declares one row per {key} via its own "
+                            f"unique_combination_of_columns test. This {j.kind} join matches on "
+                            f"{hit} and the model never references {missing}, so each row here can "
+                            f"match several parent rows."
+                            + (" A DISTINCT in this model collapses the duplicates again, so "
+                               "the fan-out is probably the intended mechanism here."
+                               if absorbed else
+                               " Nothing in this model collapses the duplicates. Check that "
+                               "the aggregation accounts for the inflation, or that the "
+                               "parent's declared key is still correct.")),
+                    base=1,
+                    evidence={"parent": project.name_of(parent), "declared_key": key,
+                              "joined_on": hit, "missing": missing, "join_kind": j.kind,
+                              "fanout_absorbed": absorbed},
                 ))
     return found
 
@@ -179,12 +205,13 @@ def columns_dropped_at_boundary(project, facts: list[EdgeFact],
 
 # `narrow_read` is informational and fired 124 times on a real project, so it is opt-in rather
 # than part of the default run. Volume without a verdict is how a findings list gets muted.
-def run_all(project, digests: dict[str, Digest], *,
+def run_all(project, digests: dict[str, Digest], schema=None, *,
             include_informational: bool = False) -> tuple[list[EdgeFact], list[Finding]]:
     facts = edge_facts(project, digests)
     findings: list[Finding] = []
+    if schema is not None:
+        findings += joins_parent_on_partial_key(project, digests, schema)
     if include_informational:
-        findings += joins_parent_on_partial_key(project, digests, facts)
         findings += columns_dropped_at_boundary(project, facts)
     for f in findings:
         b = project.blast_radius(f.subject)

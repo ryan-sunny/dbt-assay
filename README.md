@@ -38,8 +38,13 @@ Structure is exact and free. These need nothing but your `manifest.json` and com
 - ranking by a function that returns degrees, after alias resolution
 - window functions positioned where they can only see post-filter rows
 - dialect traps, like `~` meaning full match in DuckDB rather than a partial one
-- columns dropped at a model boundary, and join keys whose disambiguating column left the lineage
-  four models upstream
+- columns dropped at a model boundary, per edge
+- joins that fan out: a child joining a parent on only part of the key that parent's own
+  `unique_combination_of_columns` test declares
+
+Column knowledge is built parents-first through the DAG, so a `select *` is expanded from what its
+parents were found to offer. `target/catalog.json` is used when present and every column list says
+whether it was derived from SQL, read from the catalog, or declared in `schema.yml`.
 
 ## What the judgment tier adds
 

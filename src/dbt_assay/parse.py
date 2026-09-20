@@ -51,6 +51,20 @@ def func_name(node: exp.Expression) -> str:
         return type(node).__name__.upper()
 
 
+def _relname(t: exp.Table) -> str:
+    return ".".join(p for p in (t.catalog, t.db, t.name) if p)
+
+
+def _from_of(sel: exp.Select):
+    """sqlglot renamed this arg from `from` to `from_` at v30.
+
+    Reading only the new key returns None on older sqlglot, which is a SILENT miss: the FROM
+    relation simply vanishes and every check downstream behaves as though the model joined nothing.
+    The package supports sqlglot>=25, so both spellings are read.
+    """
+    return sel.args.get("from_") or sel.args.get("from")
+
+
 def position_of(node: exp.Expression) -> str:
     """The nearest enclosing clause. 'projection' when the node is in a select list."""
     anc = node.parent
@@ -127,6 +141,15 @@ class JoinFact:
     target: str                     # the relation or subquery being joined, truncated
     using: list[str] = field(default_factory=list)
     on_columns: list[str] = field(default_factory=list)   # qualified, both sides
+    # *** WHICH RELATION THIS JOIN ACTUALLY TARGETS. ***
+    # Without this, a check matches join keys globally across a model and cannot tell a join from
+    # the FROM relation, nor a table from an aggregated subquery. Three false positives, three
+    # different causes, all of them this.
+    target_alias: str = ""
+    target_relation: str | None = None    # catalog.schema.table, when the target is a real table
+    target_is_subquery: bool = False
+    target_aggregates: bool = False       # the subquery GROUPs or DISTINCTs: the grain is collapsed
+    target_keys: list[str] = field(default_factory=list)  # unqualified cols on the TARGET side
 
 
 @dataclass
@@ -158,6 +181,10 @@ class Digest:
     distinct: bool = False
     predicates: list[str] = field(default_factory=list)
     has_qualify: bool = False
+    # Relations in a FROM clause. A model's driving table is NOT something it joins to, and a check
+    # that conflates the two reports a fan-out against the table the model is simply reading.
+    from_relations: list[str] = field(default_factory=list)
+    absorbs_fanout: bool = False    # a DISTINCT somewhere: duplicate rows are collapsed again
     # DuckDB's `~` is regexp_full_match, not Postgres's partial match. Captured here so no check
     # ever has to parse the SQL a second time; one parse per model is the contract.
     full_match_patterns: list[str] = field(default_factory=list)
@@ -220,18 +247,54 @@ def digest(sql: str, name: str = "", dialect: str = "duckdb") -> Digest:
 
     d.referenced_columns = sorted({c.name.lower() for c in tree.find_all(exp.Column) if c.name})
 
+    for sel in tree.find_all(exp.Select):
+        src = _from_of(sel)
+        if (src is not None and isinstance(src.this, exp.Table) and src.this.name
+                and src.this.name.lower() not in cte_names):
+            d.from_relations.append(_relname(src.this))
+    d.from_relations = sorted(set(d.from_relations))
+
     for j in tree.find_all(exp.Join):
         side = (j.args.get("side") or "").upper()
         kindw = (j.args.get("kind") or "").upper()
         on, using = j.args.get("on"), j.args.get("using")
         kind = side or kindw or ("CROSS" if not on and not using else "INNER")
+        tgt = j.this
+        alias = (tgt.alias_or_name or "") if isinstance(tgt, exp.Expression) else ""
+        rel, is_sub, aggs = None, False, False
+        if isinstance(tgt, exp.Table):
+            if tgt.name and tgt.name.lower() not in cte_names:
+                rel = _relname(tgt)
+        elif isinstance(tgt, (exp.Subquery, exp.Lateral)):
+            is_sub = True
+            inner = tgt.find(exp.Select)
+            if inner is not None:
+                aggs = bool(inner.args.get("group")) or bool(inner.args.get("distinct"))
+        on_cols = sorted({c.sql(dialect=dialect) for c in on.find_all(exp.Column)}) if on else []
+        tkeys = sorted({c.name.lower() for c in on.find_all(exp.Column)
+                        if c.table and alias and c.table.lower() == alias.lower()}) if on else []
+        if using:
+            tkeys = sorted({u.alias_or_name.lower() for u in using})
         d.joins.append(JoinFact(
             kind=kind,
-            lateral=isinstance(j.this, exp.Lateral) or bool(j.args.get("lateral")),
-            target=j.this.sql(dialect=dialect).replace("\n", " ")[:60],
+            lateral=isinstance(tgt, exp.Lateral) or bool(j.args.get("lateral")),
+            target=tgt.sql(dialect=dialect).replace("\n", " ")[:60],
             using=[u.alias_or_name for u in (using or [])],
-            on_columns=sorted({c.sql(dialect=dialect) for c in on.find_all(exp.Column)}) if on else [],
+            on_columns=on_cols,
+            target_alias=alias, target_relation=rel,
+            target_is_subquery=is_sub, target_aggregates=aggs,
+            target_keys=tkeys,
         ))
+
+    # *** LOOK FOR DISTINCT EVERYWHERE, NOT JUST IN AN AGGREGATE IN THE FINAL SELECT. ***
+    # `count(distinct x)` parses as Count(this=Distinct(..)) rather than as a `distinct` arg;
+    # `string_agg(distinct ..)` may not even be an AggFunc; and a real model absorbed its fan-out
+    # with a plain `select distinct` inside a CTE, which none of the above would have seen. Missing
+    # any of these marks a deliberate, correct pattern as a defect.
+    d.absorbs_fanout = (
+        any(sel.args.get("distinct") for sel in tree.find_all(exp.Select))
+        or bool(list(tree.find_all(exp.Distinct)))
+    )
 
     for w in tree.find_all(exp.Window):
         pos = "projection"
