@@ -207,3 +207,47 @@ def test_the_shipped_skill_tells_an_agent_to_check_its_own_work():
     assert "Never guess a model's grain" in SKILL_MD
     assert "Never remove a filter you do not understand" in SKILL_MD
     assert "not what you concluded" in SKILL_MD
+
+
+def test_a_uniqueness_test_of_either_kind_counts_as_coverage():
+    """A compound grain IS asserted with unique_combination_of_columns; listing only `unique`
+    reported a model that carries one as having nothing watching it."""
+    from dbt_assay import testing as t
+    for sig in ("joins", "aggregates", "window"):
+        assert set(t.EXPOSURE[sig][1]) == set(t.UNIQUENESS)
+
+
+def test_only_a_bounded_case_is_worth_an_accepted_values_test():
+    """'the model contains a CASE' flagged 97 models on a real project and essentially all were
+    noise: a CASE building a geography, one concatenating a string, and passthroughs of the shape
+    `case when cep in ('nan','0') then null else cep end`."""
+    from dbt_assay.parse import digest as dg
+    from dbt_assay.testing import _bounded_case
+
+    enum = dg("select case when s='a' then 'A' when s='b' then 'B' else 'C' end as f from t")
+    assert _bounded_case(enum)
+
+    passthrough = dg("select case when cep in ('nan','0') then null else cep end as cep from t")
+    assert not _bounded_case(passthrough)
+
+    built = dg("select case when lon is not null then st_geogpoint(lon, lat) end as g from t")
+    assert not _bounded_case(built)
+
+
+def test_an_aggregate_with_nothing_to_inflate_it_is_not_an_exposure():
+    """Firing on any SUM or COUNT flagged 62 models on a real project that had no joins at all."""
+    from types import SimpleNamespace
+
+    from dbt_assay.inventory import Fact, ModelEntry
+    from dbt_assay.parse import digest as dg
+    from dbt_assay.testing import coverage_gaps
+
+    project = SimpleNamespace(tests=[], models={"model.p.m": object()})
+    e = ModelEntry(uid="model.p.m", name="m", path="p.sql", layer="marts", materialized="table")
+    e.grain = Fact(["a"], "derived")
+
+    alone = {"model.p.m": dg("select k, sum(v) as t from t group by k")}
+    assert not [g for g in coverage_gaps(project, alone, [e]) if "inflated" in g.exposure]
+
+    joined = {"model.p.m": dg("select k, sum(v) as t from t join u on u.k = t.k group by k")}
+    assert [g for g in coverage_gaps(project, joined, [e]) if "inflated" in g.exposure]

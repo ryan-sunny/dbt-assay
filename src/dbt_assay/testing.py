@@ -23,13 +23,27 @@ SEV_Q = QUESTIONS["severity_fit"]
 SEV_VERSION = SEV_Q["prompt_version"]
 
 # What a model's SQL exposes it to, and the assertion that would catch it. Pure bookkeeping.
+# *** EVERY UNIQUENESS TEST COUNTS, NOT JUST `unique`. ***
+# The window and aggregate rows listed only one of the two kinds, so a model asserting its grain
+# with `unique_combination_of_columns` -- which is how a compound grain IS asserted -- was reported
+# as having nothing watching it. Checked by hand on a real project: br_mgi_pncp__contratacao
+# carries one and was flagged anyway.
+UNIQUENESS = ("unique", "unique_combination_of_columns")
+
 EXPOSURE = {
-    "joins": ("a fan-out changing the grain", ("unique", "unique_combination_of_columns")),
-    "aggregates": ("an aggregate over inflated rows", ("unique_combination_of_columns",)),
+    "joins": ("a fan-out changing the grain", UNIQUENESS),
+    "aggregates": ("an aggregate over inflated rows", UNIQUENESS),
     "coalesce": ("a NULL replaced by a literal that hides missing data", ("not_null",)),
     "case": ("a value outside the branches anyone expected", ("accepted_values",)),
-    "window": ("a window evaluated against the wrong partition", ("unique",)),
+    "window": ("a window evaluated against the wrong partition", UNIQUENESS),
 }
+
+# *** A CASE IS ONLY WORTH AN accepted_values TEST IF ITS ANSWERS ARE A SMALL CLOSED SET. ***
+# "the model contains a CASE" flagged 97 models on a real project and essentially all of them were
+# noise: a CASE building an ST_GEOGPOINT, one concatenating a crop-year string, and a great many
+# of the shape `case when cep in ('nan','0') then null else cep end`, which is a passthrough. An
+# accepted_values test on any of those is meaningless.
+MAX_ACCEPTED_VALUES = 12
 
 LEVELS = {0: "cosmetic", 1: "worth knowing", 2: "corrupts a mart"}
 CHUNK = 8
@@ -126,6 +140,21 @@ class Gap:
     signals: list = field(default_factory=list)
 
 
+def _bounded_case(d) -> bool:
+    """A CASE whose branches are a handful of literals. Anything else is not an enum."""
+    from .parse import case_branch_values
+    for col, root in d.output_roots.items():
+        if root != "case":
+            continue
+        vals = case_branch_values(d.output_exprs.get(col, ""))
+        if vals is None:
+            continue                       # a branch returns an expression: not a closed set
+        real = [v for v in vals if v is not None]
+        if 2 <= len(real) <= MAX_ACCEPTED_VALUES:
+            return True
+    return False
+
+
 def coverage_gaps(project, digests, entries) -> list[Gap]:
     """*** ENTIRELY CODE. ***
 
@@ -145,10 +174,13 @@ def coverage_gaps(project, digests, entries) -> list[Gap]:
         kinds = have.get(e.uid, set())
         signals = {
             "joins": bool(d.joins),
-            "aggregates": any(n.startswith(("SUM", "COUNT", "AVG", "MIN", "MAX"))
-                              for n, _p in d.functions),
+            # *** AN AGGREGATE IS ONLY OVER *INFLATED* ROWS IF SOMETHING INFLATED THEM. ***
+            # Firing on any SUM or COUNT flagged 62 models on a real project that had no joins at
+            # all -- nothing had multiplied anything, so there was no exposure to assert against.
+            "aggregates": bool(d.joins) and any(
+                n.startswith(("SUM", "COUNT", "AVG", "MIN", "MAX")) for n, _p in d.functions),
             "coalesce": any(r == "coalesce:literal" for r in d.output_roots.values()),
-            "case": any(r == "case" for r in d.output_roots.values()),
+            "case": _bounded_case(d),
             "window": bool(d.windows),
         }
         for sig, present in signals.items():
