@@ -315,9 +315,19 @@ honestly at a source, because what happened outside dbt is not knowable from a m
 
 Maintained for my own use. PRs read when convenient, issues may sit, fork freely.
 
-Developed against DuckDB. Verified on Snowflake: a 25-model public package assay had never seen,
-parsed 21/25 from raw SQL with no warehouse connection at all. `--dialect snowflake | bigquery |
-postgres | redshift | databricks`.
+Developed against DuckDB. Verified elsewhere, all with no warehouse connection at all:
+
+| dialect | project | parsed |
+|---|---|---|
+| snowflake | `get-select/dbt-snowflake-monitoring`, 25 models, never seen | 21/25 |
+| bigquery | UNNEST, struct access, SAFE_CAST, QUALIFY, ARRAY_AGG | 2/2 |
+| postgres | `elementary-data/dbt-data-reliability`, 30 models | 6/30 |
+
+The postgres number is the honest limit and not a dialect problem: elementary's models are built
+from `{% set %}` blocks calling macros, so there is almost no SQL to read until dbt compiles them.
+With compiled output, all three read normally.
+
+`--dialect snowflake | bigquery | postgres | redshift | databricks | duckdb`.
 
 Where there is no compiled SQL, assay strips the Jinja and says so. That is not a compile, and a
 macro-generated model will not survive it, but it means a project can be audited by somebody with
