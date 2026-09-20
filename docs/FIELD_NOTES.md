@@ -481,3 +481,44 @@ exist.
   shipped families within 0.11 of the line. The static `option_routes_to_another` rule catches the
   known cause; the judged check does not.
 - CTE-level `group by` as a grain route, which is what the 28 above are really asking for.
+
+## 0.10.1: `patch` would write two tests whose only evidence is an empty table
+
+`assay regress` holds 8/8 at zero calls across the 0.9.x → 0.10.1 upgrade. `patch --dry-run`
+refuses 18 of 21 with reasons that read exactly right — *"its grain is not in its own output"*,
+*"NOT COUNTED -- and an uncounted grain is not a passing one"*, *"it does not hold: 45,959 rows,
+7,910 distinct (6x). A test here fails on its first run"*.
+
+**Of the three it would write, two are empty tables:**
+
+```
+int_azcc_owners      owner_key                         0 rows, 0 distinct
+stg_pm_properties    building_key                      0 rows, 0 distinct
+lead_volume          geography, city, zip, …      13,081 rows, 13,081 distinct
+```
+
+The command's promise is that anything it writes provably passes. An empty table passes any
+uniqueness test, so two of the three proofs are vacuous — and **writing is worse than printing**,
+because a committed test that passed on zero rows is indistinguishable in the repo from one
+verified against real data. This project carries 1,288 tests and `test_cannot_fail` is 50 of its 87
+findings; `patch` would add two more of that kind, from the command built to reduce them.
+
+`0 rows` already reaches the decision — refusing it, or writing it with the count in the generated
+comment, both close this. Refusing seems right: an empty table is not evidence of a grain, it is
+absence of evidence, which is the distinction this codebase has now drawn six times elsewhere.
+
+## `uvx dbt-assay mcp` cannot start — the documented line omits the extra
+
+```
+claude mcp add assay -- uvx dbt-assay mcp …            ✘ CONNECTION_CLOSED
+claude mcp add assay -- uvx --from "dbt-assay[mcp]" …  ✔ Connected
+```
+
+A bare `uvx` installs the base package, and `serve()`'s import guard raises the right message — but
+over stdio nobody sees it, so the client reports a closed connection with no cause. Two fixes, both
+cheap: document `dbt-assay[mcp]`, and have `assay mcp` check the import before opening the
+transport so the error lands on the terminal instead of down the pipe.
+
+(Also: `uvx dbt-assay <cmd>` needs `--from`, since the package name and the console script differ.
+`uvx dbt-assay skill` prints *"Use `uvx --from dbt-assay assay` instead"*, which is good — the MCP
+line in the docs is the one place that guidance is missing.)
