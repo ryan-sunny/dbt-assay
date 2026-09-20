@@ -20,21 +20,43 @@ Jev](https://docs.typesafe.ai) reads the meaning. SQL does the rest.
 > Built while auditing a Colorado water rights warehouse, where a case number is only unique inside
 > a water division and nothing in the stack could tell me that.
 
-**[Field notes](docs/FIELD_NOTES.md)** — one night on a 357-model warehouse, written by someone
-else using it. Seven problems, five of them now fixed, kept as reported.
+## What it finds
 
-**[What has actually been verified](docs/VERIFICATION.md)** — per family, whether a person has read
-its findings against the real thing. Two families failed their own controls and were rewritten;
-five have not been verified at all, and it says which.
+A staging model in that warehouse described itself like this:
 
-**[Full overview](docs/OVERVIEW.md)** — what it is, what each tier finds, and how to run it as a
-standing part of your warehouse rather than a one-off audit.
+> *"Boulder commercial building permits (residential filtered out)."*
+
+The filter excludes exactly two substrings, `%single family%` and `%dwelling%`. Of the 14,150 rows
+that survive it, 373 are non-residential, **157 are explicitly `building permit - multifamily`**,
+and 13,620 are trade permits with no commercial distinction at all — so residential roofing jobs
+were going out as commercial leads through 19 downstream models.
+
+Valid SQL. Passing tests. A description that is simply false. **No linter reaches that**, and the
+judgment that did cost $0.0026 across the whole 265-model project.
+
+The same run found a `join irr i on p.xmin <= i.xmax and p.xmax >= i.xmin` — a bounding-box
+*overlap* join feeding a mart, where one parcel matches many polygons and every count past it is
+inflated while each individual row stays valid.
+
+```bash
+uvx dbt-assay onboard --target path/to/dbt/target
+```
+
+On a project `assay` has never seen: it reads your manifest, says what it can and cannot see, runs
+the structural checks, runs the judgment tier if a key is present, writes an `audit.yml` that gates
+nothing, and prints the next command. `--agent` also writes the skill file your coding agent
+follows.
 
 ## How it works
 
 <img src="docs/how-jev-fits.svg" alt="assay: a parser settles what it can, Jev judges the rest, you rule on it, and it lands in your warehouse as relations">
 
-**The parser and the judgment are not two products.** They are one division of labour, and it is
+**The structural tier is what makes the judged tier safe.** Blast radius comes off the DAG, so a
+judged finding can be *ranked* without trusting the judgment. `assay patch` refuses a proposed test
+by *counting* it rather than by asking. Everywhere this has been right, code did the deciding and
+judgment did the noticing.
+
+**So the parser and the judgment are not two products.** They are one division of labour, and it is
 the whole design: *if a parser can answer it, Jev is never asked.* A grain, a column's provenance,
 a test that cannot fail — those are facts, settled exactly and for free, and putting them to a
 model would be spending money to make a certainty approximate.
@@ -51,16 +73,15 @@ is decides whether the line gets deleted next quarter or guarded forever.
 
 That is the question `assay` exists to answer, and it is why Jev is not an add-on.
 
-## One command
+## Read next
 
-```bash
-uvx dbt-assay onboard --target path/to/dbt/target
-```
-
-On a project `assay` has never seen. It reads your manifest, tells you what it can and cannot see,
-runs the structural checks, runs the judgment tier if a key is present, writes an `audit.yml` that
-gates nothing, and prints the next command. `--agent` also writes the skill file your coding agent
-follows.
+- **[Full overview](docs/OVERVIEW.md)** — every command, every question, every config block, and
+  how to run this as a standing part of a warehouse rather than a one-off audit.
+- **[What has actually been verified](docs/VERIFICATION.md)** — per family, whether a person has
+  read its findings against the real thing. Two families failed their own controls and were
+  rewritten; it names the ones nobody has checked.
+- **[Field notes](docs/FIELD_NOTES.md)** — someone else using it on a 357-model warehouse, kept as
+  reported. Most entries found a defect in the checker rather than in the warehouse.
 
 ## Status
 
@@ -71,11 +92,8 @@ meaning is the half a parser cannot reach.
 
 Ten of sixteen question families have had their findings read against real data by a person; two
 failed that and were rewritten; [docs/VERIFICATION.md](docs/VERIFICATION.md) says which, and which
-five have not been checked at all. Nothing gates a build until you have ruled on it, and `assay`
-refuses rather than warns.
-
-Nothing gates a build in either tier until a question has recorded your verdicts, and `assay`
-refuses rather than warns.
+five have not been checked at all. Nothing gates a build in either tier until a question has recorded your
+verdicts, and `assay` refuses rather than warns.
 
 ## The inventory
 
@@ -107,7 +125,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.10.2
+- uses: ryan-sunny/dbt-assay@v0.10.3
   with:
     target: target-head
     baseline: base/target
@@ -241,12 +259,20 @@ something you can chart and diff.
 ## Install
 
 ```bash
-uvx dbt-assay onboard --target path/to/dbt/target
+uvx dbt-assay onboard -t target              # no install at all
+pip install dbt-assay                        # or the usual
+pip install 'dbt-assay[jev,mcp]'             # judged tier and the MCP server
 ```
 
-No install step, no API key, no configuration. `onboard` reads the project, says what it can and
-cannot see, shows what it found for free, writes an `audit.yml` that gates nothing, and prints the
-next command. `--agent` also writes the skill file your coding agent follows.
+**No `dbt-core` dependency.** assay reads `manifest.json` as data, so it works across dbt versions
+and adapters and can never break your dbt. Python 3.10+.
+
+**The `[mcp]` extra is not optional for the MCP server**, and a bare `uvx dbt-assay mcp` will not
+have it:
+
+```bash
+claude mcp add assay -- uvx --from 'dbt-assay[mcp]' assay mcp --target target --store assay.duckdb
+```
 
 **The key is never in a config file.** assay reads `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` from
 the environment or from a `.env` in your project or any parent directory, and an exported variable
