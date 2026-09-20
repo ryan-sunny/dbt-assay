@@ -245,12 +245,20 @@ class Backend:
         if st is None:
             return {"error": f"nothing was recorded: {why}"}
         try:
-            answered = ""
+            answered, pv, mv = "", "", ""
             row = st.con.execute(
-                "select answer from model_decisions where decision_key = ? and question = ? "
-                "order by decided_at desc limit 1", [subject, question]).fetchone()
+                "select answer, prompt_version, model_version from model_decisions "
+                "where decision_key = ? and question = ? order by decided_at desc limit 1",
+                [subject, question]).fetchone()
             if row:
-                answered = row[0]
+                answered, pv, mv = row[0], row[1] or "", row[2] or ""
+            else:
+                # *** A STRUCTURAL FINDING HAS NO QUESTION, SO IT HAS NO PROMPT VERSION. ***
+                # It has assay's, which is the version of the CHECK being ruled on, and without it
+                # 99 of 107 rulings on a real store carried no version at all -- the two families
+                # 0.12.0 fixed were the two at 0% agreement and nothing could have said so.
+                from . import __version__
+                pv = f"assay.{__version__}"
             # `contracts.family_of` and not `cli._family_of`: cli imports this module, so
             # reaching back into it is a circular import that kills the binary while the test
             # suite -- which imports in a different order -- stays green.
@@ -258,7 +266,8 @@ class Backend:
             who = (decided_by or "").strip()[:60]
             st.adjudicate(subject, question, family_of(question) or question.split("__")[0],
                           answered, verdict, correction=correction, note=why.strip(),
-                          who=f"agent, relaying {who}" if who else "agent", source="agent")
+                          who=f"agent, relaying {who}" if who else "agent", source="agent",
+                          prompt_version=pv, model_version=mv)
             human = len(st.ruled_subjects())
             mine = len(st.agent_rulings())
         finally:

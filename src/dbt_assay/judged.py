@@ -342,6 +342,16 @@ def apply_policy(findings, cfg, store, project=None) -> tuple[list, list]:
     from .selector import resolve
 
     counts = store.adjudication_counts() if store else {}
+    # *** THE RATE IS MEASURED ON THE VERSION SHIPPING NOW. ***
+    # A verdict recorded against v1 of a question is evidence about v1. Letting it authorise v4 to
+    # fail a build is the same error as letting an agent's ruling count as a person's: the number
+    # is real and it is about something else.
+    rates: dict = {}
+    if store is not None and cfg.min_agreement:
+        from . import __version__
+        from .contracts import QUESTIONS
+        shipping = {n: (q or {}).get("prompt_version", "") for n, q in QUESTIONS.items()}
+        rates = store.accuracy_by_family(shipping, default=f"assay.{__version__}")
     kept, waived = [], []
     scope_cache: dict = {}
 
@@ -368,8 +378,12 @@ def apply_policy(findings, cfg, store, project=None) -> tuple[list, list]:
         # Verdicts are recorded per question family and a finding is not a question: several
         # findings rest on one family, and a structural finding rests on none. Looking up
         # `f.check` here meant nine of ten families could never satisfy the gate floor.
+        fam = f.rests_on or f.check
+        rate = rates.get(fam)
         act = q.action_for(judged_answer if q.act else None,
-                           counts.get(f.rests_on or f.check, 0), cfg.min_adjudications)
+                           counts.get(fam, 0), cfg.min_adjudications,
+                           agreement=rate[0] if rate else None,
+                           min_agreement=cfg.min_agreement)
         why = "audit.yml" if act else "default by severity"
         kept.append((f, act or ("queue" if f.base >= 3 else "annotate"), why))
     return kept, waived

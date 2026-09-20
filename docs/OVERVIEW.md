@@ -282,7 +282,25 @@ assay probe               # run it, via `dbt show --inline`. assay never holds a
 
 ```bash
 assay review -i           # a / d / u / s, least certain first
+assay effectiveness       # did the questions get BETTER? agreement per family, per version
+assay effectiveness --json
 ```
+
+A verdict is about a VERSION of a question, so the store keys on `(subject, question,
+prompt_version)` and a re-ruling after a rewrite is kept rather than overwriting the old one. That
+is what makes a before and after possible: `units_are_what_the_column_claims` went 2/4 to 8/8
+across one rewrite, and until now that number lived in a markdown file somebody typed.
+
+`model_version` is the second axis. It moves when Jev ships a new model, under questions nobody
+touched, and it is the only way "our agreement fell and we changed nothing" is ever visible.
+
+A disagreement is **open** until somebody agrees at a different version of the question. So the
+count falls only when a question changed and a person re-read it, and no release can lower it.
+
+`unclear` is not disagreement and is never in the agreement denominator. Disagreement means the
+criteria are wrong. Unclear means the subject state does not carry what the question asks about,
+which is what seventeen unclears on one warehouse turned out to be. Reword an option to fix one,
+add a field to fix the other.
 
 **On a branch, and over time**
 
@@ -310,7 +328,7 @@ the file at all.
 | block | what it does |
 |---|---|
 | `jev:` | `provider`, `model`, `max_spend_usd`. The cap is per invocation and is estimated **before** the call, because a cap that fires after the spend is not a cap |
-| `gating:` | `min_adjudications` — human verdicts a question needs before it may fail a build. 20 **per question**, not overall |
+| `gating:` | `min_adjudications` — human verdicts a question needs before it may fail a build. 20 **per question**, not overall. `min_agreement` — how often those verdicts had to AGREE, measured on the version shipping now. Ships at 0, which is off: a count of wrong answers is still a count, but a floor set before anything was measured is a guess. Run `assay effectiveness` and pick one |
 | `questions:` | per-**check** thresholds and actions. A key matching no check is reported, never silently ignored |
 | `practices:` | how each dbt-project-evaluator rule is treated: enforce, recommend, adjudicate, off |
 | `vocab:` | **what your words mean here.** Injected into the state for every question, which is why it improves answers to questions you never wrote |
@@ -599,7 +617,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.13.1
+- uses: ryan-sunny/dbt-assay@v0.14.0
   with:
     target: target-head
     baseline: base/target

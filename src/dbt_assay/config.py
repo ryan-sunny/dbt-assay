@@ -133,11 +133,21 @@ class QuestionConfig:
     action: str | None = None            # annotate | queue | fail, for STRUCTURAL findings
 
     def action_for(self, answer: dict | None, adjudications: int,
-                   min_adjudications: int) -> str | None:
+                   min_adjudications: int, agreement: float | None = None,
+                   min_agreement: float = 0.0) -> str | None:
         """The strongest action this answer earns. `fail` is refused while unmeasured.
 
         An answer of None is a structural finding: exact, no probability, so the configured plain
         `action` stands and no calibration is waited for.
+
+        *** COUNT WAS THE ONLY FLOOR, AND A COUNT OF WRONG ANSWERS IS STILL TWENTY. ***
+        `min_adjudications` asks whether enough people have looked. It does not ask whether they
+        AGREED. A question twenty-five people read and disagreed with twelve times has satisfied
+        the gate and earned nothing, and it can fail somebody's build.
+
+        `min_agreement` is the other half. It is measured on the version SHIPPING NOW, because a
+        verdict about v1 says nothing about v4, and an unmeasured rate arrives as None and cannot
+        refuse anything -- an absent measurement must never read as a failing one.
         """
         if answer is None:
             return self.action
@@ -145,8 +155,14 @@ class QuestionConfig:
             t = self.act.get(act)
             if t is None or not t.holds(answer):
                 continue
-            if act == "fail" and adjudications < min_adjudications:
-                return "queue"
+            if act == "fail":
+                if adjudications < min_adjudications:
+                    return "queue"
+                if min_agreement and agreement is not None and agreement < min_agreement:
+                    # Same sentence as the count floor: not trusted enough to fail. It is queued
+                    # rather than dropped, because a question people argue with is exactly the one
+                    # somebody should be looking at.
+                    return "queue"
             return act
         return None
 
@@ -173,6 +189,9 @@ class Config:
     model: str = "jev-latest"
     max_spend_usd: float = 1.0
     min_adjudications: int = 20
+    # *** DEFAULT OFF, BECAUSE A FLOOR SET BEFORE ANYTHING WAS MEASURED IS A GUESS. ***
+    # `assay effectiveness` prints the real rates. Pick a number from those, not from this file.
+    min_agreement: float = 0.0
     path: Path | None = None
 
     @classmethod
@@ -191,7 +210,12 @@ class Config:
         cfg.provider = j.get("provider", "auto")
         cfg.model = j.get("model", "jev-latest")
         cfg.max_spend_usd = float(j.get("max_spend_usd", 1.0))
-        cfg.min_adjudications = int((data.get("gating") or {}).get("min_adjudications", 20))
+        gating = data.get("gating") or {}
+        cfg.min_adjudications = int(gating.get("min_adjudications", 20))
+        cfg.min_agreement = float(gating.get("min_agreement", 0.0))
+        if not 0.0 <= cfg.min_agreement <= 1.0:
+            raise ValueError(f"gating.min_agreement must be between 0 and 1, "
+                             f"got {cfg.min_agreement}. It is a rate, not a percentage.")
         cfg.vocab = data.get("vocab") or {}
         cfg.explanations = data.get("explanations") or {}
         cfg.practices = data.get("practices") or {}
@@ -277,6 +301,14 @@ gating:
   # `fail` is refused for a question with fewer recorded human verdicts than this, and downgraded
   # to `queue`. A threshold set before anything was measured is a guess wearing a number.
   min_adjudications: 20
+
+  # And the other half: how often those people had to AGREE. A count of wrong answers is still a
+  # count, so a question twenty-five people read and disagreed with twelve times satisfies the
+  # line above and has earned nothing. Measured only on verdicts given against the version of the
+  # question shipping now, and `unclear` is never in the denominator.
+  #
+  # 0 is off. Run `assay effectiveness` and pick a number from the rates you actually have.
+  min_agreement: 0.0
 
 questions:
   # An EXACT check has no probability to threshold, so it takes a plain action and may gate

@@ -75,8 +75,21 @@ create table if not exists adjudications (
     -- by hand showed THREE were the label being wrong, not the answer. So a label is evidence and
     -- never a gate, and only human verdicts count toward min_adjudications.
     source       varchar,
+    -- *** A VERDICT IS ABOUT A VERSION OF A QUESTION, NOT ABOUT THE QUESTION FOREVER. ***
+    -- The key used to be (subject, question), so re-ruling OVERWROTE. A question rewritten after
+    -- people disagreed with it kept their verdicts and lost the fact that they were about the old
+    -- wording, which is the one measurement that says whether the rewrite worked. `units` went
+    -- 2/4 to 8/8 across a rewrite and the store could not have told you.
+    --
+    -- `model_version` is the second axis and it is free: Jev shipping a new model moves answers
+    -- under questions nobody touched, and this is the only way that is ever visible.
+    -- DEFAULT '' because a primary-key column is NOT NULL in duckdb, and a caller that does not
+    -- know the version must still be able to record a verdict. An empty version reports as
+    -- `(unversioned)` rather than failing the insert or inventing one.
+    prompt_version varchar default '',
+    model_version  varchar default '',
     decided_at   timestamp,
-    primary key (subject, question)
+    primary key (subject, question, prompt_version)
 );
 create table if not exists edge_facts (
     run_id varchar, parent varchar, child varchar, parent_name varchar, child_name varchar,
@@ -156,6 +169,66 @@ class Store:
                         self.con.execute(
                             "update adjudications set source = 'human' where source is null")
 
+        self._reshape_adjudications()
+
+    def _reshape_adjudications(self) -> None:
+        """Put `prompt_version` in the key on a store written before it was there.
+
+        *** duckdb CANNOT ALTER A PRIMARY KEY, SO THIS REBUILDS THE TABLE. ***
+        The backfill uses the CLOCK, which is not a guess. `model_decisions` keeps every version
+        of every answer with the time it was given, so the version a person was looking at is the
+        latest one that produced that answer BEFORE they ruled. Where no such row exists -- the
+        answer has changed since, or the ruling predates the decision -- the version stays empty
+        and reports as `(unversioned)`.
+
+        The first attempt required exactly one version ever to have given that answer, and on a
+        real store it backfilled ZERO rows: the eight human verdicts there were all on a question
+        that had been rewritten, which is precisely the case this table exists to measure. A
+        correct rule that answers nothing is not better than a wrong one.
+        """
+        try:
+            have = {r[0] for r in self.con.execute(
+                "select column_name from information_schema.columns "
+                "where table_name = 'adjudications'").fetchall()}
+        except Exception:                                        # noqa: BLE001
+            return
+        if not have or "prompt_version" in have:
+            return
+        self.con.execute("""
+            create table _adj_reshaped (
+                subject varchar, question varchar, family varchar, answered varchar,
+                verdict varchar, correction varchar, note varchar, decided_by varchar,
+                source varchar, prompt_version varchar default '',
+                model_version varchar default '',
+                decided_at timestamp, primary key (subject, question, prompt_version))""")
+        self.con.execute("""
+            insert into _adj_reshaped
+            select a.subject, a.question, a.family, a.answered, a.verdict, a.correction, a.note,
+                   a.decided_by, coalesce(a.source, 'human'),
+                   coalesce(nullif((select d.prompt_version from model_decisions d
+                                    where d.decision_key = a.subject and d.question = a.question
+                                      and d.answer = a.answered and d.decided_at <= a.decided_at
+                                    order by d.decided_at desc limit 1), ''),
+                            -- *** A STRUCTURAL CHECK HAS A VERSION TOO, AND IT IS assay's OWN. ***
+                            -- 99 of 107 rulings on a real store were on structural findings,
+                            -- where no question was asked so there is no prompt to version. All
+                            -- of them would have read `(unversioned)` and the before-and-after
+                            -- could not have begun until new rulings came in. `runs` records
+                            -- which assay was running and when, so the version being ruled ON is
+                            -- the latest run at or before the ruling. A lookup, not a guess.
+                            (select 'assay.' || r.assay_version from runs r
+                             where r.started_at <= a.decided_at
+                             order by r.started_at desc limit 1),
+                            ''),
+                   coalesce((select d.model_version from model_decisions d
+                             where d.decision_key = a.subject and d.question = a.question
+                               and d.answer = a.answered and d.decided_at <= a.decided_at
+                             order by d.decided_at desc limit 1), ''),
+                   a.decided_at
+            from adjudications a""")
+        self.con.execute("drop table adjudications")
+        self.con.execute("alter table _adj_reshaped rename to adjudications")
+
     def close(self) -> None:
         self.con.close()
 
@@ -192,7 +265,8 @@ class Store:
 
     def adjudicate(self, subject: str, question: str, family: str, answered: str,
                    verdict: str, correction: str = "", note: str = "",
-                   who: str = "", source: str = "human") -> None:
+                   who: str = "", source: str = "human",
+                   prompt_version: str = "", model_version: str = "") -> None:
         if verdict not in ("agree", "disagree", "unclear"):
             raise ValueError("verdict must be agree, disagree or unclear")
         if source not in ("human", "label", "replay", "agent"):
@@ -203,10 +277,11 @@ class Store:
         self.con.execute(
             """insert or replace into adjudications
                (subject, question, family, answered, verdict, correction, note,
-                decided_by, source, decided_at)
-               values (?,?,?,?,?,?,?,?,?,?)""",
+                decided_by, source, prompt_version, model_version, decided_at)
+               values (?,?,?,?,?,?,?,?,?,?,?,?)""",
             [subject, question, family, answered, verdict, correction, note,
-             who or "unknown", source, datetime.now(timezone.utc)])
+             who or "unknown", source, prompt_version or "", model_version or "",
+             datetime.now(timezone.utc)])
 
     def save_claims(self, rows: list) -> None:
         """Named columns, never positional. Positional inserts broke twice after a migration."""
@@ -285,8 +360,15 @@ class Store:
         rulings were on record.
         """
         self.con.execute(DDL)
-        q = ("select subject, question, family, answered, correction from adjudications "
-             "where verdict = 'agree' and source = 'human'")
+        # *** THE LATEST RULING PER PAIR, NOW THAT THE VERSION IS IN THE KEY. ***
+        # A subject ruled `agree` at v1 and `disagree` at v2 keeps both rows. Taking them all
+        # would anchor `regress` to a verdict the person has since withdrawn, which is worse than
+        # no baseline: it would fail a build over an answer nobody stands behind any more.
+        q = ("""select subject, question, family, answered, correction from (
+                  select *, row_number() over (
+                      partition by subject, question order by decided_at desc) as rn
+                  from adjudications where source = 'human') t
+              where rn = 1 and verdict = 'agree'""")
         args: list = []
         if family:
             q += " and family = ?"
@@ -307,12 +389,99 @@ class Store:
         disagreements were exactly that.
         """
         self.con.execute(DDL)
-        q = "select family, count(*) from adjudications"
+        # *** DISTINCT PAIRS, NOT ROWS. ***
+        # `prompt_version` joined the key so that a re-ruling is kept rather than overwritten.
+        # Counting rows would then let ONE subject ruled twice look like two verdicts, and a gate
+        # floor is meant to measure how many SUBJECTS somebody read, not how many times they
+        # pressed a key. Ruling the same model again is not more evidence about the question.
+        q = "select family, subject, question from adjudications"
         args: list = []
         if source != "all":
             q += " where source = ?"
             args.append(source)
-        return dict(self.con.execute(q + " group by 1", args).fetchall())
+        out: dict = {}
+        for fam, _subj, _q in {tuple(r) for r in self.con.execute(q, args).fetchall()}:
+            out[fam] = out.get(fam, 0) + 1
+        return out
+
+    def effectiveness(self, source: str = "human") -> list[dict]:
+        """Per family, per version: how often people agreed, and what is still open.
+
+        *** THE ONE NUMBER THAT SAYS WHETHER A QUESTION GOT BETTER. ***
+        Every question rewrite in this project so far was found by reading output, and its effect
+        was written down by hand in a markdown file. `units_are_what_the_column_claims` went 2/4
+        to 8/8 across a rewrite; `claim_alignment` took four rounds to halve its contradictions.
+        Both numbers existed in verdicts somebody had already given and neither was in the store,
+        because a re-ruling overwrote the row that would have carried it.
+
+        An OPEN disagreement is one where nobody has since agreed at a DIFFERENT version. So the
+        count falls only when a question changed and a person re-read it. A release cannot lower
+        it, which is the same property the ruled-on figure has and the reason it is worth printing.
+        """
+        self.con.execute(DDL)
+        where, args = "", []
+        if source != "all":
+            where, args = "where a.source = ?", [source]
+        rows = self.con.execute(f"""
+            select a.family,
+                   coalesce(nullif(a.prompt_version, ''), '(unversioned)') as pv,
+                   coalesce(nullif(a.model_version, ''), '(unrecorded)') as mv,
+                   count(*) as n,
+                   count(*) filter (where a.verdict = 'agree') as agree,
+                   count(*) filter (where a.verdict = 'disagree') as disagree,
+                   count(*) filter (where a.verdict = 'unclear') as unclear,
+                   count(*) filter (where a.verdict = 'disagree' and not exists (
+                       select 1 from adjudications b
+                       where b.subject = a.subject and b.question = a.question
+                         and b.verdict = 'agree'
+                         and b.prompt_version <> a.prompt_version
+                         and b.decided_at > a.decided_at)) as still_open
+            from adjudications a
+            {where}
+            group by 1, 2, 3
+            order by 1, 2, 3""", args).fetchall()
+        cols = ("family", "prompt_version", "model_version", "n", "agree", "disagree",
+                "unclear", "open_disagreements")
+        out = []
+        for r in rows:
+            d = dict(zip(cols, r, strict=True))
+            decided = d["agree"] + d["disagree"]
+            # *** `unclear` IS NOT A DISAGREEMENT AND MUST NOT BE IN THE DENOMINATOR. ***
+            # They say different things and they need different fixes. A family people DISAGREE
+            # with has wrong criteria. A family they cannot rule on has a state problem, which is
+            # exactly what seventeen unclears on one warehouse turned out to be. Averaging them
+            # together hides which repair to make.
+            d["agreement"] = (d["agree"] / decided) if decided else None
+            out.append(d)
+        return out
+
+    def accuracy_by_family(self, versions: dict, source: str = "human",
+                           default: str = "") -> dict:
+        """{family: (agreement, n)} counting ONLY verdicts given against the version now shipping.
+
+        A verdict recorded against v1 of a question says nothing about whether people agree with
+        v4 of it. `versions` maps family -> the prompt_version currently in the bank; a family
+        with no verdicts at that version comes back absent, and an absent rate must never read as
+        a failing one.
+
+        `default` is the version for a family the bank does not name, which is a STRUCTURAL check:
+        its version is assay's own, because it changed when the check changed. Without it such a
+        family matches at every version it was ever ruled at, and verdicts about a check from two
+        releases ago count as if they were about this one.
+        """
+        rows = self.con.execute(
+            "select family, prompt_version, verdict, count(*) from adjudications "
+            "where source = ? group by 1, 2, 3", [source]).fetchall()
+        tally: dict = {}
+        for fam, pv, verdict, n in rows:
+            want = versions.get(fam) or (default if str(pv).startswith("assay.") else "")
+            if want and pv != want:
+                continue
+            d = tally.setdefault(fam, {"agree": 0, "disagree": 0})
+            if verdict in d:
+                d[verdict] += n
+        return {fam: (d["agree"] / (d["agree"] + d["disagree"]), d["agree"] + d["disagree"])
+                for fam, d in tally.items() if (d["agree"] + d["disagree"])}
 
     def accuracy(self, family: str | None = None, source: str | None = None) -> dict:
         """Agreement rate, and the denominator, because a rate without one says nothing."""
@@ -337,7 +506,7 @@ class Store:
         self.con.execute(DDL)
         return self.con.execute(
             """select d.decision_key, d.question, d.answer, d.confidence, d.prompt_version,
-                      coalesce(d.context, '')
+                      coalesce(d.context, ''), coalesce(d.model_version, '')
                from model_decisions d
                left join adjudications a
                  on a.subject = d.decision_key and a.question = d.question

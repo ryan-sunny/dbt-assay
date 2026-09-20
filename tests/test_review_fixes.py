@@ -325,3 +325,129 @@ def test_the_wrapper_hint_walks_up_to_the_repo_root(tmp_path):
     outer.mkdir()
     (outer / ".git").mkdir()
     assert _wrapper_hint(outer) == ""
+
+
+# --- effectiveness: a verdict is about a VERSION of a question ------------------------------
+
+def _store():
+    from dbt_assay.store import Store
+    return Store(":memory:")
+
+
+def test_re_ruling_after_a_rewrite_is_kept_rather_than_overwriting():
+    """*** THE ONE MEASUREMENT THAT SAYS WHETHER A REWRITE WORKED. ***
+
+    The key was (subject, question), so ruling again REPLACED the row. `units` went 2/4 to 8/8
+    across a rewrite and the store could not have told you, because the 2/4 was gone.
+    """
+    s = _store()
+    s.adjudicate("m", "units__a", "units", "feet", "disagree", prompt_version="units.v1")
+    s.adjudicate("m", "units__a", "units", "acres", "agree", prompt_version="units.v2")
+    rows = {r["prompt_version"]: r for r in s.effectiveness()}
+    assert set(rows) == {"units.v1", "units.v2"}, "the older verdict was overwritten"
+    assert rows["units.v1"]["disagree"] == 1
+    assert rows["units.v2"]["agree"] == 1
+
+
+def test_a_disagreement_closes_only_when_somebody_agrees_at_another_version():
+    """It falls when a question changed and a person re-read it. A release cannot lower it."""
+    s = _store()
+    s.adjudicate("m", "q__a", "fam", "x", "disagree", prompt_version="v1")
+    assert s.effectiveness()[0]["open_disagreements"] == 1
+
+    s.adjudicate("m", "q__a", "fam", "x", "agree", prompt_version="v1")   # same version
+    v1 = next(r for r in s.effectiveness() if r["prompt_version"] == "v1")
+    assert v1["open_disagreements"] == 0 or v1["disagree"] == 0, "same-version re-rule replaces"
+
+    s2 = _store()
+    s2.adjudicate("n", "q__a", "fam", "x", "disagree", prompt_version="v1")
+    s2.adjudicate("n", "q__a", "fam", "y", "agree", prompt_version="v2")
+    assert sum(r["open_disagreements"] for r in s2.effectiveness()) == 0
+
+
+def test_unclear_is_never_in_the_agreement_denominator():
+    """Disagreement is wrong criteria. Unclear is a state that cannot carry the answer, and the
+    two need different repairs. Seventeen unclears on one warehouse were all the second kind."""
+    s = _store()
+    s.adjudicate("a", "q__1", "fam", "x", "agree", prompt_version="v1")
+    s.adjudicate("b", "q__2", "fam", "x", "unclear", prompt_version="v1")
+    s.adjudicate("c", "q__3", "fam", "x", "unclear", prompt_version="v1")
+    r = s.effectiveness()[0]
+    assert r["agreement"] == 1.0, "three unclears must not read as a 33% agreement rate"
+    assert r["unclear"] == 2 and r["n"] == 3
+
+
+def test_the_gate_count_is_subjects_read_not_keys_pressed():
+    """Versioning the key must not let one subject ruled twice look like two verdicts."""
+    s = _store()
+    s.adjudicate("m", "q__a", "fam", "x", "agree", prompt_version="v1")
+    s.adjudicate("m", "q__a", "fam", "x", "agree", prompt_version="v2")
+    s.adjudicate("n", "q__a", "fam", "x", "agree", prompt_version="v2")
+    assert s.adjudication_counts()["fam"] == 2, "two subjects were read, not three"
+
+
+def test_regress_anchors_on_the_latest_verdict_not_a_withdrawn_one():
+    """Agreed at v1, disagreed at v2. Taking both would fail a build over an answer nobody stands
+    behind any more, which is worse than having no baseline."""
+    s = _store()
+    s.adjudicate("m", "q__a", "fam", "old_answer", "agree", prompt_version="v1")
+    import time
+    time.sleep(0.01)
+    s.adjudicate("m", "q__a", "fam", "old_answer", "disagree", prompt_version="v2")
+    assert s.confirmed() == [], "the withdrawn agreement is still anchoring regress"
+
+
+def test_an_unmeasured_agreement_rate_cannot_refuse_anything():
+    """An absent measurement must never read as a failing one. It is the rule this codebase keeps
+    relearning, and here it would silently downgrade every judged gate on a fresh store."""
+    from dbt_assay.config import QuestionConfig, Threshold
+
+    c = QuestionConfig(name="x", act={"fail": Threshold("p > 0.5")})
+    ans = {"kind": "noul", "answer": "0.9"}
+    assert c.action_for(ans, 99, 20, agreement=None, min_agreement=0.9) == "fail"
+    assert c.action_for(ans, 99, 20, agreement=0.4, min_agreement=0.9) == "queue"
+    assert c.action_for(ans, 99, 20, agreement=0.4, min_agreement=0.0) == "fail"
+
+
+def test_a_structural_ruling_carries_assay_s_own_version():
+    """*** 99 OF 107 RULINGS ON A REAL STORE WERE STRUCTURAL. ***
+
+    No question is asked, so there is no prompt to version -- and every one of them would have
+    read `(unversioned)`, with no before-and-after possible until new rulings came in. The version
+    of a structural check IS assay's, because it changed when the check changed. The two families
+    0.12.0 fixed were the two sitting at 0% agreement and nothing could have said so.
+    """
+    import dbt_assay
+    from dbt_assay.mcp_server import Backend
+
+    wrote = {}
+
+    class _Store:
+        con = SimpleNamespace(execute=lambda *_a, **_k: SimpleNamespace(fetchone=lambda: None))
+
+        def adjudicate(self, *a, **k):
+            wrote.update(k)
+
+        def ruled_subjects(self):
+            return set()
+
+        def agent_rulings(self):
+            return []
+
+        def close(self):
+            pass
+
+    b = Backend.__new__(Backend)
+    b._store_or_why = lambda: (_Store(), "")
+    b.rule("model.p.m", "hop_multiplies_rows", "disagree", "it is a union")
+    assert wrote["prompt_version"] == f"assay.{dbt_assay.__version__}"
+
+
+def test_the_rate_gate_ignores_verdicts_about_an_older_version_of_the_check():
+    """Verdicts about v1 are evidence about v1. Counting them for v4 is the same error as letting
+    an agent ruling count as a person's: the number is real and it is about something else."""
+    s = _store()
+    s.adjudicate("a", "hop", "hop_multiplies_rows", "x", "disagree", prompt_version="assay.0.11.0")
+    s.adjudicate("b", "hop", "hop_multiplies_rows", "x", "agree", prompt_version="assay.0.12.0")
+    got = s.accuracy_by_family({}, default="assay.0.12.0")
+    assert got["hop_multiplies_rows"] == (1.0, 1), "an older release's verdicts leaked in"

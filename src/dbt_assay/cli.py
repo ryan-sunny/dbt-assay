@@ -790,6 +790,11 @@ def config(
     t.add_row("spend cap", f"${cfg.max_spend_usd:.2f} per invocation")
     t.add_row("gate floor", f"{cfg.min_adjudications} human verdicts before a question may fail "
                             f"a build")
+    t.add_row("agreement floor",
+              (f"{cfg.min_agreement:.0%} of those verdicts must AGREE, on the version shipping now"
+               if cfg.min_agreement else
+               "[dim]off. A count of wrong answers is still a count -- run `assay effectiveness` "
+               "and set gating.min_agreement from the rates you have[/]"))
 
     client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
     if client.available:
@@ -1175,6 +1180,98 @@ def traverse(
     for f, p_ in sorted(bad, key=lambda x: -x[1])[:15]:
         console.print(f"  [bold]{f.parent_name}[/] -> [bold]{f.child_name}[/]  "
                       f"[dim]p={p_:.2f}  on {', '.join(sorted(f.joined_on or [])[:4]) or 'no key'}[/]")
+
+
+@app.command()
+def effectiveness(
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    source: str = typer.Option("human", "--source",
+                               help="human | agent | label | all. Only human verdicts gate."),
+    config_path: str = typer.Option(".", "--config"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Did the questions get BETTER? Agreement per family, per version of the question.
+
+    *** THE TOOL COULD NOT MEASURE ITS OWN IMPROVEMENT, AND THE DATA WAS ALREADY THERE. ***
+    Every question rewrite so far was found by a person reading output, and its effect was written
+    into a markdown file by hand. `units_are_what_the_column_claims` went 2/4 to 8/8 across one
+    rewrite. Those verdicts existed. The store threw the older ones away, because a re-ruling
+    overwrote the row rather than joining it.
+
+    Two axes, and they fail differently. `prompt_version` moves when YOU change a question, so the
+    before and after is the measurement of your own work. `model_version` moves when Jev ships,
+    under questions nobody touched, and it is the only way "our agreement fell and we changed
+    nothing" is ever visible.
+    """
+    import json
+
+    from .contracts import QUESTIONS
+
+    if not Path(store_path).exists():
+        console.print(f"[yellow]no store at {store_path}.[/] [dim]Run any judged command once.[/]")
+        raise typer.Exit(1)
+    store = Store(store_path)
+    try:
+        rows = store.effectiveness(source)
+    finally:
+        store.close()
+    if not rows:
+        console.print(f"[yellow]no {source} verdicts recorded yet.[/] [dim]`assay review -i` is "
+                      f"where they come from, and nothing here can be computed without them.[/]")
+        raise typer.Exit(1)
+    if as_json:
+        print(json.dumps(rows, default=str, indent=2))
+        raise typer.Exit(0)
+
+    shipping = {name: (q or {}).get("prompt_version", "") for name, q in QUESTIONS.items()}
+    t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    t.add_column("family", overflow="fold"); t.add_column("question version")
+    t.add_column("answered by"); t.add_column("ruled", justify="right")
+    t.add_column("agreed", justify="right"); t.add_column("unclear", justify="right")
+    t.add_column("open", justify="right")
+    stale = 0
+    for r in rows:
+        pv = r["prompt_version"]
+        # *** A VERDICT ABOUT v1 SAYS NOTHING ABOUT v4. ***
+        # Marked rather than hidden: the rows are real evidence, about a question that no longer
+        # exists in that wording.
+        want = shipping.get(r["family"]) or (
+            # A structural check's version is assay's own: it changed when the CHECK changed.
+            f"assay.{_pkg_version()}" if pv.startswith("assay.") else "")
+        old = bool(want) and pv not in ("(unversioned)", want)
+        stale += bool(old)
+        rate = r["agreement"]
+        cell = "[dim]no verdict either way[/]" if rate is None else (
+            f"{'[red]' if rate < 0.5 else '[yellow]' if rate < 0.8 else '[green]'}"
+            f"{r['agree']}/{r['agree'] + r['disagree']}  ({rate:.0%})[/]")
+        t.add_row(r["family"], f"[dim]{pv}[/]" if old else pv, r["model_version"],
+                  str(r["n"]), cell,
+                  str(r["unclear"]) if r["unclear"] else "[dim]0[/]",
+                  f"[red]{r['open_disagreements']}[/]" if r["open_disagreements"] else "[dim]0[/]")
+    console.print(t)
+
+    total_open = sum(r["open_disagreements"] for r in rows)
+    unclear = sum(r["unclear"] for r in rows)
+    console.print(f"\n[bold]{total_open}[/] disagreement(s) still open. [dim]A disagreement closes "
+                  f"when somebody agrees at a DIFFERENT version of the question, so this falls "
+                  f"only when a question changed and a person re-read it. A release cannot lower "
+                  f"it.[/]")
+    if unclear:
+        # *** `unclear` AND `disagree` NEED DIFFERENT REPAIRS. ***
+        # Disagreement is wrong criteria. Unclear is a state that does not carry the answer, which
+        # is what seventeen unclears on one warehouse turned out to be -- every one fixed by
+        # putting something in the state, none by rewording an option.
+        console.print(f"[bold]{unclear}[/] unclear, which is not disagreement. [dim]It is the "
+                      f"subject state failing to carry what the question asks about. Reword an "
+                      f"option to fix a disagreement; add a field to fix an unclear.[/]")
+    if stale:
+        console.print(f"[dim]{stale} row(s) greyed: recorded against a version of the question "
+                      f"that is no longer shipping. They still count as evidence and they do not "
+                      f"count toward the agreement floor.[/]")
+    unver = sum(1 for r in rows if r["prompt_version"] == "(unversioned)")
+    if unver:
+        console.print(f"[dim]{unver} row(s) are (unversioned): recorded before the version was "
+                      f"kept, or traceable to more than one. assay does not guess which.[/]")
 
 
 @app.command()
@@ -2040,13 +2137,16 @@ def review(
             console.print("[red]--verdict needs --subject and --question[/]")
             raise typer.Exit(1)
         row = store.con.execute(
-            "select answer from model_decisions where decision_key = ? and question = ?"
-            " order by decided_at desc limit 1", [subject, question]).fetchone()
+            "select answer, prompt_version, model_version from model_decisions "
+            "where decision_key = ? and question = ? order by decided_at desc limit 1",
+            [subject, question]).fetchone()
         fam = question.split("__")[0]
         fam = {"role": "column_role", "null": "null_meaning",
                "key": "column_is_part_of_the_key"}.get(fam, fam)
         store.adjudicate(subject, question, fam, row[0] if row else "",
-                         verdict, correction, note, who)
+                         verdict, correction, note, who,
+                         prompt_version=(row[1] if row else f"assay.{_pkg_version()}"),
+                         model_version=row[2] if row else "")
         acc = store.accuracy(fam)
         console.print(f"recorded. [bold]{fam}[/] now has {acc['n']} verdicts, "
                       f"{acc['agree']} agreeing.")
@@ -2068,7 +2168,7 @@ def review(
 
     rows = store.pending(limit)
     console.print(f"\n[bold]{len(rows)}[/] judgments awaiting a verdict:")
-    for key, q, ans, conf, _pv, about in rows:
+    for key, q, ans, conf, pv, about, mv in rows:
         cf = f"  conf {conf:.2f}" if conf is not None else ""
         console.print(f"  [dim]{about or key.split('.')[-1]}[/]  {q} = [bold]{ans}[/]{cf}")
     console.print("\n[dim]assay review --subject <key> --question <q> --verdict agree|disagree[/]")
@@ -3432,6 +3532,12 @@ def choice_q(name: str) -> dict:
     return _c(q["instructions"], q["criteria"])
 
 
+def _pkg_version() -> str:
+    """assay's own version, which IS the version of a structural check being ruled on."""
+    import dbt_assay
+    return dbt_assay.__version__
+
+
 def _prompt_version(name: str) -> str:
     from .contracts import QUESTIONS
     return QUESTIONS[name]["prompt_version"]
@@ -3563,7 +3669,7 @@ def _review_loop(store, limit: int, target=None, dialect: str | None = None) -> 
     console.print(f"[bold]{len(rows)}[/] to rule on, least certain first.  "
                   "[dim]a agree · d disagree · u unclear · s skip · q quit[/]\n")
     done = 0
-    for key, q, ans, conf, _pv, about in rows:
+    for key, q, ans, conf, pv, about, mv in rows:
         fam = _family_of(q)
         subject = about or key.split(".")[-1]
         cf = f"  [dim]confidence {conf:.2f}[/]" if conf is not None else ""
@@ -3586,7 +3692,8 @@ def _review_loop(store, limit: int, target=None, dialect: str | None = None) -> 
         if not v:
             console.print("  [dim]not a verdict; skipped[/]\n")
             continue
-        store.adjudicate(key, q, fam, str(ans), v, who="review")
+        store.adjudicate(key, q, fam, str(ans), v, who="review",
+                         prompt_version=pv or "", model_version=mv or "")
         done += 1
         colour = {"agree": "green", "disagree": "red", "unclear": "yellow"}[v]
         console.print(f"  [{colour}]{v}[/]\n")
@@ -3624,11 +3731,12 @@ def _record_from_labels(store, target, dialect: str) -> None:
     labels = cm.free_labels(project)
 
     rows = store.con.execute(
-        "select decision_key, question, answer from model_decisions").fetchall()
+        "select decision_key, question, answer, prompt_version, model_version "
+        "from model_decisions").fetchall()
     tally = {"agree": 0, "disagree": 0}
     per_family: dict = {}
 
-    for key, q, ans in rows:
+    for key, q, ans, pv, mv in rows:
         fam = _family_of(q)
         want = None
         if q.startswith("role__"):
@@ -3644,7 +3752,8 @@ def _record_from_labels(store, target, dialect: str) -> None:
             continue
         verdict = "agree" if str(ans) == str(want) else "disagree"
         store.adjudicate(key, q, fam, str(ans), verdict,
-                         note=f"the project asserts {want}", who="project", source="label")
+                         note=f"the project asserts {want}", who="project", source="label",
+                         prompt_version=pv or "", model_version=mv or "")
         tally[verdict] += 1
         d = per_family.setdefault(fam, {"agree": 0, "disagree": 0})
         d[verdict] += 1

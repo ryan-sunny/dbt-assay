@@ -902,3 +902,65 @@ and `--dbt-bin` on four, and `practices` took `--dbt` on 0.9.4 and `--dbt-bin` o
 script written against one release broke on the next. Every command accepts both now, `--dbt` is
 the documented spelling, and the guard ENUMERATES the app rather than naming commands, because a
 guard with a hardcoded list stops seeing the thing it was written for.
+
+---
+
+## `assay effectiveness`: the tool could not measure its own improvement
+
+Every question rewrite in this project was found by a person reading output, and its effect was
+typed into a markdown file by hand. The verdicts that prove it existed the whole time. The store
+threw the older ones away, because `adjudications` was keyed on `(subject, question)` and a
+re-ruling OVERWROTE rather than joining.
+
+So `prompt_version` is in the key now. A verdict is about a VERSION of a question, not about the
+question forever.
+
+**A structural check has a version too, and it is assay's own.** 99 of the 107 rulings on the field
+store are structural findings, where no question is asked and there is no prompt to version. All of
+them would have read `(unversioned)` and no before-and-after could have started until new rulings
+came in. The `runs` table records which assay was running and when, so the version being ruled on
+is the latest run at or before the ruling. A lookup, not a guess.
+
+**The first backfill rule was correct and answered nothing.** It stamped a version only where
+exactly one version had ever produced that answer. On the real store that backfilled **zero** rows:
+the eight human verdicts there were all on a question that had been rewritten, which is precisely
+the case this table exists to measure. Using the clock instead, the version a person saw is the
+latest one that produced that answer before they ruled. 107 of 107.
+
+Run against the field store, the number points straight at the right place:
+
+```
+family                    version         ruled   agreed        unclear  open
+arbitrary_pick            assay.0.11.0       24   24/24 (100%)        0     0
+bbox_as_radius            assay.0.11.0        2     0/2    (0%)       0     2
+description_contradicts   assay.0.11.0        8     4/4  (100%)       4     0
+hop_multiplies_rows       assay.0.11.0       23    0/10    (0%)      13    10
+join_fans_out             assay.0.11.0        4     4/4  (100%)       0     0
+test_cannot_fail          assay.0.1.0         4     4/4  (100%)       0     0
+test_cannot_fail          assay.0.11.0       34   34/34  (100%)       0     0
+water.prio                water.prio.v4       8     8/8  (100%)       0     0
+```
+
+The two families 0.12.0 fixed are the two at 0%. Nothing in the tool could have said so before,
+and a person reading 99 findings had to work it out.
+
+**`unclear` is never in the agreement denominator.** Disagreement means the criteria are wrong.
+Unclear means the subject state does not carry what the question asks about, which is what all
+seventeen unclears on that warehouse turned out to be: every one fixed by putting something in the
+state, none by rewording an option. Averaging them hides which repair to make.
+
+**A disagreement is open until somebody agrees at a DIFFERENT version.** So the count falls only
+when a question changed and a person re-read it. A release cannot lower it, which is the same
+property the ruled-on figure has.
+
+### And the other half of the gate
+
+`min_adjudications` asks whether enough people looked. It never asked whether they AGREED, and a
+count of wrong answers is still a count: a question twenty-five people read and disagreed with
+twelve times satisfies that floor and has earned nothing. `gating.min_agreement` is the rate, and
+it is measured only on verdicts given against the version shipping now. It ships at 0, which is
+off, because a floor set before anything was measured is a guess wearing a number. Run
+`assay effectiveness` and pick one from the rates you have.
+
+An unmeasured rate arrives as `None` and cannot refuse anything. An absent measurement must never
+read as a failing one.
