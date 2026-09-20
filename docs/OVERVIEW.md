@@ -103,9 +103,25 @@ Some questions have no syntactic answer. A `where` clause is either domain logic
 bad feed, or the thing that makes the model mean what it means — and the SQL is identical for all
 three.
 
-Jev answers **typed** questions. Not JSON you hope is well-formed: a `choice` returns one of the
-options you defined, a `noul` returns a probability, a `score` returns a position on ordered levels.
-It cannot return anything outside what you asked for.
+[Jev](https://docs.typesafe.ai) is a **System One** model: built to make fast, structured decisions
+software consumes directly. It does not write replies, produce code, or explain its reasoning. You
+define the answers; it returns one with a calibrated probability.
+
+- `choice` — one of your options, plus the full distribution. Confidence is **how concentrated that
+  distribution is**, a statistic about the probabilities. It is not permission to act.
+- `noul` — the probability the answer is yes. **There is no confidence field.** 0.5 means yes and
+  no are equally likely, not "medium".
+- `score` — a position on ordered levels, and the answer may land **between** two of them, so every
+  level must name a concrete situation. "Medium" describes nothing.
+
+It cannot return anything outside what you defined, so there is no parse step and no retry loop.
+
+**It is also narrow on purpose, and TypeSafe publishes exactly where.** *"Jev is not a
+calculator."* It cannot do arithmetic reliably and reads dates as text rather than ordered
+quantities. Unrelated detail in the state acts as a distractor. Multi-hop reasoning costs accuracy.
+Every one of those shapes this tool: arithmetic and dates are settled by sqlglot or by SQL and
+never asked, states are the smallest thing that can answer the question, and there is one noul per
+rule rather than one over a list of them. The [README](../README.md) carries the measurements.
 
 Twelve question families ship. The one worth seeing first:
 

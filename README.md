@@ -292,9 +292,12 @@ row count and timestamp, because unique in today's data is not a constraint.
 
 ## What Jev is, and why it is not a chat model in a trench coat
 
-[Jev](https://docs.typesafe.ai) is a System One model. It does not generate text and it does not
-explain itself. It takes a **state** — named JSON fields, not a prompt — and a map of **typed
-questions**, and it returns typed answers with calibrated probabilities.
+[Jev](https://docs.typesafe.ai) is TypeSafe's flagship **System One** model — a class of model
+"built to make fast, structured decisions that software can use directly". It does not write
+replies, produce code, or explain its reasoning. You define the possible answers, and it returns
+one of them with a calibrated probability.
+
+It takes a **state** — named JSON fields, not a prompt — and a map of **typed questions**.
 
 ```python
 # this is the real question assay ships, copied from questions/semantics.yml
@@ -309,40 +312,72 @@ Three primitives, and choosing right is most of the work:
 
 | | returns | the distinction that matters |
 |---|---|---|
-| `choice` | one of your options | confidence is **distribution concentration**, not permission to act |
-| `noul` | probability a condition holds | **0.5 means genuinely unsure**, not a weak yes |
-| `score` | a position on ordered levels | each level names a concrete situation; "medium" describes nothing |
+| `choice` | `choice`, `probabilities`, `confidence` | confidence is **how concentrated the distribution is**, a statistic *about* the probabilities — never permission to act |
+| `noul` | `noul` only | **no confidence field exists.** 0.5 means yes and no are equally likely, *not* medium intensity |
+| `score` | `score`, `legend`, `probabilities`, `confidence` | the answer may land **between** two levels, so each level must name a concrete situation |
 
 It cannot return anything outside what you defined. That is the difference from asking a chat model
-for JSON and hoping: there is no parse step, no retry loop, no "as an AI language model", and no
-answer that is outside the option set because the option set is the type.
+for JSON and hoping: no parse step, no retry loop, and no answer outside the option set, because
+the option set *is* the type.
+
+**Question ids are never sent to the model.** `assay` names them `role__zip`, `desc`, `pred__0` for
+its own bookkeeping; the model sees only `instructions` and `criteria`, so those have to carry the
+complete question.
 
 **And it is cheap enough to run on every model.** $0.042 per million input tokens, output free. A
 265-model warehouse: 60 calls, 15 seconds, **$0.0026**. Cached on a hash of the state, so an
 unchanged model is free forever and a rebuild only re-asks what moved.
 
-### The design rules, measured rather than assumed
+### What Jev is bad at, and what assay does about it
 
-**One noul per rule, never one over a list of them.** Asked as a single lumped question over three
-rules, a known case-number defect read 0.64. Split, the rule that applied read **0.85** and the two
-that did not read 0.02 and 0.05. The split is sharper where it applies, correctly near zero where
-it does not, and it kills a false positive the lumped version produced on clean code.
+TypeSafe publishes the failure modes, which is the most useful page they have. Four of them shape
+this tool directly:
 
-**A question the state cannot answer returns a confident non-answer.** `keys_on_a_non_unique_column`
-read **0.73 to 0.85 on every model tested, clean or broken** — because a column's uniqueness is a
-property of the DATA, not of the SQL. It was not a bad question, it was in the wrong layer. It is
-now `count(*) = count(distinct k)` and needs no model at all. Before adding a question, ask what in
-the state could make the answer *no*.
+**"Jev is not a calculator."** It cannot reliably do arithmetic, and it reads **dates as text
+rather than ordered quantities**. Measured here: asked whether
+`date_trunc('month', d) + interval 3 month - interval 1 day` implements *"the last day of the
+second month following the month in which the application is filed"*, it scored the **correct**
+implementation 0.39 and a **wrong** one 0.62. Every date, count and comparison in `assay` is
+therefore settled by sqlglot or by SQL, never asked.
 
-**Ask for the explanation, not for a plausibility score.** On rows that looked anomalous, "is this
-plausible" read 0.46–0.49 on a genuinely normal case and barely separated a pond from a reservoir.
-A choice whose options **name concrete situations** read `normal_for_this_right_type` at 0.73 and
-separated cleanly. Plausibility is a judgment against nothing.
+**"Unrelated detail acts as a distractor."** A larger state is a worse state. Measured on one
+question: the structural claim alone read **0.96**; the same claim plus a *correct* worked date
+example read **0.47**. Nothing was wrong with the extra sentence — it was simply extra. This is
+also why stripping comments before judging code improved results (a false positive fell 0.50 →
+0.14): assay sends the smallest state that can answer the question, and no more.
 
-**Strip the prose before judging the code.** Measured: removing every comment *improved* results.
-It killed a false positive on a clean model whose header happens to discuss case numbers at length
-(0.50 → 0.14) and strengthened a real detection (0.52 → 0.73). The one exception is the description
-family, where the prose *is* the subject.
+**It interprets literally**, reading "scoping words, negations, and implied conditions at face
+value". So every criterion here is written as a concrete situation rather than a standard to live
+up to, and every `choice` carries a no-match option.
+
+**Multi-hop reasoning costs accuracy.** So one noul per rule, never one over a list of them. Asked
+as a single lumped question across three rules, a known defect read 0.64; split, the rule that
+applied read **0.85** and the two that did not read 0.02 and 0.05. The split is sharper where it
+applies, correctly near zero where it does not, and it kills a false positive the lumped version
+produced on clean code.
+
+### The two design rules that decide everything else
+
+**Keep deterministic work in code.** TypeSafe's own guidance: *"Keep code in control and give
+System One narrow, structured decisions."* A grain, a column's provenance, a test that cannot fail
+— those are facts, settled exactly and for free. If a parser can answer it, Jev is never asked.
+
+**A question the state cannot answer returns a confident non-answer.**
+`keys_on_a_non_unique_column` read **0.73 to 0.85 on every model tested, clean or broken** —
+because a column's uniqueness is a property of the DATA, not of the SQL. It was not a bad question,
+it was in the wrong layer. It is now `count(*) = count(distinct k)` and needs no model at all.
+Before adding a question, ask what in the state could make the answer *no*.
+
+### Prior art: this is the citation-check pattern
+
+TypeSafe's [citation check](https://docs.typesafe.ai/cookbooks/citation_check.md) cookbook is the
+same architecture, one level down. Stage one is exact string matching, which catches a fabricated
+quote with no model call at all. Stage two puts a `choice` to the surviving candidates:
+**supports**, **contradicts**, or **says_nothing**.
+
+That third option is the one worth stealing. "The evidence neither supports nor contradicts this"
+is a real state, and collapsing it into "false" is how a findings list earns a reputation for
+noise.
 
 ## What the judgment tier adds
 
