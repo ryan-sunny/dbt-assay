@@ -4,6 +4,7 @@ from __future__ import annotations
 import json as _json
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 
 import typer
@@ -26,7 +27,7 @@ from . import rows as rows_mod
 from . import semantics as sem_mod
 from . import testing as testing_mod
 from . import versioning as ver_mod
-from .checks import run_all
+from .checks import run_all, unevaluable_tests
 from .config import DEFAULT_YML, Config
 from .infer import Schema, derive_columns
 from .jev import BudgetExceeded, Client, NoProvider, decide
@@ -194,6 +195,8 @@ def check(
         print(_json.dumps({
             "coverage": project.coverage(),
             "parse_failures": [{"model": n, "error": e} for _, n, _, e in failures],
+            "unevaluable_tests": [{"model": m, "test": t, "column": c, "why": w}
+                                  for m, t, c, w in unevaluable_tests(project, digests)],
             "findings": [{"check": f.check, "model": f.subject_name, "file": f.file,
                           "summary": f.summary, "detail": f.detail, "weight": round(f.weight, 2),
                           "descendants": f.descendants, "marts": f.marts, "evidence": f.evidence}
@@ -204,8 +207,16 @@ def check(
     _coverage_panel(project, digests, failures)
     _schema_panel(schema, sstats)
 
+    blind = unevaluable_tests(project, digests)
+    if blind:
+        console.print(f"\n[yellow]{len(blind)} test(s) could not be evaluated[/] "
+                      f"[dim]and are NOT a pass. Most common reason: "
+                      f"{Counter(w for _m, _t, _c, w in blind).most_common(1)[0][0]}[/]")
+
     if not findings:
-        console.print("\n[green]no structural findings[/]")
+        console.print("\n[green]no structural findings[/]"
+                      + ("  [dim](but see above: some tests could not be looked at)[/]"
+                         if blind else ""))
     else:
         by = {}
         for f in findings:

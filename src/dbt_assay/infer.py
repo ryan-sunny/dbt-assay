@@ -159,8 +159,13 @@ def derive_columns(project, digests: dict[str, Digest], schema: Schema,
         if d and d.ok and m.compiled:
             needs_star = "*" in m.compiled
             if needs_star:
+                # *** A STAR OVER A CTE NEEDS NO EXTERNAL SCHEMA. ***
+                # Requiring parents' columns before attempting expansion left `select * from
+                # some_cte` reporting its output as literally ['*']. On a real public package that
+                # meant 38 of 38 tests were unevaluable and the check reported "no findings",
+                # which is the same shape as a pass.
                 parent_schema = schema.for_parents(uid)
-                if parent_schema:
+                if True:
                     try:
                         tree = sqlglot.parse_one(m.compiled, dialect=dialect)
                         q = qualify(tree, schema=parent_schema, dialect=dialect,

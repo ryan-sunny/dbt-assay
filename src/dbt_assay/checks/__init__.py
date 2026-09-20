@@ -1,3 +1,3 @@
-from .structural import Finding, run_all
+from .structural import Finding, run_all, unevaluable_tests
 
-__all__ = ["Finding", "run_all"]
+__all__ = ["Finding", "run_all", "unevaluable_tests"]

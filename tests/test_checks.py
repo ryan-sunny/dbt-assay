@@ -86,3 +86,34 @@ def test_a_distance_measured_after_reprojection_is_not_flagged():
               "from t s join u b on true")
     assert good.windows[0].order_roots == ["ST_DISTANCE"]
     assert good.windows[0].order_reprojected == [True]
+
+
+def test_a_test_assay_could_not_look_at_is_reported_not_counted_as_a_pass(project_dir):
+    """On a real public package every one of 38 tests sat on a column assay could not resolve --
+    the models end in `select *` -- and the check reported "no structural findings", which looks
+    exactly like a clean bill of health."""
+    from dbt_assay.checks import unevaluable_tests
+    from dbt_assay.manifest import Project
+    from dbt_assay.parse import digest as dg
+
+    p = Project.load(project_dir)
+    d = {uid: dg(m.compiled, m.name) for uid, m in p.models.items() if m.readable}
+    assert unevaluable_tests(p, d) == []          # this fixture resolves every column
+
+    # a model whose output is unknown makes its tests unevaluable, and says which reason
+    d["model.p.stg_bad_notnull"].output_columns = ["*"]
+    d["model.p.stg_bad_notnull"].output_roots = {}
+    blind = unevaluable_tests(p, d)
+    assert blind and all(len(x) == 4 for x in blind)
+    assert any("select *" in why for _m, _t, _c, why in blind)
+
+
+def test_an_unparsed_model_makes_its_tests_unevaluable_too(project_dir):
+    from dbt_assay.checks import unevaluable_tests
+    from dbt_assay.manifest import Project
+    from dbt_assay.parse import digest as dg
+
+    p = Project.load(project_dir)
+    d = {uid: dg(m.compiled, m.name) for uid, m in p.models.items() if m.readable}
+    d["model.p.stg_bad_notnull"].ok = False
+    assert any("could not be parsed" in why for _m, _t, _c, why in unevaluable_tests(p, d))

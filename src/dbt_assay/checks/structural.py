@@ -65,6 +65,34 @@ def _tests_by_model(project) -> dict:
     return out
 
 
+def unevaluable_tests(project, digests: dict[str, Digest], schema=None) -> list[tuple]:
+    """(model, test, column, why) for tests this check could not look at.
+
+    *** A CHECK THAT CANNOT SEE MUST NOT READ AS A PASS. ***
+    On a real public package, every one of 38 tests sat on a column assay could not resolve --
+    the models end in `select *` -- and the check reported "no structural findings", which looks
+    exactly like a clean bill of health. Silence has to be distinguishable from absence.
+    """
+    out = []
+    for uid, tests in _tests_by_model(project).items():
+        m = project.models.get(uid)
+        d = digests.get(uid)
+        for t in tests:
+            col = (t.column or "").lower()
+            if not m:
+                continue
+            if not d or not d.ok:
+                out.append((m.name, t.name, col, "the model's SQL could not be parsed"))
+            elif not col:
+                continue
+            elif col not in d.output_roots:
+                why = ("the model's output columns are unknown (it ends in `select *`)"
+                       if "*" in d.output_columns
+                       else "that column is not in the model's final select")
+                out.append((m.name, t.name, col, why))
+    return out
+
+
 def tests_that_cannot_fail(project, digests: dict[str, Digest]) -> list[Finding]:
     """dbt reports that a test passed. It never reports that a test was INCAPABLE of failing."""
     found = []
