@@ -642,6 +642,12 @@ def review(
     store_path: str = typer.Option("assay.duckdb", "--store"),
     interactive: bool = typer.Option(False, "--interactive", "-i",
                                      help="rule on them one keypress at a time"),
+    from_labels: bool = typer.Option(False, "--from-labels",
+                                     help="record verdicts from assertions already in the "
+                                          "project: unique tests, declared keys, join conditions. "
+                                          "Evidence, never a gate."),
+    target: str = typer.Option(None, "--target", "-t", help="needed with --from-labels"),
+    dialect: str = typer.Option("duckdb", "--dialect"),
     limit: int = typer.Option(20, "--limit", "-n"),
     subject: str = typer.Option(None, "--subject", help="the decision key to rule on"),
     question: str = typer.Option(None, "--question"),
@@ -657,6 +663,10 @@ def review(
     this and still gate on anything honestly.
     """
     store = Store(store_path)
+    if from_labels:
+        _record_from_labels(store, target, dialect)
+        store.close()
+        raise typer.Exit(0)
     if interactive:
         _review_loop(store, limit)
         store.close()
@@ -1896,3 +1906,67 @@ def _review_loop(store, limit: int) -> None:
     console.print(t)
     console.print(f"[dim]{done} recorded this round. A question may fail a build once it has "
                   f"enough of these.[/]")
+
+
+def _record_from_labels(store, target, dialect: str) -> None:
+    """*** THE PROJECT ALREADY MADE THESE JUDGMENTS. THEY WERE NEVER WRITTEN DOWN AS VERDICTS. ***
+
+    A `unique` test says a column is an identifier. A declared key says what one row is. A join
+    condition says two columns hold the same concept. Every one is a human decision, made earlier,
+    about something slightly narrower than the question assay asked -- which is exactly why they
+    are recorded as `label` and never count toward a gate. Measured: reading four role
+    disagreements by hand showed three were the LABEL being wrong.
+    """
+    from . import align as al
+    from . import columns as cm
+    from . import relate
+
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
+    declared = relate.declared_keys(project)
+    labels = cm.free_labels(project)
+    joined = {tuple(sorted(p)) for p in al.joined_pairs(project, digests, schema)}
+
+    rows = store.con.execute(
+        "select decision_key, question, answer from model_decisions").fetchall()
+    tally = {"agree": 0, "disagree": 0}
+    per_family: dict = {}
+
+    for key, q, ans in rows:
+        fam = _family_of(q)
+        want = None
+        if q.startswith("role__"):
+            want = labels.role.get((key, q[len("role__"):]))
+        elif q.startswith("key__"):
+            col = q[len("key__"):]
+            if key in declared:
+                want = "in" if col in declared[key] else "out"
+                ans = "in" if float(ans) >= 0.5 else "out"
+        elif q.startswith("align__"):
+            continue          # the pair behind the id is not recoverable from the store alone
+        if want is None:
+            continue
+        verdict = "agree" if str(ans) == str(want) else "disagree"
+        store.adjudicate(key, q, fam, str(ans), verdict,
+                         note=f"the project asserts {want}", who="project", source="label")
+        tally[verdict] += 1
+        d = per_family.setdefault(fam, {"agree": 0, "disagree": 0})
+        d[verdict] += 1
+
+    if not tally["agree"] and not tally["disagree"]:
+        console.print("[yellow]nothing in the store lines up with an assertion in the project.[/] "
+                      "[dim]Run `assay infer` or `assay columns` first.[/]")
+        return
+
+    t = Table(title="recorded from the project's own assertions", header_style="bold")
+    t.add_column("family"); t.add_column("n", justify="right")
+    t.add_column("agree", justify="right"); t.add_column("rate", justify="right")
+    for fam, d in sorted(per_family.items()):
+        n = d["agree"] + d["disagree"]
+        t.add_row(fam, str(n), str(d["agree"]), f"{100 * d['agree'] // n}%")
+    console.print(t)
+    human = sum(store.adjudication_counts("human").values())
+    console.print(f"[dim]These are recorded as `label`, not `human`. They are evidence about a "
+                  f"question and never permission for it to fail a build: a label can itself be "
+                  f"wrong, and on a real project three of four disagreements were exactly that. "
+                  f"Human verdicts so far: {human}. Add more with `assay review -i`.[/]")

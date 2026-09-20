@@ -67,6 +67,13 @@ create table if not exists adjudications (
     correction   varchar,     -- what it should have been, when known
     note         varchar,
     decided_by   varchar,
+    -- *** WHERE THE VERDICT CAME FROM, AND IT IS NOT ALL THE SAME THING. ***
+    -- `human` is somebody who looked. `label` is derived from an assertion already in the project
+    -- -- a unique test, a declared key, a join condition -- which is a REAL human judgment, made
+    -- earlier and about something slightly different. Measured: reading four role "disagreements"
+    -- by hand showed THREE were the label being wrong, not the answer. So a label is evidence and
+    -- never a gate, and only human verdicts count toward min_adjudications.
+    source       varchar,
     decided_at   timestamp,
     primary key (subject, question)
 );
@@ -87,6 +94,36 @@ class Store:
         self.path = str(path)
         self.con = duckdb.connect(self.path)
         self.con.execute(DDL)
+        self._migrate()
+
+    # *** `create table if not exists` IS NOT A MIGRATION. ***
+    # A store written by an older assay keeps its old shape forever, and the next insert fails with
+    # a column-count error on somebody's machine rather than on mine. Columns added since are
+    # applied on open; adding a column is cheap, safe and keeps every row that was already there.
+    ADDED_COLUMNS = {
+        "adjudications": [("source", "varchar")],
+        "model_decisions": [("input_tokens", "integer")],
+    }
+
+    def _migrate(self) -> None:
+        for table, columns in self.ADDED_COLUMNS.items():
+            try:
+                have = {r[0] for r in self.con.execute(
+                    f"select column_name from information_schema.columns "
+                    f"where table_name = '{table}'").fetchall()}
+            except Exception:                                           # noqa: BLE001
+                continue
+            if not have:
+                continue
+            for name, kind in columns:
+                if name not in have:
+                    self.con.execute(f"alter table {table} add column {name} {kind}")
+                    if table == "adjudications" and name == "source":
+                        # Rows written before the column existed came through the interactive
+                        # path, which is a person. Leaving them NULL would silently drop every
+                        # verdict somebody had already recorded.
+                        self.con.execute(
+                            "update adjudications set source = 'human' where source is null")
 
     def close(self) -> None:
         self.con.close()
@@ -124,27 +161,49 @@ class Store:
 
     def adjudicate(self, subject: str, question: str, family: str, answered: str,
                    verdict: str, correction: str = "", note: str = "",
-                   who: str = "") -> None:
+                   who: str = "", source: str = "human") -> None:
         if verdict not in ("agree", "disagree", "unclear"):
             raise ValueError("verdict must be agree, disagree or unclear")
+        if source not in ("human", "label", "replay"):
+            raise ValueError("source must be human, label or replay")
+        # *** NAME THE COLUMNS. ***
+        # A positional insert assumes an order, and a migration appends new columns at the END, so
+        # the two disagree the moment a store is upgraded -- writing "label" into a timestamp.
         self.con.execute(
-            "insert or replace into adjudications values (?,?,?,?,?,?,?,?,?)",
+            """insert or replace into adjudications
+               (subject, question, family, answered, verdict, correction, note,
+                decided_by, source, decided_at)
+               values (?,?,?,?,?,?,?,?,?,?)""",
             [subject, question, family, answered, verdict, correction, note,
-             who or "unknown", datetime.now(timezone.utc)])
+             who or "unknown", source, datetime.now(timezone.utc)])
 
-    def adjudication_counts(self) -> dict:
-        """How many verdicts exist PER FAMILY. Config reads this before allowing a gate."""
+    def adjudication_counts(self, source: str = "human") -> dict:
+        """Verdicts per family. ONLY HUMAN ONES COUNT TOWARD A GATE.
+
+        A label-derived verdict is evidence about a question and not permission for it to fail a
+        build: the label can be the thing that is wrong, and on a real project three of four
+        disagreements were exactly that.
+        """
         self.con.execute(DDL)
-        return dict(self.con.execute(
-            "select family, count(*) from adjudications group by 1").fetchall())
+        q = "select family, count(*) from adjudications"
+        args: list = []
+        if source != "all":
+            q += " where source = ?"
+            args.append(source)
+        return dict(self.con.execute(q + " group by 1", args).fetchall())
 
-    def accuracy(self, family: str | None = None) -> dict:
+    def accuracy(self, family: str | None = None, source: str | None = None) -> dict:
         """Agreement rate, and the denominator, because a rate without one says nothing."""
         q = "select verdict, count(*) from adjudications"
-        args = []
+        where, args = [], []
         if family:
-            q += " where family = ?"
+            where.append("family = ?")
             args.append(family)
+        if source:
+            where.append("source = ?")
+            args.append(source)
+        if where:
+            q += " where " + " and ".join(where)
         rows = dict(self.con.execute(q + " group by 1", args).fetchall())
         n = sum(rows.values())
         return {"n": n, "agree": rows.get("agree", 0), "disagree": rows.get("disagree", 0),

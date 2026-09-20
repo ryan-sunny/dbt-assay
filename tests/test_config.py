@@ -93,3 +93,46 @@ def test_a_question_id_maps_back_to_its_family():
     assert _family_of("key__section_id") == "column_is_part_of_the_key"
     assert _family_of("pred__0") == "predicate_intent"
     assert _family_of("explanation") == "row_explanation"
+
+
+def test_a_store_written_by_an_older_assay_still_opens(tmp_path):
+    """`create table if not exists` is not a migration: an old store keeps its old shape forever
+    and the next insert fails with a column-count error on somebody else's machine."""
+    import duckdb
+
+    from dbt_assay.store import Store
+    p = tmp_path / "old.duckdb"
+    con = duckdb.connect(str(p))
+    con.execute("""create table adjudications (
+        subject varchar, question varchar, family varchar, answered varchar, verdict varchar,
+        correction varchar, note varchar, decided_by varchar, decided_at timestamp,
+        primary key (subject, question))""")
+    con.execute("""insert into adjudications values
+        ('m','q','fam','a','agree','','','me',current_timestamp)""")
+    con.close()
+
+    s = Store(p)                                  # opening it migrates
+    s.adjudicate("m2", "q2", "fam", "a", "agree", source="label")
+    # the pre-existing verdict is kept as human; the label one does not count toward a gate
+    assert s.adjudication_counts("human") == {"fam": 1}
+    assert s.adjudication_counts("all")["fam"] == 2
+    s.close()
+
+
+def test_verdicts_recorded_before_the_column_existed_are_kept_as_human(tmp_path):
+    """Leaving them NULL silently drops every verdict somebody had already recorded."""
+    import duckdb
+
+    from dbt_assay.store import Store
+    p = tmp_path / "old.duckdb"
+    con = duckdb.connect(str(p))
+    con.execute("""create table adjudications (
+        subject varchar, question varchar, family varchar, answered varchar, verdict varchar,
+        correction varchar, note varchar, decided_by varchar, decided_at timestamp,
+        primary key (subject, question))""")
+    con.execute("""insert into adjudications values
+        ('m','q','column_role','a','agree','','','ryan',current_timestamp)""")
+    con.close()
+    s = Store(p)
+    assert s.adjudication_counts("human") == {"column_role": 1}
+    s.close()
