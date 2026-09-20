@@ -1,0 +1,101 @@
+name: assay
+description: >-
+  Say what a dbt change MEANS, on the pull request that makes it. A grain change is invisible in a
+  SQL diff; this posts what moved, who consumes it, and how many of those aggregate over it.
+branding:
+  icon: search
+  color: yellow
+
+inputs:
+  target:
+    description: "the dbt target/ directory of the branch under review"
+    required: false
+    default: target
+  baseline:
+    description: >-
+      a target/ directory to compare against, usually built from the base branch. Without one,
+      only the structural checks run and no contract diff is possible.
+    required: false
+    default: ""
+  dialect:
+    description: "snowflake | bigquery | postgres | redshift | databricks | duckdb"
+    required: false
+    default: duckdb
+  config:
+    description: "directory holding audit.yml"
+    required: false
+    default: "."
+  comment:
+    description: "post the result as a pull request comment"
+    required: false
+    default: "true"
+  fail-on-findings:
+    description: >-
+      exit non-zero when a finding is configured to fail. OFF by default on purpose: nothing should
+      gate a build until its question has recorded verdicts, and assay refuses to anyway.
+    required: false
+    default: "false"
+  version:
+    description: "the dbt-assay version to install"
+    required: false
+    default: ""
+  github-token:
+    description: "for posting the comment"
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: install assay
+      shell: bash
+      run: pipx install "dbt-assay${{ inputs.version && format('=={0}', inputs.version) || '' }}"
+
+    - name: what changed, and what it means
+      id: run
+      shell: bash
+      env:
+        FAIL: ${{ inputs.fail-on-findings }}
+      run: |
+        set -uo pipefail
+        {
+          echo "## assay"
+          echo
+          if [ -n "${{ inputs.baseline }}" ]; then
+            assay diff --target "${{ inputs.target }}" --baseline "${{ inputs.baseline }}" \
+                       --markdown 2>/dev/null || echo "_No model changed meaning._"
+            echo
+          fi
+          echo '<details><summary>findings in the branch</summary>'
+          echo
+          echo '```'
+          assay check --target "${{ inputs.target }}" --dialect "${{ inputs.dialect }}" \
+                      --config "${{ inputs.config }}" --limit 15 2>&1 | head -80
+          echo '```'
+          echo '</details>'
+        } > assay-comment.md
+        # *** THE EXIT CODE IS CAPTURED, NEVER READ THROUGH A PIPE. ***
+        # `cmd | head` reports head's status, so a gate written that way passes no matter what the
+        # command did.
+        assay check --target "${{ inputs.target }}" --dialect "${{ inputs.dialect }}" \
+                    --config "${{ inputs.config }}" --limit 0 > /dev/null 2>&1
+        echo "code=$?" >> "$GITHUB_OUTPUT"
+        cat assay-comment.md
+
+    - name: comment
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        gh pr comment "${{ github.event.pull_request.number }}" \
+           --repo "${{ github.repository }}" --body-file assay-comment.md --edit-last --create-if-none \
+        || gh pr comment "${{ github.event.pull_request.number }}" \
+           --repo "${{ github.repository }}" --body-file assay-comment.md
+
+    - name: gate
+      if: ${{ inputs.fail-on-findings == 'true' && steps.run.outputs.code != '0' }}
+      shell: bash
+      run: |
+        echo "::error::assay has findings configured to fail"
+        exit 1

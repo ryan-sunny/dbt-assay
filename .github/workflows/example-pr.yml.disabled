@@ -1,0 +1,31 @@
+# An example of assay on a pull request. Copy into YOUR dbt repo as .github/workflows/assay.yml.
+# Disabled here (this repo is the tool, not a dbt project).
+name: assay
+on: pull_request
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  meaning:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build the manifest for this branch. `dbt parse` needs no warehouse connection, so the
+      # credentials here can be entirely fake if all you want is the structural tier.
+      - run: pipx install dbt-core dbt-snowflake && dbt deps && dbt parse
+      - run: mv target target-head
+
+      # ...and one for the base branch, so a CONTRACT DIFF is possible. Without this you still get
+      # findings, but not "this changes the grain and three models aggregate over it".
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.base_ref }}", path: base }
+      - run: cd base && dbt deps && dbt parse
+
+      - uses: ryan-sunny/dbt-assay@v0.1.0
+        with:
+          target: target-head
+          baseline: base/target
+          dialect: snowflake

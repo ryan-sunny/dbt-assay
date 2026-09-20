@@ -83,3 +83,13 @@ def test_an_unknown_verdict_is_rejected(tmp_path):
     with _pytest.raises(ValueError):
         s.adjudicate("m", "q", "fam", "a", "looks_fine")
     s.close()
+
+
+def test_a_question_id_maps_back_to_its_family():
+    """A verdict has to be recorded against the FAMILY, not the per-column question id, or a
+    hundred verdicts look like a hundred questions with one verdict each."""
+    from dbt_assay.cli import _family_of
+    assert _family_of("role__amount") == "column_role"
+    assert _family_of("key__section_id") == "column_is_part_of_the_key"
+    assert _family_of("pred__0") == "predicate_intent"
+    assert _family_of("explanation") == "row_explanation"

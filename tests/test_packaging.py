@@ -80,3 +80,33 @@ def test_an_absent_node_type_costs_one_check_not_every_parse():
     from dbt_assay import parse
     src = inspect.getsource(parse)
     assert 'getattr(exp, "RegexpFullMatch", None)' in src
+
+
+def test_the_action_does_not_gate_by_default():
+    """Nothing should fail a build until its question has recorded verdicts, and assay refuses to
+    anyway. An action that gates out of the box would be muted within a week."""
+    from pathlib import Path
+
+    import yaml
+
+    import dbt_assay
+    root = Path(dbt_assay.__file__).parent.parent.parent
+    p = root / "action.yml"
+    if not p.exists():
+        return
+    a = yaml.safe_load(p.read_text())
+    assert a["inputs"]["fail-on-findings"]["default"] == "false"
+    assert "comment" in a["inputs"]
+
+
+def test_the_action_captures_an_exit_code_rather_than_reading_it_through_a_pipe():
+    """`cmd | head` reports head's status, so a gate written that way passes whatever happened."""
+    from pathlib import Path
+
+    import dbt_assay
+    root = Path(dbt_assay.__file__).parent.parent.parent
+    p = root / "action.yml"
+    if not p.exists():
+        return
+    body = p.read_text()
+    assert 'echo "code=$?" >> "$GITHUB_OUTPUT"' in body

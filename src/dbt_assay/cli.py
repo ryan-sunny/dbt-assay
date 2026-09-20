@@ -23,6 +23,7 @@ from . import judged as judged_mod
 from . import live as live_mod
 from . import practices as prac_mod
 from . import probe as probe_mod
+from . import render as render_mod
 from . import rows as rows_mod
 from . import semantics as sem_mod
 from . import testing as testing_mod
@@ -639,6 +640,8 @@ def columns(
 @app.command()
 def review(
     store_path: str = typer.Option("assay.duckdb", "--store"),
+    interactive: bool = typer.Option(False, "--interactive", "-i",
+                                     help="rule on them one keypress at a time"),
     limit: int = typer.Option(20, "--limit", "-n"),
     subject: str = typer.Option(None, "--subject", help="the decision key to rule on"),
     question: str = typer.Option(None, "--question"),
@@ -654,6 +657,10 @@ def review(
     this and still gate on anything honestly.
     """
     store = Store(store_path)
+    if interactive:
+        _review_loop(store, limit)
+        store.close()
+        raise typer.Exit(0)
     if verdict:
         if not (subject and question):
             console.print("[red]--verdict needs --subject and --question[/]")
@@ -700,6 +707,8 @@ def inventory(
     model: str = typer.Option(None, "--model", "-m", help="render one model as a document"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     json_out: bool = typer.Option(False, "--json"),
+    html_out: str = typer.Option(None, "--html",
+                                 help="write a self-contained page you can open, commit and diff"),
     write: str = typer.Option(None, "--write",
                               help="write contracts to a SEPARATE yaml file. Never touches "
                                    "your schema.yml."),
@@ -718,6 +727,16 @@ def inventory(
     store = Store(store_path) if Path(store_path).exists() else None
     observed = probe_mod.read(store) if store else {}
     entries = inv_mod.build(project, digests, schema, store, observed)
+
+    if html_out:
+        Path(html_out).write_text(
+            render_mod.inventory_html(entries, project.project_name, inv_mod.describe))
+        console.print(f"wrote [bold]{html_out}[/]  "
+                      f"[dim]{len(entries)} models, "
+                      f"{sum(len(e.columns) for e in entries):,} columns[/]")
+        if store:
+            store.close()
+        raise typer.Exit(0)
 
     if model:
         e = next((x for x in entries if x.name == model), None)
@@ -1067,6 +1086,14 @@ def watch(
     baseline = live_mod.Snapshot.of(state.entries)
     console.print(f"[bold]watching[/] {len(baseline.entries)} models. "
                   f"[dim]baseline taken now; ctrl-c to stop.[/]")
+    if not compile_on_save:
+        # *** WITHOUT A RECOMPILE, SAVING A MODEL CHANGES NOTHING assay CAN SEE. ***
+        # It watches source files and reads COMPILED SQL. Detecting a save and then re-reading a
+        # stale artefact reports "nothing means anything different", which is the same sentence it
+        # prints when a change really was harmless. Found by sitting in the loop.
+        console.print("[yellow]--compile is off[/] [dim]so saving a model will not change what "
+                      "assay reads, and it will report no change whether or not there was one. "
+                      "Pass --compile, or keep your own `dbt compile` running.[/]")
 
     seen = live_mod.sql_files(tdir, project_dir)
     try:
@@ -1097,7 +1124,10 @@ def watch(
             console.print()
             for c in changes[:8]:
                 colour = "red" if c.severity >= 3 else "yellow"
-                console.print(f"[{colour}]{c.kind}[/] [bold]{c.model}[/]  {c.detail or ''}")
+                # Found by actually using it: a column change printed no column name at all.
+                what = f"`{c.column}`" if c.column else ""
+                console.print(f"[{colour}]{c.kind}[/] [bold]{c.model}[/] {what} "
+                              f"{c.detail or ''}".rstrip())
                 if c.aggregating_consumers:
                     console.print(f"  [red]{len(c.aggregating_consumers)} downstream models "
                                   f"aggregate over it: "
@@ -1789,3 +1819,80 @@ def skill(
         console.print(f"wrote [bold]{p}[/]")
     else:
         print(SKILL_MD)
+
+
+# *** THE GATE DISCIPLINE IS THEORETICAL UNTIL THIS IS FAST. ***
+# `assay review --subject X --question Y --verdict agree` is too much typing to do a hundred times,
+# and a hundred is roughly what a question needs before it may fail a build. One keypress each
+# turns "well calibrated in my reading" into a measured number, which is the only thing that ever
+# earns a check authority.
+_FAMILY = {"role": "column_role", "null": "null_meaning", "key": "column_is_part_of_the_key",
+           "pred": "predicate_intent", "desc": "description_contradicts_the_code",
+           "align": "same_concept", "sev": "severity_fit", "exception": "practice_exception",
+           "explanation": "row_explanation", "coherent": "row_is_internally_coherent"}
+
+
+def _family_of(question: str) -> str:
+    return _FAMILY.get(question.split("__")[0], question.split("__")[0])
+
+
+def _keypress() -> str:
+    """One keypress on a terminal, one line anywhere else.
+
+    `click.getchar()` reads /dev/tty directly and raises when there is not one, so piping input --
+    a script, a test, CI -- killed the loop outright. A tool people drive by hand should still be
+    drivable by a pipe.
+    """
+    import sys
+
+    import click
+    if sys.stdin.isatty():
+        try:
+            return click.getchar().lower()
+        except (OSError, KeyboardInterrupt, EOFError):
+            return "q"
+    line = sys.stdin.readline()
+    return (line.strip()[:1] or "q").lower()
+
+
+def _review_loop(store, limit: int) -> None:
+    rows = store.pending(limit)
+    if not rows:
+        console.print("[green]nothing is waiting for a verdict.[/]")
+        return
+    console.print(f"[bold]{len(rows)}[/] to rule on.  "
+                  "[dim]a agree · d disagree · u unclear · s skip · q quit[/]\n")
+    done = 0
+    for key, q, ans, conf, _pv in rows:
+        fam = _family_of(q)
+        subject = key.split(".")[-1]
+        cf = f"  [dim]confidence {conf:.2f}[/]" if conf is not None else ""
+        console.print(f"[dim]{fam}[/]  [bold]{subject}[/]")
+        console.print(f"  {q}  =  [bold]{ans}[/]{cf}")
+        ch = _keypress()
+        if ch == "q":
+            break
+        if ch == "s":
+            console.print("  [dim]skipped[/]\n")
+            continue
+        v = {"a": "agree", "d": "disagree", "u": "unclear"}.get(ch)
+        if not v:
+            console.print("  [dim]not a verdict; skipped[/]\n")
+            continue
+        store.adjudicate(key, q, fam, str(ans), v, who="review")
+        done += 1
+        colour = {"agree": "green", "disagree": "red", "unclear": "yellow"}[v]
+        console.print(f"  [{colour}]{v}[/]\n")
+
+    if not done:
+        return
+    t = Table(title="verdicts", header_style="bold")
+    t.add_column("family"); t.add_column("n", justify="right"); t.add_column("agreement",
+                                                                            justify="right")
+    for fam, n in sorted(store.adjudication_counts().items()):
+        a = store.accuracy(fam)
+        t.add_row(fam, str(n),
+                  f"{100 * a['agreement']:.0f}%" if a["agreement"] is not None else "-")
+    console.print(t)
+    console.print(f"[dim]{done} recorded this round. A question may fail a build once it has "
+                  f"enough of these.[/]")

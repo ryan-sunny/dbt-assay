@@ -39,6 +39,42 @@ warehouse: grain settled for 250, 4,684 columns classified.
 it), `derived` (code worked it out) or `judged` (with the probability). A fact resting on an
 unresolved premise says so rather than inheriting confidence it did not earn.
 
+## The page
+
+```bash
+assay inventory --html docs/warehouse.html
+```
+
+One self-contained file: every model, what one row is, what each column does, where each value came
+from, and **who said so**. Colour-coded, searchable, no build step, opens from a `file://` URL.
+Commit it and a change in what your warehouse MEANS shows up as a diff.
+
+dbt docs shows you lineage. This shows you meaning.
+
+## On the pull request
+
+```yaml
+- uses: ryan-sunny/dbt-assay@v0.1.0
+  with:
+    target: target-head
+    baseline: base/target
+    dialect: snowflake
+```
+
+Posts what changed about what your models mean, who consumes it, and how many of those aggregate
+over it. It does **not** gate by default: nothing should fail a build until its question has
+recorded verdicts, and assay refuses to anyway.
+
+## Ruling on findings, one keypress each
+
+```bash
+assay review -i
+```
+
+`a` agree, `d` disagree, `u` unclear, `s` skip. The gate discipline is theoretical until this is
+fast: a hundred verdicts is roughly what a question needs before it may fail a build, and a
+hundred invocations of a flag is not a thing anyone does.
+
 ## While you type, and for your agent
 
 ```bash
