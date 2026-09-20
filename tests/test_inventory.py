@@ -82,3 +82,35 @@ def test_write_out_is_a_separate_file_and_defaults_to_adjudicated_only(project_d
                for v in strict["models"].values())
     loose = inventory.to_yaml_dict(entries, adjudicated_only=False)
     assert len(loose["models"]) >= len(strict["models"])
+
+
+def test_grain_confidence_reflects_the_columns_in_the_grain_not_the_rejected_ones():
+    """A key of [wdid] read 0.25 because a measure beside it scored 0.25 and was thrown out.
+    That is the system working, and it must not drag the grain's confidence down."""
+    from types import SimpleNamespace
+
+    from dbt_assay import contracts
+    from dbt_assay.contracts import GrainCandidate
+
+    cand = GrainCandidate(["wdid", "years_total"], "group_by", "")
+    answers = {"key__wdid": {"kind": "noul", "answer": "0.88"},
+               "key__years_total": {"kind": "noul", "answer": "0.25"}}
+    g = contracts.key_from_answers(cand, answers)
+    assert g.columns == ["wdid"] and g.dropped == ["years_total"]
+    kept = [float(answers[f"key__{c}"]["answer"]) for c in g.columns]
+    assert min(kept) == 0.88
+    _ = SimpleNamespace
+
+
+def test_a_model_that_could_not_be_read_says_so_rather_than_just_unknown(project_dir):
+    """A scanner that cannot see must say so; a bare 'unknown' reads like it looked and found
+    nothing."""
+    (project_dir / "compiled" / "p" / "models" / "staging" / "stg_ok_tilde.sql").unlink()
+    p = Project.load(project_dir)
+    d = {uid: digest(m.compiled, m.name) for uid, m in p.models.items() if m.readable}
+    sch = Schema.load(p, project_dir)
+    derive_columns(p, d, sch)
+    e = next(x for x in inventory.build(p, d, sch, store=None) if x.name == "stg_ok_tilde")
+    assert e.unreadable
+    assert all("no compiled SQL" in c.provenance.note for c in e.columns
+               if c.provenance.value == "unknown")

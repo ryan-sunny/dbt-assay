@@ -35,6 +35,26 @@ warehouse: grain settled for 250, 4,684 columns classified.
 it), `derived` (code worked it out) or `judged` (with the probability). A fact resting on an
 unresolved premise says so rather than inheriting confidence it did not earn.
 
+## It becomes part of your warehouse
+
+```bash
+assay export transform/seeds/assay   # CSV seeds + a generated schema.yml
+dbt seed --select assay_*            # now it is a relation
+```
+
+The inventory, every finding, every stored judgment with its full probability distribution, every
+human verdict, and one row per DAG edge. Seeds work on every adapter with no external-table setup.
+Then assay's knowledge is just data you can join to:
+
+```sql
+select check_name, count(*) as findings, count(distinct subject_name) as models
+from {{ ref('assay_findings') }}
+group by 1 order by 2 desc
+```
+
+A report is read once. A table accrues: a probability per question per model per commit is
+something you can chart and diff.
+
 ## Install
 
 ```bash

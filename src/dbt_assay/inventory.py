@@ -134,8 +134,13 @@ def build(project, digests, schema, store=None, observed=None) -> list[ModelEntr
             if key_answers:
                 g = contracts.key_from_answers(cand, {k: {"kind": "noul", **v}
                                                       for k, v in key_answers.items()})
-                lowest = min((float(v["answer"]) for v in key_answers.values()), default=None)
-                entry.grain = Fact(g.columns, "judged", lowest, cand.reason,
+                # *** THE GRAIN'S CONFIDENCE IS THE WEAKEST COLUMN IN IT, NOT THE WEAKEST ANSWER. ***
+                # Taking the minimum across every answer drags a sound grain down using columns the
+                # judgment CORRECTLY rejected: a key of [wdid] read 0.25 because a measure beside it
+                # scored 0.25 and was thrown out, which is the system working.
+                kept = [float(key_answers[f"key__{c}"]["answer"])
+                        for c in g.columns if f"key__{c}" in key_answers]
+                entry.grain = Fact(g.columns, "judged", min(kept) if kept else None, cand.reason,
                                    resting_on=[f"unresolved: {c}" for c in g.uncertain])
             else:
                 src = "observed" if cand.route == "from_probe" else "derived"
@@ -143,11 +148,20 @@ def build(project, digests, schema, store=None, observed=None) -> list[ModelEntr
 
         # ---- columns ----
         prov = provenance.classify(uid, project, digests, schema)
+        # *** "UNKNOWN" MUST SAY WHY. ***
+        # A model with no compiled SQL cannot be classified at all, and reporting its columns as a
+        # bare "unknown" reads like assay looked and found nothing, rather than that it could not
+        # look. Same rule as the coverage line: a scanner that cannot see must say so.
+        blind = "this model has no compiled SQL, so nothing could be read" if entry.unreadable else ""
         key_cols = {c.lower() for c in (entry.grain.value if entry.grain else [])}
         for col in schema.columns(uid).names:
             c = col.lower()
             p = prov.get(c)
-            pf = Fact(p.kind if p else "unknown", "derived", note=p.evidence if p else "")
+            kind = p.kind if p else "unknown"
+            note = p.evidence if p else ""
+            if kind == "unknown" and blind:
+                note = blind
+            pf = Fact(kind, "derived", note=note)
             ce = ColumnEntry(name=c, provenance=pf, in_key=c in key_cols)
             r = judged.get(f"role__{c}")
             if r:

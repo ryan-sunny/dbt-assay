@@ -12,7 +12,9 @@ from rich.table import Table
 
 from . import __version__, contracts, relate
 from . import columns as columns_mod
+from . import export as export_mod
 from . import inventory as inv_mod
+from . import judged as judged_mod
 from . import probe as probe_mod
 from .checks import run_all
 from .config import DEFAULT_YML, Config
@@ -130,7 +132,8 @@ def scan(target: str = typer.Option(None, "--target", "-t", help="path to dbt ta
 def check(
     target: str = typer.Option(None, "--target", "-t"),
     json_out: bool = typer.Option(False, "--json", help="emit findings as JSON"),
-    store_path: str = typer.Option(None, "--store", help="persist to a DuckDB file"),
+    store_path: str = typer.Option("assay.duckdb", "--store",
+                                   help="the DuckDB file to read judgments from and write to"),
     limit: int = typer.Option(25, "--limit", "-n", help="how many findings to print"),
     check_name: str = typer.Option(None, "--check", help="only this check"),
 ):
@@ -139,6 +142,16 @@ def check(
     project, digests, failures, schema, sstats = _load(tdir)
     facts, edge_findings = relate.run_all(project, digests, schema)
     findings = run_all(project, digests) + edge_findings
+    # *** ONE STREAM. ***
+    # Structural and judged findings were in separate worlds: `check` saw only the parser's, and
+    # nothing from `infer` or `columns` ever reached the store. "What is wrong with this model"
+    # needs a single answer.
+    if Path(store_path or "").exists():
+        _s = Store(store_path)
+        _obs = probe_mod.read(_s)
+        _entries = inv_mod.build(project, digests, schema, _s, _obs)
+        findings += judged_mod.run_all(project, _entries, relate.declared_keys(project))
+        _s.close()
     findings.sort(key=lambda f: -f.weight)
     if check_name:
         findings = [f for f in findings if f.check == check_name]
@@ -728,3 +741,43 @@ def inventory(
         run_id = uuid.uuid4().hex[:12]
         inv_mod.write_store(store, run_id, entries)
         store.close()
+
+
+@app.command()
+def export(
+    directory: str = typer.Argument(..., help="where to write, e.g. transform/seeds/assay"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    fmt: str = typer.Option("seeds", "--format", help="seeds | parquet"),
+    no_docs: bool = typer.Option(False, "--no-docs", help="skip the generated schema.yml"),
+):
+    """Put assay's tables in your warehouse, as data your own models can join to.
+
+    Seeds work on every adapter with no external-table setup: write them, run `dbt seed`, and the
+    inventory, the findings, every stored judgment and every human verdict are real relations.
+    """
+    if not Path(store_path).exists():
+        console.print(f"[yellow]no store at {store_path}.[/] Run `assay check --store` first.")
+        raise typer.Exit(1)
+    store = Store(store_path)
+    out = (export_mod.to_parquet(store, directory) if fmt == "parquet"
+           else export_mod.to_seeds(store, directory))
+    if not out:
+        console.print("[yellow]nothing to export yet.[/]")
+        store.close()
+        raise typer.Exit(0)
+
+    t = Table(title="exported", header_style="bold")
+    t.add_column("table"); t.add_column("rows", justify="right"); t.add_column("file")
+    for e in out:
+        t.add_row(e.table, f"{e.rows:,}", e.path.name)
+    console.print(t)
+
+    if not no_docs and fmt == "seeds":
+        p = Path(directory) / "assay.yml"
+        p.write_text(export_mod.schema_yml(store, out))
+        ex = Path(directory) / "example_assay_defect_classes.sql"
+        ex.write_text(export_mod.EXAMPLE_SQL)
+        console.print(f"wrote [bold]{p.name}[/] documenting every column, "
+                      f"and an example query in {ex.name}")
+    console.print(f"\n[dim]now: dbt seed --select {export_mod.PREFIX}*[/]")
+    store.close()
