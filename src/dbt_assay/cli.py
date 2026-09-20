@@ -347,6 +347,36 @@ def _project_dir_for(target: Path) -> Path | None:
     return None
 
 
+def _wrapper_hint(project_dir: Path) -> str:
+    """The `uv run dbt` suggestion, found by walking UP to the repo root.
+
+    *** IT LOOKED ONLY BESIDE `dbt_project.yml`, AND THAT IS THE WRONG DIRECTORY. ***
+    Reported from the field on a repo whose layout is the normal one for a project that is not
+    ONLY dbt:
+
+        dbt_project.yml   ./transform/dbt_project.yml
+        uv.lock           ./uv.lock            <- repo root, one level up
+
+    So `onboard --compile` said "pass --dbt with the command you use" and named nothing, which is
+    the wasted run the hint exists to prevent. `transform/`, `dbt/` and `warehouse/` are all common
+    and the lockfile belongs to the repo, not to the dbt project inside it.
+
+    It stops at the repo root rather than walking to `/`: a lockfile above the repo is somebody
+    else's project, and suggesting its wrapper is worse than suggesting nothing.
+    """
+    here = Path(project_dir).resolve()
+    for d in (here, *list(here.parents)[:8]):
+        for lock, wrapper in (("uv.lock", "uv run dbt"), ("poetry.lock", "poetry run dbt"),
+                              ("Pipfile.lock", "pipenv run dbt")):
+            if (d / lock).exists():
+                where = "" if d == here else f" ({d / lock}, above the dbt project)"
+                return (f"  This looks like a {lock.split('.')[0]} project{where}: "
+                        f'try --dbt "{wrapper}".')
+        if (d / ".git").exists():
+            break
+    return ""
+
+
 def _run_dbt_compile(target: Path, dbt_bin: str = "dbt", profiles_dir: str | None = None,
                      timeout: int = 900) -> tuple[bool, str]:
     """*** NEVER SILENTLY. ***
@@ -386,12 +416,7 @@ def _run_dbt_compile(target: Path, dbt_bin: str = "dbt", profiles_dir: str | Non
         # Reported from the field: the compile failed with one line, onboard printed the rest of a
         # successful-looking run, and the models stayed unreadable. Guessing the wrapper from the
         # lockfile beside dbt_project.yml removes a whole wasted run.
-        hint = ""
-        for lock, wrapper in (("uv.lock", "uv run dbt"), ("poetry.lock", "poetry run dbt"),
-                              ("Pipfile.lock", "pipenv run dbt")):
-            if (pd / lock).exists():
-                hint = f"  This looks like a {lock.split('.')[0]} project: try --dbt \"{wrapper}\"."
-                break
+        hint = _wrapper_hint(pd)
         return False, f"{dbt_bin!r} is not on PATH.{hint or ' Pass --dbt with the command you use.'}"
     except subprocess.TimeoutExpired:
         return False, f"`dbt compile` did not finish within {timeout}s."
@@ -523,7 +548,7 @@ def onboard(
                                        help="run `dbt compile` first when models have no "
                                             "compiled SQL. Needs your warehouse connection and "
                                             "can take minutes, so it is never automatic."),
-    dbt_bin: str = typer.Option("dbt", "--dbt", help="the dbt command, e.g. 'uv run dbt'"),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin", help="the dbt command, e.g. 'uv run dbt'"),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
     judge: bool = typer.Option(True, "--judge/--no-judge",
                                help="run the judgment tier when a key is present"),
@@ -1526,7 +1551,7 @@ def patch(
     store_path: str = typer.Option("assay.duckdb", "--store"),
     project_dir: str = typer.Option(".", "--project-dir"),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
-    dbt_bin: str = typer.Option("dbt", "--dbt", help="the dbt command, e.g. 'uv run dbt'"),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin", help="the dbt command, e.g. 'uv run dbt'"),
     dry_run: bool = typer.Option(False, "--dry-run", help="print what it would write, write none"),
     dialect: str = typer.Option(None, "--dialect"),
 ):
@@ -1803,7 +1828,7 @@ def probe(
                                     help="the dbt project to run `dbt show` from"),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
     dialect: str = typer.Option(None, "--dialect"),
-    dbt_bin: str = typer.Option("dbt", "--dbt-bin",
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin",
                                 help='how to invoke dbt, e.g. "uv run dbt"'),
     dry_run: bool = typer.Option(False, "--dry-run",
                                  help="print the SQL that would run, and run nothing"),
@@ -2348,7 +2373,7 @@ def backtest(
     project_dir: str = typer.Option(".", "--project-dir",
                                     help="the dbt project inside the repo, e.g. transform"),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
-    dbt_bin: str = typer.Option("dbt", "--dbt-bin", help='e.g. "uv run dbt"'),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin", help='e.g. "uv run dbt"'),
 ):
     """Replay this repo's own history and measure whether the checks catch what it already fixed.
 
@@ -2429,7 +2454,7 @@ def watch(
     project_dir: str = typer.Option(".", "--project-dir", help="the dbt project to compile in"),
     compile_on_save: bool = typer.Option(False, "--compile",
                                          help="run `dbt compile --select <changed>+` on a save"),
-    dbt_bin: str = typer.Option("dbt", "--dbt-bin", help='e.g. "uv run dbt"'),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin", help='e.g. "uv run dbt"'),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
     interval: float = typer.Option(1.0, "--interval", help="seconds between checks"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
@@ -2778,7 +2803,7 @@ def feeds(
     target: str = typer.Option(None, "--target", "-t"),
     project_dir: str = typer.Option(".", "--project-dir"),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
-    dbt_bin: str = typer.Option("dbt", "--dbt-bin", help='e.g. "uv run dbt"'),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin", help='e.g. "uv run dbt"'),
     sample: int = typer.Option(20, "--sample", help="rows per relation; the defect is uniform "
                                                     "across a load, so twenty answer it"),
     limit: int = typer.Option(10, "--limit", "-n", help="how many sources to sample"),
@@ -3014,7 +3039,7 @@ def tests_cmd(
                                              "wins. Needs your dbt; one batched query."),
     project_dir: str = typer.Option(".", "--project-dir"),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
-    dbt_bin: str = typer.Option("dbt", "--dbt"),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
     gaps_only: bool = typer.Option(False, "--gaps-only",
                                    help="coverage only. Pure code, no API key, no spend."),
     dialect: str = typer.Option(None, "--dialect",
@@ -3094,7 +3119,7 @@ def adjudicate(
     target: str = typer.Option(None, "--target", "-t"),
     project_dir: str = typer.Option(".", "--project-dir"),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
-    dbt_bin: str = typer.Option("dbt", "--dbt-bin"),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
     per_test: int = typer.Option(10, "--per-test", help="rows sampled per failing test"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     config_path: str = typer.Option(".", "--config"),
@@ -3164,7 +3189,7 @@ def practices(
     target: str = typer.Option(None, "--target", "-t"),
     project_dir: str = typer.Option(".", "--project-dir"),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
-    dbt_bin: str = typer.Option("dbt", "--dbt-bin"),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
     schema_name: str = typer.Option(None, "--evaluator-schema",
                                     help="where dbt-project-evaluator built its fct_ tables"),
     dialect: str = typer.Option(None, "--dialect",
@@ -3207,24 +3232,34 @@ def practices(
                   header_style="bold")
         t.add_column("model"); t.add_column("marts", justify="right")
         t.add_column("the grain a test should assert"); t.add_column("from")
-        inexpressible, would_fail = [], []
+        inexpressible, would_fail, empty = [], [], []
+        writable = 0
         for name, cols, src, marts, dropped in patches[:15]:
             if not cols:
                 inexpressible.append((name, dropped, marts))
                 continue
             counted = held.get(name)
-            if counted and counted[1] < counted[0]:
+            verdict, why = prac_mod.grain_verdict(counted)
+            if verdict == "fails":
                 would_fail.append((name, cols, marts, counted))
                 continue                  # a test that fails on its first run is not a patch
+            if verdict == "empty":
+                # *** THIS COMMAND CALLED IT `holds` AND `patch` CALLED IT EMPTY. ***
+                # `0 distinct < 0 rows` is false, so an empty table fell through to the success
+                # branch of a condition that never considered it, and the word `holds` printed in
+                # the column a reader scans for green. Same two integers, opposite readings.
+                empty.append((name, cols, marts))
+                continue
             note = (f"  [yellow](and {', '.join(map(str, dropped))}, which it does not emit)[/]"
                     if dropped else "")
-            if verify and not counted:
+            if verify and verdict == "uncounted":
                 note += "  [dim](not counted)[/]"
-            elif counted:
-                note += f"  [green](holds: {counted[0]:,} rows, {counted[1]:,} distinct)[/]"
+            elif verdict == "holds":
+                note += f"  [green]({why})[/]"
+                writable += 1
             t.add_row(name, str(marts), ", ".join(cols)[:44] + note, src)
         console.print(t)
-        n_ok = sum(1 for p_ in patches if p_[1])
+        n_ok = writable if verify else sum(1 for p_ in patches if p_[1])
         console.print(f"[dim]{n_ok} model(s) where a test can be written as-is. The standard check "
                       f"says 'no primary key test'; this says which columns it should cover, and "
                       f"only ever names columns the model actually emits.[/]")
@@ -3239,6 +3274,13 @@ def practices(
                 console.print(f"  [bold]{name}[/]  [dim]{marts} marts · {', '.join(cols)[:40]} "
                               f"gives {d:,} distinct over {n:,} rows "
                               f"([bold]{prac_mod.fanout(n, d)}[/bold])[/]")
+        if empty:
+            console.print(f"\n[yellow]{len(empty)} model(s) whose table is EMPTY[/] [dim]-- a "
+                          f"uniqueness test on an unbuilt model passes for the wrong reason, and "
+                          f"in the repo it is indistinguishable from a verified one. Build these "
+                          f"and run this again:[/]")
+            for name, cols, marts in empty[:8]:
+                console.print(f"  [bold]{name}[/]  [dim]{marts} marts · {', '.join(cols)[:40]}[/]")
         if inexpressible:
             # *** THE GRAIN IS NOT IN THE OUTPUT, SO NOTHING CAN ASSERT IT. ***
             # A model that dedups on a column and then drops it cannot have its own uniqueness

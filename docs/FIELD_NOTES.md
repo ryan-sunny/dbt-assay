@@ -872,3 +872,33 @@ in itself cannot be the field that decides authority. And `rule` claimed to put 
 whoever reviews next" with no way to see that queue, so an agent could write a hundred rulings and
 never learn whether one had been read. Agent-read items rank first, because confirming a reading is
 one keypress and a cold finding is not.
+
+### The last three of the same report
+
+**`practices` printed `holds: 0 rows, 0 distinct` for the table `patch` refuses as EMPTY.** Same
+model, same run, opposite readings of the same two integers, and the word `holds` sat in the column
+a reader scans for green in the command `onboard` points at first. `0 distinct < 0 rows` is false,
+so an empty table fell through to the success branch of a condition that never considered it.
+
+The refusal was already written and already right. It was written in one place, so the other
+surface kept its own reading. `practices.grain_verdict` now holds it and both callers read it. On
+the warehouse the writable count went 3 to 1, with `int_azcc_owners` (19 marts) and
+`stg_pm_properties` (9 marts) moved into their own block.
+
+**The wrapper hint looked beside `dbt_project.yml`, which is the wrong directory.**
+
+```
+dbt_project.yml   ./transform/dbt_project.yml
+uv.lock           ./uv.lock            <- repo root, one level up
+```
+
+That is the normal layout for a repo that is not only dbt, so the hint that exists to prevent a
+wasted run found nothing and printed nothing. It walks up to the repo root now and stops there: a
+lockfile above the repo is somebody else's project, and suggesting its wrapper is worse than
+suggesting nothing.
+
+**The dbt-binary flag was spelled two ways and flipped between releases.** `--dbt` on five commands
+and `--dbt-bin` on four, and `practices` took `--dbt` on 0.9.4 and `--dbt-bin` on 0.13.0, so a
+script written against one release broke on the next. Every command accepts both now, `--dbt` is
+the documented spelling, and the guard ENUMERATES the app rather than naming commands, because a
+guard with a hardcoded list stops seeing the thing it was written for.

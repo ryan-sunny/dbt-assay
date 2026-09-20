@@ -266,3 +266,62 @@ def test_the_review_queue_puts_read_findings_first_and_hides_nothing():
     assert names[0] == "read", "a finding an agent has read is one keypress; it goes first"
     assert got["waiting_for_a_person"][0]["an_agent_already_said"]["because"] == "a union"
     assert got["already_ruled_by_a_person"] == 1
+
+
+def test_an_empty_table_reads_the_same_way_in_both_commands():
+    """*** `practices` PRINTED `holds: 0 rows, 0 distinct` FOR THE TABLE `patch` REFUSES. ***
+
+    Same model, same run, opposite framings, and `holds` sat in the column a reader scans for
+    green. One fact, two spellings: both callers now read `grain_verdict`.
+    """
+    from dbt_assay.patch import plan
+    from dbt_assay.practices import grain_verdict
+
+    assert grain_verdict((0, 0))[0] == "empty"
+    assert grain_verdict(None)[0] == "uncounted"
+    assert grain_verdict((10, 3))[0] == "fails"
+    assert grain_verdict((10, 10))[0] == "holds"
+
+    got = plan([("m", ["k"], "derived", 1, [])], {"m": (0, 0)}, "1.0", Path("/tmp"))
+    assert got[0].sql == "" and "EMPTY" in got[0].skipped
+    assert got[0].skipped == grain_verdict((0, 0))[1], "the two surfaces must say the same words"
+
+
+def test_the_dbt_binary_flag_is_spelled_the_same_way_on_every_command():
+    """It was `--dbt` on five commands and `--dbt-bin` on four, and `practices` FLIPPED between
+    0.9.4 and 0.13.0 -- so a script written against one release breaks on the next.
+
+    This enumerates the app rather than naming commands, because a guard with a hardcoded list is
+    a guard that stops seeing the thing it was written for.
+    """
+    from dbt_assay.cli import app
+
+    seen = 0
+    for cmd in app.registered_commands:
+        for param in getattr(cmd.callback, "__defaults__", None) or ():
+            decls = set(getattr(param, "param_decls", ()) or ())
+            if "--dbt" in decls or "--dbt-bin" in decls:
+                seen += 1
+                assert {"--dbt", "--dbt-bin"} <= decls, (
+                    f"{cmd.callback.__name__} accepts only {decls & {'--dbt', '--dbt-bin'}}")
+    assert seen >= 8, f"only found {seen} dbt-binary options; the introspection is broken"
+
+
+def test_the_wrapper_hint_walks_up_to_the_repo_root(tmp_path):
+    """`dbt_project.yml` in `transform/` and `uv.lock` at the root is the normal layout for a repo
+    that is not only dbt. The hint looked beside `dbt_project.yml` and found nothing."""
+    from dbt_assay.cli import _wrapper_hint
+
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "uv.lock").write_text("")
+    sub = tmp_path / "transform"
+    sub.mkdir()
+    (sub / "dbt_project.yml").write_text("name: x")
+    hint = _wrapper_hint(sub)
+    assert 'uv run dbt' in hint and "above the dbt project" in hint
+
+    # It must not reach past the repo root: a lockfile out there is somebody else's project.
+    outer = tmp_path / "inner"
+    outer.mkdir()
+    (outer / ".git").mkdir()
+    assert _wrapper_hint(outer) == ""

@@ -229,6 +229,30 @@ def fanout(n: int, d: int) -> str:
     return f"{r:.4f}x"
 
 
+def grain_verdict(counted) -> tuple[str, str]:
+    """What a counted grain MEANS, in one place, because two places disagreed about zero.
+
+    *** `practices` SAID `holds: 0 rows, 0 distinct` FOR THE TABLE `patch` REFUSES AS EMPTY. ***
+    Same model, same run, opposite framings, and the word `holds` sat in the column a reader scans
+    for green -- in the command `onboard` points at first. `0 distinct < 0 rows` is false, so an
+    empty table fell through to the success branch of a condition that never considered it.
+
+    The refusal was already written and already correct. It was written in `patch` only, so the
+    older surface kept its own reading of the same two integers. One fact, two spellings, silent
+    when they disagree: the class this codebase has now found nine times. Both callers read this.
+    """
+    if counted is None:
+        return "uncounted", "NOT COUNTED -- and an uncounted grain is not a passing one"
+    n, d = counted
+    if n == 0:
+        return "empty", ("the table is EMPTY, so any uniqueness test on it passes for the wrong "
+                         "reason. Build the model and run this again")
+    if d < n:
+        return "fails", (f"it does not hold: {n:,} rows, {d:,} distinct ({fanout(n, d)}). "
+                         f"A test here fails on its first run")
+    return "holds", f"holds: {n:,} rows, {d:,} distinct"
+
+
 def verify_grains(patches: list, project, probe_mod, project_dir: str,
                   profiles_dir: str | None, dbt_bin: str, batch: int = 60, schema=None) -> dict:
     """{model_name: (rows, distinct)} for every proposal that could be counted.
