@@ -19,6 +19,7 @@ from . import inventory as inv_mod
 from . import judged as judged_mod
 from . import live as live_mod
 from . import probe as probe_mod
+from . import versioning as ver_mod
 from .checks import run_all
 from .config import DEFAULT_YML, Config
 from .infer import Schema, derive_columns
@@ -1096,3 +1097,110 @@ def mcp(
     except RuntimeError as e:
         console.print(f"[red]{e}[/]")
         raise typer.Exit(1) from None
+
+
+@app.command("version-check")
+def version_check(
+    baseline: str = typer.Option(..., "--baseline", "-b",
+                                 help="a target/ directory to compare against, e.g. main"),
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    bump: bool = typer.Option(False, "--bump", help="print the exact edit for each model that "
+                                                    "owes one"),
+    write: bool = typer.Option(False, "--write",
+                               help="with --bump, apply it. A targeted text edit; your comments "
+                                    "are not round-tripped through a YAML dumper."),
+    project_root: str = typer.Option(".", "--project-root",
+                                     help="where the patch paths in the manifest are relative to"),
+):
+    """A version bump is owed when the MEANING changed, and never when it did not.
+
+    A reformat, a renamed CTE or a join rewritten as a subquery owes nothing. That is the whole
+    reason this rule is bearable: every other version-bump check fires on whitespace and gets
+    switched off within a fortnight.
+    """
+    tdir, bdir = _find_target(target), _find_target(baseline)
+    store = Store(store_path) if Path(store_path).exists() else None
+    obs = probe_mod.read(store) if store else {}
+
+    pa, da, _f, sa, _s = _load(tdir)
+    after = inv_mod.build(pa, da, sa, store, obs)
+    pb, db, _f2, sb, _s2 = _load(bdir)
+    before = inv_mod.build(pb, db, sb, store, obs)
+    if store:
+        store.close()
+
+    changes = diff_mod.compare(before, after, pa, da)
+    states = ver_mod.assess(changes, pb, pa)
+    owing = [s for s in states if s.owes]
+
+    if not states:
+        console.print("[green]nothing changed meaning, so nothing owes a bump.[/]")
+        raise typer.Exit(0)
+
+    t = Table(title="version", header_style="bold")
+    t.add_column("model"); t.add_column("needs"); t.add_column("version")
+    t.add_column("status"); t.add_column("why")
+    for s in states:
+        v = f"{s.before if s.before is not None else '-'} -> {s.after if s.after is not None else '-'}"
+        status = "[green]bumped[/]" if s.bumped else "[red]owes a bump[/]"
+        t.add_row(s.model, s.required, v, status, (s.reasons[0] if s.reasons else "")[:54])
+    console.print(t)
+
+    if bump and owing:
+        console.print()
+        for s in owing:
+            if write and s.patch_path:
+                p = str(Path(project_root) / s.patch_path)
+                ok = ver_mod.write_bump(p, s.model, s.suggested)
+                console.print(f"{'[green]wrote[/]' if ok else '[yellow]could not locate[/]'} "
+                              f"{s.model} version {s.suggested} in {s.patch_path}")
+            else:
+                console.print(f"[bold]{s.model}[/]\n{ver_mod.patch_text(s)}\n")
+
+    if owing:
+        console.print(f"\n[red]{len(owing)} model(s) owe a version bump.[/]")
+        raise typer.Exit(1)
+    console.print("\n[green]every model whose meaning changed was bumped.[/]")
+
+
+@app.command("version-stamps")
+def version_stamps(
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    recommend: bool = typer.Option(False, "--recommend",
+                                   help="also list marts carrying no version stamp"),
+):
+    """Does each row say which version of the logic produced it?
+
+    A constant column named like a version is a stamp. A model that declares itself v3 and stamps
+    its rows with 2 makes every row produced since the bump untraceable, which is the one job the
+    column had.
+    """
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir)
+    store = Store(store_path) if Path(store_path).exists() else None
+    entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store) if store else {})
+    if store:
+        store.close()
+
+    drift = ver_mod.column_drift(project, entries, digests)
+    if drift:
+        t = Table(title="version stamp drift", header_style="bold")
+        t.add_column("model"); t.add_column("column"); t.add_column("stamps")
+        t.add_column("declares")
+        for name, col, got, want in drift:
+            t.add_row(name, col, str(got), str(want))
+        console.print(t)
+    else:
+        console.print("[green]no version stamp disagrees with its declaration.[/]")
+
+    if recommend:
+        missing = ver_mod.unstamped_marts(project, entries, digests)
+        if missing:
+            console.print(f"\n[dim]{len(missing)} mart(s) carry no version stamp. A constant "
+                          f"column lets you tell later which logic produced a row:[/]")
+            for n in missing[:12]:
+                console.print(f"  [dim]{n}[/]")
+    if drift:
+        raise typer.Exit(1)

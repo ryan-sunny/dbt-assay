@@ -203,6 +203,28 @@ guaranteed to render exactly what that commit rendered years ago, and on a Snowf
 project the throwaway profile compiles through DuckDB's adapter, so an adapter-dispatching macro
 can differ. Pass `--profiles-dir` to use your real one.
 
+## Version when the meaning changed, never when it did not
+
+```bash
+assay version-check --baseline ../main/target          # flags models owing a bump, exits non-zero
+assay version-check --baseline ../main/target --bump   # prints the exact edit
+assay version-stamps --recommend                        # do rows say which logic produced them?
+```
+
+Every "you must bump the version" check ever written fires on whitespace, nags on a reformat, and
+gets switched off within a fortnight. assay is the one thing in the stack that can tell a renamed
+CTE from a grain change, so a reformat, a rewritten join and a tidied comment owe **nothing**.
+
+The level comes from what the change does to a consumer. **Major**: the grain moved, a column left,
+a column's role changed, or its provenance changed in a way that alters nullability — `from_source`
+becoming `defaulted` means NULLs silently became zeros and every average downstream shifts.
+**Minor**: a column was added.
+
+`--bump` prints the edit; `--bump --write` applies it as a targeted text edit. Measured on a real
+2,327-line schema.yml: two lines added, all 94 comment lines intact. Inferred contracts still go to
+their own file — a bump is a decision, a contract is a guess, and only one of them belongs in a
+file you maintain by hand.
+
 ## Configuration actually configures
 
 `assay init` writes an `audit.yml`. It scopes questions, waives findings, and decides what an
