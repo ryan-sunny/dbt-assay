@@ -1,6 +1,6 @@
 # assay
 
-<img src="docs/foghorn.png" align="right" width="132" alt="">
+<img src="docs/foghorn.jpg" align="right" width="210" alt="">
 
 *I say, I say — assay.*
 
