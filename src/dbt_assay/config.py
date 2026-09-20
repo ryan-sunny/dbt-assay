@@ -96,6 +96,30 @@ class Threshold:
             ) from None
 
 
+def known_checks() -> set:
+    """Every `check` a Finding can carry, read from the source that constructs them.
+
+    Parsed rather than listed, because a list is a second copy of a fact and the second copy is
+    what drifts. A reader that matches nothing would pass this wrongly, so it asserts a floor.
+    """
+    import ast
+    import inspect
+
+    from . import judged, relate
+    from .checks import structural
+    out = set()
+    for mod in (judged, structural, relate):
+        for node in ast.walk(ast.parse(inspect.getsource(mod))):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "id", "") == "Finding"):
+                continue
+            c = {k.arg: k.value for k in node.keywords}.get("check")
+            if isinstance(c, ast.Constant):
+                out.add(c.value)
+    if len(out) < 10:                       # a scanner that finds nothing must not report "clean"
+        raise RuntimeError(f"only found {len(out)} check names; the reader is broken")
+    return out
+
+
 @dataclass
 class QuestionConfig:
     name: str
@@ -138,6 +162,7 @@ class Waiver:
 class Config:
     questions: dict = field(default_factory=dict)
     waivers: dict = field(default_factory=dict)     # model name -> [Waiver]
+    unknown_questions: list = field(default_factory=list)   # keys that configure nothing
     vocab: dict = field(default_factory=dict)
     # Per-mart options for the row-adjudication family. THE OPTIONS ARE THE DOMAIN KNOWLEDGE and
     # there is one set per mart; this is the part of the file worth maintaining.
@@ -191,6 +216,15 @@ class Config:
                 name=name, enabled=q.get("enabled", True),
                 select=sel, act=act, action=action)
 
+        # *** A CONFIG KEY THAT MATCHES NO CHECK CONFIGURES NOTHING, SILENTLY. ***
+        # `questions:` is keyed by the CHECK a finding carries, and the verdict floor is counted
+        # by the QUESTION FAMILY a finding rests on. Two namespaces with confusable names, and
+        # assay's own shipped default used a family name where a check belongs -- so the example
+        # everyone copies had never done anything. Collected rather than raised: a renamed check
+        # must not break someone's build on upgrade, but it must not pass unmentioned either.
+        checks = known_checks()
+        cfg.unknown_questions = sorted(set(cfg.questions) - checks)
+
         for model, meta in (data.get("waivers") or {}).items():
             out = []
             for w in meta or []:
@@ -200,6 +234,12 @@ class Config:
                         f"without one is where findings go to die.")
                 out.append(Waiver(w["question"], w["reason"], w.get("until")))
             cfg.waivers[model] = out
+        # A waiver naming no real check silences nothing, and a waiver is exactly the place
+        # someone believes a finding has been dealt with. assay's own example waived
+        # `figure_is_plausible`, which is neither a check nor a question.
+        cfg.unknown_questions = sorted(set(cfg.unknown_questions) | {
+            w.question for ws in cfg.waivers.values() for w in ws
+            if w.question and w.question not in checks})
         return cfg
 
     def for_question(self, name: str) -> QuestionConfig:
@@ -248,7 +288,11 @@ questions:
   #  when:
   #    select: "path:models/water+"
 
-  column_is_part_of_the_key:
+  # Keyed by the CHECK a finding carries, which is NOT the question family a verdict is filed
+  # under. `assay check --json` prints every check name; `assay config` warns about a key here
+  # that matches none of them. This example said `column_is_part_of_the_key` for months, which is
+  # a question family, so it configured nothing at all.
+  grain_unresolved:
     # A threshold is an EXPRESSION, so its direction is readable at a glance, and per ACTION,
     # because the cost of being wrong differs between annotating and failing a build.
     act:
@@ -277,7 +321,7 @@ vocab: {}
 # waivers: reason required, expiry optional but recommended.
 waivers: {}
 #  int_water_conditional:
-#    - question: figure_is_plausible
-#      reason: "conditional rights have no built structure by definition"
+#    - question: description_contradicts_the_code   # a CHECK name, as in `questions:` above
+#      reason: "the summary is deliberately short; the file comment carries the detail"
 #      until: 2027-01-01
 """

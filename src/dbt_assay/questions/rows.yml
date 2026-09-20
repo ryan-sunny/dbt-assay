@@ -16,6 +16,7 @@
 version: 1
 
 row_explanation:
+  id_prefix: "explanation"
   type: choice
   prompt_version: "row.v1"
   instructions:
@@ -39,6 +40,7 @@ row_explanation:
       what: "The row does not carry enough to say. Choose this rather than guess."
 
 row_is_internally_coherent:
+  id_prefix: "coherent"
   type: noul
   prompt_version: "row.coh.v1"
   instructions:

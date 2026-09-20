@@ -10,6 +10,7 @@
 version: 1
 
 field_matches_its_name:
+  id_prefix: "name"
   type: choice
   prompt_version: "feed.name.v1"
   instructions:
@@ -34,6 +35,7 @@ field_matches_its_name:
       what: "The sample does not settle it. Choose this rather than guess."
 
 units_are_what_the_column_claims:
+  id_prefix: "unit"
   type: choice
   prompt_version: "feed.units.v1"
   instructions:

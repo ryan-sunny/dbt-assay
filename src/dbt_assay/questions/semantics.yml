@@ -7,6 +7,7 @@ version: 1
 # completely different objects and the SQL is identical for all three. Nothing else in a warehouse
 # tells them apart, and the cost of confusing them is deleting a rule or keeping a hack for years.
 predicate_intent:
+  id_prefix: "pred"
   type: choice
   prompt_version: "pred.v1"
   instructions:
@@ -46,6 +47,7 @@ predicate_intent:
 # probability means the prose is wrong -- mixing polarity across a bank is how a threshold gets
 # applied backwards.
 description_contradicts_the_code:
+  id_prefix: "desc"
   type: noul
   prompt_version: "desc.v1"
   instructions:

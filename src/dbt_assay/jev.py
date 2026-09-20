@@ -251,6 +251,8 @@ def unpack(ans: dict) -> tuple:
 def decide(store, client: Client, state, questions: dict, *, decision_key: str,
            prompt_version: str, caller: str = "assay", contexts: dict | None = None) -> dict:
     """Cached judgments. Returns {question: {kind, answer, confidence, probabilities, cached}}."""
+    from .contracts import check_question_ids
+    check_question_ids(questions)
     store.con.execute(DDL)
     sh = state_hash(state)
     model_name = client.model or client._conn()[1]["model"]

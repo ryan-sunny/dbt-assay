@@ -9,6 +9,7 @@
 version: 1
 
 practice_exception:
+  id_prefix: "exception"
   type: choice
   prompt_version: "practice.v1"
   instructions:

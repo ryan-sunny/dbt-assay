@@ -198,6 +198,7 @@ def check(
     # that parses but is never consulted implies a control that does not exist, which is worse
     # than having none.
     cfg = Config.load(config_path)
+    _warn_unknown_questions(cfg)
     _st = Store(store_path) if Path(store_path or "").exists() else None
     policed, waived = judged_mod.apply_policy(findings, cfg, _st, project)
     if _st:
@@ -499,6 +500,17 @@ def onboard(
     console.print(t)
 
 
+def _warn_unknown_questions(cfg) -> None:
+    """A `questions:` key matching no check configures nothing, and said so nowhere."""
+    if not cfg.unknown_questions:
+        return
+    console.print(f"[yellow]audit.yml configures {len(cfg.unknown_questions)} question(s) that "
+                  f"match no check:[/] {', '.join(cfg.unknown_questions)}")
+    console.print("[dim]These do nothing. `questions:` is keyed by the CHECK a finding carries, "
+                  "which is not the question family a verdict files under. "
+                  "`assay check --json` lists every check name.[/]")
+
+
 def _gate_progress(store_path: str, cfg) -> None:
     """How far each question is from being allowed to fail a build.
 
@@ -590,6 +602,7 @@ def config(
     if cfg.waivers:
         console.print(f"[dim]waivers: {sum(len(v) for v in cfg.waivers.values())}[/]")
 
+    _warn_unknown_questions(cfg)
     _gate_progress(store_path, cfg)
 
     if not check:
@@ -2180,10 +2193,21 @@ def skill(
 # and a hundred is roughly what a question needs before it may fail a build. One keypress each
 # turns "well calibrated in my reading" into a measured number, which is the only thing that ever
 # earns a check authority.
-_FAMILY = {"role": "column_role", "null": "null_meaning", "key": "column_is_part_of_the_key",
-           "pred": "predicate_intent", "desc": "description_contradicts_the_code",
-           "align": "same_concept", "sev": "severity_fit", "exception": "practice_exception",
-           "explanation": "row_explanation", "coherent": "row_is_internally_coherent"}
+# *** THIS MAP WAS HAND-MAINTAINED AND HAD DRIFTED, TWICE. ***
+# A question id is `<prefix>__<subject>`, and a verdict is filed under the family the prefix names.
+# The map lived here, the prefixes lived in the code that builds the questions, and the family
+# names lived in the YAML banks: three copies of one fact, and `name__` and `unit__` were missing
+# from this one, so every verdict on the two feed families was filed under a family that does not
+# exist. It counted toward nothing and appeared in no report.
+#
+# Now each bank declares its own `id_prefix` and this is derived. One copy, and a test asserts the
+# round trip for every question that exists.
+def _family_map() -> dict:
+    from .contracts import load_all_banks
+    return {q["id_prefix"]: name for name, q in load_all_banks().items() if q.get("id_prefix")}
+
+
+_FAMILY = _family_map()
 
 
 def _family_of(question: str) -> str:

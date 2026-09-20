@@ -10,6 +10,7 @@
 version: 1
 
 same_concept:
+  id_prefix: "align"
   type: score
   prompt_version: "align.v1"
   instructions:

@@ -11,6 +11,7 @@
 version: 1
 
 column_is_part_of_the_key:
+  id_prefix: "key"
   type: noul
   prompt_version: "key.v1"
   # Phrased so HIGH means "yes, it identifies", which is the positive form here. It gates on a HIGH

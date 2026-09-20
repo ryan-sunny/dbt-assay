@@ -239,3 +239,34 @@ def key_from_answers(cand: GrainCandidate, answers: dict,
             unsure.append(col)
     return Grain(columns=keep or list(cand.columns), route=cand.route,
                  source="judged", dropped=drop, uncertain=unsure)
+
+
+# *** A QUESTION ID THAT MAPS TO NO FAMILY IS FILED UNDER NOTHING, SILENTLY. ***
+# A verdict is recorded against the FAMILY a question id names, and the id is `<prefix>__<subject>`
+# or a bare prefix. When a prefix is not declared by any bank, `name__` and `unit__` both were, the
+# verdict lands under a family that does not exist: it counts toward no gate, appears in no report,
+# and nothing anywhere says so. Twice now that has been found by reading, months apart, which is
+# not a way to find things.
+#
+# So it is checked where the question is ASKED rather than in a test that has to guess at every
+# call site. Wrong here is a programming error and it raises.
+def family_of(question_id: str) -> str | None:
+    """The bank a question id files its verdicts under, or None when nothing claims it."""
+    prefix = question_id.split("__")[0]
+    for name, q in load_all_banks().items():
+        if q.get("id_prefix") == prefix:
+            return name
+    return None
+
+
+def check_question_ids(question_ids) -> None:
+    """Raise on any id no bank claims. Called before a request is built, so a mis-prefixed
+    question fails on its first run rather than filing verdicts nobody can count."""
+    unknown = sorted({q for q in question_ids if family_of(q) is None})
+    if unknown:
+        known = sorted(q["id_prefix"] for q in load_all_banks().values() if q.get("id_prefix"))
+        raise ValueError(
+            f"question id(s) {unknown} use a prefix no bank declares. "
+            f"A verdict on one files under a family that does not exist, counts toward no gate "
+            f"and shows in no report. Declared prefixes: {known}. "
+            f"Add `id_prefix:` to the question's bank.")

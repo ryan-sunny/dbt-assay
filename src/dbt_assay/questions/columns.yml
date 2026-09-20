@@ -9,6 +9,7 @@ version: 1
 # as free_text at 0.81. A phone number is not prose -- it was the best fit in an option set that
 # had no room for a structured contact detail. The gap was in the criteria, not the judgment.
 column_role:
+  id_prefix: "role"
   type: choice
   prompt_version: "role.v2"
   instructions:
@@ -84,6 +85,7 @@ column_role:
 # Until it has that evidence it stays opt-in. A question asked without what it needs produces a
 # confident-looking answer to a worse question.
 null_meaning:
+  id_prefix: "null"
   type: choice
   prompt_version: "null.v2"
   instructions:

@@ -7,6 +7,7 @@
 version: 1
 
 severity_fit:
+  id_prefix: "sev"
   type: score
   prompt_version: "sev.v1"
   instructions:
