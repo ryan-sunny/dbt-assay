@@ -117,3 +117,27 @@ def test_an_unparsed_model_makes_its_tests_unevaluable_too(project_dir):
     d = {uid: dg(m.compiled, m.name) for uid, m in p.models.items() if m.readable}
     d["model.p.stg_bad_notnull"].ok = False
     assert any("could not be parsed" in why for _m, _t, _c, why in unevaluable_tests(p, d))
+
+
+def test_taking_the_first_element_of_a_multivalued_field_is_detected():
+    """sqlglot names SPLIT_PART's arguments rather than positioning them, and normalises `arr[1]`
+    to `arr[0]`. Reading positional args and looking for a literal 1 found nothing at all."""
+    from dbt_assay.parse import digest as dg
+    assert dg("select split_part(cases, ',', 1) as c from t").first_element_picks
+    assert dg("select arr[1] as a from t").first_element_picks
+    assert dg("select split(s, ',')[1] as s from t").first_element_picks
+    # a deliberate, defensible index is not a first-match pick
+    assert not dg("select split_part(x, ',', 2) as ok from t").first_element_picks
+
+
+def test_parsing_a_structured_string_is_not_picking_from_a_list():
+    """All 8 findings on a real project were deliberate parses: the street out of an address, the
+    prefix of a licence number, the first word of a status. The column's own name is what
+    separates a structured string from a list of equivalent values."""
+    from dbt_assay.checks.structural import _LISTY
+    for parse in ("SPLIT_PART(street_address, ',', 1)", "SPLIT_PART(license_number, '-', 1)",
+                  "SPLIT_PART(township, ' ', 1)", "SPLIT_PART(buyer_vertical, ' - ', 1)"):
+        assert not _LISTY.search(parse), parse
+    for pick in ("SPLIT_PART(associated_case_numbers, ',', 1)", "owner_names[1]",
+                 "SPLIT_PART(contact_ids, ';', 1)", "SPLIT_PART(all_codes, ',', 1)"):
+        assert _LISTY.search(pick), pick

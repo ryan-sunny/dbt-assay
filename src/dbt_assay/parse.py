@@ -290,6 +290,9 @@ class Digest:
     # DuckDB's `~` is regexp_full_match, not Postgres's partial match. Captured here so no check
     # ever has to parse the SQL a second time; one parse per model is the contract.
     full_match_patterns: list[str] = field(default_factory=list)
+    # First-element picks out of a delimited or array value. Taking [1] of a multi-valued field is
+    # a silent CHOICE, and which value you get depends on the source's ordering.
+    first_element_picks: list = field(default_factory=list)   # (column_expr, how)
 
     def functions_at(self, position: str) -> set[str]:
         return {n for n, p in self.functions if p == position}
@@ -504,6 +507,22 @@ def _extract(tree, name: str, dialect: str) -> Digest:
     # Referencing it unconditionally makes assay fail to parse ANY model on an older sqlglot,
     # which is worse than losing one dialect check. The declared floor is 28 for this reason and
     # the fallback keeps a narrower floor viable for anyone who pins deliberately.
+    # *** THE ARGUMENT IS NAMED, NOT POSITIONAL, AND THE INDEX IS NORMALISED. ***
+    # sqlglot parses SPLIT_PART into a node whose parts are `this`/`delimiter`/`part_index`, so
+    # reading positional arguments found nothing at all. And `arr[1]` is normalised to `arr[0]`,
+    # so a check looking only for a literal 1 is silently blind to every array pick.
+    for _fn in tree.find_all(exp.Func):
+        if func_name(_fn) in ("SPLIT_PART", "SPLITPART"):
+            _idx = _fn.args.get("part_index")
+            if isinstance(_idx, exp.Literal) and str(_idx.this) == "1":
+                d.first_element_picks.append((_fn.sql(dialect=dialect)[:110], "split_part(.., 1)"))
+    for _br in tree.find_all(exp.Bracket):
+        _i = (_br.expressions or [None])[0]
+        _lit = _i.this if isinstance(_i, exp.Literal) else None
+        if str(_lit) in ("0", "1") and isinstance(_br.this, (exp.Column, exp.Func)):
+            d.first_element_picks.append((_br.sql(dialect=dialect)[:110], "the first element"))
+
+
     full_match = getattr(exp, "RegexpFullMatch", None)
     if full_match is not None:
         for node in tree.find_all(full_match):

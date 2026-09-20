@@ -280,18 +280,138 @@ def duckdb_tilde_is_full_match(project, digests: dict[str, Digest]) -> list[Find
 
 
 # window_sees_only_filtered_rows is deliberately absent. See its docstring.
+def arbitrary_pick(project, digests: dict[str, Digest]) -> list[Finding]:
+    """A dedupe whose ORDER BY cannot break every tie, so which row survives is luck.
+
+    *** THIS ONE HAS BITTEN THIS PROJECT REPEATEDLY. ***
+    `row_number() over (partition by k order by x) = 1` keeps ONE row per k. If `x` has ties the
+    winner is whatever the engine happened to return, and it can differ between builds on the same
+    data. A crosswalk here made three such picks; a capped query ordered by a column with 150,625
+    duplicates drew a different subset every run.
+
+    A tie-break is total when its last key is a column the project declares unique. That is
+    checkable against the project's own tests, with no data.
+    """
+    from ..relate import declared_keys
+    unique_cols = set()
+    for cols in declared_keys(project).values():
+        if len(cols) == 1:
+            unique_cols.add(cols[0])
+    for t in project.tests:
+        if t.kind == "unique" and t.column:
+            unique_cols.add(t.column.lower())
+
+    found = []
+    for uid, d in digests.items():
+        if not d.ok:
+            continue
+        m = project.models[uid]
+        for w in d.windows:
+            # only a dedupe: a ranking nobody filters on is a reported position, not a choice
+            if not w.partition_columns or not w.order_sql:
+                continue
+            if not (d.has_qualify or any("rn" in p_.lower() or "= 1" in p_
+                                         for p_ in d.predicates)):
+                continue
+            keys = [o.split()[0].split(".")[-1].strip("()").lower() for o in w.order_sql]
+            if any(k in unique_cols for k in keys):
+                continue                       # the last resort is a declared-unique column
+            found.append(Finding(
+                check="arbitrary_pick",
+                subject=uid, subject_name=m.name, file=m.path,
+                summary=f"dedupe on {w.partition_columns} whose tie-break may not be total",
+                detail=("`row_number() ... = 1` keeps one row per partition. None of the ORDER BY "
+                        "keys is a column this project declares unique, so ties are broken by "
+                        "whatever the engine returned, and the winner can change between builds "
+                        "on identical data. Add a unique column as the last sort key."),
+                base=2,
+                evidence={"partition_by": w.partition_columns, "order_by": w.order_sql[:3]},
+            ))
+    return found
+
+
+# *** PARSING A STRUCTURED STRING IS NOT PICKING FROM A LIST. ***
+# The first version flagged any first-element access, and all 8 findings on a real project were
+# deliberate parses: the street out of "123 Main St, Denver, CO", the prefix of a licence number,
+# the first word of a status. `SPLIT_PART(address, ',', 1)` IS the street.
+#
+# The real defect is a list of EQUIVALENT values -- `associated_case_numbers` is a comma list and
+# taking the first is a coin toss. What separates them is the column's own name, so that is what
+# is read.
+# Anchored on a WORD BOUNDARY, not end-of-string: the column name sits INSIDE the expression
+# -- `SPLIT_PART(associated_case_numbers, ',', 1)` -- so `$` matched nothing at all.
+_LISTY = re.compile(
+    r"_(numbers|ids|keys|codes|names|values|list|items|tags)\b"
+    r"|\b(all|multi|assoc\w*)_", re.IGNORECASE)
+
+
+def first_match_from_a_multivalued_field(project, digests: dict[str, Digest]) -> list[Finding]:
+    """Taking element one of a LIST of equivalent values is a silent choice."""
+    found = []
+    for uid, d in digests.items():
+        if not d.ok or not d.first_element_picks:
+            continue
+        listy = [(e, h) for e, h in d.first_element_picks if _LISTY.search(e)]
+        if not listy:
+            continue
+        m = project.models[uid]
+        expr, how = listy[0]
+        found.append(Finding(
+            check="first_match_pick",
+            subject=uid, subject_name=m.name, file=m.path,
+            summary=f"takes the first element of a multi-valued field via {how}",
+            detail=("Which element is first is the SOURCE's ordering, not a fact about the entity. "
+                    "If the field genuinely holds several values, either keep them all and let the "
+                    "grain say so, or choose deliberately with an ordering you can defend."),
+            base=2,
+            evidence={"expression": expr, "how": how, "occurrences": len(listy)},
+        ))
+    return found
+
+
+def variant_columns(project, digests, schema=None) -> list[Finding]:
+    """A loader split a mixed-type column, and the base column now holds a SUBSET.
+
+    dlt writes `<col>` and `<col>__v_double` when a source mixes types. Reading the base column
+    silently drops every row whose value went to the variant: one here lost 22 of 125 real values.
+    """
+    if schema is None:
+        return []
+    found = []
+    for uid, m in project.models.items():
+        cols = [c.lower() for c in schema.columns(uid).names]
+        pairs = [(c, base) for c in cols
+                 for base in [c.split("__v_")[0]] if "__v_" in c and base in cols]
+        if not pairs:
+            continue
+        found.append(Finding(
+            check="variant_column",
+            subject=uid, subject_name=m.name, file=m.path,
+            summary=f"{len(pairs)} column(s) split by the loader into a typed variant",
+            detail=("A mixed-type source column becomes `<col>` and `<col>__v_<type>`, and the "
+                    "base column then holds only the rows whose value matched the first type it "
+                    "saw. Reading it alone silently drops the rest."),
+            base=3,
+            evidence={"pairs": [f"{b} / {v}" for v, b in pairs][:6]},
+        ))
+    return found
+
+
 CHECKS = (
     tests_that_cannot_fail,
     ranks_by_degrees,
     bbox_used_as_distance,
     duckdb_tilde_is_full_match,
+    arbitrary_pick,
+    first_match_from_a_multivalued_field,
 )
 
 
-def run_all(project, digests: dict[str, Digest]) -> list[Finding]:
+def run_all(project, digests: dict[str, Digest], schema=None) -> list[Finding]:
     out: list[Finding] = []
     for fn in CHECKS:
         out.extend(fn(project, digests))
+    out.extend(variant_columns(project, digests, schema))
     for f in out:
         b = project.blast_radius(f.subject)
         f.descendants, f.marts = b["descendants"], b["marts"]

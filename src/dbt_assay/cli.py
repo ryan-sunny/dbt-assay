@@ -164,7 +164,7 @@ def check(
     tdir = _find_target(target)
     project, digests, failures, schema, sstats = _load(tdir, dialect)
     facts, edge_findings = relate.run_all(project, digests, schema)
-    findings = run_all(project, digests) + edge_findings
+    findings = run_all(project, digests, schema) + edge_findings
     # *** ONE STREAM. ***
     # Structural and judged findings were in separate worlds: `check` saw only the parser's, and
     # nothing from `infer` or `columns` ever reached the store. "What is wrong with this model"
