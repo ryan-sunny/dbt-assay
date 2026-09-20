@@ -83,6 +83,22 @@ _SPLIT = re.compile(r"(?<=[.!?;])\s+(?=[A-Za-z`\"'*])")
 _ABBREV = ("e.g.", "i.e.", "cf.", "vs.", "etc.", "C.R.S.", "U.S.C.", "approx.", "no.", "fig.")
 
 
+# *** A SENTENCE THAT OPENS WITH A BARE PRONOUN IS NOT INDEPENDENTLY CHECKABLE. ***
+# Found by running this method on assay's own source. "dbt reports that a test passed. It never
+# reports that a test was INCAPABLE of failing." -- split on the full stop, the second sentence
+# reads as a claim about the FUNCTION, and it was judged `contradicts` at 0.73. The subject is
+# dbt, one sentence back.
+#
+# Splitting prose destroys antecedents, and a claim whose subject is elsewhere cannot be judged
+# alone. So it is carried forward and joined to the sentence it depends on, rather than asked.
+_LEADING_PRONOUN = re.compile(
+    r"^(it|they|this|that|these|those|its|their)\b", re.IGNORECASE)
+
+
+def _needs_its_antecedent(sentence: str) -> bool:
+    return bool(_LEADING_PRONOUN.match(sentence.strip()))
+
+
 def sentences(text: str, min_len: int = 24) -> list[str]:
     """Prose split into candidate claims.
 
@@ -100,7 +116,15 @@ def sentences(text: str, min_len: int = 24) -> list[str]:
         buf = ""
     if buf:
         out.append(buf)
-    return [s for s in out if len(s) >= min_len]
+
+    # Rejoin anything that opens with a bare pronoun onto what it refers back to.
+    joined: list[str] = []
+    for part in out:
+        if joined and _needs_its_antecedent(part):
+            joined[-1] = f"{joined[-1]} {part}"
+        else:
+            joined.append(part)
+    return [s for s in joined if len(s) >= min_len]
 
 
 def comment_sentences(sql: str) -> list[tuple[str, int]]:

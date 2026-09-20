@@ -86,3 +86,28 @@ def test_every_question_this_module_uses_is_in_a_bank():
     fake = [C.Claim("i", "s", "n", "t", "description")]
     check_question_ids(C.kind_questions(fake))
     check_question_ids(C.align_question())
+
+
+def test_a_sentence_opening_with_a_bare_pronoun_keeps_its_antecedent():
+    """*** FOUND BY RUNNING THIS METHOD ON assay's OWN SOURCE. ***
+
+    "dbt reports that a test passed. It never reports that a test was INCAPABLE of failing."
+    Split on the full stop, the second sentence reads as a claim about the FUNCTION rather than
+    about dbt, and it was judged `contradicts` at 0.73. The subject is one sentence back.
+
+    Splitting prose destroys antecedents, and a claim whose subject is elsewhere cannot be judged
+    alone.
+    """
+    got = C.sentences("dbt reports that a test passed. It never reports that a test was "
+                      "INCAPABLE of failing.")
+    assert len(got) == 1, got
+    assert "dbt reports" in got[0] and "INCAPABLE" in got[0]
+
+
+def test_a_sentence_whose_pronoun_has_its_own_subject_still_stands_alone():
+    """`This model ...` names what it is about. Only a BARE leading pronoun is the problem, and
+    over-joining would undo the whole reason prose is split."""
+    got = C.sentences("This model keeps one row per filing and section.")
+    assert len(got) == 1
+    two = C.sentences("One row per section and year. The legal descriptions carry no meridian.")
+    assert len(two) == 2, two

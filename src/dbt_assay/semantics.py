@@ -55,7 +55,7 @@ def header_comment(sql: str, max_lines: int = 60) -> str:
 
 
 def all_comments(sql: str, max_lines: int = 140) -> str:
-    """Every comment line, for the DESCRIPTION family only.
+    """Comment lines, for the DESCRIPTION family only, up to `max_lines`.
 
     Measured: with just the leading header, int_water_diversions read 0.75 as contradicting its
     code. The header says "windowed to the same ten years" and the model also emits full-history

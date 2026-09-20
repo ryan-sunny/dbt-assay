@@ -337,7 +337,8 @@ def _onboard_judge(project, digests, schema, findings, config_path: str, store_p
 
     *** LEADS WITH THE DESCRIPTION FAMILY, AND ONLY THAT. ***
     It is one call per model, so the cost is legible and the latency is linear. It needs no probe,
-    no catalog, no store and no prior verdicts, so it works on a project assay has never seen. And
+    no catalog and no prior verdicts, so it works on a project assay has never seen. It does
+    open a store, to cache what it asks. And
     its finding reads as English to someone who has never used this tool: your prose says one thing
     and your SQL does another. The column, predicate and grain families are all worth running and
     none of them opens as well, which is what `next` is for.
