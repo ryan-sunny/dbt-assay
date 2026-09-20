@@ -118,3 +118,14 @@ def test_a_leftover_macro_becomes_an_identifier_not_a_literal():
     assert digest(out).ok
     out2 = backtest.dejinja("select {{ dbt_utils.star(from=ref('x')) }} from t")
     assert digest(out2).ok
+
+
+def test_a_macro_on_its_own_line_inside_a_from_clause_is_not_a_statement():
+    """Deleting standalone Jinja left `from` with nothing after it. A macro returning a TABLE NAME
+    is routinely written on its own line. Measured across three projects, keeping it wins."""
+    from dbt_assay.parse import digest
+    sql = ("{{ config(alias='x') }}\n\nselect a\nfrom\n"
+           "    {{ set_datalake_project('schema.table') }}\n    as t")
+    out = backtest.dejinja(sql)
+    assert "config" not in out                 # config IS removed
+    assert digest(out).ok, out                 # and the FROM still has an operand

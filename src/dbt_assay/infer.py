@@ -21,12 +21,19 @@ A caller that cannot tell which one it got cannot judge how much to trust it, so
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.qualify import qualify
+
+# *** sqlglot's OPTIMIZER TALKS TO stdout. ***
+# Qualifying SQL whose Jinja has been stripped produces "Cannot traverse scope _jinja_" for every
+# placeholder, which is true and useless: assay already reports what it could not read, with a
+# count and a reason. Leaking a library's internals into a tool's output makes it unpipeable.
+logging.getLogger("sqlglot").setLevel(logging.ERROR)
 
 from .parse import Digest
 

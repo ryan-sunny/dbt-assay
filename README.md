@@ -317,15 +317,20 @@ Maintained for my own use. PRs read when convenient, issues may sit, fork freely
 
 Developed against DuckDB. Verified elsewhere, all with no warehouse connection at all:
 
-| dialect | project | parsed |
-|---|---|---|
-| snowflake | `get-select/dbt-snowflake-monitoring`, 25 models, never seen | 21/25 |
-| bigquery | UNNEST, struct access, SAFE_CAST, QUALIFY, ARRAY_AGG | 2/2 |
-| postgres | `elementary-data/dbt-data-reliability`, 30 models | 6/30 |
+| dialect | project | models | parsed |
+|---|---|---|---|
+| bigquery | `basedosdados/pipelines`, never seen | 1,632 | 1,603 |
+| snowflake | `get-select/dbt-snowflake-monitoring` | 25 | 23 |
+| snowflake | `fivetran/dbt_netsuite` | 41 | 39 |
+| postgres | `elementary-data/dbt-data-reliability` | 30 | 6 |
 
-The postgres number is the honest limit and not a dialect problem: elementary's models are built
-from `{% set %}` blocks calling macros, so there is almost no SQL to read until dbt compiles them.
-With compiled output, all three read normally.
+On the 1,632-model BigQuery project, from raw SQL with no warehouse: **10 seconds**, 7,858 tests
+read, 272 coverage gaps, and two `not_null` tests that can never fire because the column is the
+literal `'BA'`.
+
+The elementary number is the honest limit and not a dialect problem: its models are `{% set %}`
+blocks calling macros, so there is almost no SQL to read until dbt compiles them. assay reports
+what it could not read rather than counting it as clean.
 
 `--dialect snowflake | bigquery | postgres | redshift | databricks | duckdb`.
 

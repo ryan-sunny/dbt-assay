@@ -90,3 +90,21 @@ def test_an_output_column_is_resolved_one_hop_back_through_its_cte():
     assert d.resolved_roots["record_first_year"] == "agg:min"
     assert d.resolved_roots["record_n"] == "agg:count"
     assert d.resolved_roots["wdid"] == "column"
+
+
+def test_one_pathological_model_does_not_abort_the_run():
+    """parse_one was guarded; rendering the tree afterwards was not. sqlglot can raise deep inside
+    a dialect transform -- a BigQuery DATETIME() with one argument crashed an entire 1,632-model
+    project. A model assay cannot read is one it REPORTS."""
+    import dbt_assay.parse as parse_mod
+
+    def boom(*_a, **_k):
+        raise AttributeError("'NoneType' object has no attribute 'name'")
+
+    real = parse_mod._extract
+    parse_mod._extract = boom
+    try:
+        d = digest("select 1 from t", "pathological")
+    finally:
+        parse_mod._extract = real
+    assert d.ok is False and "could not read the parsed SQL" in d.error

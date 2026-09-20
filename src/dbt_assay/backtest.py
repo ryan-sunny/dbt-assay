@@ -72,7 +72,6 @@ def dejinja(sql: str) -> str:
     sql = _SOURCE.sub(lambda m: f"{m.group(1)}.{m.group(2)}", sql)
     sql = _CONFIG.sub("", sql)
     sql = _BLOCK.sub("", sql)
-    sql = _STANDALONE.sub("", sql)
     # *** AN IDENTIFIER, NOT A LITERAL. ***
     # What is left is a macro call or a var. Substituting `1` only parses where a VALUE belongs,
     # so anything standing in for a table name, a column or a clause died. Measured on a real

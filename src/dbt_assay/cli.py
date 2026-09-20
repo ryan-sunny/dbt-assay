@@ -294,9 +294,9 @@ def init(force: bool = typer.Option(False, "--force", help="overwrite an existin
     console.print(f"wrote [bold]{p}[/]. Nothing in it enables spend; the judgment tier is opt-in.")
 
 
-def _grain_setup(target: str | None, store_path: str | None = None):
+def _grain_setup(target: str | None, store_path: str | None = None, dialect: str = "duckdb"):
     tdir = _find_target(target)
-    project, digests, _fail, schema, _sstats = _load(tdir)
+    project, digests, _fail, schema, _sstats = _load(tdir, dialect)
     declared = relate.declared_keys(project)
     observed = {}
     if store_path and Path(store_path).exists():
@@ -540,13 +540,14 @@ def columns(
                                    help="also ask what a NULL means. Off by default: without a "
                                         "null rate from `assay probe` it answers at ~0.49 "
                                         "confidence over six options."),
+    dialect: str = typer.Option("duckdb", "--dialect", help="the SQL your warehouse speaks"),
     control: bool = typer.Option(False, "--control",
                                  help="ask only about columns the project already labels, and "
                                       "report agreement"),
 ):
     """Judge each column's role and what a NULL in it would mean."""
     cfg = Config.load(config_path)
-    _tdir, project, digests, schema, declared, proposed = _grain_setup(target, store_path)
+    _tdir, project, digests, schema, declared, proposed = _grain_setup(target, store_path, dialect)
     labels = columns_mod.free_labels(project)
 
     work = []
@@ -704,6 +705,7 @@ def inventory(
     everything: bool = typer.Option(False, "--include-unadjudicated",
                                     help="with --write, include entries nobody has ruled on"),
     limit: int = typer.Option(40, "--limit", "-n"),
+    dialect: str = typer.Option("duckdb", "--dialect", help="the SQL your warehouse speaks"),
 ):
     """What every model in this project actually IS.
 
@@ -711,7 +713,7 @@ def inventory(
     blast radius. A judgment fills in role and sharpens grain; it is not the price of entry.
     """
     tdir = _find_target(target)
-    project, digests, _failures, schema, _sstats = _load(tdir)
+    project, digests, _failures, schema, _sstats = _load(tdir, dialect)
     store = Store(store_path) if Path(store_path).exists() else None
     observed = probe_mod.read(store) if store else {}
     entries = inv_mod.build(project, digests, schema, store, observed)
@@ -1353,8 +1355,8 @@ def semantics(
     store.close()
 
 
-def _entries(tdir, store):
-    project, digests, _f, schema, _s = _load(tdir)
+def _entries(tdir, store, dialect: str = "duckdb"):
+    project, digests, _f, schema, _s = _load(tdir, dialect)
     obs = probe_mod.read(store) if store else {}
     return project, digests, schema, inv_mod.build(project, digests, schema, store, obs)
 
@@ -1523,6 +1525,7 @@ def tests_cmd(
     target: str = typer.Option(None, "--target", "-t"),
     gaps_only: bool = typer.Option(False, "--gaps-only",
                                    help="coverage only. Pure code, no API key, no spend."),
+    dialect: str = typer.Option("duckdb", "--dialect", help="the SQL your warehouse speaks"),
     limit: int = typer.Option(80, "--limit", "-n", help="how many tests to judge"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     config_path: str = typer.Option(".", "--config"),
@@ -1531,7 +1534,7 @@ def tests_cmd(
     cfg = Config.load(config_path)
     tdir = _find_target(target)
     store = Store(store_path) if Path(store_path).exists() else None
-    project, digests, _schema, entries = _entries(tdir, store)
+    project, digests, _schema, entries = _entries(tdir, store, dialect)
 
     gaps = testing_mod.coverage_gaps(project, digests, entries)
     console.print(f"[bold]{len(gaps)}[/] coverage gap(s) [dim]found by code alone[/]")
@@ -1661,6 +1664,7 @@ def practices(
     dbt_bin: str = typer.Option("dbt", "--dbt-bin"),
     schema_name: str = typer.Option(None, "--evaluator-schema",
                                     help="where dbt-project-evaluator built its fct_ tables"),
+    dialect: str = typer.Option("duckdb", "--dialect", help="the SQL your warehouse speaks"),
     keys_only: bool = typer.Option(False, "--keys-only",
                                    help="just the primary-key patches. Pure code, no key, no "
                                         "warehouse."),
@@ -1676,7 +1680,7 @@ def practices(
     cfg = Config.load(config_path)
     tdir = _find_target(target)
     store = Store(store_path) if Path(store_path).exists() else None
-    project, _d, _sch, entries = _entries(tdir, store)
+    project, _d, _sch, entries = _entries(tdir, store, dialect)
 
     patches = prac_mod.primary_key_patches(project, entries)
     if patches:

@@ -318,6 +318,20 @@ def digest(sql: str, name: str = "", dialect: str = "duckdb") -> Digest:
     if tree is None:
         return Digest(name=name, ok=False, error="empty statement")
 
+    try:
+        return _extract(tree, name, dialect)
+    except RecursionError:
+        return Digest(name=name, ok=False, error="RecursionError while reading the parsed SQL")
+    except Exception as e:                                              # noqa: BLE001
+        # *** ONE PATHOLOGICAL MODEL MUST NOT TAKE DOWN A 1,600-MODEL RUN. ***
+        # parse_one was guarded; rendering the tree afterwards was not, and sqlglot can raise deep
+        # inside a dialect transform -- a BigQuery DATETIME() with one argument crashed an entire
+        # project. A model assay cannot read is a model assay REPORTS, never an aborted run.
+        return Digest(name=name, ok=False,
+                      error=f"could not read the parsed SQL: {type(e).__name__}: {e}"[:200])
+
+
+def _extract(tree, name: str, dialect: str) -> Digest:
     d = Digest(name=name, ok=True)
     cte_names = set()
 

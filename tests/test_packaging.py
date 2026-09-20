@@ -78,5 +78,5 @@ def test_an_absent_node_type_costs_one_check_not_every_parse():
     import inspect
 
     from dbt_assay import parse
-    src = inspect.getsource(parse.digest)
+    src = inspect.getsource(parse)
     assert 'getattr(exp, "RegexpFullMatch", None)' in src
