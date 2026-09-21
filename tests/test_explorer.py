@@ -294,7 +294,8 @@ def _tiny():
                      "generated_at": "x", "coverage": {}},
             "models": [{"uid": "m", "name": "a"}], "edges": [], "claims": [],
             "findings": [{"id": "f1", "check": "c"}], "decisions": [], "questions": [],
-            "adjudications": [], "config": {"provider": "auto"}, "runs": [], "unreadable": []}
+            "adjudications": [], "config": {"provider": "auto"}, "runs": [],
+            "unreadable": [], "unconfigured": []}
 
 
 def test_the_artifact_is_one_line_per_entity(tmp_path):
@@ -346,6 +347,14 @@ def test_an_artifact_round_trips_to_the_same_page(tmp_path):
     a = explorer.explorer_html({k: v for k, v in data.items()}, "<html>rec</html>")
     b = explorer.explorer_html({k: v for k, v in back.items() if k != "record"}, back["record"])
     assert a == b, "a page rendered from the artifact differs from one rendered from the store"
+
+    # *** AND THE TWO SIDES MUST AGREE ON WHAT KEYS EXIST, NOT ONLY ON THIS FIXTURE. ***
+    # A section added to `assemble` and not to the artifact round-trips to a page missing it; one
+    # added to the reader and not the writer round-trips to a page with an empty section that
+    # looks like a real answer. Both read as "there is nothing here".
+    written = {n for n in explore._LINES} | {n for n, _ in explore._WHOLE}
+    assert written <= set(data), f"the artifact writes sections assemble does not produce: {written - set(data)}"
+    assert set(back) - {"record"} == written, "the reader and the writer disagree about sections"
 
 
 def test_a_directory_that_is_not_an_artifact_refuses_rather_than_rendering_empty(tmp_path):
@@ -814,3 +823,62 @@ def test_what_you_are_looking_at_is_a_heading_not_a_control():
     assert "extra.push(back)" not in rows, "the way back is in the filter bar again"
     assert "controls: opts.controls || []" in rows, "the bar no longer holds the view switch"
     assert "h3.crumb{" in explorer.CSS, "the title has no style of its own"
+
+
+def test_the_overview_picks_its_form_from_the_data_and_its_color_last():
+    """*** THE PAGE'S OWN PILL COLORS FAILED THE VALIDATOR AS A CHART PALETTE. ***
+
+    green `#5a6a2f` vs blue `#2b5c7a` measure dE 14.1 for normal vision, under the 15 floor:
+    fine as small text beside a word, genuinely hard to separate as adjacent bars. So they are
+    not reused for marks.
+
+    Grain is ORDINAL -- declared beats derived beats judged beats nothing -- so it is one hue
+    dark to light, which puts the ordering in the ink instead of a key. Checked monotonic in
+    OKLab lightness (.433 / .575 / .764) rather than eyeballed. Status colors are reserved, never
+    a series, and always carry their label, because `warning` is sub-3:1 on this surface by
+    design.
+    """
+    v = explorer._VIEWS
+    assert "const RAMP = {declared: '#184f95', derived: '#2a78d6', judged: '#86b6ef'" in v, \
+        "the ordinal ramp is gone"
+    assert "'#5a6a2f'" not in v and "'#2b5c7a'" not in v, "the failing pill colors are used as marks"
+    # status never appears without its label
+    ov = v[v.index("function understoodTab"):]
+    assert "would FAIL the build" in ov and "queued for a person" in ov
+    # a ranking is one hue: color must not be assigned per row
+    assert "r.color || '#2a78d6'" in v, "ranked bars stopped using a single hue"
+
+
+def test_no_chart_distorts_its_own_labels_or_clips_its_names():
+    """*** TWO GEOMETRY BUGS A DOM DRIVER CANNOT SEE. ***
+
+    An SVG bar that fills its container needs `preserveAspectRatio="none"`, which stretches the
+    TEXT inside it. And a fixed label gutter has to be guessed: three check names exceed 200px at
+    12px monospace, `description_contradicts_the_code` at 230px, so they ran off the left.
+
+    Both are HTML now -- flex for the stack, a grid for the ranking -- where the browser measures
+    what the author would otherwise have to predict.
+    """
+    v = explorer._VIEWS
+    # Scoped to the Overview's charts. The LINEAGE drawing is a real SVG and legitimately sets
+    # preserveAspectRatio; only these two must not, because only these two hold text that scales.
+    charts = v[v.index("/* A composition of a known whole"):v.index("function tile(")]
+    # `createElementNS` is the whole assertion: no SVG means no viewBox, so no scaling factor and
+    # nothing that can stretch text. Checking for `preserveAspectRatio` by name would only catch
+    # the comment that explains why it is absent -- the record, not the behavior.
+    assert "createElementNS" not in charts, "the Overview charts went back to SVG"
+    assert "preserveAspectRatio" in charts, "the reason it is not SVG stopped being written down"
+    assert ".sbar{display:flex" in explorer.CSS.replace(" ", "").replace("\n", "") or \
+           ".sbar{display:flex" in explorer.CSS
+    assert ".rank{display:grid" in explorer.CSS, "the ranking has no self-measuring gutter"
+    # and a label only where one fits, never a number on every mark
+    assert "if (pct_ > 7)" in v, "every segment is labelled regardless of width"
+
+
+def test_every_mark_carries_its_own_numbers():
+    """An HTML chart IS interactive; a mark you cannot interrogate is a picture of a number."""
+    v = explorer._VIEWS
+    sb = v[v.index("function stackedBar"):v.index("function rankedBars")]
+    assert "title:" in sb, "a stacked segment has no hover"
+    rb = v[v.index("function rankedBars"):v.index("function tile")]
+    assert "title: r.tip" in rb, "a ranked row has no hover"

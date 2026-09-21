@@ -510,7 +510,7 @@ def changes(store, project=None) -> list:
     return out
 
 
-def order_by_staleness(targets_: list, store) -> list:
+def order_by_staleness(targets_: list, store, project=None) -> list:
     """Least-recently-observed first, so -n walks the project instead of re-probing the front.
 
     *** WITHOUT THIS, `-n 8` PROBES THE SAME EIGHT FOREVER. ***
@@ -530,16 +530,34 @@ def order_by_staleness(targets_: list, store) -> list:
     than nothing. If a failure wrote no row its `max(observed_at)` would stay NULL, it would sort
     first forever, and one unreadable relation would starve the whole cycle -- silently, with the
     symptom "probe seems to work but coverage never grows".
+
+    *** AND AMONG THE NEVER-OBSERVED, REACH DECIDES, NOT THE ALPHABET. ***
+    Reported from the field: the next eight on a real warehouse ranged from 0 to 18 marts with no
+    relation to position, because the order within a tier was the relation name. At 35 passes to
+    first coverage that is the alphabet deciding which models are understood in week one and which
+    in week five. Blast radius is already counted off the DAG, exact and free, so it costs nothing
+    to front-load the models where a key that stops holding actually costs something. The name
+    stays as the last key, because a comparison that can tie is not an order.
     """
+    def reach(t) -> int:
+        if project is None:
+            return 0
+        try:
+            return int(project.blast_radius(t.uid).get("marts", 0) or 0)
+        except Exception:                                        # noqa: BLE001
+            return 0
+
     if store is None:
-        return sorted(targets_, key=lambda t: t.relation)
+        return sorted(targets_, key=lambda t: (-reach(t), t.relation))
     store.con.execute(DDL)
     try:
         seen = {str(r[0]).lower(): r[1] for r in store.con.execute(
             "select relation, max(observed_at) from observed_keys group by relation").fetchall()}
     except Exception:                                            # noqa: BLE001
         seen = {}
-    # NULL first, then oldest, then the name. Three keys, and the last one makes it total.
+    # Never-observed first, then oldest, then WIDEST REACH, then the name. Four keys, and the
+    # last one is what makes it total -- a batch shares a timestamp and reach ties constantly.
     return sorted(targets_, key=lambda t: (seen.get(t.relation.lower()) is not None,
                                            seen.get(t.relation.lower()) or 0,
+                                           -reach(t),
                                            t.relation))

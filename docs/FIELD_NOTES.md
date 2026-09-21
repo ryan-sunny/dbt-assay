@@ -2625,3 +2625,76 @@ Deliberately not in scope, and recorded so it is not re-proposed: no snapshot co
 scheduling, and no design work around the DuckDB lock in general. Cross-process read-only is
 blocked too, but that is an embedded-file constraint — on Snowflake, BigQuery or Postgres a probe
 runs whenever. It belongs in guidance for the DuckDB case, not in the shape of the tool.
+
+### The probe walked alphabetically, and reach was sitting there for free
+
+Verification of the walk came back with the next eight ranging from 0 to 18 marts with no relation
+to position, because the order within the never-observed tier was the relation name. At 35 passes
+to first coverage, **the alphabet was deciding which models are understood in week one and which
+in week five.**
+
+Blast radius is counted off the DAG, exact and free, so the tier order is
+`(never-observed, oldest, widest reach, name)` now. The name stays last because a comparison that
+can tie is not an order, and reach ties constantly.
+
+```
+before   stg_az_liquor 0 · stg_boulder_health 0 · stg_boulder_permits 15 · stg_childcare 0 ...
+after    denver_parcels_geom 35 · co_addresses 28 · elpaso_parcels 25 · stg_phoenix_permits 24 ...
+```
+
+Still deterministic across twenty orderings. And the candidate pool shrinks as you go -- 277, 275,
+273 -- because probing settles grains and a settled relation leaves the pool, so it is a shrinking
+target rather than a fixed denominator.
+
+---
+
+## Round nineteen: the Overview became the state of the warehouse
+
+It was an iframe of the record and nothing else. Now it is the page you open to find out where
+this warehouse stands, and the record is the argument at the bottom of it.
+
+### The form came from the data's job, and the color came last
+
+The ruled-on figure is a **hero number**: one value, no comparison, and a bar of it would be a bar
+of one. Grain by evidence is a **composition of a known whole**, so one stacked bar. Findings by
+check is a **ranking**, so horizontal bars in ONE hue -- they are the same kind of thing, and
+coloring them apart would encode rank as identity.
+
+**The page's own provenance pills failed the validator as a chart palette.** Green `#5a6a2f`
+against blue `#2b5c7a` measures dE 14.1 for normal vision, under the 15 floor: fine as small text
+beside a word, genuinely hard to separate as adjacent bars. Running the check took a second; the
+reasoning that would have kept them would have been wrong.
+
+Grain is **ordinal** -- declared beats derived beats judged beats nothing -- so it is one hue dark
+to light, which puts the ordering in the ink instead of asking you to learn a key. Monotonic in
+OKLab lightness at .433 / .575 / .764, checked rather than eyeballed. Status colors stay reserved,
+never a series, and always carry their label, because `warning` is sub-3:1 against this surface by
+design and the label is the mitigation.
+
+### Two geometry bugs a DOM driver cannot see
+
+An SVG bar that fills its container needs `preserveAspectRatio="none"` -- which **stretches the
+text inside it**. And a fixed label gutter is a number you have to guess: three check names exceed
+200px at 12px monospace, `description_contradicts_the_code` at 230px, so they ran off the left
+edge.
+
+Both are HTML now, flex for the stack and a grid for the ranking, where the browser measures what
+the author would otherwise predict. Neither bug throws, neither shows up in a tab that renders,
+and both are visible the moment somebody looks at the page.
+
+### And two facts the page needed that the artifact did not carry
+
+**What each finding would DO on a build.** The findings list says what is wrong; the policy says
+which of it stops CI, and deciding that by reading the list is exactly the judgment a reader
+should not be making. `action` and `action_why` travel with the finding now -- and a WAIVED
+finding says `waived` rather than carrying a blank, because a blank cannot be told apart from
+unconfigured.
+
+**The configuration gap**, so the Overview can show the checks firing that `audit.yml` does not
+name, beside what assay would suggest for each.
+
+And once more, in the code that carries them: `_WHOLE` defaulted every section to `{}`, so an
+artifact missing `unconfigured.json` handed back a dict where a list belongs -- and `.length` on a
+dict is `undefined` rather than an error, so the page would have shown nothing and looked fine.
+Second appearance of `[] -> {}` in this file. Each section declares its own empty type now, and a
+guard asserts the reader and the writer agree about which sections exist at all.

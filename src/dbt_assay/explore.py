@@ -70,6 +70,23 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
              generated_at: str, version: str) -> dict:
     """One object holding every fact assay has about this project."""
     by_uid = {e.uid: e for e in entries}
+    # *** WHAT EACH FINDING WOULD DO ON A BUILD, NOT JUST THAT IT EXISTS. ***
+    # `findings` says what is wrong; the policy says which of it stops CI. Deciding that by
+    # reading the list is exactly the judgment a reader should not be making, so it travels with
+    # the finding -- the same argument `violations()` makes to an agent.
+    acted: dict = {}
+    try:
+        from . import judged as _judged
+        kept, waived = _judged.apply_policy(findings, cfg, store, project)
+        for f, act, why in kept:
+            acted[f.id] = (act, why)
+        # *** A WAIVED FINDING IS NOT AN UNCONFIGURED ONE, AND A BLANK CANNOT TELL THEM APART. ***
+        # It never reaches the findings table on a normal run, so anything seeing it here is
+        # reading the pre-policy list and needs to know which it is holding.
+        for f, why in waived:
+            acted[f.id] = ("waived", why)
+    except Exception:                                            # noqa: BLE001
+        acted = {}
 
     read_by: dict = {}
     for e in entries:
@@ -81,7 +98,7 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
     for c in claims:
         claim_by_subject.setdefault(c["subject"], []).append(c["id"])
 
-    find_rows = _findings(findings, store)
+    find_rows = _findings(findings, store, acted)
     find_by_subject: dict = {}
     for f in find_rows:
         find_by_subject.setdefault(f["subject"], []).append(f["id"])
@@ -147,6 +164,11 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         "questions": _questions(),
         "adjudications": _adjudications(store),
         "config": _config(cfg),
+        # *** CHECKS THAT FIRED AND audit.yml DOES NOT NAME. ***
+        # "It reported nothing" and "it is not configured" read identically from the outside, and
+        # this is the direction that grows by itself: every release adds checks.
+        "unconfigured": [{"check": c, "shipped": a}
+                         for c, a in cfg.unconfigured({f["check"] for f in find_rows})],
         "runs": _runs(store),
         "unreadable": _unreadable(store, project),
     }
@@ -243,7 +265,8 @@ def _claims(store, entries) -> list:
     return sorted(out, key=lambda c: (c["subject_name"], c["id"]))
 
 
-def _findings(findings, store) -> list:
+def _findings(findings, store, acted: dict | None = None) -> list:
+    acted = acted or {}
     ruled = store.ruled_subjects() if store is not None else set()
     out = []
     for f in findings:
@@ -258,6 +281,9 @@ def _findings(findings, store) -> list:
             # *** RULED ON THIS FINDING, OR ON ITS MODEL, AND THEY ARE NOT THE SAME CLAIM. ***
             "ruled_finding": f"{f.subject}::finding::{fid}" in ruled,
             "ruled_model": f.subject in ruled,
+            # fail | queue | annotate, and WHY it is that: `audit.yml` or `default by severity`.
+            "action": acted.get(fid, ("", ""))[0],
+            "action_why": acted.get(fid, ("", ""))[1],
         })
     return sorted(out, key=lambda f: (-f["weight"], f["check"], f["model"], f["id"]))
 
@@ -407,7 +433,11 @@ def _unreadable(store, project) -> list:
 # Reading the artifact is a build step, not a runtime load.
 _LINES = ("models", "edges", "claims", "findings", "decisions", "questions",
           "adjudications", "unreadable", "runs")
-_WHOLE = ("meta", "config")
+# *** AND ITS EMPTY VALUE, BECAUSE A LIST DEFAULTING TO `{}` IS THE SAME BUG AS `[]` -> `{}`. ***
+# Caught by the round-trip guard: an artifact with no `unconfigured.json` handed back a dict where
+# a list belongs, and `.length` on a dict is `undefined` rather than an error -- so the page would
+# have shown nothing and looked fine. Second time this class has appeared in this file.
+_WHOLE = (("meta", dict), ("config", dict), ("unconfigured", list))
 
 
 def write_data(data: dict, directory, record: str = "") -> list:
@@ -430,9 +460,10 @@ def write_data(data: dict, directory, record: str = "") -> list:
             json.dumps(r, sort_keys=True, separators=(",", ":"), default=str) + "\n"
             for r in rows))
         out.append((p, len(rows)))
-    for name in _WHOLE:
+    for name, empty in _WHOLE:
         p = d / f"{name}.json"
-        p.write_text(json.dumps(data.get(name) or {}, sort_keys=True, indent=2, default=str) + "\n")
+        p.write_text(json.dumps(data.get(name) if data.get(name) is not None else empty(),
+                                sort_keys=True, indent=2, default=str) + "\n")
         out.append((p, 1))
     # *** THE RECORD LIVES IN THE ARTIFACT TOO, AND IT IS THE HALF A PERSON READS. ***
     # 15 KB, diffs line by line, and it is the one file here you would open directly. Without it
@@ -457,9 +488,9 @@ def read_data(directory) -> dict:
         p = d / f"{name}.jsonl"
         data[name] = [json.loads(line) for line in p.read_text().splitlines() if line.strip()] \
             if p.exists() else []
-    for name in _WHOLE:
+    for name, empty in _WHOLE:
         p = d / f"{name}.json"
-        data[name] = json.loads(p.read_text()) if p.exists() else {}
+        data[name] = json.loads(p.read_text()) if p.exists() else empty()
     rec = d / "record.html"
     data["record"] = rec.read_text() if rec.exists() else ""
     # *** AN ARTIFACT MISSING A TABLE IS NOT AN EMPTY WAREHOUSE. ***

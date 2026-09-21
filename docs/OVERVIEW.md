@@ -639,7 +639,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.31.0
+- uses: ryan-sunny/dbt-assay@v0.32.0
   with:
     target: target-head
     baseline: base/target

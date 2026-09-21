@@ -88,6 +88,40 @@ summary{cursor:pointer;color:var(--dim);font-size:12.5px}
 pre{background:#f6f9fa;border:1px solid var(--line);border-radius:6px;padding:9px 11px;
 overflow:auto;font-size:11.5px;margin:6px 0;white-space:pre-wrap;word-break:break-word}
 .tot{color:var(--faint)}
+.hero{display:flex;gap:26px;flex-wrap:wrap;margin:4px 0 22px}
+.herobig{flex:1 1 300px;min-width:280px}
+.herobig .lab{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);
+font-weight:600;margin-bottom:4px}
+.heron{font-size:46px;font-weight:700;letter-spacing:-.02em;line-height:1}
+.heron.small{font-size:34px}
+.heroof{font-size:17px;color:var(--dim)}
+.tiles{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 24px}
+.tile{flex:1 1 150px;min-width:140px;border:1px solid var(--line);border-radius:8px;
+background:var(--card);padding:11px 13px}
+.tilebig{font-size:22px;font-weight:650;letter-spacing:-.01em}
+.tilebig.bad{color:var(--red)}
+.tilelab{font-size:12.5px;color:var(--ink);margin-top:1px}
+.tilenote{font-size:11.5px;color:var(--faint);margin-top:2px}
+.ovblock{margin:0 0 26px}
+.ovblock h3{margin:0 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+color:var(--faint);font-weight:600}
+.ovblock .note{margin:0 0 10px;max-width:70ch}
+.sbar{display:flex;gap:2px;height:26px;width:100%}
+.sseg{border-radius:3px;display:flex;align-items:center;overflow:hidden;min-width:2px}
+.sval{font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;padding-left:7px;
+white-space:nowrap}
+.rank{display:grid;grid-template-columns:auto minmax(80px,1fr) auto;gap:3px 10px;
+align-items:center}
+.rrow{display:contents}
+.rrow.clk{cursor:pointer}
+.rlab{font-size:12px;color:var(--ink);white-space:nowrap;text-align:right}
+.rtrack{height:13px;display:block}
+.rfill{display:block;height:13px;border-radius:3px}
+.rrow.clk:hover .rfill{opacity:.82}
+.rval{font-size:11.5px;color:var(--dim);white-space:nowrap}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--dim)}
+.lgi{display:inline-flex;gap:6px;align-items:center}
+.sw{width:11px;height:11px;border-radius:2px;display:inline-block}
 .bad{color:var(--red);font-weight:600}
 .ok{color:var(--green)}
 .low{color:var(--amber);font-weight:600}
@@ -1241,23 +1275,216 @@ function configTab(host) {
   host.replaceChildren(...bits);
 }
 
-/* --------------------------------------------------------------------------- Understood */
+/* ------------------------------------------------------------------------------ Overview
+
+   *** THE FORM COMES FROM THE DATA'S JOB, AND SOMETIMES THE ANSWER IS NOT A CHART. ***
+   The ruled-on figure is a hero number: one value, no comparison, and a bar of it would be a bar
+   of one. Grain by evidence is a composition of a known whole -> one stacked bar. Findings by
+   check is a ranking -> horizontal bars, one hue, because the bars are the same KIND of thing and
+   coloring them differently would encode rank as identity.
+
+   *** COLOR LAST, AND COMPUTED. ***
+   The page's own provenance pills (green/blue/amber) FAILED the validator as a chart palette:
+   green vs blue measure dE 14.1 for normal vision, under the 15 floor. Fine as small text beside
+   a word, genuinely hard to separate as adjacent bars. They are not reused here.
+
+   Grain is ORDINAL -- declared beats derived beats judged beats nothing -- so it is one hue,
+   dark to light, which encodes the ordering in the ink instead of asking you to learn a key.
+   Checked monotonic in OKLab lightness: .433 / .575 / .764, then a neutral for the absence.
+   Status colors are reserved, never reused as a series, and always carry their label, because
+   `warning` is sub-3:1 against this surface by design. */
+const RAMP = {declared: '#184f95', derived: '#2a78d6', judged: '#86b6ef', none: '#b8c2c6'};
+const ACT = {fail: '#d03b3b', queue: '#fab219', annotate: '#7c8b91', waived: '#b8c2c6'};
+
+/* A composition of a known whole. HTML, not SVG.
+   *** AN SVG BAR THAT FILLS ITS CONTAINER NEEDS preserveAspectRatio="none", WHICH STRETCHES THE
+   TEXT INSIDE IT. *** A stacked bar is boxes in a row; flex does that natively at any width with
+   no distortion and crisp labels, so the only reason to reach for SVG here would be habit.
+   2px gaps between segments, and a direct label only where one fits. */
+function stackedBar(parts, total) {
+  const row = el('div', {class: 'sbar'});
+  for (const p of parts) {
+    if (!p.n) continue;
+    const pct_ = (p.n / total) * 100;
+    const seg = el('div', {class: 'sseg', style: `flex:0 0 calc(${pct_}% - 2px);background:${p.color}`,
+                           title: `${p.label}: ${num(p.n)} of ${num(total)} (${Math.round(pct_)}%)`});
+    // Selective, never a number on every segment: a 1%-wide slice cannot hold one legibly.
+    if (pct_ > 7) seg.append(el('span', {class: 'sval', text: num(p.n)}));
+    row.append(seg);
+  }
+  return row;
+}
+
+/* A ranking. One hue: the bars are the same KIND of thing, so color would encode rank. */
+/* A ranking. Also HTML: the label gutter has to fit the longest NAME, and three check names are
+   over 200px at 12px monospace -- `description_contradicts_the_code` is 230px. In SVG that is a
+   number to guess and get wrong; in a grid the column measures itself. One hue, because the bars
+   are the same KIND of thing and coloring them apart would encode rank as identity. */
+function rankedBars(rows) {
+  const max = Math.max(...rows.map(r => r.n), 1);
+  const host = el('div', {class: 'rank'});
+  for (const r of rows) {
+    const line = el('div', {class: 'rrow' + (r.onclick ? ' clk' : ''),
+                            title: r.tip || `${r.label}: ${num(r.n)}`});
+    line.append(el('span', {class: 'rlab mono', text: r.label}));
+    const track = el('span', {class: 'rtrack'});
+    track.append(el('span', {class: 'rfill',
+                             style: `width:${Math.max(1.5, (r.n / max) * 100)}%;`
+                                    + `background:${r.color || '#2a78d6'}`}));
+    line.append(track);
+    line.append(el('span', {class: 'rval', text: num(r.n) + (r.note ? '  ' + r.note : '')}));
+    if (r.onclick) line.onclick = r.onclick;
+    host.append(line);
+  }
+  return host;
+}
+
+function tile(big, label, note, cls) {
+  return el('div', {class: 'tile'}, [
+    el('div', {class: 'tilebig ' + (cls || ''), text: big}),
+    el('div', {class: 'tilelab', text: label}),
+    el('div', {class: 'tilenote', text: note || ''}),
+  ]);
+}
+
+function block(title, note, node) {
+  const b = el('div', {class: 'ovblock'});
+  b.append(el('h3', {text: title}));
+  if (note) b.append(el('p', {class: 'note', text: note}));
+  if (node) b.append(node);
+  return b;
+}
+
+function goTab(name, label) {
+  const a = el('a', {class: 'lk', href: '#', text: label});
+  a.onclick = e => { e.preventDefault(); open(name); };
+  return a;
+}
+
 function understoodTab(host) {
-  /* An iframe, because the record is a whole document with its own stylesheet and this page has
-     one too. srcdoc is same-origin, so the height can follow its content instead of guessing. */
+  const M_ = DATA.models, F = DATA.findings, meta = DATA.meta;
+  const bits = [];
+
+  // ---- the hero. One number, no comparison: a bar of it would be a bar of one.
+  const ruledN = F.filter(f => f.ruled_finding).length;
+  const agentN = DATA.adjudications.filter(a => a.source === 'agent').length;
+  const humanN = DATA.adjudications.filter(a => a.source === 'human').length;
+  bits.push(el('div', {class: 'hero'}, [
+    el('div', {class: 'herobig'}, [
+      el('div', {class: 'lab', text: 'findings a person has ruled on'}),
+      el('div', {}, [el('span', {class: 'heron', text: num(ruledN)}),
+                     el('span', {class: 'heroof', text: ' of ' + num(F.length)})]),
+      el('p', {class: 'note', text: 'The only number here a release cannot improve. A sharper '
+        + 'check finds more, a fuller state raises a confidence, the DAG moves the blast radius '
+        + '-- none of that moves this, because it moves when somebody reads SQL and at no other '
+        + 'time. A good release makes it look worse. That is the design working.'}),
+    ]),
+    el('div', {class: 'herobig'}, [
+      el('div', {class: 'lab', text: 'and by whom'}),
+      el('div', {}, [el('span', {class: 'heron small', text: num(humanN)}),
+                     el('span', {class: 'heroof', text: ' human · ' + num(agentN) + ' agent'})]),
+      el('p', {class: 'note', text: 'Agent rulings are kept apart. They triage what a person '
+        + 'should read first; they gate nothing, satisfy no verdict floor, anchor no regression '
+        + 'check, and cannot move the number on the left.'}),
+    ]),
+  ]));
+
+  // ---- what assay can even see
+  const unread = meta.models - (meta.coverage || {}).readable;
+  bits.push(el('div', {class: 'tiles'}, [
+    tile(num(meta.models), 'models', num(meta.yours) + ' yours, ' + num(meta.packaged) + ' packaged'),
+    tile(num((meta.coverage || {}).readable || 0), 'assay could read',
+         unread ? num(unread) + ' it could not, and that is not a pass' : 'all of them',
+         unread ? 'bad' : ''),
+    tile(num(DATA.edges.length), 'hops in the DAG', num(meta.sources) + ' sources'),
+    tile(num(DATA.claims.length), 'claims extracted',
+         num(DATA.claims.filter(c => c.contradicted != null).length) + ' contradicted'),
+    tile(num(DATA.decisions.length), 'answers stored',
+         num(DATA.questions.length) + ' question families'),
+  ]));
+
+  // ---- grain: a composition of a known whole, ordered by evidence, so one hue dark->light
+  const g = {declared: 0, derived: 0, judged: 0, none: 0};
+  for (const m of M_) g[((m.grain || {}).source) || 'none'] = (g[((m.grain || {}).source) || 'none'] || 0) + 1;
+  const gparts = [
+    {label: 'declared by a test', n: g.declared, color: RAMP.declared},
+    {label: 'derived from the SQL', n: g.derived, color: RAMP.derived},
+    {label: 'judged', n: g.judged, color: RAMP.judged},
+    {label: 'nothing settles it', n: g.none, color: RAMP.none},
+  ];
+  const glegend = el('div', {class: 'legend'}, gparts.map(p => el('span', {class: 'lgi'}, [
+    el('span', {class: 'sw', style: 'background:' + p.color}),
+    el('span', {text: p.label + ' ' + num(p.n)})])));
+  bits.push(block('What is one row of this?',
+    'Responsibility number one, and the one every other answer rests on. Strongest evidence is '
+    + 'darkest. They are never added together: a grain a person declared and one a judgement '
+    + 'reached at 0.53 are not the same fact.',
+    el('div', {}, [stackedBar(gparts, M_.length), glegend])));
+
+  // ---- findings by check, ranked, one hue
+  const byCheck = {};
+  for (const f of F) byCheck[f.check] = (byCheck[f.check] || 0) + 1;
+  const rows = Object.entries(byCheck).sort((a, b) => b[1] - a[1]).map(([c, n]) => {
+    const mine = F.filter(f => f.check === c);
+    const read = mine.filter(f => f.ruled_finding).length;
+    return {label: c, n: n, note: read ? read + ' read' : '',
+            tip: `${c}: ${n} finding(s), ${read} read by a person, worst reach `
+                 + Math.max(...mine.map(f => f.marts)) + ' marts',
+            onclick: () => { open('findings'); }};
+  });
+  bits.push(block('What is wrong, and how much of it',
+    'Ranked by count. One hue on purpose: these are the same KIND of thing, so coloring them '
+    + 'differently would encode rank as identity. Click any bar for the findings themselves.',
+    rankedBars(rows)));
+
+  // ---- what would happen on a build. STATUS colors, always with their label.
+  const acts = {fail: 0, queue: 0, annotate: 0, waived: 0};
+  for (const f of F) if (acts[f.action] != null) acts[f.action]++;
+  const aparts = [
+    {label: 'would FAIL the build', n: acts.fail, color: ACT.fail},
+    {label: 'queued for a person', n: acts.queue, color: ACT.queue},
+    {label: 'annotated only', n: acts.annotate, color: ACT.annotate},
+    {label: 'waived, with a reason', n: acts.waived, color: ACT.waived},
+  ];
+  const alegend = el('div', {class: 'legend'}, aparts.filter(p => p.n).map(p =>
+    el('span', {class: 'lgi'}, [el('span', {class: 'sw', style: 'background:' + p.color}),
+                                el('span', {text: p.label + ' ' + num(p.n)})])));
+  bits.push(block('What this would do to a build',
+    'Your own audit.yml, applied. An empty "would fail" can also mean nothing has earned the '
+    + 'right to gate yet: a judged question cannot fail a build before people have ruled on it.',
+    el('div', {}, [stackedBar(aparts.filter(p => p.n), F.length), alegend])));
+
+  // ---- the configuration gap
+  const gap = DATA.unconfigured || [];
+  if (gap.length) {
+    const grows = gap.map(u => ({
+      label: u.check, n: (byCheck[u.check] || 0),
+      note: u.shipped ? 'assay suggests ' + u.shipped : 'severity decides',
+      color: '#b8c2c6',
+      tip: `${u.check} is firing and audit.yml does not name it`}));
+    bits.push(block(gap.length + ' check(s) fired that your audit.yml does not name',
+      'They fall back to their severity and can never fail a build -- deliberate, so a release '
+      + 'adding a gating check cannot turn a green build red. It also means nothing here is '
+      + 'tuned, and "it reported nothing" and "it is not configured" read identically from the '
+      + 'outside.', rankedBars(grows)));
+  }
+
+  // ---- how much has been counted, and how far from being able to detect drift
+  const obs = DATA.runs.length;
+  bits.push(block('The record', null, null));
   const f = el('iframe', {style: 'width:100%;border:1px solid var(--line);border-radius:8px;'
-    + 'background:#fff;height:80vh', title: 'the record'});
-  host.replaceChildren(
-    el('p', {class: 'note', text: 'The record: the one surface here with an argument to make '
-      + 'rather than a table to show. It is also what `assay page --plain` writes on its own, and '
-      + 'what `record.html` holds in the data artifact, small enough to commit and to read a diff '
-      + 'of.'}),
-    f);
+    + 'background:#fff;height:70vh', title: 'the record'});
+  bits[bits.length - 1].append(
+    el('p', {class: 'note', text: 'The same page `assay page --plain` writes on its own, and what '
+      + '`record.html` holds in the data artifact: small enough to commit and to read a diff of. '
+      + obs + ' run(s) recorded.'}), f);
   f.srcdoc = DATA.record || '';
   f.onload = () => { try {
     const h = f.contentDocument.body.scrollHeight;
     if (h > 100) f.style.height = (h + 24) + 'px';
-  } catch (e) { /* height stays at the default; nothing here depends on it */ } };
+  } catch (e) { /* the default height stands */ } };
+
+  host.replaceChildren(...bits);
 }
 
 /* ---------------------------------------------------------------------------------- tabs */

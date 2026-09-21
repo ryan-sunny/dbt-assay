@@ -2644,7 +2644,7 @@ def probe(
     # nothing can depend on it. This is what lets a bounded probe walk a project over several
     # runs, which is what the drift checks need -- they cannot say anything about a relation with
     # only one observation.
-    tg = probe_mod.order_by_staleness(tg, store)
+    tg = probe_mod.order_by_staleness(tg, store, project)
     if limit:
         tg = tg[:limit]
         console.print(f"[dim]{len(tg)} least-recently-observed of {n_all:,} candidate(s). Run it "
