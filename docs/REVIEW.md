@@ -368,3 +368,55 @@ parser is not.
 - `practices` prints `holds: 0 rows, 0 distinct` where `patch` refuses the same table as `EMPTY`.
 - Lockfile detection looks beside `dbt_project.yml`; the lockfile is at the repo root one level up.
 - `--dbt-bin` versus `--dbt` across commands, and it flipped between 0.9.4 and 0.13.0.
+
+---
+
+# Round five, 0.17.1: the judged stream reaches MCP, and `review_queue` hides 122 items silently
+
+## Verified
+
+```
+findings()                    showing: "20 of 142", all seven families in the breakdown
+findings(check=...)           reads one family end to end
+violations()                  74 annotated, and the note names the human-verdict gate
+review_queue(limit=200)       142 items, all seven families, 142 of 142 carrying a reading
+hop_multiplies_rows           30 here too, against 58 in my stored run -- 0.15.0's unique-key
+                              counting cut it on this warehouse as well
+```
+
+The single-path fix is right and the guard that compares both surfaces is the right guard. A
+source-level check would not have caught two call sites computing one fact.
+
+## `review_queue()` is the same reporting gap `findings()` just closed
+
+Default `limit=20` returns 20 items across three families and says nothing about the rest:
+
+```
+default    20 items   description_contradicts_the_code, arbitrary_pick, test_cannot_fail
+limit=200  142 items  + hop_multiplies_rows 30, join_fans_out 3, bbox_as_radius 2,
+                        ranks_by_degrees 2
+```
+
+Response keys are `waiting_for_a_person`, `already_ruled_by_a_person`, `note`,
+`pass_the_finding_id_back` — **no `showing`, no total, no breakdown.** I concluded from a default
+call that `hop_multiplies_rows` was excluded from the queue entirely, wrote that up as a bug, and it
+was four families sitting below the cut.
+
+`findings()` fixed exactly this in the same release by adding `showing: "20 of 142"` and
+`every_check_in_this_project`. The queue is the surface an agent uses to decide **what to read
+next**, so a silent truncation there chooses its reading order for it.
+
+> **Fix:** the same two fields. `showing: "20 of 142"` and the per-check breakdown.
+
+## One smaller thing
+
+`findings()` carries no reading — `an_agent_already_said` exists only on `review_queue()` items. That
+is defensible as a division of labour, but an agent that calls `findings(check='hop_multiplies_rows')`
+to read a family end to end gets 30 findings with no indication that 9 of the 11 models already
+have a reading recorded. It re-reads what it already read.
+
+## Still open from earlier rounds
+
+- `practices` prints `holds: 0 rows, 0 distinct` where `patch` refuses the same table as `EMPTY`.
+- Lockfile detection looks beside `dbt_project.yml`; the lockfile is at the repo root one level up.
+- `--dbt-bin` versus `--dbt` across commands, and it flipped between 0.9.4 and 0.13.0.
