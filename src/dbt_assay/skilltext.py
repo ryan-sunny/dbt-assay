@@ -308,6 +308,43 @@ fine", not a batch they waved through without seeing. If they say "just do the o
 which ones they mean and show them first. A verdict they did not give is worse than no verdict,
 because it gates a build and it carries their name.
 
+## Two modes, and the count decides which
+
+**More than about ten to get through: emit the form.** One turn per finding is one turn per
+finding, and a backlog of 159 is 159 turns that nobody will sit through. The reading batches; the
+answering does not have to happen in a conversation at all.
+
+```bash
+assay review --emit review.html --target <target/> --store assay.duckdb
+```
+
+One self-contained file, opened from `file://`, no server and nothing left running. Twenty cards at
+a time, highest blast radius first, answers kept in the browser so the tab can be closed. The
+download button writes `verdicts.json`, and:
+
+```bash
+assay review --load verdicts.json --store assay.duckdb
+```
+
+records every verdict at once. A card nobody answered is never submitted and never recorded, and
+`--load` names each row it did not record rather than reporting a total that hides them.
+
+**The expensive half is yours, and it is what makes each card cheap.** Read the SQL for every
+finding once, offline, and write what you found into a file keyed by `<subject>::<check>`, with a
+`verdict` and a `why` for each. Then:
+
+```bash
+assay review --emit review.html --reads reads.json --target <target/>
+```
+
+ships the form with MY READ already filled. That is a long job and a background one, and it is the
+difference between a form somebody answers and a form somebody closes. The emit line says how many
+cards already carry a reading and how many are a cold start, so you know the size of the job before
+you start it.
+
+**A handful, or they want to talk through them: the loop below.** It is the right shape for a
+call. It is the wrong shape for a project.
+
 ## The loop
 
 ### 1. Pull the queue, ranked
@@ -319,6 +356,10 @@ assay check --target <target/> --store assay.duckdb
 Then read the findings from the store, newest run, ordered by `marts desc`. Skip any `(subject,
 question)` pair that already has a `human` verdict — a verdict covers the model and question, not
 the single finding, so one ruling clears every finding of that check on that model.
+
+**The pair, and only the pair.** A verdict on one check of a model says nothing about its other
+checks, and treating it as if it did drops questions nobody answered out of the list whose job
+is showing what nobody has answered. Both the queue and the form had that bug.
 
 ### 2. Present ONE finding, with the reading already done
 

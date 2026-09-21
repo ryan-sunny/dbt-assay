@@ -340,3 +340,45 @@ def test_the_shipped_skills_are_still_shaped_like_documents():
             f"{name} has bullets folded into a paragraph"
         over = [ln for ln in lines if len(ln) > 100 and "```" not in ln]
         assert not over, f"{name} has lines past 100 columns: {[len(x) for x in over]}"
+
+
+def test_every_check_the_code_ships_is_named_in_the_docs():
+    """*** THE FAMILY GUARD EXISTED; THE CHECK GUARD DID NOT. ***
+
+    `test_every_question_family_is_named_in_the_docs` covers the judged banks. Nothing covered
+    `known_checks()`, so five of twenty-eight checks were in no user-facing document at all --
+    `join_fans_out`, `key_column_stopped_mattering`, `key_started_holding`, `narrow_read` and
+    `test_outruns_its_source`. Four of those were drift nobody had noticed.
+
+    A check with no documentation is a finding somebody reads, searches for, and cannot look up.
+    From the outside that is indistinguishable from the tool inventing a category.
+    """
+    from dbt_assay.config import known_checks
+    docs = _docs()
+    if docs is None:
+        pytest.skip("no docs in a wheel install")
+    docs += (ROOT / "docs" / "PRODUCT.md").read_text()
+    ks = known_checks()
+    assert len(ks) > 20, "the check reader found almost nothing; it is broken"
+    missing = sorted(c for c in ks if c not in docs)
+    assert not missing, missing
+
+
+def test_the_mcp_tool_count_in_the_docs_is_the_real_one():
+    """A number written by hand beside a list that grows is a number that goes stale.
+
+    It said fourteen the day a fifteenth was added, in the same commit that added it.
+    """
+    import re
+
+    from dbt_assay.mcp_server import TOOLS
+    docs = _docs()
+    if docs is None:
+        pytest.skip("no docs in a wheel install")
+    words = {14: "Fourteen", 15: "Fifteen", 16: "Sixteen", 17: "Seventeen", 18: "Eighteen",
+             19: "Nineteen", 20: "Twenty"}
+    said = re.search(r"\b(Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty) tools\b",
+                     docs)
+    assert said, "the tool count sentence is gone; keep it or drop this test deliberately"
+    assert said.group(1) == words.get(len(TOOLS)), \
+        f"docs say {said.group(1)} tools, the code ships {len(TOOLS)}"

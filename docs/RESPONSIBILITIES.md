@@ -13,7 +13,7 @@ implies it covers all nine.
 |---|---|---|---|
 | 1 | **Grain** | "what is one row of this?" | **covered** — `contract`, `infer`, `column_is_part_of_the_key` |
 | 2 | **Docs versus code** | "does it do what it says?" | **covered** — `claims`, `verify`, `description_contradicts_the_code` |
-| 3 | **Do the guards guard?** | "these tests pass, does that mean anything?" | **covered** — `test_cannot_fail`, waivers-with-reasons, `min_adjudications` |
+| 3 | **Do the guards guard?** | "these tests pass, does that mean anything?" | **covered** — `test_cannot_fail` and its mirror `test_outruns_its_source`, waivers-with-reasons, `min_adjudications` |
 | 4 | **Provenance** | "where did this number come from?" | **covered** — `trace`, `lineage` |
 | 5 | **Blast radius** | "what breaks if I change this?" | **covered** — `blast_radius`, `changed_contracts`, `must_stay_true` |
 | 6 | **Completeness** | "do we have all of it?" | **NOT COVERED — the gap** |

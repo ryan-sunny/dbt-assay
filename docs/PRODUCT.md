@@ -105,6 +105,17 @@ No API key, no network, no spend. `assay check`.
 | `bbox_as_radius` | a bounding box standing in for a radius |
 | `duckdb_full_match` | `~` is a full-string match in DuckDB, not a partial one |
 | `variant_column` | dlt's `__v_double` split, where one column silently became two |
+| `test_outruns_its_source` | a test asserting something the column has no right to promise: a `not_null` on a column carried from a LEFT-joined parent, padded with `CAST(NULL AS ...)` in a UNION arm, or produced by a NULL-preserving aggregate. `count()` over a group is 0; `min()` over an all-NULL group is NULL |
+| `narrow_read` | a model reading far fewer columns of a parent than it could, where the ones it skips carry the meaning |
+| `join_fans_out` | a join whose key is not unique on the far side, so one row becomes several |
+| `key_started_holding` | a column that now holds unique where it did not before. Nothing is wrong today; it is the moment to declare the key, before something depends on an accident |
+| `key_column_stopped_mattering` | the mirror: a key that held last week and does not now. Invisible to every check that describes the present, and the failure that corrupts a warehouse |
+
+`test_outruns_its_source` is the mirror of `test_cannot_fail`. That family answers "here is
+something nothing asserts"; this one answers "here is something asserted that was never true
+upstream", and it is the one a real outage produced: a `not_null` that passed for months and then
+failed on **one row of 49,034**, where the obvious repair was to delete the row — fixing the data to
+protect an assertion the data never supported.
 
 Alongside those, `assay check` reports **unevaluable tests** separately: tests dbt counts as
 passing that could never have run at all. They are not a finding about a model, so they are not in

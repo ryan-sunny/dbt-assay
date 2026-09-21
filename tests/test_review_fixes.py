@@ -208,6 +208,11 @@ def test_a_relayed_ruling_names_the_person_and_is_still_an_agent_ruling():
         def adjudicate(self, *a, **k):
             wrote.update(k)
 
+        def ruled_pairs(self):
+            # What a verdict actually COVERS. The queue used to skip on the subject, which hid
+            # every other check on a model somebody had ruled one check of.
+            return set()
+
         def ruled_subjects(self):
             return set()
 
@@ -237,12 +242,21 @@ def test_the_review_queue_puts_read_findings_first_and_hides_nothing():
           SimpleNamespace(check="b", subject="model.p.read", subject_name="read", file="r.sql",
                           summary="s", marts=1, id="idread"),
           SimpleNamespace(check="c", subject="model.p.done", subject_name="done", file="d.sql",
-                          summary="s", marts=99, id="iddone")]
+                          summary="s", marts=99, id="iddone"),
+          # *** A SECOND CHECK ON THE MODEL SOMEBODY RULED ONE CHECK OF. ***
+          # A verdict covers (subject, question). Skipping on the subject dropped this one from
+          # the queue whose entire job is showing what is still waiting -- silently, by omission.
+          SimpleNamespace(check="other", subject="model.p.done", subject_name="done",
+                          file="d.sql", summary="s", marts=99, id="idother")]
 
     class _Store:
         @staticmethod
         def ruled_subjects():
             return {"model.p.done"}
+
+        @staticmethod
+        def ruled_pairs():
+            return {("model.p.done", "c")}
 
         @staticmethod
         def agent_rulings():
@@ -264,11 +278,17 @@ def test_the_review_queue_puts_read_findings_first_and_hides_nothing():
     finally:
         live.findings_for = real
     names = [r["model"] for r in got["waiting_for_a_person"]]
-    assert "done" not in names, "a person already ruled on it"
     assert names[0] == "read", "a finding an agent has read is one keypress; it goes first"
     assert got["waiting_for_a_person"][0]["an_agent_already_said"]["because"] == "a union"
     assert got["already_ruled_by_a_person"] == 1
 
+    # *** THIS ASSERTION USED TO READ `"done" not in names`, AND THAT WAS THE BUG. ***
+    # It encoded skipping on the SUBJECT, so the test held the over-skip in place: a model with
+    # one check ruled dropped out of the queue entirely, taking its unanswered checks with it.
+    keys = {(r["model"], r["check"]) for r in got["waiting_for_a_person"]}
+    assert ("done", "c") not in keys, "a pair somebody ruled came back"
+    assert ("done", "other") in keys, \
+        "a DIFFERENT check on that model vanished, unanswered, from the waiting list"
 
 def test_an_empty_table_reads_the_same_way_in_both_commands():
     """*** `practices` PRINTED `holds: 0 rows, 0 distinct` FOR THE TABLE `patch` REFUSES. ***
@@ -429,6 +449,11 @@ def test_a_structural_ruling_carries_assay_s_own_version():
 
         def adjudicate(self, *a, **k):
             wrote.update(k)
+
+        def ruled_pairs(self):
+            # What a verdict actually COVERS. The queue used to skip on the subject, which hid
+            # every other check on a model somebody had ruled one check of.
+            return set()
 
         def ruled_subjects(self):
             return set()

@@ -524,6 +524,24 @@ class Store:
         return [dict(zip(cols, r, strict=True))
                 for r in self.con.execute(q + " order by decided_at desc", args).fetchall()]
 
+    def ruled_pairs(self) -> set:
+        """Every `(subject, question)` a PERSON has ruled on. What a verdict actually covers.
+
+        *** `ruled_subjects` IS THE SUBJECT, AND TWO CALLERS USED IT TO MEAN THE PAIR. ***
+        A verdict is recorded against a subject AND a question, and one answer clears every
+        finding of that check on that model -- not every finding on that model. Skipping on the
+        subject therefore hid checks nobody had answered, by omission, from the review queue and
+        the review form, which are the two surfaces whose entire job is showing what is still
+        unanswered. Measured: four verdicts removed six of 212 cards.
+
+        Both callers wanted this. Neither had it, so both wrote the subject-level one and got a
+        quiet over-skip -- so it lives here once rather than as a query in each.
+        """
+        self.con.execute(DDL)
+        return {(str(a), str(b)) for a, b in self.con.execute(
+            "select distinct subject, question from adjudications "
+            "where source = 'human'").fetchall()}
+
     def ruled_subjects(self) -> set[str]:
         """Every subject a PERSON has ruled on, however they ruled.
 

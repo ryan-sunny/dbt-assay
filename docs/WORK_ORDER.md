@@ -277,14 +277,18 @@ before any of it shipped; this records what did, and then the one thing it expos
 |---|---|
 | 1. Make confidence answerable | **shipped** (0.29.0) as `assay calibration`. The premise above was wrong and is left standing as written: `column_is_part_of_the_key` is a `noul`, whose answer IS the probability, so banding it by `confidence` finds nulls and concludes "unanswerable". Banding by the answer works. Left uncorrected because a work order that quietly edits its own bad reasoning teaches nothing |
 | 2. Ship a dbt package | **shipped as queries, not models** (0.29.0). Three examples over the previously unread tables |
-| 3. The over-assertion check | open |
+| 3. The over-assertion check | **shipped** (0.33.0) as `test_outruns_its_source`. Structural only; counts stay behind `--verify`. Two earlier versions were rejected from their own numbers: firing on "the parent does not declare `not_null`" caught 148 of 227 carried-column tests, and narrowing to the join/UNION cases found zero — correctly, because the field case had moved into `min()` over a grouped CTE after the model was rewritten to an INNER join. **7 of 646** `not_null` tests, the outage among them |
 | 4. Read `run_results.json` | **shipped** (0.29.0) as `assay tests --run-results`. Verified against the real artifacts of a production outage: it named the capped count, the 108 skipped nodes, and "398 of 1,282 tests executed, covering 105 of 326 models" |
 | 5. Probe and the MCP line | **decided** (0.31.0). No ad-hoc query tool, recorded as rejected. Probe walks least-recently-observed, reach-ranked, deterministic. Cross-process read-only is blocked too, so the DuckDB lock is guidance, not tool shape |
 | 6. Write surface | **documented**. One schema; no roles exist on DuckDB |
-| 7. Retention | open |
+| 7. Retention | **shipped** (0.33.0) as `assay prune`. Explicit, never automatic. `PRUNABLE` and `NEVER_PRUNED` are declared rather than inferred, so a new table belongs to one list or the other and a test fails until it does. 3,563 findings to 730, every paid table byte-identical |
+| 8. `assay suggest` | **shipped** (0.33.0), amended in 0.33.1. Seven rules, 69 candidates on this warehouse; it reproduced both figures §8 derived by hand (`section_id` 65 hops / 24 models, `xmin`/`xmax` 14 / 9). Four refusals, each because the first attempt did the thing and was wrong — see 0.33.1 in FIELD_NOTES for the one that ranked repaired clusters above live ones |
 
 Also shipped and not in part one: `seed_reaches_nothing`, the `observed_keys` timestamped series and
-its two drift checks, the unconfigured-checks panel, and the Overview.
+its two drift checks, the unconfigured-checks panel, the Overview, stored decision states with
+`assay evidence`, and the offline review form (`assay review --emit` / `--load`) — which is the
+answer to a thing this order did not raise: one turn per finding is 159 turns, and the number of
+findings ruled on by a person had not moved off **0 of 159**.
 
 ---
 

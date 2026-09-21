@@ -398,12 +398,16 @@ class Backend:
         st = self.state()
         fs = live.findings_for(st, None)
         store, why = self._store_or_why()
+        ruled_pairs: set = set()
         ruled: set = set()
         mine: dict = {}
         orphans: list = []
         if store is not None:
             try:
                 ruled = store.ruled_subjects()
+                # Read INSIDE the try: the `finally` below closes this connection, and a read
+                # after it raises `Connection already closed`.
+                ruled_pairs = store.ruled_pairs()
                 known = set(self.state().project.models)
                 for r in store.agent_rulings():
                     key = str(r["subject"])
@@ -419,9 +423,15 @@ class Backend:
                         orphans.append(key)
             finally:
                 store.close()
+        # *** A VERDICT COVERS (SUBJECT, QUESTION), AND THIS SKIPPED ON THE SUBJECT. ***
+        # Ruling one check on a model dropped every other check on it from the queue that exists
+        # to show what is still waiting -- silently, by omission, which is the shape this project
+        # reports in other people's warehouses. Found while building the review form, where the
+        # identical line made four verdicts remove six cards.
         rows = []
         for f in fs:
-            if f.subject in ruled or f"{f.subject}::finding::{f.id}" in ruled:
+            if (str(f.subject), str(f.check)) in ruled_pairs \
+                    or f"{f.subject}::finding::{f.id}" in ruled:
                 continue
             a = mine.get(f.id) or mine.get(str(f.subject).split("::")[0])
             rows.append({"finding": f.id,

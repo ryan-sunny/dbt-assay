@@ -25,12 +25,32 @@ Verified on a 357-model Colorado water-rights warehouse and two public dbt repos
 | `units_are_what_the_column_claims` | **8 real column names, after a rewrite** | 8/8 at confidence **1.00**. It failed first — see below |
 | `row_explanation` | **a finding read in the field** | called wells `genuinely_wrong` at 0.50–0.70 on a **290-foot well with a water level of 26,018 feet**. The `accepted_range` test that surfaced them catches 12 rows; the real invariant `water_level_ft <= well_depth_ft` holds on **708**. It found a data defect *and* an inadequate test, from a sample of six rows |
 | `test_cannot_fail` | findings read on two public repos | found `'BA' as sigla_uf` carrying a `not_null` test in `basedosdados` |
+| `test_outruns_its_source` | **the finding read against the data it is about** | `int_water_well_parcel.parcel_id` is `min(parcel_id)` over a grouped CTE. Parent: **5,876 null of 2,732,101**. Child: **0 of 48,648**. The test passes today and is one all-NULL group from not passing — which is what the outage was, one row of 49,034 after months of green |
 
 ### Where `same_concept` is ambiguous rather than wrong
 
 It read `land_acres ~ land_sqft` as **1.9 (same)**. Defensible — they *are* the same concept — but
 "same concept" and "safe to equate numerically" are different questions, and only the first is
 being asked. Do not use this family to authorize a join.
+
+### What `test_outruns_its_source` does NOT claim
+
+It says the column **can** be NULL by construction, from the AST. It does not say the parent
+contains nulls today — that is a count, and counts arrive with `--verify` like every other counted
+check here, absent rather than guessed.
+
+Two versions of it were rejected before this one, and both failures are the measurement:
+
+- firing when the parent merely did not declare `not_null` on the column caught **148 of 227**
+  carried-column tests (65%), because not declaring `not_null` on every parent column is ordinary
+  practice rather than a defect. A check that fires on the normal case is how a list of exceptions
+  becomes a list;
+- narrowed to the two join/UNION cases it found **zero**, and zero was correct: every carried
+  `not_null` column in a LEFT-joined model on that warehouse is carried from the *driving* table,
+  which a LEFT join does not make nullable. The field case had moved into an aggregate.
+
+Telling the aggregates apart is the whole check: **7 findings, not 23**, because 16 of the 23
+aggregated `not_null` tests are `count()`, which is 0 and never NULL.
 
 ---
 

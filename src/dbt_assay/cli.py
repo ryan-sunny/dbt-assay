@@ -3164,6 +3164,13 @@ def review(
     correction: str = typer.Option("", "--correction", help="what it should have been"),
     note: str = typer.Option("", "--note"),
     who: str = typer.Option("", "--by"),
+    config_path: str = typer.Option(".", "--config", help="where audit.yml lives, for --emit"),
+    emit: str = typer.Option(None, "--emit",
+                             help="write a form to this .html and record nothing. Needs --target"),
+    load: str = typer.Option(None, "--load", help="a verdicts.json the form handed back"),
+    reads: str = typer.Option(None, "--reads",
+                              help="a JSON of {'<subject>::<check>': {verdict, why}} to "
+                                   "pre-fill MY READ on the emitted form"),
     repair: bool = typer.Option(False, "--repair",
                                 help="re-point rulings written under a bare model name at the "
                                      "unique_id, so they join to findings again. Needs --target."),
@@ -3175,6 +3182,19 @@ def review(
     this and still gate on anything honestly.
     """
     store = Store(store_path)
+
+    # *** ONE TURN PER FINDING IS 159 TURNS, AND NOBODY DOES 159 TURNS. ***
+    # The interactive loop is the right shape for a call and the wrong shape for a project. The
+    # reading batches; the answering does not have to happen in a conversation at all.
+    if emit:
+        _emit_review_form(store, emit, target, config_path, store_path, dialect, reads)
+        store.close()
+        raise typer.Exit(0)
+    if load:
+        _load_verdicts(store, load, who)
+        store.close()
+        raise typer.Exit(0)
+
     if repair:
         _repair_subjects(store, target, dialect)
         store.close()
@@ -3195,13 +3215,7 @@ def review(
             "select answer, prompt_version, model_version from model_decisions "
             "where decision_key = ? and question = ? order by decided_at desc limit 1",
             [subject, question]).fetchone()
-        fam = question.split("__")[0]
-        fam = {"role": "column_role", "null": "null_meaning",
-               "key": "column_is_part_of_the_key"}.get(fam, fam)
-        store.adjudicate(subject, question, fam, row[0] if row else "",
-                         verdict, correction, note, who,
-                         prompt_version=(row[1] if row else f"assay.{_pkg_version()}"),
-                         model_version=row[2] if row else "")
+        fam = _record_one_verdict(store, subject, question, verdict, correction, note, who, row)
         _warn_orphan_family(fam, question)
         acc = store.accuracy(fam)
         console.print(f"recorded. [bold]{fam}[/] now has {acc['n']} verdicts, "
@@ -3229,6 +3243,103 @@ def review(
         console.print(f"  [dim]{about or key.split('.')[-1]}[/]  {q} = [bold]{ans}[/]{cf}")
     console.print("\n[dim]assay review --subject <key> --question <q> --verdict agree|disagree[/]")
     store.close()
+
+
+def _emit_review_form(store, out: str, target: str, config_path: str, store_path: str,
+                      dialect: str, reads_path: str | None) -> None:
+    """Write the form. It records nothing -- that is the point of it being a file."""
+    from . import reviewform
+    if not target:
+        console.print("[yellow]--emit needs --target[/] [dim]-- the form carries each model's "
+                      "own SQL, and that comes from the project, not the store.[/]")
+        raise typer.Exit(2)
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
+    cfg = Config.load(config_path)
+    entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store))
+    findings = live_mod.all_findings(project, digests, schema, entries, store,
+                                     cfg.row_loss_threshold)
+    reads = {}
+    if reads_path:
+        reads = _json.loads(Path(reads_path).read_text())
+
+    cards, sql = reviewform.cards(findings, store, Path(tdir).parent, reads)
+    if not cards:
+        console.print("[green]nothing to rule on.[/] [dim]Either there are no findings, or every "
+                      "(model, check) pair already has a human verdict. Those are different "
+                      "things: `assay check` says which.[/]")
+        return
+    p = Path(out)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(reviewform.form_html(
+        cards, sql, project.project_name or "this project",
+        project.raw.get("metadata", {}).get("generated_at", ""), _pkg_version()))
+
+    n_read = sum(1 for c in cards if c.get("read") or c.get("agent"))
+    console.print(f"wrote [bold]{p}[/] [dim]({len(cards)} card(s) from {len(findings)} finding(s); "
+                  f"a verdict covers a (model, check) pair, so one answer clears every finding of "
+                  f"that check on that model)[/]")
+    console.print(f"   [dim]{n_read} carry a reading already; {len(cards) - n_read} are a cold "
+                  f"start.[/]")
+    if len(cards) - n_read:
+        console.print("   [dim]`--reads <json>` pre-fills MY READ, which is what makes each card "
+                      "cheap to answer. An agent writes that file once, offline.[/]")
+    console.print(f"   [dim]Open it, answer what you can, download verdicts.json, then "
+                  f"`assay review --load verdicts.json --store {store_path}`.[/]")
+
+
+def _load_verdicts(store, path: str, who: str) -> None:
+    """Record every verdict the form handed back, and nothing it did not."""
+    from . import reviewform
+    payload = _json.loads(Path(path).read_text())
+    rows, bad = reviewform.load(payload)
+    # The person who filled the form named themselves in it; `--by` overrides. Neither is
+    # verified, and the skill says so -- `source='human'` is set by this code path, not by
+    # anything about who ran it.
+    by = who or (payload.get("by") if isinstance(payload, dict) else "") or "unknown"
+    fams = Counter()
+    for r in rows:
+        fams[_record_one_verdict(store, r["subject"], r["question"], r["verdict"],
+                                 r["correction"], r["note"], by)] += 1
+    console.print(f"recorded [bold]{len(rows)}[/] verdict(s) as `{by}`.")
+    for fam, n in sorted(fams.items()):
+        a = store.accuracy(fam)
+        console.print(f"   [bold]{fam}[/] {n} new, now {a['n']} total, {a['agree']} agreeing")
+    if bad:
+        # *** A ROW THAT WAS NOT RECORDED IS NAMED. *** Silently dropping the unanswered ones
+        # makes "recorded 40" indistinguishable from "you answered 40 of 212".
+        console.print(f"\n[yellow]{len(bad)} row(s) recorded nothing:[/]")
+        for b in bad[:8]:
+            console.print(f"   [dim]{b}[/]")
+        if len(bad) > 8:
+            console.print(f"   [dim]...and {len(bad) - 8} more[/]")
+        console.print("[dim]A card with no verdict is one somebody scrolled past. `human` means "
+                      "a person answered it, so nothing here is defaulted.[/]")
+
+
+def _record_one_verdict(store, subject: str, question: str, verdict: str, correction: str,
+                        note: str, who: str, row=None) -> str:
+    """Write ONE human verdict, and return the family it landed in.
+
+    *** `--verdict` AND `--load` MUST NOT BE TWO SPELLINGS OF THIS. ***
+    A verdict is filed under the FAMILY a question prefix names, and that mapping has already
+    drifted twice in this file. A second copy of it -- written so a form could post a hundred
+    verdicts at once -- would drift a third time, and the failure is silent: the rows land under
+    a family that does not exist, count toward nothing, and appear in no report.
+    """
+    if row is None:
+        row = store.con.execute(
+            "select answer, prompt_version, model_version from model_decisions "
+            "where decision_key = ? and question = ? order by decided_at desc limit 1",
+            [subject, question]).fetchone()
+    fam = question.split("__")[0]
+    fam = {"role": "column_role", "null": "null_meaning",
+           "key": "column_is_part_of_the_key"}.get(fam, fam)
+    store.adjudicate(subject, question, fam, row[0] if row else "",
+                     verdict, correction, note, who,
+                     prompt_version=(row[1] if row else f"assay.{_pkg_version()}"),
+                     model_version=row[2] if row else "")
+    return fam
 
 
 @app.command()

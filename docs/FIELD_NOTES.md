@@ -2983,3 +2983,86 @@ single run-on paragraph with the dashes inline. Valid markdown, loads fine, and 
 specific way that makes an agent skip the rules it is there to follow. Nothing structural was
 checked because the file had only ever been eyeballed. A guard now asserts frontmatter, balanced
 fences, bullets that are still bullets, and the column limit -- on both procedures.
+
+## 0.34.0: one turn per finding is 159 turns
+
+The interactive review skill shipped in 0.33.2 and the pace killed it on contact. Walking findings
+one at a time, with the SQL read first, is genuinely the right shape for a CALL. It is the wrong
+shape for a project: 159 models with findings is 159 turns, and nobody sits through 159 turns.
+
+So the reading batches and the answering leaves the conversation altogether. `assay review --emit`
+writes one self-contained file -- `file://`, no server, no port, nothing left running -- with
+twenty cards at a time, highest blast radius first. Each card carries what assay found, the claim
+it quotes, the model's own SQL with line numbers, and any reading an agent already recorded.
+Answers live in the browser as you go, so the tab can be closed and reopened. The download button
+writes `verdicts.json`, and `assay review --load` records the lot.
+
+The round trip is `probe --emit` / `--load`, which this project already had, for the same reason
+one layer over: assay never holds a credential, and it never holds a verdict it was not given.
+
+**One card per (model, check), because that is what a verdict covers.** 260 findings are 212 cards
+on the field warehouse. Cards per finding would have asked 48 of them twice and kept both answers.
+
+### The bug that would have hidden the questions it exists to show
+
+Four verdicts turned 212 cards into **206**, not 208. Two cards disappeared that nobody had
+answered.
+
+`store.ruled_subjects()` is subject-level -- it is the number that measures whether a warehouse is
+being understood, and it is right for that. Using it to decide what to ASK is not: ruling
+`code_contradicts_a_claim` on a model marked the whole model ruled, so every other check on it
+vanished from the form. Silently, by removal, from the surface whose entire job is showing what
+nobody has answered.
+
+The same line was in `review_queue`, where the form's version had been copied from -- and the test
+covering it asserted `"done" not in names`, which is the buggy behaviour written down as the
+expectation. The test was holding it in place.
+
+Both callers wanted `(subject, question)` and neither had it, so both reached for the subject-level
+one. `Store.ruled_pairs()` exists now and both use it.
+
+### A seed's "code" is its data, and one of them was 4.9 MB
+
+`seed_reaches_nothing` fires on seeds, whose `file` is a `.csv`. Read whole, two of them made the
+form **7.8 MB for 212 cards** -- 91% of the page was rows nobody would scroll. Capped at twenty
+rows, and the cap is stated in the panel: a file that ends early without saying so looks exactly
+like a file that is really that short, and that is the defect this project reports in other
+people's warehouses. 7.8 MB to 1.1 MB.
+
+### And the detail was carried and never drawn
+
+Each card had the finding's `detail` in its data and rendered only the summary, so half of them
+asked for a verdict on a headline: "the description claims something the code does not do" is a
+category, not a case. Caught by opening the page and reading a card, which is the only way that
+class of defect is ever caught.
+
+### What the label still does not prove
+
+Unchanged and worth repeating where the form makes it easier to write a hundred verdicts at once:
+`source = 'human'` is set by the code path, not by who ran it. The form asks for a name, `--load`
+takes `--by`, and neither is verified. What the form does guarantee is narrower and is the part
+that matters: **a card nobody answered is never submitted and never recorded**, and `--load` names
+every row it did not record rather than printing a total that hides them.
+
+### The docs sweep, which found four things that were not this release's
+
+Checking every document against the code before pushing turned up drift older than anything in
+0.33 or 0.34.
+
+**Five of twenty-eight checks were named in no user-facing document at all** — `join_fans_out`,
+`key_column_stopped_mattering`, `key_started_holding`, `narrow_read` and the new
+`test_outruns_its_source`. Four of those were pre-existing. A check with no documentation is a
+finding somebody reads, searches for, and cannot look up, which from the outside is
+indistinguishable from the tool inventing a category.
+
+The reason it was possible: `test_every_question_family_is_named_in_the_docs` covers the judged
+banks and nothing covered `known_checks()`. The guard existed for one of the two lists. There is
+now one for the other.
+
+**And a hand-written count beside a growing list.** The MCP section said "fourteen tools" in the
+same commit that made it fifteen. Guarded now, by reading `len(TOOLS)`.
+
+README carried almost none of 0.33–0.34: not `suggest`, not `prune`, not `evidence`, not the review
+form, not the second skill, not the new check. OVERVIEW had them because it was edited alongside
+the work; the front door was not. Both are current, and both guards run in the suite rather than
+depending on somebody remembering to look.

@@ -280,6 +280,37 @@ assay feeds               # has a source column changed its meaning? (needs the 
 assay adjudicate          # triage the rows a dbt test already failed
 ```
 
+**Turning findings into verdicts, without a turn each**
+
+```bash
+assay review --emit review.html -t target/   # the form, with everything in it
+assay review --load verdicts.json            # every verdict at once
+```
+
+The one number a release cannot move is findings a person has ruled on, and on the warehouse this
+was built against it sat at **0 of 159** for months. Not for want of `assay review -i`, which has
+shipped for most of this project's life. Ruling meant leaving the conversation you were already in,
+and one turn per finding is 159 turns.
+
+So the reading batches and the answering leaves the conversation. `--emit` writes one self-contained
+file that opens from `file://` with no server and nothing running: twenty cards at a time, highest
+blast radius first, each carrying what assay found, the claim it quotes, the model's own SQL with
+line numbers, and any reading an agent already recorded. Answers are kept in the browser as you go,
+so the tab can be closed. The download button writes `verdicts.json` and `--load` records the lot.
+
+The round trip is `probe --emit` / `--load`, which this project already has, for the same reason one
+layer over: assay never holds a credential, and it never holds a verdict it was not given. **A card
+nobody answered is never submitted and never recorded**, and `--load` names every row it did not
+record rather than printing a total that hides them.
+
+**One card per (model, check), because that is what a verdict covers.** 260 findings are 212 cards
+here. Cards per finding would have asked 48 of them twice and kept both answers.
+
+`--reads <json>` pre-fills the agent's own read, keyed by `<subject>::<check>`. Reading the SQL for
+every finding is the expensive half and it is what makes each card cheap to answer; done once,
+offline, it turns a form somebody closes into a form somebody answers. The emit line says how many
+cards already carry a reading and how many are a cold start.
+
 **Settling things by counting, through your own dbt**
 
 ```bash
@@ -735,7 +766,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.33.2
+- uses: ryan-sunny/dbt-assay@v0.34.0
   with:
     target: target-head
     baseline: base/target
@@ -810,6 +841,17 @@ The MCP server gives an agent the **ability** to check itself: it can ask what a
 a column is, what the grain is, and what would break before it writes a line. The skill file gives
 it the **obligation** — without it an agent checks when it remembers, and with it, checking is the
 procedure.
+
+Fifteen tools. Most report; three do something else:
+
+| tool | what it is for |
+|---|---|
+| `guide(topic)` | how to SET assay up — vocabulary, questions, waivers, policy. Read before writing anything into someone's `audit.yml` |
+| `suggestions(section)` | **what to put in their `audit.yml`**, derived from what the checks found, each row carrying its measurement. Every `means:` and `implies:` comes back empty and must stay empty |
+| `evidence(question, subject)` | the exact **state** a judged answer was computed from. Call it before disagreeing with one: if the answer is wrong and the state is wrong, what gets sent needs fixing; if the state is right, the question does |
+
+Each has a CLI equivalent, because a skill with no MCP connection is still a procedure:
+`assay guide`, `assay suggest`, `assay evidence`. The skill file carries the mapping.
 
 ### What a finding hands the agent
 

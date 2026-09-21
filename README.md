@@ -127,7 +127,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.33.2
+- uses: ryan-sunny/dbt-assay@v0.34.0
   with:
     target: target-head
     baseline: base/target
@@ -162,6 +162,32 @@ already given at 0.99 teaches almost nothing and one on a 0.45 is where the ques
 being decided.
 
 The evidence is on screen because a verdict nobody can reach in five seconds does not get given.
+
+### ...or all of them, away from the terminal
+
+One keypress each is still one turn each, and a backlog of 159 is 159 turns nobody sits through.
+On the warehouse this was built against, findings ruled on by a person sat at **0 of 159** for
+months — not for want of the loop above, which has shipped for most of this project's life.
+
+```bash
+assay review --emit review.html -t target/   # the form, with everything already in it
+assay review --load verdicts.json            # every verdict at once
+```
+
+One self-contained file that opens from `file://` — no server, no port, nothing left running.
+Twenty cards at a time, highest blast radius first, each carrying what assay found, the claim it
+quotes, the model's own SQL with line numbers, and any reading an agent already recorded. Answers
+are kept in the browser as you go, so the tab can be closed and come back to. The download button
+writes `verdicts.json`.
+
+**A card nobody answered is never submitted and never recorded**, and `--load` names every row it
+did not record rather than printing a total that hides them. One card per `(model, check)`, because
+that is what a verdict covers: 260 findings are 212 cards.
+
+`--reads <json>` pre-fills the agent's own read of each finding. That is the expensive half and it
+is what makes a card cheap to answer; done once, offline, it is the difference between a form
+somebody answers and a form somebody closes.
+
 
 ```bash
 assay review --from-labels     # verdicts from assertions already in your project
@@ -221,6 +247,13 @@ assay practices --keys-only     # models with no uniqueness test, and the grain 
 assay practices                 # the full standard set, adjudicated
 assay skill all --write .       # both agent procedures, under .claude/skills/
 ```
+
+Two procedures, because they run at different moments. `dbt-assay` is what an agent follows around
+an edit — `contract` and `claims` before, `changed_contracts` and `violations` after. `assay-review`
+is walking the findings *with* the person whose warehouse it is and recording their verdicts, and
+it says plainly what the label does not prove: `source = 'human'` is set by the code path, not by
+anything about who ran it, and `--by` is free text that defaults to `unknown`. Nothing validates
+either, so the procedure — record nothing that was not actually answered — is the whole mechanism.
 
 assay does **not** reimplement dbt-project-evaluator. It reads that package's own `fct_*` tables
 and splits its 23 checks three ways: **enforce** (exact, essentially no exception — a staging model
@@ -299,6 +332,13 @@ is the only thing that can answer:
 - the project graph, blast radius, and per-edge facts
 - **tests that cannot fail** — `not_null` on a `coalesce(x, 0)`, `unique` on the group by key,
   `accepted_values` covering every branch of a CASE
+- **tests that outrun their source** — the mirror: a `not_null` on a column carried from a
+  LEFT-joined parent, padded with `CAST(NULL AS ...)` in a UNION arm, or produced by a
+  NULL-preserving aggregate. `count()` over a group is 0; `min()` over an all-NULL group is NULL,
+  and the GROUP BY still emits the row. **7 of 646** `not_null` tests on the warehouse this was
+  built against, including the one a real outage produced — passed for months, then failed on one
+  row of 49,034, where the obvious repair was to delete the row and protect an assertion the data
+  never supported
 - ranking by a function that returns degrees, after alias resolution
 - window functions positioned where they can only see post-filter rows
 - dialect traps, like `~` meaning full match in DuckDB rather than a partial one
@@ -692,6 +732,31 @@ waivers:
 `assay check` exits non-zero only when something earns `fail`. A selector assay does not understand
 is an **error**, never a silent match-all.
 
+## What to configure, drawn from what was found
+
+```bash
+assay suggest -t target/          # candidates, each with the measurement behind it
+assay suggest --section vocab     # one section at a time
+```
+
+`guide` explains what a vocabulary term is for and `init` writes defaults; nothing went from 257
+findings to the four lines of YAML that settle sixty of them. Seven rules, each reporting what it
+measured: columns shared across the most models and absent from the vocabulary (`section_id`: 24
+models, 65 hops), columns named like a key that are *nearly* unique and so pass every spot check
+(`incident_id`: 19,566 distinct in 19,628 rows), `disagree` rulings that nothing waives, and
+per-family actions backed by agreement you already recorded.
+
+**It proposes the candidate and the measurement. It never proposes the meaning.** `means:` and
+`implies:` arrive empty with the evidence underneath them. A plausible vocabulary block written
+from model names looks exactly like knowledge, is not, and then rides along with every judged
+question from that point on.
+
+Two rules refuse to finish the job on purpose. A reason repeating across subjects points at a
+missing term *or* at a check that is wrong, and those go in different files — on this project the
+answer was the second, and the fix was structural rather than a third waiver. And where a family
+has no measured agreement, it says so and proposes nothing rather than falling back to the shipped
+default, which would read as measured.
+
 ## Where did this number come from
 
 ```bash
@@ -700,6 +765,33 @@ assay trace water_rights.water_right_id
 
 Follows a column back through the DAG to the first hop that did something to the value, and stops
 honestly at a source, because what happened outside dbt is not knowable from a manifest.
+
+## Where an ANSWER came from
+
+```bash
+assay evidence -q <question> -s <model>
+```
+
+The exact state a judged answer was computed from, as it was sent. Every judged answer is a
+function of a state assay assembled and then threw away, so a disagreement could not be resolved
+into "the judge is wrong" or "it was handed the wrong facts" — opposite repairs, one editing the
+question and one editing what gets sent. States are stored by hash, so one reused across a thousand
+answers is stored once. An answer from before state storage says so, in those words; its absence is
+never rendered as an empty state.
+
+## Keeping the store from growing forever
+
+```bash
+assay prune --dry-run     # what it would drop, and what it would never touch
+assay prune
+```
+
+Explicit, never automatic. It drops only what a later `check` re-derives for free from the same
+manifest — findings, edge facts, the unreadable list — and will not touch anything that cost money
+or a keypress: rulings, claims, adjudications, observed keys, the run log. On a real store that is
+3,563 findings down to 730, with every paid table byte-identical afterwards. The split is declared
+in `store.PRUNABLE` and `store.NEVER_PRUNED` rather than inferred, so a new table is not silently
+prunable — it belongs to one list or the other, and a test fails until it does.
 
 ## Maintenance
 
