@@ -1861,3 +1861,119 @@ def test_a_seed_nothing_reads_is_found_by_the_check_built_to_find_that(project_d
     owned = completeness_checks()
     assert "seed_reaches_nothing" in owned
     assert "hop_drops_most_rows" in owned
+
+
+def test_the_seed_declaration_comes_from_the_store_not_a_hand_list(tmp_path):
+    """*** THE DECLARATION, THE STORE AND THE QUERY WERE THREE SPELLINGS OF ONE FACT. ***
+
+    Reported from the field, about this tool. `edge_facts.dropped` is INTEGER in the store, the
+    hand-written type map did not name it, so `assay.yml` declared it `varchar`, dbt honoured the
+    declaration, and assay's own shipped query died on `sum(dropped)`. Any two of those three
+    agree fine; all three is broken. Seven columns had drifted out of the map.
+
+    It also produced a wrong number that looked right: `len()` over a VARCHAR reported a model
+    dropping "65 columns" when 65 was the character count and the real answer is 794.
+    """
+    from dbt_assay import export
+    from dbt_assay.store import Store
+
+    s = Store(str(tmp_path / "assay.duckdb"))
+    try:
+        s.con.execute(
+            "insert into edge_facts values ('r','p','c','pn','cn',10,7,3,'[]','[]')")
+        out = export.to_seeds(s, tmp_path / "seeds")
+        yml = export.schema_yml(s, out)
+        for numeric in ("available: integer", "carried: integer", "dropped: integer"):
+            assert numeric in yml, f"{numeric} is not declared, so a sum on it will fail"
+        # and the columns that really ARE text stay text
+        assert "joined_on: varchar" in yml and "dropped_cols: varchar" in yml
+        assert "weight: double" in yml and "marts: integer" in yml
+        # the derivation asks the store, so a column nobody listed still gets the right type
+        assert export.seed_type(s, "edge_facts", "dropped") == "integer"
+        assert export.seed_type(s, "edge_facts", "joined_on") == "varchar"
+        assert export.seed_type(s, "nosuchtable", "x") == "varchar", "it must not raise"
+    finally:
+        s.close()
+
+
+def test_every_shipped_example_query_runs_against_a_seeded_export(tmp_path):
+    """*** A SHIPPED QUERY THAT FAILS, OR SILENTLY RETURNS NOTHING, IS THE DEFECT THIS TOOL IS
+    ABOUT. *** Both happened: one died on `sum(VARCHAR)` and one returned zero rows because a
+    decision key is `<uid>::<family>::<id>` and it matched the bare uid. So they are executed
+    here, against tables built with the TYPES ASSAY ITSELF DECLARES, which is what dbt does.
+    """
+    import csv
+    import re
+
+    import duckdb
+
+    from dbt_assay import export
+    from dbt_assay.store import Store
+
+    s = Store(str(tmp_path / "assay.duckdb"))
+    try:
+        s.con.execute("insert into runs (run_id, started_at, project, assay_version, models) "
+                      "values ('r', current_timestamp, 'p', '0', 1)")
+        s.con.execute("insert into edge_facts values ('r','model.p.a','model.p.b','a','b',"
+                      "10,7,3,'[\"k\"]','[\"x\"]')")
+        s.con.execute(
+            """insert into findings (run_id, check_name, subject, subject_name, file, summary,
+                   detail, base, weight, descendants, marts, evidence, finding_id)
+               values ('r','c','model.p.b','b','f','s','d',2,3.0,1,4,'{}','fid')""")
+        s.con.execute(
+            """insert into model_decisions (decision_key, question, kind, answer, confidence,
+                   probabilities, state_hash, prompt_version, model_version, call_id, caller,
+                   context, input_tokens, decided_at)
+               values ('model.p.b::edge::x','edge','choice','same_thing',0.4,'{}','h','v','m',
+                       'c','t','x',1, current_timestamp)""")
+        out = export.to_seeds(s, tmp_path / "seeds")
+        types = {}
+        for line in export.schema_yml(s, out).splitlines():
+            if line.startswith("  - name: "):
+                cur = line.split("name: ")[1].strip()
+                types[cur] = {}
+            elif ": " in line and line.startswith("        "):
+                k, v = line.strip().split(": ", 1)
+                types[cur][k] = v
+    finally:
+        s.close()
+
+    db = duckdb.connect()
+    for p in sorted((tmp_path / "seeds").glob("assay_*.csv")):
+        with p.open() as fh:
+            header = next(csv.reader(fh))
+        cols = ", ".join(f"'{c}': '{types.get(p.stem, {}).get(c, 'varchar')}'" for c in header)
+        db.execute(f"create table {p.stem} as select * from "
+                   f"read_csv('{p}', header=true, columns={{{cols}}})")
+
+    ran = 0
+    for name, sql in [("defect_classes", export.EXAMPLE_SQL), *export.EXTRA_SQL.items()]:
+        q = re.sub(r"\{\{ ref\('([a-z_]+)'\) \}\}", r"\1", sql)
+        db.execute(q).fetchall()          # raises on a type error, which is the point
+        ran += 1
+    assert ran == 1 + len(export.EXTRA_SQL), "a shipped query was not executed"
+
+
+def test_a_band_reports_its_interval_and_says_when_nothing_separates():
+    """*** A BARE PERCENTAGE AT n=18 INVITES A CONCLUSION THE SAMPLE CANNOT CARRY. ***
+
+    Reported from the field on the report's first day: 85 / 74 / 50 / 64 reads as a clean
+    inversion, and every adjacent pair overlaps -- best and worst included. Saying so is the whole
+    job of a feature whose purpose is to stop somebody gating on the wrong axis.
+    """
+    from dbt_assay.subjects import separated, wilson
+
+    lo, hi = wilson(17, 20)
+    assert 0.6 < lo < 0.7 and 0.93 < hi < 0.97, (lo, hi)
+    # Wilson, not the normal approximation, because the normal one runs past 1.0 exactly here
+    assert wilson(20, 20)[1] <= 1.0 and wilson(0, 20)[0] >= 0.0
+    assert wilson(0, 0) == (None, None)
+
+    field = [{"source": "label", "family": "f", "agree": a, "ruled": n,
+              "lo": wilson(a, n)[0], "hi": wilson(a, n)[1]}
+             for a, n in ((17, 20), (14, 19), (9, 18), (16, 25))]
+    assert not separated(field), "the field bands were reported as separating and they do not"
+    apart = [{"source": "label", "family": "f", "agree": a, "ruled": n,
+              "lo": wilson(a, n)[0], "hi": wilson(a, n)[1]}
+             for a, n in ((200, 200), (10, 200))]
+    assert separated(apart), "two obviously different bands did not register as separating"

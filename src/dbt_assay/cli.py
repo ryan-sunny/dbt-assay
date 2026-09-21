@@ -2357,6 +2357,7 @@ def calibration(
     nothing.
     """
     from .subjects import calibration as _cal
+    from .subjects import separated as _sep
     if not Path(store_path).exists():
         console.print(f"[yellow]no store at {store_path}.[/] Nothing has been asked yet.")
         raise typer.Exit(0)
@@ -2384,13 +2385,30 @@ def calibration(
         t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
         t.add_column("family"); t.add_column("band")
         t.add_column("ruled", justify="right"); t.add_column("agree", justify="right")
+        t.add_column("95% CI", justify="right")
         for r in sorted(mine, key=lambda r: (r["family"], r["band"])):
             a = f"{r['agreement']:.0%}" if r["agreement"] is not None else "[dim]-[/]"
-            t.add_row(r["family"], r["band"], str(r["ruled"]), a)
+            ci = (f"[dim]{r['lo']:.0%} to {r['hi']:.0%}[/]"
+                  if r["lo"] is not None else "[dim]-[/]")
+            t.add_row(r["family"], r["band"], str(r["ruled"]), a, ci)
         console.print(t)
-    console.print("\n[dim]Read DOWN a source's bands, never across sources. If the bands do not "
-                  "separate, the confidence is not measuring what you would gate on, and "
-                  "`min_agreement` is watching the wrong axis.[/]")
+        # *** A BARE PERCENTAGE AT n=18 INVITES A CONCLUSION THE SAMPLE CANNOT CARRY. ***
+        # Reported from the field about this report, on its first day: 85 / 74 / 50 / 64 reads as
+        # a clean inversion and every adjacent pair overlaps, best and worst included. Saying so
+        # is the whole job of a feature that exists to stop somebody gating on the wrong axis.
+        if not _sep(mine):
+            console.print(
+                "[yellow]No two bands separate.[/] [dim]Every interval above overlaps every "
+                "other, so the ordering you can see in the percentages has not been "
+                "demonstrated -- it is what this many verdicts look like whether the judge is "
+                "calibrated or not. Rule on more before reading anything into the shape.[/]")
+        else:
+            console.print("[dim]At least one pair of bands separates: their intervals do not "
+                          "overlap, so that difference is real at this sample size.[/]")
+    console.print("\n[dim]Read DOWN a source's bands, never across sources. Bands that separate "
+                  "mean the confidence is measuring something you could gate on. Bands that do "
+                  "not have told you nothing yet, which is different from telling you the "
+                  "confidence is worthless.[/]")
 
 
 @app.command(name="guide")

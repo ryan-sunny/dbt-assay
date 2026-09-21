@@ -376,6 +376,48 @@ def _pair_id(a: dict, b: dict) -> str:
 
 # ------------------------------------------------------------------------------ calibration
 
+def wilson(k: int, n: int, z: float = 1.96) -> tuple:
+    """A 95% interval for a proportion, by the Wilson score.
+
+    *** A BARE PERCENTAGE AT n=18 INVITES A CONCLUSION THE SAMPLE CANNOT CARRY. ***
+    Reported from the field about this very report: the bands read 85 / 74 / 50 / 64, which looks
+    like a clean inversion, and every adjacent pair overlaps heavily -- even the best and worst
+    bands overlap by seven points. "Inverted" was a plausible reading presented as an established
+    one, in the one feature whose whole purpose is to stop somebody gating on an axis that is not
+    measuring what they think.
+
+    Wilson rather than the normal approximation because the normal one is wrong at exactly the
+    sample sizes this report will have for months: it produces intervals that run past 1.0, and it
+    is worst when the proportion is near 0 or 1, which is where an interesting band sits.
+    """
+    if not n:
+        return (None, None)
+    import math
+    p = k / n
+    d = 1 + z * z / n
+    center = (p + z * z / (2 * n)) / d
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
+    return (round(max(0.0, center - half), 4), round(min(1.0, center + half), 4))
+
+
+def separated(rows: list) -> bool:
+    """Do ANY two bands of one family actually separate, intervals and all?
+
+    Two bands whose intervals overlap have not been shown to differ. If no pair separates, the
+    report has measured nothing yet and has to say so rather than let a reader rank the numbers.
+    """
+    by_fam: dict = {}
+    for r in rows:
+        if r["lo"] is not None:
+            by_fam.setdefault((r["source"], r["family"]), []).append(r)
+    for group in by_fam.values():
+        for a in group:
+            for b in group:
+                if a is not b and (a["hi"] < b["lo"] or b["hi"] < a["lo"]):
+                    return True
+    return False
+
+
 def calibration(store, bands: tuple = (0.3, 0.5, 0.7)) -> list[dict]:
     """When this thing is confident, is it right more often than when it is not?
 
@@ -445,5 +487,6 @@ def calibration(store, bands: tuple = (0.3, 0.5, 0.7)) -> list[dict]:
         d["agree" if verdict == "agree" else "disagree"] += 1
     for d in out.values():
         d["agreement"] = d["agree"] / d["ruled"] if d["ruled"] else None
+        d["lo"], d["hi"] = wilson(d["agree"], d["ruled"])
     # A stable order, so two runs of the report produce the same rows in the same places.
     return sorted(out.values(), key=lambda d: (d["source"], d["family"], d["band"]))

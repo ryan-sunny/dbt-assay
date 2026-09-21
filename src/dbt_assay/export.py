@@ -113,9 +113,19 @@ def to_parquet(store, directory: str | Path) -> list[Exported]:
     return out
 
 
-# Types for the generated seed schema. Everything not named here is varchar on purpose: a seed is
-# a transport format, and a column that arrives as text and is cast where it is used cannot be
-# mis-sniffed into a number on one machine and a string on another.
+# *** THE DECLARATION, THE STORE AND THE QUERY WERE THREE SPELLINGS OF ONE FACT. ***
+# Reported from the field, about this tool. `edge_facts.dropped` is INTEGER in the store, this map
+# did not name it, so `assay.yml` declared it `varchar`, dbt honoured the declaration, the seeded
+# column came back text, and assay's OWN shipped query died on `sum(dropped)`. Any two of those
+# three are fine together; all three is broken.
+#
+# It also produced a wrong number that looked right: `len()` over a VARCHAR column reported a model
+# dropping "65 columns" when the character count was 65 and the real answer, read from the store
+# where the type survives, is 794 over 36 hops.
+#
+# So the types are DERIVED from the store, which knows them exactly, and this map is only the
+# override for the few the store cannot settle. A hand-written list of every numeric column is a
+# second copy of the schema, and seven columns had already drifted out of it.
 _SEED_TYPE = {
     "weight": "double", "confidence": "double", "base": "double",
     "descendants": "integer", "marts": "integer", "input_tokens": "integer",
@@ -124,6 +134,37 @@ _SEED_TYPE = {
     "parse_failed": "integer", "rows": "integer", "n": "integer",
     "decided_at": "timestamp", "started_at": "timestamp", "decided_on": "timestamp",
 }
+
+
+# duckdb's own type names -> what a seed should be declared as. Anything not matched stays
+# varchar, which keeps the original argument intact: a column whose type is not obviously a number
+# or a time is transported as text rather than guessed at.
+_DUCK_TO_SEED = (("bigint", "bigint"), ("hugeint", "bigint"), ("integer", "integer"),
+                 ("smallint", "integer"), ("tinyint", "integer"), ("double", "double"),
+                 ("float", "double"), ("real", "double"), ("decimal", "double"),
+                 ("timestamp", "timestamp"), ("date", "date"), ("boolean", "boolean"))
+
+
+def seed_type(store, table: str, column: str) -> str:
+    """What this column should be declared as in the seed schema.
+
+    The store first, because it holds the truth. `_SEED_TYPE` second, for the handful a caller
+    wants to override. varchar last, for anything neither settles.
+    """
+    try:
+        for c, typ, *_ in store.con.execute(f"describe {table}").fetchall():
+            if c != column:
+                continue
+            low = str(typ).lower()
+            for needle, seed in _DUCK_TO_SEED:
+                if needle in low:
+                    return seed
+            return _SEED_TYPE.get(column, "varchar")
+    except Exception:                                                   # noqa: BLE001
+        # A store that cannot describe the table still exports; the declaration falls back rather
+        # than the whole command failing over a schema query.
+        return _SEED_TYPE.get(column, "varchar")
+    return _SEED_TYPE.get(column, "varchar")
 
 
 def schema_yml(store, exported: list[Exported]) -> str:
@@ -147,7 +188,7 @@ def schema_yml(store, exported: list[Exported]) -> str:
         lines.append("    config:")
         lines.append("      column_types:")
         for c in cols:
-            lines.append(f"        {c}: {_SEED_TYPE.get(c, 'varchar')}")
+            lines.append(f"        {c}: {seed_type(store, e.table, c)}")
         lines.append("    columns:")
         for c in cols:
             doc = COLUMN_DOCS.get(c)

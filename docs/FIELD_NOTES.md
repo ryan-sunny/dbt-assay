@@ -2387,3 +2387,62 @@ They ship as example queries beside the seeds instead. All three were run agains
 before shipping: `assay_uncertainty` returned **zero rows** on the first attempt, because a
 decision key is `<uid>::<family>::<id>` and it matched the bare uid. A shipped query that silently
 returns nothing is the defect this whole tool is about.
+
+### The declaration, the store and the query were three spellings of one fact
+
+Reported back within the hour, about the release above, and it is this tool's own thesis pointed
+at this tool.
+
+```
+store       edge_facts.available / carried / dropped    INTEGER
+assay.yml   declares them                               varchar
+the query   does                                        sum(dropped)
+```
+
+**Any two of those agree fine. All three is broken.** dbt honors the declaration, the seeded
+column arrives as text, and assay's own shipped query dies on `sum(VARCHAR)`.
+
+The type map was hand-written, with a stated reason: everything unnamed stays varchar so a
+transport column cannot be mis-sniffed into a number on one machine and a string on another. The
+reasoning is about the SNIFFER, and `column_types` is an explicit declaration that overrides the
+sniffer entirely — so declaring `integer` for a column the store says is INTEGER is not a guess,
+it is the truth. Seven columns had already drifted out of that map.
+
+The types are derived from the store now, which knows them exactly, and the hand map is only an
+override for what the store cannot settle. Registering a column is declaring it.
+
+**And it produced a wrong number that looked right.** The same session reported a model dropping
+"65 columns". That was `len()` over a VARCHAR, so 65 was the character count of a JSON list. Read
+from the store, where the type survives, it is **794 dropped columns over 36 hops**. A type error
+that raises is the lucky case; this one answered.
+
+Every shipped example query is now executed in the suite against tables built with the types assay
+itself declares, which is what dbt does. Two of three had already failed that way once: one on
+`sum(VARCHAR)` and one returning zero rows.
+
+### A bare percentage at n=18 invites a conclusion the sample cannot carry
+
+Also reported back, about the calibration report on its first day, and it is the better catch.
+
+```
+band         ruled   agreement   95% CI
+< 0.30          20         85%   64-95%
+0.30-0.50       19         74%   51-88%
+0.50-0.70       18         50%   29-71%
+0.70+           25         64%   45-80%
+```
+
+Every adjacent pair overlaps. Best and worst overlap by seven points. So **"inverted" was a
+plausible reading presented as an established one** — in the one feature whose entire purpose is to
+stop somebody gating on an axis that is not measuring what they think.
+
+The report carries a Wilson interval per band now (Wilson rather than the normal approximation,
+which runs past 1.0 at exactly these sample sizes and is worst near 0 and 1, where an interesting
+band sits), and it states the conclusion rather than leaving it to be inferred:
+
+> **No two bands separate.** Every interval above overlaps every other, so the ordering you can
+> see in the percentages has not been demonstrated — it is what this many verdicts look like
+> whether the judge is calibrated or not.
+
+And the closing line stopped implying a verdict. Bands that do not separate have told you nothing
+yet, which is a different statement from telling you the confidence is worthless.
