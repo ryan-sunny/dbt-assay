@@ -212,16 +212,39 @@ it.
 
 ## The page
 
-`assay page assay.html` writes one self-contained file answering *is this warehouse understood,
-and by whom*. The ruled-on number first and largest, then agreement per question version, then
-findings by defect class and reach, then coverage, then what moved since the last run.
+`assay page assay.html` writes **everything assay knows about your warehouse**, as one file you
+open by double-clicking. Eight tabs:
 
-`--plain` writes the same page as a sober report: no colour, no background, nothing to explain
-before a colleague reads it.
+| tab | what is on it |
+|---|---|
+| **Models** | every model, and on one screen: what one row of it is and who settled that, every column with its role and where its value came from, every hop in and out, what the project claims about it, every finding, and every answer ever given |
+| **The chain** | every hop in the DAG, what it carries, what it **drops**, what it joined on, whether it drives, and how much of the parent survived |
+| **Claims** | every sentence the project says about itself, where it was written down to `path:line`, and what the code said back |
+| **Findings** | ranked by reach, each with its evidence and whether a person has read *this finding* or only its model |
+| **Answers** | the live answer to every question asked about this project, with its confidence and the runner-up |
+| **Questions** | all the question banks in full: the instructions and every option, exactly as they are sent |
+| **Config** | what was actually resolved, the vocab, the runs, and what assay could not read |
+| **Understood** | the record, unchanged |
 
-It is **deterministic**: it carries the manifest's own `generated_at` and never a wall clock, so a
-rerun that changes nothing writes an identical file. That is the whole argument for a file over a
-dashboard. A file that diffs accrues; a server shows you today and forgets.
+`--plain` writes **the record** on its own: the small report answering *is this warehouse
+understood, and by whom*, at about 15 KB. Those are two different jobs and conflating them was
+costing both. The record is small, committed, diffed across commits, and handed to a colleague;
+its whole argument is that it accrues, which needs it to stay small. The explorer is for the
+person who owns the warehouse.
+
+**One file, and that is not a style preference.** Browsers block `fetch` on `file://`, so a
+directory of HTML plus JSON that loads a model when you click it cannot be opened from disk. That
+option does not exist locally: an artifact you double-click has to carry its data inside it, and
+the moment lazy loading is wanted a server is required. There is no middle rung. It costs roughly
+24 KB per model, so a 358-model warehouse is about 8 MB and opens instantly.
+
+Everything renders from one object called `DATA`, embedded here and one `fetch` on a server, so
+this already builds most of `assay serve` if a warehouse ever outgrows a file.
+
+And it is still **deterministic**: it carries the manifest's own `generated_at` and never a wall
+clock, and every array is sorted in the assembly layer rather than in the browser, so a rerun that
+changes nothing writes an identical file. That is the whole argument for a file over a dashboard.
+A file that diffs accrues; a server shows you today and forgets.
 
 ## Two ways in: MCP, or a skill
 

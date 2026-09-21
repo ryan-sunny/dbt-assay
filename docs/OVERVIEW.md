@@ -324,8 +324,9 @@ assay watch                                # rerun on save; print only what your
 **Wiring it in**
 
 ```bash
-assay page assay.html     # one page: is this warehouse understood, and by whom
-assay page --plain        # ...as a sober report instead
+assay page assay.html     # EVERYTHING assay knows: models, chain, claims, findings,
+                          # answers, questions, config. One file, eight tabs.
+assay page --plain        # ...just the record: is this warehouse understood, and by whom
 assay export <dir>        # the tables, as seeds your own models can join to
 assay mcp                 # the MCP server
 assay skill --write       # the procedure your agent follows
@@ -632,7 +633,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.24.2
+- uses: ryan-sunny/dbt-assay@v0.25.0
   with:
     target: target-head
     baseline: base/target

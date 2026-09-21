@@ -1721,3 +1721,97 @@ wording is being actively improved is exactly the one people will have ruled on.
 Not fixed here, because every fix trades something: dropping the summary from the hash merges the
 eight findings one model can carry under one check, and a `supersedes` map is a second copy of the
 check list, which is the thing that drifts.
+
+---
+
+## Round eleven: the page became the whole warehouse, and driving it found two defects
+
+The page answered one question well and showed almost nothing. The store holds 9,945 answers,
+5,794 claims, 3,438 edge facts and 195 verdicts; the page showed a scorecard and eighteen
+findings. Everything else was reachable only by running four commands and holding the answers in
+your head.
+
+### Two jobs that were always conflated
+
+The record is small, committed, diffed across commits, and handed to a colleague. Its whole
+argument is that it **accrues**, which needs it to stay small. The explorer is for the person who
+owns the warehouse, and has no determinism requirement of its own because nobody diffs an
+explorer. Separating them is what made the size question answerable at all: `--plain` writes the
+record at about 15 KB, and the default writes the explorer with the record inside it as a tab.
+
+### One file, and it is not a style preference
+
+Browsers block `fetch` and XHR on `file://`. So a directory of HTML plus JSON that loads a model
+when you click it **cannot be opened by double-clicking it**. That option does not exist locally:
+an artifact you open from disk carries its data inside it, and the moment lazy loading is wanted a
+server is required. There is no middle rung.
+
+Measured at roughly 24 KB per model, so this warehouse is 8.2 MB, which opens instantly, and a
+2,000-model one would not. Everything renders from one object called `DATA`, embedded in a script
+tag here and one `fetch` on a server, so the file already builds most of `assay serve` and the
+decision can be made later for a fraction of the work rather than a rewrite.
+
+### `order by count(*) desc limit 1` is an arbitrary pick, and it shipped here first
+
+The first version read edge facts from the fullest run, copying the shipped example model, whose
+comment says a tie "would mean two runs found exactly the same thing". On this store **six runs
+hold exactly 573 edge facts each**. The tie is the normal case, duckdb returned a different winner
+between two invocations, and two runs of `assay page` against an unchanged store wrote different
+files:
+
+```
+run A   int_lead_contact <- stg_business_entities   carried 7   dropped 25
+run B   int_lead_contact <- stg_business_entities   carried 8   dropped 24
+```
+
+`arbitrary_pick` and `first_match_pick` are checks this tool runs against other people's SQL. This
+was the same defect, in the code that renders their results, and it broke the one property the
+file exists to have. The run is now chosen by `started_at` with `run_id` breaking the tie, because
+a comparison that can tie is not an order. Byte-identical across three runs afterwards.
+
+**The same bug is in the shipped `ops_assay_debt` example**, whose `latest` CTE picks the fullest
+run the same way. On this store the findings table has three runs tied at 349.
+
+### `json.loads(s) or {}` turns an empty list into an empty dict
+
+`edge_facts.joined_on` is a list. A hop with no join key stores `"[]"`, which parses to `[]`,
+which is falsy, which the `or` replaced with `{}`. Every such hop then carried a dict where the
+reader expected a list, `(h.joined_on || []).join` threw on the first one, and **the entire chain
+tab rendered as an empty page** -- 573 hops, showing nothing, with no error visible to anyone
+looking at it.
+
+Nothing about the shape of that code looked wrong, and no test that asserted on populated rows
+would have caught it. It was found by driving the page in a real DOM.
+
+### Which is the part worth keeping
+
+The page was verified by loading it in jsdom and clicking every tab, not by checking that the
+generator produced plausible HTML. That found the two defects above, and both are invisible to
+any check that reads the source or the output markup:
+
+```
+models      rows=  385  text= 12483  OK
+chain       rows=    0  text=     0  ** EMPTY **     <- joined_on was a dict
+claims      rows= 2000  text=443375  OK
+findings    rows=  244  text= 12005  OK
+answers     rows= 2000  text=399686  OK
+questions   rows=   19  text=  2674  OK
+config      rows=   36  text=  3563  OK
+understood  rows=    0  text=   201  OK
+```
+
+A tab that renders nothing and a warehouse that has nothing to show produce the same page. That is
+the failure `VERIFICATION.md` opens by describing, one surface over, and the only thing that
+separates them is opening it.
+
+### Smaller
+
+`history.replaceState` throws a SecurityError on `file://` in some browsers, and `file://` is the
+entire delivery mode. It sat after the panels were swapped and before the view was built, so a
+throw would have left a blank tab. It is in a try/catch: the deep link is a convenience, the tab
+is not.
+
+The record travels inside the JSON blob and renders into an iframe rather than being dropped into
+a div. It is a whole document with its own stylesheet and so is the page around it. The `</`
+sequence is escaped in the blob for the same class of reason: a dbt model with `</script>` in a
+comment is not exotic, and it would truncate the page describing it.

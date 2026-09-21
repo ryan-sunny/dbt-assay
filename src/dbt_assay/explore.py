@@ -1,0 +1,385 @@
+"""Everything assay knows about one warehouse, as one serialisable object.
+
+*** THE KNOWLEDGE WAS ALWAYS THERE. IT WAS SPREAD ACROSS NINE COMMANDS. ***
+`contract` knows the grain, `trace` knows where a column came from, `traverse` knows what each
+hop carries, `claims` knows what the project says about itself, and the store knows what was
+answered and who ruled on it. A person asking "what IS this model" had to run four commands and
+hold the answers in their head.
+
+This assembles all of it once, in a shape a page can render without asking anything further. It
+is the half that has nothing to do with HTML: the same object serves a file, a server, or a
+future surface nobody has written yet.
+
+*** DETERMINISTIC OR IT CANNOT BE COMMITTED. ***
+Every list here is sorted on a stable key and no wall clock is read. The same store and the same
+manifest produce byte-identical output, which is the property the whole file-over-server argument
+rests on -- and a dict iterating in insertion order is not a sort, so the sorts are explicit.
+"""
+from __future__ import annotations
+
+import json
+from typing import Any
+
+
+def _fact(f) -> dict | None:
+    """A Fact as data, with its provenance, because a value without its source is a rumour."""
+    if f is None:
+        return None
+    return {"value": f.value, "source": f.source,
+            "confidence": round(f.confidence, 4) if f.confidence is not None else None,
+            "resting_on": getattr(f, "resting_on", None) or None,
+            "note": getattr(f, "note", "") or ""}
+
+
+# *** THE DISTRIBUTION IS THE SINGLE BIGGEST THING IN THE FILE AND THE LEAST READ. ***
+# Measured on a 358-model warehouse: the full `probabilities` blob on every stored answer is a
+# large share of the embedded payload, and it matters only when somebody is auditing one specific
+# answer. The chosen answer, its confidence and the RUNNER-UP carry the part a reader acts on --
+# "it said X at 0.62 and the next best was Y at 0.31" is the sentence people actually want -- at a
+# fraction of the bytes. `assay review -i` still shows the whole distribution.
+def _runner_up(probs: dict, answer) -> list | None:
+    if not probs:
+        return None
+    rest = sorted(((v, k) for k, v in probs.items() if k != answer), reverse=True)
+    if not rest:
+        return None
+    return [rest[0][1], round(float(rest[0][0]), 4)]
+
+
+def _json(s, empty):
+    """Parse a stored JSON column WITHOUT changing its type.
+
+    *** `json.loads(s) or {}` TURNS AN EMPTY LIST INTO AN EMPTY DICT. ***
+    `edge_facts.joined_on` is a list. A hop with no join key stores `"[]"`, which parses to `[]`,
+    which is falsy, which the `or` replaced with `{}`. Every such hop then carried a dict where
+    the reader expected a list, and the whole chain view threw on the first one. Caught by driving
+    the page in a real DOM; nothing about the shape of the code looked wrong.
+
+    The caller says what empty means here, because only the caller knows the column's type.
+    """
+    if s in (None, ""):
+        return empty
+    try:
+        v = json.loads(s)
+    except (TypeError, ValueError):
+        return empty
+    return empty if v is None else v
+
+
+def assemble(project, digests, schema, entries, findings, store, cfg,
+             generated_at: str, version: str) -> dict:
+    """One object holding every fact assay has about this project."""
+    by_uid = {e.uid: e for e in entries}
+
+    read_by: dict = {}
+    for e in entries:
+        for p in e.reads:
+            read_by.setdefault(p, []).append(e.name)
+
+    claims = _claims(store, entries)
+    claim_by_subject: dict = {}
+    for c in claims:
+        claim_by_subject.setdefault(c["subject"], []).append(c["id"])
+
+    find_rows = _findings(findings, store)
+    find_by_subject: dict = {}
+    for f in find_rows:
+        find_by_subject.setdefault(f["subject"], []).append(f["id"])
+
+    decisions = _decisions(store)
+    dec_by_subject: dict = {}
+    for i, d in enumerate(decisions):
+        # A decision key is the model uid, or `<uid>::<family>::<id>` for the families that ask
+        # per claim or per hop. Both belong to the model.
+        dec_by_subject.setdefault(d["key"].split("::")[0], []).append(i)
+
+    models = []
+    for e in sorted(entries, key=lambda x: x.uid):
+        models.append({
+            "uid": e.uid, "name": e.name, "path": e.path, "layer": e.layer,
+            "materialized": e.materialized, "description": e.description or "",
+            "unreadable": bool(e.unreadable),
+            "grain": _fact(e.grain), "derived_grain": list(e.derived_grain or []),
+            "columns": [{"name": c.name, "in_key": bool(c.in_key),
+                         "provenance": _fact(c.provenance), "role": _fact(c.role),
+                         "null_meaning": _fact(c.null_meaning)}
+                        for c in sorted(e.columns, key=lambda c: c.name)],
+            "reads": sorted(e.reads), "read_by": sorted(read_by.get(e.name, [])),
+            "descendants": e.descendants, "marts": e.marts,
+            "filters_rows": bool(e.filters_rows), "aggregates": bool(e.aggregates),
+            "union_parents": sorted(e.union_parents or []),
+            "driving_parents": sorted(e.driving_parents or []),
+            "unique_key_parents": sorted(e.unique_key_parents or []),
+            "join_keys": {k: sorted(v) for k, v in sorted((e.join_keys or {}).items())},
+            "join_kind": dict(sorted((e.join_kind or {}).items())),
+            "pre_aggregated": {k: sorted(v) for k, v
+                               in sorted((e.pre_aggregated_parents or {}).items())},
+            "row_loss": {k: list(v) for k, v in sorted((e.row_loss or {}).items())},
+            "parent_rows": dict(sorted((e.parent_rows or {}).items())),
+            "doc_conflict": _fact(e.doc_conflict),
+            "fanout_hops": [[c, round(float(p), 4)] for c, p in sorted(e.fanout_hops or [])],
+            "claims": sorted(claim_by_subject.get(e.uid, [])),
+            "findings": sorted(find_by_subject.get(e.uid, [])),
+            "decisions": sorted(dec_by_subject.get(e.uid, [])),
+        })
+
+    return {
+        "meta": {
+            "project": project.project_name or "this project",
+            "models": len(project.models), "sources": len(project.sources),
+            "version": version,
+            # *** NEVER A WALL CLOCK. *** A page that churns cannot be committed.
+            "generated_at": generated_at,
+            "coverage": project.coverage(),
+        },
+        "models": models,
+        "edges": _edges(store, by_uid),
+        "claims": claims,
+        "findings": find_rows,
+        "decisions": decisions,
+        "questions": _questions(),
+        "adjudications": _adjudications(store),
+        "config": _config(cfg),
+        "runs": _runs(store),
+        "unreadable": _unreadable(store, project),
+    }
+
+
+def _latest_run(store, table: str) -> str | None:
+    """The run to read `table` from, chosen by a TOTAL order.
+
+    *** `order by count(*) desc limit 1` IS AN ARBITRARY PICK, AND IT CAUGHT ME. ***
+    The first version of this took the fullest run, copying a shipped example that says a tie
+    "would mean two runs found exactly the same thing". On the field store six runs hold exactly
+    573 edge facts each, so the tie is the NORMAL case and duckdb returned a different winner
+    between two invocations of the same command. Two runs of `assay page` against an unchanged
+    store wrote different files, which is the one property the file is supposed to have.
+
+    `arbitrary_pick` and `first_match_pick` are checks this tool runs against other people's SQL.
+    This is the same defect, in the code that renders their results.
+
+    So: most recent by the clock, and `run_id` breaks the tie, because a comparison that can tie
+    is not an order. The store's `runs` table carries `started_at`; a run_id present in `table`
+    but absent from `runs` still sorts, at the end, rather than vanishing.
+    """
+    if store is None:
+        return None
+    try:
+        row = store.con.execute(
+            f"select t.run_id from {table} t "
+            "left join runs r on r.run_id = t.run_id "
+            "group by t.run_id, r.started_at "
+            "order by r.started_at desc nulls last, t.run_id desc limit 1").fetchone()
+    except Exception:                                            # noqa: BLE001
+        return None
+    return row[0] if row else None
+
+
+def _edges(store, by_uid) -> list:
+    """Every hop, with what it carries and drops, and the verdict on whether it kept the grain.
+
+    The columns a hop DROPS are the part no other surface shows, and they are the answer to "why
+    does this mart not have that field". Stored per run; the latest run is the live one.
+    """
+    out = []
+    if store is None:
+        return out
+    try:
+        run = _latest_run(store, "edge_facts")
+        rows = store.con.execute(
+            "select parent, child, parent_name, child_name, available, carried, dropped, "
+            "joined_on, dropped_cols from edge_facts where run_id = ? "
+            "order by child_name, parent_name, parent", [run]).fetchall()
+    except Exception:                                            # noqa: BLE001
+        return out
+    for p, c, pn, cn, avail, carried, dropped, joined, dcols in rows:
+        e = by_uid.get(c)
+        out.append({
+            "parent": p, "child": c, "parent_name": pn, "child_name": cn,
+            "available": avail, "carried": carried, "dropped": dropped,
+            "joined_on": _json(joined, []),
+            "dropped_cols": _json(dcols, []),
+            "kind": (e.join_kind or {}).get(pn, "") if e else "",
+            "driving": bool(e and pn in (e.driving_parents or set())),
+            "union_arm": bool(e and pn in (e.union_parents or set())),
+            "unique_key": bool(e and pn in (e.unique_key_parents or set())),
+            "row_loss": list((e.row_loss or {}).get(pn, ())) if e else [],
+        })
+    return out
+
+
+def _claims(store, entries) -> list:
+    """Every sentence this project says about itself, and what the code said back."""
+    if store is None:
+        return []
+    # *** THE KEY IS THE CONTEXT STRING, NOT THE CLAIM ID. ***
+    # `claim_conflicts` carries `"<model>: <text[:120]>"`, which is what the writer put in the
+    # decision's context. Matching on the claim id finds nothing and every claim would read as
+    # supported -- absence reporting as a pass, in the one table built to show disagreement.
+    conflict: dict = {}
+    for e in entries:
+        for ctx, p in (e.claim_conflicts or []):
+            conflict[ctx] = round(float(p), 4)
+    out = []
+    for r in store.claims():
+        out.append({
+            "id": r["claim_id"], "subject": r["subject"], "subject_name": r["subject_name"],
+            "text": r["text"], "kind": r["kind"] or "",
+            "kind_conf": round(r["kind_conf"], 4) if r["kind_conf"] is not None else None,
+            "source_kind": r["source_kind"] or "", "source_ref": r["source_ref"] or "",
+            "citation": r["citation"] or "", "status": r["status"] or "active",
+            # *** THE CONTEXT KEY IS THE CLAIM TEXT, NOT THE CLAIM ID. ***
+            # `claim_conflicts` carries `"<model>: <text>"`, so matching on the id alone finds
+            # nothing. Both are tried and the absence of a match means UNASKED, never SUPPORTED.
+            "contradicted": conflict.get(f"{r['subject_name']}: {(r['text'] or '')[:120]}"),
+        })
+    return sorted(out, key=lambda c: (c["subject_name"], c["id"]))
+
+
+def _findings(findings, store) -> list:
+    ruled = store.ruled_subjects() if store is not None else set()
+    out = []
+    for f in findings:
+        fid = f.id
+        out.append({
+            "id": fid, "check": f.check, "subject": f.subject, "model": f.subject_name,
+            "file": f.file, "summary": f.summary, "detail": f.detail,
+            "base": f.base, "weight": round(f.weight, 3),
+            "descendants": f.descendants, "marts": f.marts,
+            "rests_on": f.rests_on or "",
+            "evidence": f.evidence or {},
+            # *** RULED ON THIS FINDING, OR ON ITS MODEL, AND THEY ARE NOT THE SAME CLAIM. ***
+            "ruled_finding": f"{f.subject}::finding::{fid}" in ruled,
+            "ruled_model": f.subject in ruled,
+        })
+    return sorted(out, key=lambda f: (-f["weight"], f["check"], f["model"], f["id"]))
+
+
+def _decisions(store) -> list:
+    """The live answer to every question asked about this project.
+
+    One row per (subject, question): the latest. Every version is kept in the store because that
+    is what makes `effectiveness` possible, and serving all of them at once is how `traversal`
+    once reported twelve verdicts for four hops.
+    """
+    if store is None:
+        return []
+    try:
+        rows = store.live_decisions(
+            "1 = 1", [],
+            columns="decision_key, question, answer, confidence, probabilities, context, "
+                    "prompt_version, model_version, caller")
+    except Exception:                                            # noqa: BLE001
+        return []
+    out = []
+    for key, q, ans, conf, probs, ctx, pv, mv, caller in rows:
+        p = _json(probs, {})
+        out.append({
+            "key": key, "question": q, "answer": ans,
+            "confidence": round(float(conf), 4) if conf is not None else None,
+            "runner_up": _runner_up(p, ans),
+            "context": ctx or "", "prompt_version": pv or "", "model_version": mv or "",
+            "caller": caller or "",
+        })
+    return sorted(out, key=lambda d: (d["key"], d["question"]))
+
+
+def _adjudications(store) -> list:
+    """Who ruled what, and whether they were a person. Only `human` counts anywhere."""
+    if store is None:
+        return []
+    try:
+        rows = store.con.execute(
+            "select subject, question, family, answered, verdict, correction, note, "
+            "decided_by, source, prompt_version from adjudications "
+            "order by subject, question, prompt_version").fetchall()
+    except Exception:                                            # noqa: BLE001
+        return []
+    cols = ("subject", "question", "family", "answered", "verdict", "correction", "note",
+            "decided_by", "source", "prompt_version")
+    return [dict(zip(cols, r, strict=True)) for r in rows]
+
+
+def _questions() -> list:
+    """Every question assay will ask, in full.
+
+    *** THE TEXT IS THE THING BEING MEASURED, SO IT BELONGS NEXT TO THE MEASUREMENT. ***
+    `effectiveness` reports agreement per prompt_version and the version alone tells a reader
+    nothing about what changed. The bank is small, static per release, and putting it in the file
+    makes the file a complete record of what was asked as well as what came back.
+    """
+    from .contracts import load_all_banks
+    out = []
+    for name, q in sorted(load_all_banks().items()):
+        crit = q.get("criteria") or {}
+        out.append({
+            "name": name,
+            "id_prefix": q.get("id_prefix") or "",
+            "prompt_version": q.get("prompt_version") or "",
+            "kind": q.get("kind") or "choice",
+            "subject": q.get("subject") or "",
+            "origin": q.get("origin") or "shipped",
+            "instructions": q.get("instructions") or {},
+            "options": sorted(crit) if isinstance(crit, dict) else [],
+            "criteria": crit,
+        })
+    return out
+
+
+def _config(cfg) -> dict:
+    """What was actually resolved, which is not always what the file says."""
+    out: dict[str, Any] = {}
+    for k in ("provider", "model", "max_spend_usd", "row_loss_threshold",
+              "min_adjudications", "min_agreement"):
+        v = getattr(cfg, k, None)
+        if v is not None:
+            out[k] = v
+    for k in ("questions", "waivers", "vocab", "practices", "explanations"):
+        v = getattr(cfg, k, None)
+        if v:
+            try:
+                out[k] = json.loads(json.dumps(v, default=str, sort_keys=True))
+            except (TypeError, ValueError):
+                out[k] = str(v)
+    return out
+
+
+def _runs(store) -> list:
+    if store is None:
+        return []
+    try:
+        rows = store.con.execute(
+            "select run_id, project, dbt_version, assay_version, models, sources, tests, edges, "
+            "readable, unreadable from runs order by started_at").fetchall()
+    except Exception:                                            # noqa: BLE001
+        return []
+    cols = ("run_id", "project", "dbt_version", "assay_version", "models", "sources", "tests",
+            "edges", "readable", "unreadable")
+    return [dict(zip(cols, r, strict=True)) for r in rows]
+
+
+def _unreadable(store, project) -> list:
+    """*** WHAT assay COULD NOT READ, WHICH IS NOT THE SAME AS WHAT IS FINE. ***
+
+    A model absent from every table above because its SQL would not parse looks identical, from
+    outside, to a model with nothing wrong with it. It is named here for that reason.
+    """
+    out = []
+    for uid, m in sorted(project.models.items()):
+        if not m.readable:
+            out.append({"uid": uid, "name": m.name, "path": m.path,
+                        "why": "no compiled SQL assay could reach"})
+    if store is None:
+        return out
+    try:
+        run = _latest_run(store, "unreadable")
+        rows = store.con.execute(
+            "select distinct subject_name, file, reason from unreadable where run_id = ? "
+            "order by subject_name", [run]).fetchall()
+    except Exception:                                            # noqa: BLE001
+        return out
+    seen = {r["name"] for r in out}
+    for name, path, err in rows:
+        if name not in seen:
+            out.append({"uid": "", "name": name, "path": path or "", "why": err or "parse failed"})
+    return out

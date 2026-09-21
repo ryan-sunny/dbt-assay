@@ -1662,7 +1662,20 @@ def page(
                                help="a sober report: no colour, no background, nothing to "
                                     "explain before somebody reads it"),
 ) -> None:
-    """One page answering "is this warehouse understood, and by whom".
+    """Everything assay knows about this warehouse, as one file you can open.
+
+    Tabs: every model and what one row of it is, every hop and what it carries and drops, every
+    claim the project makes about itself, every finding, every answer ever given, every question
+    in full, and the resolved config. `--plain` writes the record instead: the small report that
+    answers "is this warehouse understood, and by whom", which is also the first tab here.
+
+    *** ONE FILE, BECAUSE A DIRECTORY CANNOT BE OPENED FROM DISK. ***
+    Browsers block `fetch` on `file://`, so an artifact you double-click has to carry its data
+    inside it. Everything renders from one object called DATA, which is embedded here and would be
+    one fetch on a server -- so this builds most of `assay serve` if a warehouse ever outgrows a
+    file. Roughly 24 KB per model.
+
+    The old docstring, still true of the record:
 
     *** NOT A DASHBOARD OF METRICS. *** The ruled-on number goes first and largest, because
     everything else on the page is downstream of whether anybody has read any of it, and because
@@ -1754,7 +1767,7 @@ def page(
         '<span class="mono">assay completeness --verify</span> to count them through this '
         "project's own dbt. Their absence above is not a pass.</p>")
 
-    doc = render.page_html({
+    record = render.page_html({
         "project": project.project_name or "this project",
         "models": len(project.models),
         # *** NEVER A WALL CLOCK. *** A page that churns cannot be committed.
@@ -1769,11 +1782,28 @@ def page(
                           "marts": f.marts} for f in fs[:18]],
         "shown": min(18, len(fs)),
     })
+
+    # *** TWO JOBS THAT WERE ALWAYS CONFLATED. ***
+    # `--plain` is THE RECORD: small, committed, diffed across commits, the thing you hand a
+    # colleague. Its whole argument is that it accrues, which needs it to stay small. The default
+    # is THE EXPLORER: everything assay knows, for the person who owns the warehouse. An explorer
+    # has no determinism requirement of its own -- nobody diffs an explorer -- but it keeps one
+    # anyway, because the record rides inside it as a tab.
+    if plain:
+        doc = record
+    else:
+        from . import explore, explorer
+        doc = explorer.explorer_html(
+            explore.assemble(project, digests, schema, entries, fs, store, cfg,
+                             (project.raw.get("metadata") or {}).get("generated_at", "unknown"),
+                             __version__),
+            record)
     if store is not None:
         store.close()
     Path(out).write_text(doc)
-    console.print(f"wrote [bold]{out}[/]  [dim]{len(doc):,} bytes, self-contained. "
-                  f"Commit it: a rerun that changes nothing writes an identical file.[/]")
+    what = "the record" if plain else "the explorer"
+    console.print(f"wrote [bold]{out}[/]  [dim]{len(doc):,} bytes, {what}, self-contained. "
+                  f"A rerun that changes nothing writes an identical file.[/]")
 
 
 @app.command()
