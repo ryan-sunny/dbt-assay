@@ -1289,3 +1289,56 @@ assay already held:
   pass -- it has not been asked"*. No verdicts prints that until somebody presses a key no question
   may fail a build. Row loss uncounted says so rather than showing a zero. The same discipline the
   checks have, applied to the page.
+
+---
+
+## Round five: two blind spots, both found by using it
+
+`completeness` earned its keep on the first run: five sources declared, loaded every run, read by
+nothing, holding 69,946 rows of AZ ADWR data. Ruled and recorded.
+
+### A manifest check cannot see a Python reader, and the obvious action is to delete
+
+`enriched_wells.well_documents` came back as read by nothing. True of the dbt graph and false of
+the warehouse: `enrichment/well_scans.py` reads it. Its own description already said *"the document
+index the scan reader works from"*, so a person had written it down and nothing could act on prose.
+
+Two fixes, and the first matters more.
+
+**Say what was actually checked.** The summary claimed "nothing reads it", which is a statement
+about the warehouse when only the dbt graph was looked at. It now reads *"nothing in this dbt
+project reads it"*, and the detail says outright: a reader outside dbt is invisible here, do not
+delete on the strength of this finding.
+
+**And let the project declare one.** `meta: {read_by: enrichment/well_scans.py}` on the source
+suppresses it. That stays inside the rule this whole tier follows -- coverage of what the project
+ITSELF declares -- and it turns a false positive into a fact recorded where a human will also read
+it.
+
+This is the case that justifies the skill note about not acting on initiative, and it arrived
+within a day of that note being written.
+
+### The narrowing can be on a different edge, and the counts already said so
+
+`multifamily_leads` keeps 0.4% of `dim_owner` because it joins a roster of apartment buildings
+only. The hop is not failing to match: the child is the SIZE of its other parent. Same family as
+the union blind spot, and settled the same way -- by code, from numbers already in hand.
+`verify_row_loss` now counts every parent of a candidate child rather than only the candidate
+parents, and a hop whose child is roughly the size of a sibling parent is refused.
+
+```
+mart_acquisition_targets   13,694 rows   dim_owner 3,156,986   int_acquisition_targets 13,694
+int_az_pending_sections       620 rows   stg_adwr_sections 114,305   stg_adwr_aaws_pending 162
+```
+
+Both explained, both refused.
+
+### And that leaves the check finding nothing, which is worth saying plainly
+
+Three refusals, then a fourth took it 8 to 2, then this one took it to **0**. Both field hits were
+genuine false positives and both refusals are right. But a check that has never said *no* has not
+been verified, and it is now verified against a **planted control** only.
+
+Two readings, no way to choose yet: either the refusals are correct and this warehouse has no
+silently-failing joins, or `row_loss_threshold` at 0.8 is too high. It needs a second project.
+Recorded in `VERIFICATION.md` rather than counted as a clean result.

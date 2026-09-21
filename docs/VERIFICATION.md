@@ -144,6 +144,20 @@ surface it.
 | `options_overlap` | verified against the pair that prompted it, and it independently flagged `predicate_intent` — the family already proven weak by hand. Not yet read against a question it should PASS but does not |
 | `sentence_is_a_claim` | extraction was read by hand on one model (16 sentences, every high-confidence answer correct, every low-confidence one a genuinely ambiguous header) — but only one model |
 
+### `hop_drops_most_rows` currently finds nothing, and that is worth stating plainly
+
+It was built with three structural refusals, then a fourth (the parent was pre-aggregated) took it
+from 8 findings to 2, then a fifth (a sibling edge explains the narrowing) took it to **0**. Both
+field hits were genuine false positives and both refusals are right.
+
+But a check that has never said *no* has not been verified, which is this page's own rule. It is
+verified against a **planted control** only: a child joined to one large parent with no sibling
+its own size, which fires. Nobody has yet seen it catch a real join that was failing to match.
+
+Two readings and no way to choose between them yet: the refusals are correct and this warehouse
+genuinely has no silently-failing joins, or `completeness.row_loss_threshold` at 0.8 is too high.
+Run it on a second project before trusting either.
+
 ### `options_overlap` has a known false negative
 
 An option whose description **routes to another option by name** — "the answer is `<other>`, not

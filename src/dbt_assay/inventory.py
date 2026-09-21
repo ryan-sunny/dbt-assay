@@ -116,6 +116,10 @@ class ModelEntry:
     aggregates: bool = False
     # {parent_name: (parent_rows, child_rows)} once `--verify` has counted them.
     row_loss: dict = field(default_factory=dict)
+    # Every joined parent's row count, including ones that are not candidates. A hop can only be
+    # judged against its SIBLINGS: a child joined to a small roster is that roster's size, and the
+    # narrowing happened on the other edge.
+    parent_rows: dict = field(default_factory=dict)
     # {parent: [keys]} for parents collapsed inside a subquery before being joined.
     pre_aggregated_parents: dict = field(default_factory=dict)
     description: str = ""

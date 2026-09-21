@@ -1002,3 +1002,70 @@ def test_the_page_is_deterministic(project_dir, tmp_path):
         assert r.exit_code == 0, r.output
     assert a.read_text() == b.read_text(), "the page churns between identical runs"
     assert "20" in a.read_text()
+
+
+# --- round five: two blind spots found by using it -------------------------------------------
+
+def test_a_source_can_declare_a_reader_that_lives_outside_dbt():
+    """*** A MANIFEST CHECK CANNOT SEE A PYTHON READER, AND THE OBVIOUS ACTION IS TO DELETE. ***
+
+    `enriched_wells.well_documents` came back as read by nothing, which is true of the dbt graph
+    and false of the warehouse: `enrichment/well_scans.py` reads it. Its own description already
+    said so and nothing could act on prose.
+    """
+    from types import SimpleNamespace as NS
+
+    from dbt_assay.checks import sources as sc
+
+    src = NS(source_name="enriched", name="well_documents", schema="s", columns={})
+    project = NS(sources={"source.p.enriched.well_documents": src},
+                 raw={"child_map": {}, "nodes": {},
+                      "sources": {"source.p.enriched.well_documents": {}}})
+    got = sc.source_reaches_nothing(project)
+    assert len(got) == 1
+    assert "in this dbt project" in got[0].summary, "it claimed more than it checked"
+    assert "Do not delete" in got[0].detail and sc.READ_BY in got[0].detail
+
+    project.raw["sources"]["source.p.enriched.well_documents"] = {
+        "meta": {sc.READ_BY: "enrichment/well_scans.py"}}
+    assert sc.source_reaches_nothing(project) == []
+    project.raw["sources"]["source.p.enriched.well_documents"] = {
+        "config": {"meta": {sc.READ_BY: ["a.py", "b.py"]}}}
+    assert sc.source_reaches_nothing(project) == []
+
+
+def test_row_loss_is_refused_when_a_sibling_edge_explains_it():
+    """*** THE NARROWING CAN BE ON A DIFFERENT EDGE, AND THE COUNTS ALREADY SAY SO. ***
+
+    `multifamily_leads` keeps 0.4% of `dim_owner` because it joins a roster of apartment
+    buildings only. The hop is not failing to match; the child is the SIZE of its other parent.
+    Same family as the union blind spot.
+
+    *** AND THIS IS THE NEGATIVE CONTROL THE FIELD CANNOT SUPPLY. ***
+    After the refusal this check finds NOTHING on the only warehouse it has been run against, so
+    a planted case is the only thing standing between it and a check that has never said no.
+    """
+    from dbt_assay.inventory import ModelEntry
+    from dbt_assay.practices import hop_drops_most_rows
+
+    def child(**kw):
+        x = ModelEntry(uid="model.p.c", name="c", path="c.sql", layer="marts",
+                       materialized="table")
+        x.row_loss = {"big": (3_156_986, 13_694)}
+        for k, v in kw.items():
+            setattr(x, k, v)
+        return x
+
+    # A sibling the child is the size of: the roster explains it.
+    e = child(parent_rows={"big": 3_156_986, "roster": 13_694})
+    assert hop_drops_most_rows(None, [e], 0.8) == []
+
+    # No sibling explains it -- every other parent is far larger than the child. THE CONTROL.
+    e2 = child(parent_rows={"big": 3_156_986, "other": 2_000_000})
+    got = hop_drops_most_rows(None, [e2], 0.8)
+    assert len(got) == 1, "the check no longer fires on anything at all"
+    assert "13,694 rows from 3,156,986" in got[0].summary
+
+    # A single-parent child has no sibling to be explained by, so it still fires.
+    e3 = child(parent_rows={"big": 3_156_986})
+    assert len(hop_drops_most_rows(None, [e3], 0.8)) == 1

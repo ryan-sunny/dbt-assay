@@ -458,7 +458,11 @@ def verify_row_loss(entries, project, probe_mod, project_dir: str, profiles_dir:
     rel_of = dict(getattr(schema, "relation", None) or {})
     by_name = {m.name: (rel_of.get(uid) or m.name).replace('"', "")
                for uid, m in project.models.items()}
-    wanted = {e.name for e, _p in cands} | {p for _e, p in cands}
+    # *** EVERY PARENT OF A CANDIDATE CHILD, NOT ONLY THE CANDIDATE PARENTS. ***
+    # A hop can only be judged against its siblings, so the ones that are not candidates still
+    # have to be counted. They are what explains the loss.
+    kids = list({id(e): e for e, _p in cands}.values())     # ModelEntry is not hashable
+    wanted = {e.name for e in kids} | {p for e in kids for p in (e.join_keys or {})}
     todo = sorted(n for n in wanted if n in by_name)
     counts: dict = {}
 
@@ -488,6 +492,10 @@ def verify_row_loss(entries, project, probe_mod, project_dir: str, profiles_dir:
     for i in range(0, len(todo), batch):
         walk(todo[i:i + batch])
 
+    for e in kids:
+        for pname in (e.join_keys or {}):
+            if pname in counts:
+                e.parent_rows[pname] = counts[pname]
     n = 0
     for e, pname in cands:
         if e.name in counts and pname in counts:
@@ -503,6 +511,15 @@ def hop_drops_most_rows(project, entries, threshold: float = 0.8) -> list:
     for e in entries:
         for pname, (pn, cn) in sorted((e.row_loss or {}).items()):
             if pn <= 0 or cn >= pn * (1 - threshold):
+                continue
+            # *** THE NARROWING CAN BE ON A DIFFERENT EDGE, AND THE COUNTS ALREADY SAY SO. ***
+            # Reported from the field: `multifamily_leads` keeps 0.4% of `dim_owner` because it
+            # joins a roster of apartment buildings only. The hop is not failing to match -- the
+            # child is the SIZE of its other parent. Same family as the union blind spot, and
+            # settled the same way: by code, from numbers already in hand.
+            explained = next((sib for sib, sn in sorted((e.parent_rows or {}).items())
+                              if sib != pname and sn and cn >= sn * (1 - threshold)), None)
+            if explained:
                 continue
             kept = cn / pn
             out.append(Finding(

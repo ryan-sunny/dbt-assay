@@ -36,21 +36,49 @@ def installed(project, package: str) -> bool:
                for n in (project.raw.get("nodes", {}) or {}).values())
 
 
+READ_BY = "read_by"
+
+
+def _declared_reader(project, uid: str) -> str:
+    """`meta.read_by` on the source: a consumer OUTSIDE dbt, written down where it is declared.
+
+    *** A MANIFEST CHECK CANNOT SEE A PYTHON READER, AND THE OBVIOUS ACTION IS TO DELETE. ***
+    Reported from the field: `enriched_wells.well_documents` came back as read by nothing, which
+    is true of the dbt graph and false of the warehouse -- `enrichment/well_scans.py` reads it.
+    Its own description already says "the document index the scan reader works from", so a person
+    had written it down and nothing could act on prose.
+
+    `meta: {read_by: enrichment/well_scans.py}` is the same fact in a place code can read, and it
+    stays inside the rule this whole tier follows: coverage of what the project ITSELF declares.
+    """
+    n = (project.raw.get("sources", {}) or {}).get(uid) or {}
+    meta = {**(n.get("meta") or {}), **((n.get("config") or {}).get("meta") or {})}
+    v = meta.get(READ_BY)
+    return ", ".join(map(str, v)) if isinstance(v, (list, tuple)) else (str(v) if v else "")
+
+
 def source_reaches_nothing(project, _digests=None) -> list[Finding]:
-    """Declared, loaded on every run, and read by no model and no test."""
+    """Declared, loaded on every run, and read by no model and no test IN THIS PROJECT."""
     out = []
     for uid, s in project.sources.items():
-        if _child_uids(project, uid):
+        if _child_uids(project, uid) or _declared_reader(project, uid):
             continue
         out.append(Finding(
             check="source_reaches_nothing", subject=uid,
             subject_name=f"{s.source_name}.{s.name}", file="",
-            summary=f"`{s.source_name}.{s.name}` is declared and nothing reads it",
+            # *** SAY WHAT WAS ACTUALLY CHECKED. *** "Nothing reads it" is a claim about the
+            # warehouse and only the dbt graph was looked at.
+            summary=f"nothing in this dbt project reads `{s.source_name}.{s.name}`",
             detail=("No model and no test refers to this source. Either something was meant to "
-                    "read it and does not -- which is a gap nothing else in this project "
-                    "reports -- or the declaration outlived what used it and is now describing "
-                    "a table your warehouse no longer needs."),
-            base=1, evidence={"source": s.source_name, "table": s.name, "schema": s.schema}))
+                    "read it and does not -- a gap nothing else in this project reports -- or "
+                    "the declaration outlived what used it.\n\n"
+                    "A reader OUTSIDE dbt is invisible here: a Python enricher or a notebook "
+                    "consuming this table looks exactly the same as nothing at all. Do not "
+                    "delete on the strength of this finding. If something out of band reads it, "
+                    f"record that once with `meta: {{{READ_BY}: path/to/reader.py}}` on the "
+                    "source and this stops firing."),
+            base=1, evidence={"source": s.source_name, "table": s.name, "schema": s.schema,
+                              "checked": "the dbt graph only"}))
     return out
 
 
@@ -65,6 +93,8 @@ def source_only_a_test_reads(project, _digests=None) -> list[Finding]:
     for uid, s in project.sources.items():
         kids = _child_uids(project, uid)
         if not kids or not all(k.startswith("test.") for k in kids):
+            continue
+        if _declared_reader(project, uid):
             continue
         out.append(Finding(
             check="source_only_a_test_reads", subject=uid,
