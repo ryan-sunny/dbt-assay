@@ -352,8 +352,8 @@ def family_of(question_id: str) -> str | None:
 # read the next one's version.
 EMITTED_IDS = {
     # family: the id its writer actually puts in the question dict, and where.
-    "sentence_is_a_claim":              ("claim__<i>", "claims.kind_questions"),
-    "claim_alignment":                  ("align", "claims.align_question"),
+    "sentence_is_a_claim":              ("sentence__<i>", "claims.kind_questions"),
+    "claim_alignment":                  ("claim", "claims.align_question"),
     "same_concept":                     ("align__<i>", "align.pair_questions"),
     "severity_fit":                     ("sev__<i>", "testing.questions"),
     "predicate_intent":                 ("pred__<i>", "semantics.predicate_questions"),

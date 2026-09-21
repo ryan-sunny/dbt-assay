@@ -138,6 +138,15 @@ create table if not exists unreadable (
 """
 
 
+# *** THE MIGRATION RUNS ON WHICHEVER STORE OPENS FIRST, AND THAT IS RARELY THE ONE REPORTING. ***
+# `check` opens three. If the count lived only on the instance that did the work, the surface a
+# person is watching would print nothing and 7,536 moved rows would read exactly like zero -- the
+# failure this codebase keeps finding, where "it reported nothing" and "it is not wired up" are the
+# same output. Append-only, per process, and it describes what THIS process did to the store.
+QUESTION_IDS_MOVED: list[tuple[str, str, str, int]] = []
+QUESTION_IDS_STUCK: list[tuple[str, str, str, int]] = []
+
+
 class StoreUnwritable(RuntimeError):
     """The store cannot be opened for writing. Says which path and why, rather than a traceback."""
 
@@ -156,6 +165,8 @@ class Store:
                 f"Pass --store with a writable path, or run from a writable directory. "
                 f"The structural checks work without a store at all.") from e
         self.con.execute(DDL)
+        self.renamed_question_ids: list[tuple[str, str, int]] = []
+        self.unrenamable_question_ids: list[tuple[str, str, int]] = []
         self._migrate()
         self.superseded_decisions = 0
         self.stale_decisions = 0
@@ -191,6 +202,109 @@ class Store:
                             "update adjudications set source = 'human' where source is null")
 
         self._reshape_adjudications()
+        self._rename_moved_question_ids()
+
+    # *** A QUESTION THAT MOVES TO ITS OWN PREFIX TAKES ITS STORED ANSWERS WITH IT. ***
+    # `sentence_is_a_claim` filed under `claim__N` and `claim_alignment` filed under `align`, each
+    # one a prefix a NEIGHBOURING bank declares. Fixing the emitted ids without moving the rows
+    # would orphan 7,536 answers on the field store: the writer would ask under the new id, find
+    # no cached answer, and pay to re-ask a question whose TEXT never changed. So the ids move and
+    # the answers move with them, which is a rename and not a re-ask -- state hashes are unchanged,
+    # every row stays a cache hit, and no `prompt_version` moves because no question moved.
+    #
+    # (old id, new id, is_prefix, the family that actually writes it, the family it used to
+    #  resolve to -- which is the wrong value sitting in `adjudications.family` on any store
+    #  written before this.)
+    MOVED_QUESTION_IDS: ClassVar[tuple] = (
+        ("claim__", "sentence__", True,  "sentence_is_a_claim", "claim_alignment"),
+        ("align",   "claim",      False, "claim_alignment",     "same_concept"),
+    )
+
+    # The two tables that key on a question id. `model_decisions` holds the answers;
+    # `adjudications` holds the verdicts people gave on them, and they must move together or the
+    # verdict stops joining to the answer it was about -- the 0.17.0 orphaning, one column over.
+    _QUESTION_ID_TABLES: ClassVar[tuple] = (
+        ("model_decisions", "decision_key", ("prompt_version", "model_version")),
+        ("adjudications",   "subject",      ("prompt_version",)),
+    )
+
+    def _rename_moved_question_ids(self) -> None:
+        """Move stored answers onto the question id their own bank declares.
+
+        *** IT MOVES WHAT IT CAN AND SAYS WHAT IT CANNOT, AND IT NEVER DROPS A ROW. ***
+        A rename can collide: a store holding both the old id and the new one under the same key
+        cannot have both, because the id is in the primary key. An `update` there would raise and
+        a `insert or replace` would silently destroy one of the two answers -- which is the shape
+        this codebase keeps finding in other people's code. So collisions are counted, left where
+        they are, and reported by name. Nothing here is a guess: a row under `claim__N` was written
+        by `kind_questions` and by nothing else.
+
+        Idempotent. After it runs the old ids do not exist, so the second run moves nothing and
+        prints nothing.
+        """
+        for table, key, version_cols in self._QUESTION_ID_TABLES:
+            try:
+                have = {r[0] for r in self.con.execute(
+                    "select column_name from information_schema.columns "
+                    "where table_name = ?", [table]).fetchall()}
+            except Exception:                                    # noqa: BLE001, S112
+                continue
+            if "question" not in have:
+                continue
+            for old, new, is_prefix, right_family, wrong_family in self.MOVED_QUESTION_IDS:
+                self._move_one_question_id(table, key, version_cols, old, new, is_prefix,
+                                           right_family, wrong_family, have)
+
+    def _move_one_question_id(self, table, key, version_cols, old, new, is_prefix,
+                              right_family, wrong_family, have) -> None:
+        # `starts_with`, never `like`: `_` is a single-character wildcard in LIKE, so
+        # `like 'claim__%'` also matches `claimXY...`. The ids being moved END in a double
+        # underscore, which is precisely where that would bite.
+        def new_id(col: str) -> str:
+            """The id `col` becomes, as SQL."""
+            return f"? || substr({col}, {len(old) + 1})" if is_prefix else "?"
+
+        def matches(col: str) -> str:
+            return f"starts_with({col}, ?)" if is_prefix else f"{col} = ?"
+
+        cols = [key, *(c for c in version_cols if c in have)]
+        same_key = " and ".join(f"b.{c} = t.{c}" for c in cols)
+        # A row that ALREADY sits where one of these is going, under the same key. The id is in
+        # the primary key, so both cannot exist: an `update` would raise and an `insert or
+        # replace` would destroy one of the two answers silently.
+        collides = (f"exists (select 1 from {table} b where {same_key} "
+                    f"and b.question = {new_id('t.question')})")
+
+        n = self.con.execute(
+            f"select count(*) from {table} where {matches('question')}", [old]).fetchone()[0]
+        if not n:
+            return
+        stuck = self.con.execute(
+            f"select count(*) from {table} t where {matches('t.question')} and {collides}",
+            [old, new]).fetchone()[0]
+        if stuck:
+            self.unrenamable_question_ids.append((old, new, stuck))
+            QUESTION_IDS_STUCK.append((table, old, new, stuck))
+
+        moved = n - stuck
+        if moved <= 0:
+            return
+        self.con.execute(
+            f"update {table} as t set question = {new_id('t.question')} "
+            f"where {matches('t.question')} and not {collides}",
+            [new, old, new])
+        self.renamed_question_ids.append((old, new, moved))
+        QUESTION_IDS_MOVED.append((table, old, new, moved))
+
+        # *** THE FAMILY COLUMN CARRIED THE NAME THE OLD PREFIX RESOLVED TO. ***
+        # That name is a REAL family, so `_unresolved_family`'s repair -- which only moves a
+        # family nothing can join back to -- steps over it. Only the known-wrong value and an
+        # empty one are corrected here; any other value is somebody's deliberate label.
+        if table == "adjudications" and "family" in have:
+            self.con.execute(
+                f"update {table} set family = ? where {matches('question')} "
+                f"and (family = ? or family is null or family = '')",
+                [right_family, new, wrong_family])
 
     def _reshape_adjudications(self) -> None:
         """Put `prompt_version` in the key on a store written before it was there.

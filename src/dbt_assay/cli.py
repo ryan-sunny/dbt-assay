@@ -325,6 +325,9 @@ def check(
         }, indent=2))
         raise typer.Exit(0)
 
+    _report_moved_question_ids()
+    _report_refused_claim_findings()
+
     if _dropped.get("stale") or _dropped.get("superseded"):
         bits = []
         if _dropped["superseded"]:
@@ -969,11 +972,29 @@ def claims(
     scope = resolve(project, select)
     if scope is not None:
         cands = [c for c in cands if c.subject in scope]
-    seen, uniq = set(), []
-    for c in cands:                       # the same sentence in a description AND a comment is one
-        if c.claim_id not in seen:
-            seen.add(c.claim_id)
-            uniq.append(c)
+    # The same sentence in a description AND a comment is one claim. `claim_id` collapses the
+    # byte-identical case; `near_duplicate_key` collapses the pairs that differ by a backtick or
+    # a trailing full stop, which is what actually survived in the field -- one sentence read,
+    # asked and reported twice, at 0.95 and again at 0.93.
+    seen, near, uniq, merged = set(), {}, [], []
+    for c in cands:
+        if c.claim_id in seen:
+            continue
+        k = claims_mod.near_duplicate_key(c.subject, c.text)
+        if k in near:
+            merged.append((c.subject_name, near[k].text, c.text))
+            continue
+        seen.add(c.claim_id)
+        near[k] = c
+        uniq.append(c)
+    if merged:
+        # *** SAY WHAT WAS MERGED, WITH BOTH SENTENCES. ***
+        # A normaliser that collapses two claims that genuinely differ loses one of them, and it
+        # loses it quietly. Printing the pair is what makes that reviewable rather than trusted.
+        console.print(f"[dim]{len(merged)} sentence(s) merged as the same claim written twice, "
+                      f"once in a description and once in a comment.[/]")
+        for _n, _kept, _drop in merged[:3]:
+            console.print(f"[dim]  {_n}: kept {_kept[:70]!r}, merged {_drop[:70]!r}[/]")
     by_model: dict = {}
     for c in uniq:
         by_model.setdefault(c.subject, []).append(c)
@@ -1007,7 +1028,7 @@ def claims(
                 st = claims_mod.kind_state(m.name, chunk, m.description or "", cfg.vocab)
                 try:
                     ans = decide(store, client, st, claims_mod.kind_questions(chunk),
-                                 contexts={f"claim__{i}": c.text[:120]
+                                 contexts={f"sentence__{i}": c.text[:120]
                                            for i, c in enumerate(chunk)},
                                  decision_key=f"{uid}::sentence::{chunk[0].claim_id}",
                                  prompt_version=claims_mod.KIND_VERSION, caller="assay.claims")
@@ -1015,7 +1036,7 @@ def claims(
                     console.print(f"[yellow]stopped at the cap: {e}[/]")
                     break
                 for i, c in enumerate(chunk):
-                    a = ans.get(f"claim__{i}")
+                    a = ans.get(f"sentence__{i}")
                     if not a:
                         continue
                     kinds[a["answer"]] += 1
@@ -1118,13 +1139,13 @@ def verify(
             try:
                 ans = decide(store, client, claims_mod.align_state(c, ev, cfg.vocab),
                              claims_mod.align_question(),
-                             contexts={"align": f"{c.subject_name}: {c.text[:120]}"},
+                             contexts={"claim": f"{c.subject_name}: {c.text[:120]}"},
                              decision_key=f"{c.subject}::claim::{c.claim_id}",
                              prompt_version=claims_mod.ALIGN_VERSION, caller="assay.verify")
             except BudgetExceeded as e:
                 console.print(f"[yellow]stopped at the cap: {e}[/]")
                 break
-            a = ans.get("align")
+            a = ans.get("claim")
             if not a:
                 continue
             counts[a["answer"]] += 1
@@ -4062,6 +4083,49 @@ def _pkg_version() -> str:
 def _prompt_version(name: str) -> str:
     from .contracts import QUESTIONS
     return QUESTIONS[name]["prompt_version"]
+
+
+def _report_refused_claim_findings() -> None:
+    """Stored contradictions that did not become findings, and why.
+
+    `verify` refuses these before the call and prints each one. Answers given before 0.23.0 were
+    never refused by anything, so the read path refuses them too -- and a silent skip there would
+    make a shrinking findings count read as a warehouse getting better.
+    """
+    from .inventory import REFUSED_CLAIM_FINDINGS
+    if not REFUSED_CLAIM_FINDINGS:
+        return
+    console.print(f"[dim]{len(REFUSED_CLAIM_FINDINGS)} stored contradiction(s) are NOT shown as "
+                  f"findings: the claim cannot be answered from SQL in either direction. "
+                  f"Absent evidence is not disagreement.[/]")
+    for name, why in REFUSED_CLAIM_FINDINGS[:4]:
+        console.print(f"[dim]  {name}: {why[:150]}[/]")
+
+
+def _report_moved_question_ids() -> None:
+    """Say out loud that stored answers were moved onto a different question id.
+
+    *** A STORE THAT CHANGES UNDER SOMEBODY HAS TO SAY SO WHERE THEY ARE LOOKING. ***
+    7,536 answers moving is exactly the size of thing that, unreported, reads as a release
+    quietly losing data -- which is how 0.24.0's hidden findings were first noticed and how
+    they were first mis-explained. The rename costs nothing and re-asks nothing, and both of
+    those are claims a person should be able to check rather than take.
+    """
+    from .store import QUESTION_IDS_MOVED, QUESTION_IDS_STUCK
+    if not QUESTION_IDS_MOVED and not QUESTION_IDS_STUCK:
+        return
+    console.print("[dim]question ids: stored answers moved onto the prefix their own bank "
+                  "declares.[/]")
+    for table, old, new, n in QUESTION_IDS_MOVED:
+        console.print(f"[dim]  {table}: {n:,} row(s) {old!r} -> {new!r}[/]")
+    console.print("[dim]  The question TEXT did not change, so no version moved and every "
+                  "answer stays a cache hit. Nothing was re-asked.[/]")
+    for table, old, new, n in QUESTION_IDS_STUCK:
+        # *** LEFT WHERE IT IS, NOT DROPPED. ***
+        console.print(f"[yellow]  {table}: {n:,} row(s) could not move {old!r} -> {new!r}[/] "
+                      f"[dim]because an answer already sits there under the same key. Both are "
+                      f"kept; the one under {old!r} is the older of the two and is no longer "
+                      f"read.[/]")
 
 
 def _family_of(question: str) -> str:

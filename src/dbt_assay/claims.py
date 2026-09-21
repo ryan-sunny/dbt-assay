@@ -154,6 +154,26 @@ def comment_sentences(sql: str) -> list[tuple[str, int]]:
     return out
 
 
+_PUNCT = re.compile(r"[^a-z0-9 ]+")
+
+
+def near_duplicate_key(subject: str, text: str) -> tuple[str, str]:
+    """A key that is equal for the same sentence written twice with different punctuation.
+
+    *** THE SAME CLAIM FROM A HEADER AND FROM A SCHEMA DESCRIPTION WAS COUNTED TWICE. ***
+    Measured in the field: `int_water_diversion_history` came back contradicted at 0.95 AND at
+    0.93, `stg_cdss_dams` at 0.95 and 0.93, each pair one sentence a person had written in two
+    places. `claim_id` already collapses byte-identical text, so what survived were the pairs
+    differing by a backtick, a trailing full stop or a comma.
+
+    *** IT STRIPS PUNCTUATION AND NOTHING ELSE. ***
+    Dropping stop words or stemming would collapse two claims that genuinely differ, and the
+    louder a normaliser is the more quietly it loses one of them. Scoped to the model, because
+    the same sentence about two models is two claims.
+    """
+    return subject, " ".join(_PUNCT.sub(" ", (text or "").lower()).split())
+
+
 def candidates(project, digests, shared: set[str] | None = None) -> list[Claim]:
     """Every sentence that could be a claim, with where it came from. No judgment yet.
 
@@ -178,8 +198,14 @@ def candidates(project, digests, shared: set[str] | None = None) -> list[Claim]:
 
 
 def kind_questions(items: list[Claim]) -> dict:
-    return {f"claim__{i}": choice({"sentence": c.text, **KIND_Q["instructions"]},
-                                  KIND_Q["criteria"])
+    # *** THE ID MUST CARRY ITS OWN BANK'S PREFIX, AND FOR EIGHT RELEASES IT CARRIED A NEIGHBOUR'S.
+    # This is `sentence_is_a_claim`, whose bank declares `id_prefix: sentence`. It filed under
+    # `claim__N`, which `claim_alignment` declares, so every resolution from a stored id to a
+    # family landed one family over: verdicts counted toward the wrong gate floor, `review -i`
+    # printed the wrong family name, and 0.24.0's version filter hid 231 findings on that mapping.
+    # `contracts.id_prefix_conflicts` asserts the invariant that was missing.
+    return {f"sentence__{i}": choice({"sentence": c.text, **KIND_Q["instructions"]},
+                                     KIND_Q["criteria"])
             for i, c in enumerate(items)}
 
 
@@ -195,7 +221,9 @@ def kind_state(model_name: str, items: list[Claim], purpose: str = "",
 
 
 def align_question() -> dict:
-    return {"align": choice(ALIGN_Q["instructions"], ALIGN_Q["criteria"])}
+    # This is `claim_alignment`, whose bank declares `id_prefix: claim`. It filed under `align`,
+    # which `same_concept` declares. See `kind_questions` above: same defect, one family over.
+    return {"claim": choice(ALIGN_Q["instructions"], ALIGN_Q["criteria"])}
 
 
 def align_state(claim: Claim, evidence: dict, vocab: dict | None = None) -> dict:

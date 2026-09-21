@@ -1258,17 +1258,21 @@ def test_the_reader_never_hides_an_answer_on_a_guess_about_its_family():
     18, while nothing about those models had changed.
 
     So there is no family resolution in the reader at all. The latest answer to a question wins.
+
+    0.24.2 moved those two ids onto their own banks' prefixes (`sentence__N` and `claim`), which
+    removes the CAUSE. This test keeps the PROPERTY, because the property has to hold for a
+    custom bank whose prefix assay has never seen either.
     """
     s = _decisions([
-        ("claim__0", "sentence.v1", "m::sentence::a", "claim_about_output"),
-        ("align", "claim.v2", "m::claim::a", "supports"),
+        ("sentence__0", "sentence.v1", "m::sentence::a", "claim_about_output"),
+        ("claim", "claim.v2", "m::claim::a", "supports"),
         ("desc", "desc.v1+comments+scoped", "m::desc", "0.7"),
         ("edge", "edge.v1", "m::edge::p", "silently_multiplied"),
         ("edge", "edge.v2", "m::edge::p", "same_thing"),
     ])
     try:
         got = dict(s.live_decisions("1 = 1", [], columns="question, answer"))
-        assert set(got) == {"claim__0", "align", "desc", "edge"}, \
+        assert set(got) == {"sentence__0", "claim", "desc", "edge"}, \
             f"an answer was hidden on a guess about which family asked it: {got}"
         assert got["edge"] == "same_thing", "the latest answer did not win"
         assert s.superseded_decisions == 1
@@ -1340,17 +1344,18 @@ def test_no_question_id_resolves_to_another_family():
     version; `claim_alignment` (prefix `claim`) files under `align` and read `same_concept`'s.
     A reader built on that mapping hid 7,536 answers and reported `246 resolved`.
 
-    Nothing in this codebase may resolve a version through a question id while these exist. This
-    fails until they are reconciled, which is the point: it is a live defect, not a note.
+    RECONCILED IN 0.24.2. `kind_questions` emits `sentence__N` and `align_question` emits
+    `claim`, each matching its own bank's declared `id_prefix`, and `Store.MOVED_QUESTION_IDS`
+    carried the 7,536 stored answers across without re-asking anything. This was an xfail for one
+    release; it is an assertion now, and a new question that files under a neighbour's prefix
+    fails here rather than being discovered by 231 findings going missing.
     """
-    import pytest
-
     from dbt_assay.contracts import id_prefix_conflicts
 
     conflicts = id_prefix_conflicts()
-    if conflicts:
-        pytest.xfail("known, reported by `assay banks` as an error:\n  " + "\n  ".join(conflicts))
-    assert not conflicts
+    assert not conflicts, (
+        "a question files under a prefix another bank declares, so every resolution from a "
+        "stored id to a family lands one family over:\n  " + "\n  ".join(conflicts))
 
 
 def test_the_emitted_id_table_matches_the_writers():
@@ -1372,3 +1377,333 @@ def test_the_emitted_id_table_matches_the_writers():
                 f"{where} does not emit {emitted!r}; the table is stale"
             seen[fam] = True
     assert len(seen) >= 7, f"the reader is broken; it checked only {len(seen)} writers"
+
+
+# --------------------------------------------------------------------- 0.24.2: the ids that moved
+
+def _planted_store(tmp_path, decisions, adjudications=()):
+    """A store holding PRE-rename rows, written straight to duckdb so the migration is what
+    moves them rather than the writer never having produced them."""
+    from dbt_assay.store import Store
+    p = str(tmp_path / "assay.duckdb")
+    s = Store(p)
+    for key, q, pv, ans in decisions:
+        s.con.execute(
+            """insert into model_decisions (decision_key, question, kind, answer, confidence,
+                   probabilities, state_hash, prompt_version, model_version, call_id, caller,
+                   context, input_tokens, decided_at)
+               values (?,?,'choice',?,0.9,'{}',?,?,'jev-1','c','t','x',1, current_timestamp)""",
+            [key, q, ans, f"h-{key}-{q}", pv])
+    for subj, q, fam in adjudications:
+        s.con.execute(
+            """insert into adjudications (subject, question, family, answered, verdict,
+                   correction, note, decided_by, source, prompt_version, model_version, decided_at)
+               values (?,?,?,'contradicts','disagree','','','ryan','human','claim.v2','jev-1',
+                       current_timestamp)""",
+            [subj, q, fam])
+    s.close()
+    return p
+
+
+def test_a_question_that_moved_prefix_takes_its_stored_answers_with_it(tmp_path):
+    """*** A RENAME, NOT A RE-ASK. ***
+
+    `sentence_is_a_claim` filed under `claim__N` and `claim_alignment` under `align`, each a
+    prefix a neighbouring bank declares. Fixing the emitted ids alone would have orphaned 7,536
+    answers on the field store: the writer asks under the new id, finds no cached answer, and pays
+    to re-ask a question whose TEXT never changed. The answers move with the id.
+
+    Exercised against a real store rather than by reading the source, because a source grep has
+    passed while the thing it guarded was broken several times in this file.
+    """
+    from dbt_assay.store import Store
+
+    p = _planted_store(
+        tmp_path,
+        [("m::sentence::a", "claim__0", "sentence.v1", "claim_about_output"),
+         ("m::sentence::a", "claim__1", "sentence.v1", "claim_about_output"),
+         ("m::claim::a", "align", "claim.v2", "contradicts")],
+        [("m::claim::a", "align", "same_concept")])
+
+    s = Store(p)
+    try:
+        qs = sorted(r[0] for r in s.con.execute("select question from model_decisions").fetchall())
+        assert qs == ["claim", "sentence__0", "sentence__1"], qs
+        # NOT A RE-ASK: the state hash is what decides a cache hit, and it did not move.
+        hashes = {r[0] for r in s.con.execute("select state_hash from model_decisions").fetchall()}
+        assert hashes == {"h-m::sentence::a-claim__0", "h-m::sentence::a-claim__1",
+                          "h-m::claim::a-align"}, hashes
+        # *** AND THE VERDICT MOVED WITH THE ANSWER, OR IT STOPS JOINING TO IT. ***
+        got = s.con.execute("select question, family from adjudications").fetchall()
+        assert got == [("claim", "claim_alignment")], got
+        assert ("model_decisions", "align", "claim", 1) in \
+            [(t, o, n, c) for t, o, n, c in __import__(
+                "dbt_assay.store", fromlist=["x"]).QUESTION_IDS_MOVED]
+    finally:
+        s.close()
+
+    s = Store(p)
+    try:
+        assert s.renamed_question_ids == [], "the migration is not idempotent"
+    finally:
+        s.close()
+
+
+def test_a_question_id_that_cannot_move_is_kept_and_named(tmp_path):
+    """*** IT NEVER DROPS A ROW, AND AN `insert or replace` WOULD HAVE. ***
+
+    The question id is in the primary key, so a store holding both the old id and the new one
+    under one key cannot hold both after the rename. `update` raises there and `insert or replace`
+    destroys one of the two answers silently -- the exact shape this tool checks other people's
+    code for. The movable rows move, the collision stays put, and it is reported by name.
+    """
+    from dbt_assay.store import Store
+
+    p = _planted_store(
+        tmp_path,
+        [("m::claim::a", "align", "claim.v2", "OLD_under_align"),
+         ("m::claim::a", "claim", "claim.v2", "ALREADY_under_claim"),
+         ("m::claim::b", "align", "claim.v2", "moves_fine")])
+
+    s = Store(p)
+    try:
+        rows = sorted(s.con.execute(
+            "select decision_key, question, answer from model_decisions").fetchall())
+        assert rows == [("m::claim::a", "align", "OLD_under_align"),
+                        ("m::claim::a", "claim", "ALREADY_under_claim"),
+                        ("m::claim::b", "claim", "moves_fine")], rows
+        assert s.unrenamable_question_ids == [("align", "claim", 1)], s.unrenamable_question_ids
+        assert ("align", "claim", 1) in s.renamed_question_ids, s.renamed_question_ids
+    finally:
+        s.close()
+
+
+def test_the_rename_does_not_match_a_single_underscore_wildcard(tmp_path):
+    """`like 'claim__%'` matches `claimXY` too, because `_` is a wildcard in LIKE and the ids
+    being moved end in a DOUBLE underscore. `starts_with` is the whole fix and this is what says
+    so: a neighbouring id that merely begins with the same letters must not move."""
+    from dbt_assay.store import Store
+
+    p = _planted_store(tmp_path, [("m::x", "claimXY", "v1", "untouched"),
+                                  ("m::x", "claim__0", "v1", "moves"),
+                                  # *** same_concept OWNS `align__N` AND KEEPS IT. ***
+                                  # Only the BARE `align` was claim_alignment's. A prefix match
+                                  # here would have swept up a whole other family's answers.
+                                  ("m::x", "align__0", "v1", "same_concepts_own")])
+    s = Store(p)
+    try:
+        got = sorted(r[0] for r in s.con.execute("select question from model_decisions").fetchall())
+        assert got == ["align__0", "claimXY", "sentence__0"], got
+    finally:
+        s.close()
+
+
+# ------------------------------------------------- 0.24.2: the claim refusal reaches the read path
+
+def test_near_duplicate_claims_collapse_but_two_real_claims_do_not():
+    """*** ONE SENTENCE, WRITTEN IN TWO PLACES, ASKED AND REPORTED TWICE. ***
+
+    `int_water_diversion_history` came back contradicted at 0.95 AND 0.93, `stg_cdss_dams` at
+    0.95 and 0.93 -- each pair one sentence a person had put in both a model header and a schema
+    description. `claim_id` collapses byte-identical text, so the survivors differed by a
+    backtick or a trailing full stop.
+
+    The other half matters more: a normaliser aggressive enough to collapse two claims that
+    genuinely differ loses one of them quietly, so this asserts what must NOT collapse.
+    """
+    from dbt_assay.claims import near_duplicate_key as k
+
+    assert k("m", "The `amount_af` column is acre-feet.") == k("m", "the amount_af column is acre feet")
+    assert k("m", "Residential permits are filtered out") == k("m", "Residential permits are filtered out.")
+    # different claims stay different
+    assert k("m", "residential permits are filtered out") != k("m", "commercial permits are filtered out")
+    assert k("m", "one row per parcel") != k("m", "one row per parcel per year")
+    # the same sentence about two models is two claims
+    assert k("model.a", "one row per parcel") != k("model.b", "one row per parcel")
+
+
+def test_a_stored_contradiction_the_call_site_would_refuse_is_not_a_finding(tmp_path):
+    """*** THE REFUSAL RAN AT THE CALL SITE AND NOWHERE ELSE. ***
+
+    0.23.0 taught `verify` not to ask the two claim shapes SQL cannot settle, which cut
+    contradictions 389 -> 240 and removed both hand-read false positives. It changed no
+    `prompt_version`, because the question did not change -- only which subjects are worth
+    sending. So every answer given before it shipped is still the live answer, is not stale, and
+    went on producing findings from the read path, which never consulted the refusal.
+
+    One fact in two places, silent when they disagree. Exercised through the real function.
+    """
+    from dbt_assay.inventory import _claim_is_unanswerable
+
+    class _Schema:
+        def columns(self, _uid):
+            return type("C", (), {"names": ["parcel_id", "acres"]})()
+
+    class _Digest:
+        def __init__(self):
+            self.ok = True
+            self.output_exprs = {"parcel_id": "p.parcel_id", "acres": "p.acres"}
+            self.predicates_atomic: list = []
+            self.group_by: list = []
+
+    class _Project:
+        def __init__(self):
+            self.models = {"m": type("M", (), {"parents": [], "name": "m",
+                                               "path": "m.sql"})()}
+
+        def name_of(self, uid):
+            return uid
+
+    proj, digests, schema = _Project(), {"m": _Digest()}, _Schema()
+    v = {"decision_key": "m::claim::c1"}
+
+    # names an identifier that is nowhere in the model or its parents -> cannot be contradicted
+    why = _claim_is_unanswerable(v, {"c1": "the ponds_covered flag is set upstream"},
+                                 "m", proj, digests, schema)
+    assert why and "absent" in why, why
+
+    # a claim about ROWS, which SQL structure cannot settle in either direction
+    why = _claim_is_unanswerable(v, {"c1": "the full record runs from 1886 to 2026"},
+                                 "m", proj, digests, schema)
+    assert why and "ROWS" in why, why
+
+    # an ordinary claim naming a column that IS here stays askable, and stays a finding
+    assert _claim_is_unanswerable(v, {"c1": "one row per parcel_id"},
+                                  "m", proj, digests, schema) == ""
+
+
+def test_an_unknown_claim_is_left_alone_rather_than_refused(tmp_path):
+    """*** A GUARD THAT CANNOT SEE ITS SUBJECT MUST NOT REPORT A VERDICT ON IT. ***
+
+    A decision key that resolves to no stored claim means the text is unavailable, not that the
+    claim is unanswerable. Returning a refusal there would delete a finding on the strength of a
+    missing row, which is the absence-reads-as-a-pass defect this file is mostly about.
+    """
+    from dbt_assay.inventory import _claim_is_unanswerable
+
+    assert _claim_is_unanswerable({"decision_key": "m::claim::gone"}, {}, "m", None, {}, None) == ""
+    assert _claim_is_unanswerable({}, {"c1": "anything"}, "m", None, {}, None) == ""
+
+
+# ------------------------------------------- 0.24.2: hop_drops_most_rows, end to end on a control
+
+def _control_project(tmp_path, sql: dict, parents: dict):
+    """A dbt project on disk: manifest, compiled SQL, the real loader. Relations are qualified
+    the way dbt compiles them, because the driving-edge refusal resolves `from_relations` through
+    `schema.relation` and a bare name matches nothing there."""
+    import json
+    nodes, parent_map, child_map = {}, {}, {}
+    for name, text in sql.items():
+        uid = f"model.p.{name}"
+        layer = "staging" if name.startswith("stg") else "intermediate"
+        path = f"models/{layer}/{name}.sql"
+        nodes[uid] = {"resource_type": "model", "name": name, "original_file_path": path,
+                      "schema": "main", "description": "", "columns": {},
+                      "config": {"materialized": "table", "meta": {}}}
+        parent_map[uid] = parents.get(uid, [])
+        child_map.setdefault(uid, [])
+        f = tmp_path / "target" / "compiled" / "p" / path
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text)
+    for child, ps in parents.items():
+        for p in ps:
+            child_map.setdefault(p, []).append(child)
+    (tmp_path / "target" / "manifest.json").write_text(json.dumps({
+        "metadata": {"project_name": "p", "dbt_version": "1.11.0", "adapter_type": "duckdb"},
+        "nodes": nodes, "sources": {}, "parent_map": parent_map, "child_map": child_map}))
+    return tmp_path / "target"
+
+
+def test_hop_drops_most_rows_fires_on_a_join_that_really_fails_to_match(tmp_path):
+    """*** THE END-TO-END CONTROL. A CHECK THAT HAS NEVER SAID `no` HAS NOT BEEN VERIFIED. ***
+
+    On the only warehouse this has run against, eight of nine driving edges kept EXACTLY 100% of
+    their rows and the ninth was a fan-out, so it has never caught a real defect and
+    `VERIFICATION.md` says so. It was verified against a planted candidate dict, which skips the
+    two things most likely to be wrong: whether candidate selection reaches the hop at all, and
+    whether the counts get back to it.
+
+    So this drives the whole chain -- manifest, parser, driving-edge selection, counting, finding
+    -- against a real DuckDB holding real rows, and asserts three outcomes that must differ:
+
+      int_parcel_owner   100 of 1,000 driving rows survive an INNER join   FIRES
+      int_parcel_zone  1,000 of 1,000 survive                              SILENT
+      int_parcel_where    10 of 1,000, and the model has a WHERE           REFUSED
+
+    The third is what stops the threshold taking the credit: it loses MORE than the first and
+    produces nothing, because the loss is declared in the SQL.
+    """
+    import duckdb
+
+    from dbt_assay import live, practices
+
+    sql = {
+        "stg_parcels": "select parcel_id, owner_id, acres from raw.parcels",
+        "stg_owners": "select owner_id, owner_name from raw.owners",
+        "stg_lookup": "select parcel_id, zone from raw.lookup",
+        # the defect: a driving INNER join whose key matches a fraction of the driving rows
+        "int_parcel_owner":
+            "select p.parcel_id, p.acres, o.owner_name from main.stg_parcels p "
+            "join main.stg_owners o on p.owner_id = o.owner_id",
+        # the same shape, matching everything
+        "int_parcel_zone":
+            "select p.parcel_id, p.acres, l.zone from main.stg_parcels p "
+            "join main.stg_lookup l on p.parcel_id = l.parcel_id",
+        # loses more than either, and says so in the SQL
+        "int_parcel_where":
+            "select p.parcel_id, p.acres, o.owner_name from main.stg_parcels p "
+            "join main.stg_owners o on p.owner_id = o.owner_id where p.acres > 500",
+    }
+    parents = {
+        "model.p.int_parcel_owner": ["model.p.stg_parcels", "model.p.stg_owners"],
+        "model.p.int_parcel_zone": ["model.p.stg_parcels", "model.p.stg_lookup"],
+        "model.p.int_parcel_where": ["model.p.stg_parcels", "model.p.stg_owners"],
+    }
+    target = _control_project(tmp_path, sql, parents)
+    st = live.read(target)
+
+    # *** SELECTION, BEFORE ANY COUNT. ***
+    # Only the DRIVING edge of a model that declares no narrowing. The `where` model is gone and
+    # every joined-to parent is gone, which is the 0.21.1 refusal doing the work.
+    cands = {(e.name, p) for e, p in practices.row_loss_candidates(st.entries)}
+    assert cands == {("int_parcel_owner", "stg_parcels"),
+                     ("int_parcel_zone", "stg_parcels")}, cands
+
+    db = duckdb.connect(str(tmp_path / "w.duckdb"))
+    db.execute("create schema if not exists main")
+    db.execute("create table main.stg_parcels as "
+               "select i as parcel_id, i % 50 as owner_id, i as acres from range(1000) t(i)")
+    db.execute("create table main.stg_owners as "
+               "select i as owner_id, 'o' as owner_name from range(50) t(i)")
+    db.execute("create table main.stg_lookup as "
+               "select i as parcel_id, 'z' as zone from range(1000) t(i)")
+    db.execute("create table main.int_parcel_owner as select p.parcel_id, p.acres, o.owner_name "
+               "from main.stg_parcels p join main.stg_owners o on p.owner_id = o.owner_id "
+               "where o.owner_id < 5")
+    db.execute("create table main.int_parcel_zone as select p.parcel_id, p.acres, l.zone "
+               "from main.stg_parcels p join main.stg_lookup l on p.parcel_id = l.parcel_id")
+    db.execute("create table main.int_parcel_where as select p.parcel_id from main.stg_parcels p "
+               "join main.stg_owners o on p.owner_id = o.owner_id where p.acres > 990")
+
+    class _Probe:
+        @staticmethod
+        def run_sql(q, _project_dir, _profiles_dir, _dbt_bin, limit=100):
+            return [dict(zip([c[0] for c in db.description], r, strict=True))
+                    for r in db.execute(q).fetchall()]
+
+    try:
+        n = practices.verify_row_loss(st.entries, st.project, _Probe, str(tmp_path), None,
+                                      "dbt", st.schema)
+        assert n == 2, f"counted {n} hops, expected the two candidates"
+        loss = {e.name: e.row_loss for e in st.entries if e.row_loss}
+        assert loss == {"int_parcel_owner": {"stg_parcels": (1000, 100)},
+                        "int_parcel_zone": {"stg_parcels": (1000, 1000)}}, loss
+
+        got = practices.hop_drops_most_rows(st.project, st.entries, 0.8)
+        assert [f.subject_name for f in got] == ["int_parcel_owner"], \
+            [(f.subject_name, f.summary) for f in got]
+        assert "100" in got[0].summary and "1,000" in got[0].summary, got[0].summary
+        # *** AN ABSENT MEASUREMENT IS NOT A PASS, SO THE REFUSED HOP IS ABSENT AND SILENT. ***
+        assert "int_parcel_where" not in {f.subject_name for f in got}
+    finally:
+        db.close()

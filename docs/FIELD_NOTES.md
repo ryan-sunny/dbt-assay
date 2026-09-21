@@ -1594,3 +1594,130 @@ Nothing is hidden -- re-ask with the command that owns the family and the newer 
 
 A number that moves for a reason that is not the reader's code has to say so where the reader is
 watching it move.
+
+---
+
+## Round ten: four open items, and the one the fourth uncovered
+
+Not a field report. Four things carried on the open list long enough to be worth closing together,
+and closing the fourth turned up a fifth that nobody had noticed.
+
+### The question ids moved, and the answers moved with them
+
+0.24.1 left `id_prefix_conflicts()` returning three live conflicts behind an xfail, on the
+reasoning that fixing them would orphan ~7,500 stored decisions and cost a re-ask. **It does not,
+and the number says why:**
+
+```
+5,794  claim__<i>   all written by sentence_is_a_claim   ->  sentence__<i>
+1,742  align        all written by claim_alignment       ->  claim
+    0  align__<i>   same_concept has never been asked here
+```
+
+Nothing sits under `align__<i>` to collide with and nothing sits under a bare `claim`, so both
+renames are one-to-one in both directions. More to the point, **a finding id is hashed over
+`check|subject|summary|evidence` and not over a question id**, so no finding-keyed ruling is
+touched. The only rows keyed on a question id are `model_decisions.question` and
+`adjudications.question`, and both are renameable in place.
+
+So it is a rename, not a re-ask. The question TEXT does not change, which means no
+`prompt_version` moves and every stored answer stays a cache hit. `Store.MOVED_QUESTION_IDS`
+carries them on open, idempotently, and prints what it moved.
+
+**It moves what it can and says what it cannot.** The question id is in the primary key, so a
+store holding both the old id and the new one under one key cannot hold both: `update` raises
+there and `insert or replace` destroys one of the two answers silently, which is the exact shape
+this tool checks other people's code for. Collisions are counted, left where they are, and named.
+
+**And `starts_with`, never `like`.** `_` is a single-character wildcard in LIKE, so
+`like 'claim__%'` also matches `claimXY`. The ids being moved end in a double underscore, which is
+precisely where that bites.
+
+### What the conflict was actually costing, which was more than an xfail
+
+Round nine took *version* resolution off `family_of`. Family *attribution* still ran through it:
+
+```
+claim__0     -> claim_alignment      written by sentence_is_a_claim
+align        -> same_concept         written by claim_alignment
+```
+
+Two of three shipped questions filed their verdicts under a neighbouring family's name. That
+reaches `mcp_server.rule()`, which writes that name into `adjudications.family`; `store`'s
+per-family human counts, which are what `min_adjudications` gates on; and `review -i`, which
+prints it. **A human verdict on a `claim_alignment` question counted toward `same_concept`'s gate
+floor.** Nothing had yet ruled on a claim question on the field warehouse, so no verdict was
+actually corrupted — it would have bitten on the first one.
+
+### The claim refusal ran at the call site and nowhere else
+
+0.23.0 taught `verify` not to ask the two claim shapes SQL cannot settle, which cut contradictions
+**389 to 240** and removed both hand-read false positives. It changed no `prompt_version`, because
+the question did not change — only which subjects are worth sending.
+
+Which means every answer given before it shipped is still the live answer, is **not stale**, and
+went on producing findings from a read path that never consulted the refusal. One fact, two
+places, silent when they disagree.
+
+`inventory` applies the same refusal now, and prints what it refused. It reads the claim text from
+the claims table by way of the decision key, **not** from the stored context, which is truncated at
+120 characters — a claim whose literal value sits past that would read as having none, which is the
+same absence-reads-as-a-pass defect one layer down. A decision key that resolves to no stored claim
+returns *askable*, not *refused*: a guard that cannot see its subject must not report a verdict on
+it.
+
+The third split from round seven, deduplication, shipped too. `claim_id` already collapsed
+byte-identical text, so what survived in the field were pairs differing by a backtick or a trailing
+full stop — `int_water_diversion_history` at 0.95 and again at 0.93, one sentence a person had put
+in both a header and a schema description. The key strips punctuation **and nothing else**:
+dropping stop words or stemming would collapse two claims that genuinely differ, and the louder a
+normaliser is the more quietly it loses one of them. Both sentences are printed for every merge.
+
+### `hop_drops_most_rows` has an end-to-end control
+
+It was verified against a planted candidate dict, which skips the two things most likely to be
+wrong: whether candidate selection reaches the hop at all, and whether the counts get back to it.
+There is now a dbt project on disk, parsed by the real loader, counted against real rows in a real
+DuckDB.
+
+```
+int_parcel_owner     100 of 1,000 driving rows survive an INNER join    FIRES
+int_parcel_zone    1,000 of 1,000 survive                               SILENT
+int_parcel_where      10 of 1,000, and the model declares a WHERE       REFUSED
+```
+
+The third stops the threshold taking the credit: it loses more than the first and produces
+nothing, because the loss is declared in the SQL. Selection narrows four hops to two before a row
+is counted.
+
+### And the fifth thing: a better summary orphaned five human rulings
+
+`ops_assay_debt`'s `model_has_been_ruled_on` was `a.subject like '%' || f.model || '%'`, which
+reads true on nearly everything and also matches every other model whose name CONTAINS this one —
+`water_rights` catching `water_rights_history`. It is two columns now: the exact
+`subject || '::finding::' || finding_id` join, and the weaker "is this ground anybody has looked
+at" with the weakness moved into its name.
+
+The exact one reads **0 of 349**, and five per-finding rulings exist. They join to nothing in any
+of the five stored runs, and the subject matches exactly:
+
+```
+ruled    source.sunny_data.raw_az_water.adwr_townships::finding::53cf3662d357
+current  source.sunny_data.raw_az_water.adwr_townships::finding::f0b89021a48b
+```
+
+`finding_id` is stable across runs — 349 of 349 findings keep exactly one id across the three runs
+that contain them — so this is not drift. **It is 0.21.0 rewording the summary.** Round five asked
+for `source_reaches_nothing` to stop claiming "nothing reads it" when only the dbt graph had been
+looked at, and it now reads "nothing in this dbt project reads it". That was the right fix. The id
+is hashed over the summary, so making the sentence more honest minted new ids and orphaned every
+ruling made on the old one.
+
+The docstring on `Finding.id` states the property this breaks, in as many words: *"Hashed over
+check, subject and summary rather than the run: a ruling has to survive the next run or it is not
+a ruling."* It survives the next run. It does not survive the next **release**, and a check whose
+wording is being actively improved is exactly the one people will have ruled on.
+
+Not fixed here, because every fix trades something: dropping the summary from the hash merges the
+eight findings one model can carry under one check, and a `supersedes` map is a second copy of the
+check list, which is the thing that drifts.

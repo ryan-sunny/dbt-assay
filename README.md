@@ -127,7 +127,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.24.1
+- uses: ryan-sunny/dbt-assay@v0.24.2
   with:
     target: target-head
     baseline: base/target

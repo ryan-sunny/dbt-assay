@@ -155,18 +155,57 @@ def _judgments(store, uid: str) -> dict:
     # This used to read every version and let a later row overwrite an earlier one, so which
     # answer reached a finding depended on the order duckdb returned -- `arbitrary_pick`, the
     # defect this tool checks other people's code for, in its own inventory.
-    rows = store.live_decisions("decision_key = ? or decision_key like ?",
-                                [uid, uid + "::%"])
+    rows = store.live_decisions(
+        "decision_key = ? or decision_key like ?", [uid, uid + "::%"],
+        # The key carries the claim id for the claim families, which is the only way back from a
+        # stored answer to the sentence it was about. The context holds a 120-char truncation,
+        # and a claim whose literal value sits past character 120 would read as having none.
+        columns="question, answer, confidence, probabilities, context, decision_key")
     out: dict = {}
-    for i, (q, a, c, probs, ctx) in enumerate(rows):
+    for i, (q, a, c, probs, ctx, dkey) in enumerate(rows):
         # *** UNIQUIFY ON COLLISION, NOT FROM A LIST OF IDS. ***
         # This named `("align", "edge")` as the questions asked more than once per model, which
         # is a second copy of a fact the rows already carry: any id that repeats needs a distinct
         # key, and a hardcoded list goes stale the first time a new family asks per-something.
         key = q if q not in out else f"{q}__{i}"
         out[key] = {"answer": a, "confidence": c,
-                    "probabilities": json.loads(probs or "{}"), "context": ctx}
+                    "probabilities": json.loads(probs or "{}"), "context": ctx,
+                    "decision_key": dkey}
     return out
+
+
+# *** A REFUSAL THAT NOBODY IS TOLD ABOUT IS INDISTINGUISHABLE FROM A CHECK THAT FOUND NOTHING. ***
+# `verify` prints its refusals with the reason, for exactly this argument. The read path refuses
+# too, so it says so in the same words and in the place a person watches the number move.
+REFUSED_CLAIM_FINDINGS: list[tuple[str, str]] = []
+
+
+def _claim_is_unanswerable(v: dict, claim_text: dict, uid, project, digests, schema) -> str:
+    """Why a STORED contradiction should not become a finding, or "" when it should.
+
+    *** THE SAME REFUSAL THE CALL SITE APPLIES, ON THE ANSWERS THAT PREDATE IT. ***
+    `claims.unanswerable_from_sql` decides what `verify` is willing to ask. A stored answer given
+    before that shipped has no idea, and the two hand-read false positives at p=0.95 were both of
+    exactly this shape. Re-asking would clear them too, at a cost; recognising them costs nothing
+    and does not depend on anyone remembering to re-run.
+
+    The claim text comes from the claims table by way of the decision key, NOT from the stored
+    context, which is truncated at 120 characters -- a claim whose literal value sits past that
+    would read as having none, which is the same absence-reads-as-a-pass defect one layer down.
+    """
+    from . import claims as claims_mod
+    key = v.get("decision_key") or ""
+    claim_id = key.split("::claim::")[1] if "::claim::" in key else ""
+    text = claim_text.get(claim_id, "")
+    if not text:
+        # *** NO TEXT IS NOT A CLEAN BILL. ***
+        # An unknown claim is one this check cannot judge either way, so it is left alone rather
+        # than refused. A guard that cannot see its subject must not report a verdict on it.
+        return ""
+    ev = claims_mod.evidence_for(uid, project, digests, schema, claim_text=text)
+    if not ev:
+        return ""
+    return claims_mod.unanswerable_from_sql(text, ev)
 
 
 def build(project, digests, schema, store=None, observed=None, facts=None) -> list[ModelEntry]:
@@ -180,6 +219,14 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
         if f.joined_on:
             by_child.setdefault(f.child, {})[f.parent_name] = list(f.joined_on)
     name_to_uid = {m.name: uid for uid, m in project.models.items()}
+    # *** THE REFUSAL RAN AT THE CALL SITE AND NOWHERE ELSE, SO OLD ANSWERS KEPT PRODUCING
+    # FINDINGS. *** 0.23.0 taught `verify` to recognise the two claim shapes SQL cannot settle and
+    # not to ask them, which cut contradictions 389 -> 240. It changed no `prompt_version`, because
+    # the QUESTION did not change -- only which subjects are worth sending. So every answer given
+    # before it shipped is still the live answer, is not stale, and still becomes a finding here.
+    # One fact, two places, silent when they disagree: the class this tool exists to find.
+    _claim_text = {c["claim_id"]: c["text"] for c in store.claims()} if store is not None else {}
+    REFUSED_CLAIM_FINDINGS.clear()
     out = []
 
     for uid in project.topological():
@@ -239,7 +286,11 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
                     pm = 0.0
                 if pm >= 0.6:
                     entry.fanout_hops.append((v.get("context") or "", pm))
-            if not q.startswith("align"):
+            # *** `claim`, NOT `align`: claim_alignment's answers moved to their own bank's
+            # prefix in 0.24.2. Reading `align` matched BOTH claim_alignment's `align` and
+            # same_concept's `align__N`, and only the filter on `contradicts` below -- an answer
+            # same_concept cannot give -- kept the two families apart by accident.
+            if not q.startswith("claim"):
                 continue
             try:
                 probs = v.get("probabilities") or {}
@@ -247,6 +298,10 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
             except (TypeError, ValueError, AttributeError):
                 continue
             if v.get("answer") == "contradicts" and pc >= 0.6:
+                why_not = _claim_is_unanswerable(v, _claim_text, uid, project, digests, schema)
+                if why_not:
+                    REFUSED_CLAIM_FINDINGS.append((m.name, why_not))
+                    continue
                 entry.claim_conflicts.append((v.get("context") or "", pc))
         if (d := judged.get("desc")) is not None:
             try:

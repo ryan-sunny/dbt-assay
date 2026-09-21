@@ -504,7 +504,7 @@ class Backend:
             verdicts = {}
             for r in st.con.execute(
                     "select decision_key, answer from model_decisions "
-                    "where question = 'align'").fetchall():
+                    "where question = 'claim'").fetchall():
                 cid = str(r[0]).split("::claim::")[-1]
                 if cid in by_id:
                     verdicts[cid] = r[1]

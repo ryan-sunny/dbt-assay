@@ -15,7 +15,7 @@ Verified on a 357-model Colorado water-rights warehouse and two public dbt repos
 
 | family | how | result |
 |---|---|---|
-| `claim_alignment` | read against the SQL it judged, four rounds | see below |
+| `claim_alignment` | read against the SQL it judged, four rounds | the QUESTION, yes. Its FINDINGS, no -- see below |
 | `edge_preserves_the_grain` | top hit read against the model | found a bounding-box **overlap** join feeding a mart: `join irr i on p.xmin <= i.xmax and p.xmax >= i.xmin`. One parcel matches many polygons |
 | `column_role` | 61 free labels from the project's own tests | agreed with 57; reading the 4 disagreements showed **3 were the label being wrong** |
 | `description_contradicts_the_code` | top finding read against the data | `stg_boulder_permits` claims "residential filtered out"; of 14,150 surviving rows, 157 are explicitly multifamily and 13,620 are trade permits |
@@ -78,6 +78,37 @@ now rejoined to what it refers back to.
 ---
 
 ## Known weak, and why
+
+### `code_contradicts_a_claim` is the largest thing shipping and the least confirmed
+
+**213 of 344 findings on the field warehouse, and not one has been confirmed by a person.** Two
+have been read by hand and both were false, at p=0.95:
+
+```
+int_water_diversion_history   claim "the FULL diversion record, 1886 to 2026"
+                              true. The SQL DERIVES those years and never states them.
+stg_cdss_dams                 claim about `ponds_covered`, which appears only in that comment.
+                              It is about the Python findings layer, not this model's SQL.
+```
+
+The distinction the table above now makes matters: `claim_alignment` the **question** was verified,
+over four rounds, each one a fix to its shape. `code_contradicts_a_claim` the **finding** rests on
+that question and has a separate error rate, which nobody has measured. A verified question does
+not make a verified finding, and this page said otherwise for four releases.
+
+Both false positives are the same shape — *the model could not see what it was asked about* —
+and 0.23.0 stopped asking them: a claim whose every named identifier is absent from the model, and
+a claim asserting a literal value, are refused before the call. Contradictions went **389 to 240**
+and both hand-read cases are gone.
+
+**0.24.2 applies the same refusal to the answers that predate it.** The refusal ran at the call
+site and nowhere else, so a stored answer given before 0.23.0 was still the live answer, was not
+stale, and still became a finding. One fact in two places, silent when they disagree. The read
+path refuses too now, and prints what it refused, because a shrinking findings count that nobody
+explains reads as a warehouse getting better.
+
+Until somebody reads a confirmed one, treat this family the way this page treats
+`null_meaning`: a prompt to look, never a determination.
 
 ### `predicate_intent` on a bare null filter is a coin flip
 
@@ -169,9 +200,22 @@ Eight of nine keep **exactly** 100%: every driving row survived its join. That i
 warehouse looks like on this dimension, and scattered ratios are what a wrong candidate set would
 have produced. The ninth is a fan-out, which is `hop_multiplies_rows`'s job.
 
-Still not verified in the field, because it has not caught a real defect. It is verified against a
-**planted control**: a driving INNER edge that does lose its rows, which fires. And this warehouse
-is a poor place to find the real thing — the models that would trip it legitimately narrow in
+Still not verified in the field, because it has not caught a real defect. It is verified
+**end to end against a control project** as of 0.24.2, which is a stronger statement than the
+planted candidate dict it rested on before: a dbt project on disk, parsed by the real loader,
+counted against real rows in a real DuckDB, with three outcomes that must differ.
+
+```
+int_parcel_owner     100 of 1,000 driving rows survive an INNER join    FIRES
+int_parcel_zone    1,000 of 1,000 survive                               SILENT
+int_parcel_where      10 of 1,000, and the model declares a WHERE       REFUSED
+```
+
+The third is the one that matters. It loses MORE than the first and produces nothing, so the
+threshold is not what is doing the work — the refusals are. Candidate selection narrows four hops
+to two before a single row is counted, which is the half a planted dict skips entirely.
+
+And this warehouse is a poor place to find the real thing — the models that would trip it legitimately narrow in
 sibling CTEs, so their driving edge is already the narrow one.
 
 *The first version of this refusal was a sibling-size heuristic: refuse when the child is the size
