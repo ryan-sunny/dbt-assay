@@ -355,3 +355,26 @@ def check_question_ids(question_ids) -> None:
             f"A verdict on one files under a family that does not exist, counts toward no gate "
             f"and shows in no report. Declared prefixes: {known}. "
             f"Add `id_prefix:` to the question's bank.")
+
+
+def current_versions() -> dict:
+    """{id_prefix: the prompt_version shipping now}, for every question a bank defines.
+
+    *** AN ANSWER FROM A RETIRED VERSION IS NOT AN ANSWER TO THIS QUESTION. ***
+    `model_decisions` is keyed on (decision_key, question, prompt_version, model_version) so every
+    version of every answer is kept, which is what makes `effectiveness` possible. Reading it
+    without filtering hands back all of them at once.
+
+    Reported from the field: `traversal` returned twelve verdicts for four hops and called the
+    same hop both `silently_multiplied` and `deliberately_coarser`, because every one of them
+    predated a version bump. Worse, `inventory._judgments` did the same thing and then let a
+    later row OVERWRITE an earlier one, so which answer reached a finding depended on the order
+    duckdb happened to return -- `arbitrary_pick`, the defect this tool checks other people's
+    code for, in its own inventory.
+    """
+    out: dict = {}
+    for q in load_all_banks().values():
+        p, v = q.get("id_prefix"), q.get("prompt_version")
+        if p and v:
+            out[str(p)] = str(v)
+    return out

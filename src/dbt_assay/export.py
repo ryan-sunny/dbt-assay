@@ -150,6 +150,12 @@ def schema_yml(store, exported: list[Exported]) -> str:
 EXAMPLE_SQL = '''\
 -- Example: which defect class does this project keep reintroducing?
 -- assay's findings are an ordinary relation, so this is just a query.
+--
+-- It GROUPS BY check_name rather than bucketing into named classes with a CASE, on purpose. A
+-- hand-written class list is a second copy of the check list and the second copy is what drifts:
+-- reported from the field, a debt model built that way had 219 of 349 rows land in `other` after
+-- one release added a check, so 63% of the table said nothing. If you do want classes, add an
+-- `else check_name` branch so a new check names itself instead of disappearing.
 select
     check_name,
     count(*)                                   as findings,

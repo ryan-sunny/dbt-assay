@@ -632,7 +632,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.23.0
+- uses: ryan-sunny/dbt-assay@v0.24.0
   with:
     target: target-head
     baseline: base/target
@@ -662,7 +662,16 @@ assay onboard --agent
 writes `.claude/skills/dbt-assay/SKILL.md` and prints the MCP line:
 
 ```bash
-claude mcp add assay -- uvx --from 'dbt-assay[mcp]' assay mcp --target target
+claude mcp add assay --scope project -- uvx --from 'dbt-assay[mcp]' assay mcp --target target
+```
+
+`--scope project` writes `.mcp.json` **in the repo**, so the server travels with a clone and works
+from any directory inside it. Without it the entry goes to `~/.claude.json` keyed to one absolute
+path on one machine: invisible to a session started one directory up, and absent entirely from a
+fresh clone. If you already added it the other way, `claude mcp remove assay` clears the local
+duplicate, which otherwise wins in that one directory.
+
+```bash
 # the --from matters: a bare `uvx dbt-assay` skips the optional extra and the
 # server exits before it can tell you why
 ```

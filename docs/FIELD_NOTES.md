@@ -1458,3 +1458,67 @@ Three signals, all from what was already loaded:
 It is a **note**, not a warning, and `--strict` stays green. A deliberate fork is the normal case;
 the note exists so it does not go stale unnoticed. Counting it as a warning would make a build red
 for doing exactly what the docs suggest.
+
+---
+
+## Round eight: answers to a question that no longer exists
+
+`model_decisions` is keyed on `(decision_key, question, prompt_version, model_version)` so every
+version of every answer is kept. That is what makes `effectiveness` possible. Reading it without
+filtering hands back all of them at once, and two surfaces did.
+
+**`traversal` returned twelve verdicts for four hops** and called the same hop both
+`silently_multiplied` and `deliberately_coarser`, because all of them predated a version bump. An
+agent reading it to decide about a hop was handed both and no way to tell which was live.
+
+**And `inventory._judgments` had the same cause with two different symptoms.** `edge` and `align`
+answers were keyed `edge__0, edge__1, ...`, so every version ACCUMULATED. Every other question was
+keyed by its id, so the later row OVERWROTE and the survivor was whichever row duckdb happened to
+return last. Two defects, one cause, and the second is `arbitrary_pick` -- the class this tool
+checks other people's code for -- inside its own inventory.
+
+Measured on the field store, which holds three versions of 543 `edge` answers:
+
+```
+OLD  (every version, every row)   83 hops judged silently_multiplied
+NEW  (the version shipping now)   13
+
+     edge.v1          57     <- the SHIPPED question, before the project forked it
+     edge.water.v1    13
+     edge.water.v2    13
+```
+
+The fork cut it from 57 to 13 and the tool was still counting the pre-fork 57. A question was
+rewritten precisely to stop a false positive, and the answers it was rewritten to retire went on
+producing findings.
+
+`store.live_decisions` is the one reader now: one row per `(decision_key, question)`, from the
+version shipping now, and `retired_decisions` counts what it left out. A question whose prefix no
+loaded bank claims is passed through rather than hidden, because an unloaded custom bank must not
+silently empty the inventory. `traversal` reports the count and says why they are not shown.
+
+### Why running assay on assay did not catch this
+
+Asked directly, and it is worth writing down. `arbitrary_pick` is a **SQL** check: it parses dbt
+models with sqlglot and looks for a `row_number() over (partition by ... order by ...)` whose
+tie-break is not total. assay's own code is Python. The entire structural tier is blind to it.
+
+`test_assay_on_assay.py` runs assay's METHOD on assay -- claims extracted from its own docstrings,
+plus mechanical guards -- and that is a real loop which has caught real defects. What it cannot do
+is see a dict assignment in a loop and recognise it as the same defect as a non-total window
+ordering. Recognising those two as one class is exactly the semantic step, and the tier that would
+do it is the one that does not exist yet: tree-sitter where sqlglot is, a call graph where the DAG
+is.
+
+## Two smaller things from the same report
+
+**The MCP install line wrote a machine-local entry.** `claude mcp add assay -- ...` goes to
+`~/.claude.json` keyed to one absolute directory: invisible to a session started one directory up,
+and absent entirely from a fresh clone. `--scope project` writes `.mcp.json` in the repo, so the
+server travels with it. Four places said the wrong thing, including `onboard`'s own closing line.
+
+**And a debt model built on a hand-written class list had 63% of its rows land in `other`** after
+one release added a check. The shipped example groups by `check_name` for that reason and now says
+so: a hand-written class list is a second copy of the check list, and the second copy is what
+drifts. If you want named classes, `else check_name` makes a new check name itself instead of
+disappearing.

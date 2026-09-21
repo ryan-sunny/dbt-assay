@@ -1229,3 +1229,76 @@ def test_a_fork_that_declares_where_it_came_from_is_told_when_that_moved():
     current = _bank(prompt_version="x.mine.v1", forked_from="x.v3", _source="/mine/x.yml")
     assert not [i for i in override_drift({"x": current}, shipped)
                 if i.rule == "override_is_behind"]
+
+
+# --- round eight: answers to a question that no longer exists --------------------------------
+
+def _decisions(rows):
+    """A store holding (question, prompt_version, decision_key, answer) tuples."""
+    from dbt_assay.store import Store
+    s = Store(":memory:")
+    for q, pv, key, ans in rows:
+        s.con.execute(
+            """insert or replace into model_decisions
+               (decision_key, question, kind, answer, confidence, probabilities, state_hash,
+                prompt_version, model_version, call_id, caller, context, input_tokens, decided_at)
+               values (?,?,'choice',?,0.9,'{}','h',?,'m','c','t',?,1, current_timestamp)""",
+            [key, q, ans, pv, f"ctx {key}"])
+    return s
+
+
+def test_an_answer_from_a_retired_version_is_not_served_as_current():
+    """*** IT RETURNED TWELVE VERDICTS FOR FOUR HOPS AND CONTRADICTED ITSELF. ***
+
+    The same hop came back `silently_multiplied` and `deliberately_coarser` because every one of
+    those answers predated a version bump. On a real store `edge` held three versions of 543
+    answers each, and the pre-fork version alone contributed 57 hot hops against the live 13.
+    """
+    s = _decisions([
+        ("edge", "edge.v1", "m::edge::p", "silently_multiplied"),
+        ("edge", "edge.v2", "m::edge::p", "same_thing"),
+        ("role__a", "role.v1", "m", "measure"),
+        ("role__a", "role.v2", "m", "identifier"),
+    ])
+    try:
+        got = s.live_decisions("1 = 1", [], {"edge": "edge.v2", "role": "role.v2"},
+                               columns="question, answer")
+        assert sorted(got) == [("edge", "same_thing"), ("role__a", "identifier")]
+        assert s.retired_decisions == 2, "the hidden ones were not counted"
+
+        # A question no loaded bank claims is passed through, not silently emptied: an unloaded
+        # custom bank must not blank the inventory.
+        passed = s.live_decisions("1 = 1", [], {}, columns="question, answer")
+        assert len(passed) == 2 and s.retired_decisions == 0
+    finally:
+        s.close()
+
+
+def test_one_answer_per_question_even_before_versions_are_considered():
+    """The old reader keyed `edge` answers as `edge__0, edge__1, ...`, so every version
+    accumulated instead of overwriting -- and for every OTHER question the later row won, with
+    the survivor decided by the order duckdb returned. Two defects, one cause."""
+    s = _decisions([
+        ("edge", "v1", "m::edge::p", "a"),
+        ("edge", "v1", "m::edge::p", "b"),
+        ("edge", "v1", "m::edge::q", "c"),
+    ])
+    try:
+        got = s.live_decisions("1 = 1", [], {}, columns="question, answer")
+        assert len(got) == 2, f"one row per (decision_key, question), got {got}"
+    finally:
+        s.close()
+
+
+def test_the_mcp_install_line_writes_a_file_the_repo_can_keep():
+    """Without `--scope project` the entry goes to ~/.claude.json keyed to one absolute path on
+    one machine: invisible from a directory above, absent from a fresh clone."""
+    import inspect
+
+    from dbt_assay import cli, mcp_server
+
+    for mod in (cli, mcp_server):
+        src = inspect.getsource(mod)
+        i = src.find("claude mcp add assay")
+        assert i > 0, f"{mod.__name__} no longer tells anyone how to add the server"
+        assert "--scope project" in src[i:i + 60], f"{mod.__name__} still writes machine-local"

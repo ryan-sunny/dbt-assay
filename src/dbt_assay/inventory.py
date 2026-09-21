@@ -151,9 +151,13 @@ def _judgments(store, uid: str) -> dict:
     """
     if store is None:
         return {}
-    rows = store.con.execute(
-        """select question, answer, confidence, probabilities, context from model_decisions
-           where decision_key = ? or decision_key like ?""", [uid, uid + "::%"]).fetchall()
+    # *** ONE ANSWER PER QUESTION, FROM THE VERSION SHIPPING NOW. ***
+    # This used to read every version and let a later row overwrite an earlier one, so which
+    # answer reached a finding depended on the order duckdb returned -- `arbitrary_pick`, the
+    # defect this tool checks other people's code for, in its own inventory.
+    from .contracts import current_versions
+    rows = store.live_decisions("decision_key = ? or decision_key like ?",
+                                [uid, uid + "::%"], current_versions())
     out: dict = {}
     for i, (q, a, c, probs, ctx) in enumerate(rows):
         # A model has ONE grain answer but MANY claim answers, so claim keys are made unique.

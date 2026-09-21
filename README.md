@@ -127,7 +127,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.23.0
+- uses: ryan-sunny/dbt-assay@v0.24.0
   with:
     target: target-head
     baseline: base/target
@@ -273,7 +273,7 @@ and adapters and can never break your dbt. Python 3.10+.
 have it:
 
 ```bash
-claude mcp add assay -- uvx --from 'dbt-assay[mcp]' assay mcp --target target --store assay.duckdb
+claude mcp add assay --scope project -- uvx --from 'dbt-assay[mcp]' assay mcp --target target --store assay.duckdb
 ```
 
 **The key is never in a config file.** assay reads `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` from

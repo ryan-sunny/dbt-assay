@@ -532,11 +532,21 @@ class Backend:
         st = self._open_store()
         if st is not None:
             try:
-                rows = st.con.execute(
-                    "select context, answer from model_decisions "
-                    "where question = 'edge' and decision_key like ?",
-                    [uid + "::edge::%"]).fetchall()
-                out["judged"] = [{"hop": r[0], "verdict": r[1]} for r in rows]
+                # *** IT RETURNED TWELVE VERDICTS FOR FOUR HOPS AND CONTRADICTED ITSELF. ***
+                # The same hop came back `silently_multiplied` and `deliberately_coarser`
+                # because every one of those answers predated a version bump. An agent reading
+                # this to decide about a hop was handed both and no way to tell which was live.
+                from .contracts import current_versions
+                rows = st.live_decisions(
+                    "question = 'edge' and decision_key like ?", [uid + "::edge::%"],
+                    current_versions(), columns="question, context, answer")
+                out["judged"] = [{"hop": r[1], "verdict": r[2]} for r in rows]
+                if st.retired_decisions:
+                    out["verdicts_from_a_retired_version_of_the_question"] = st.retired_decisions
+                    out["why_they_are_not_shown"] = (
+                        "the question was rewritten since they were given, so they are answers "
+                        "to a question that no longer exists. `assay traverse` re-asks; "
+                        "`assay effectiveness` shows agreement per version.")
             finally:
                 st.close()
         return out
@@ -602,7 +612,7 @@ def server_class():
             "the MCP server needs the optional extra, and a bare `uvx dbt-assay` does not "
             "install it.\n"
             "  uvx --from 'dbt-assay[mcp]' assay mcp --target target\n"
-            "  claude mcp add assay -- uvx --from 'dbt-assay[mcp]' assay mcp --target target\n"
+            "  claude mcp add assay --scope project -- uvx --from 'dbt-assay[mcp]' assay mcp --target target\n"
             "Installed instead of uvx: `uv add 'dbt-assay[mcp]'` or `pip install 'dbt-assay[mcp]'`."
         ) from e
 

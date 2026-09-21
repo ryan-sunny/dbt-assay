@@ -145,6 +145,7 @@ class Store:
                 f"The structural checks work without a store at all.") from e
         self.con.execute(DDL)
         self._migrate()
+        self.retired_decisions = 0
 
     # *** `create table if not exists` IS NOT A MIGRATION. ***
     # A store written by an older assay keeps its old shape forever, and the next insert fails with
@@ -513,6 +514,38 @@ class Store:
         return {"n": n, "agree": rows.get("agree", 0), "disagree": rows.get("disagree", 0),
                 "unclear": rows.get("unclear", 0),
                 "agreement": (rows.get("agree", 0) / n) if n else None}
+
+    def live_decisions(self, where: str, args: list, versions: dict,
+                       columns: str = "question, answer, confidence, probabilities, context",
+                       ) -> list[tuple]:
+        """Answers given against the version of their question that is SHIPPING NOW.
+
+        One row per (decision_key, question): the latest. Everything older, and everything from a
+        retired version, is left out -- and `retired_decisions` counts what was left out, because
+        an answer that is hidden without being counted is the same defect as one that is served
+        without being dated.
+
+        A question whose prefix no bank claims is passed through rather than hidden: a custom
+        bank that is not loaded right now should not silently empty the inventory.
+        """
+        self.con.execute(DDL)
+        rows = self.con.execute(
+            f"select {columns}, prompt_version, decision_key, decided_at "
+            f"from model_decisions where {where} order by decided_at desc", args).fetchall()
+        seen: set = set()
+        out, retired = [], 0
+        for r in rows:
+            q, pv, key = r[0], r[-3], r[-2]
+            want = versions.get(str(q).split("__")[0])
+            if want and pv != want:
+                retired += 1
+                continue
+            if (key, q) in seen:
+                continue
+            seen.add((key, q))
+            out.append(tuple(r[:-3]))
+        self.retired_decisions = retired
+        return out
 
     def pending(self, limit: int = 25) -> list:
         """Judgments nobody has ruled on yet."""

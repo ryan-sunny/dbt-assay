@@ -703,7 +703,7 @@ def onboard(
                       "a model)[/]")
         # markup=False, because rich reads `[mcp]` as a style tag and silently drops it -- which
         # would print an install line that installs no mcp.
-        console.print(f"   MCP: claude mcp add assay -- uvx --from 'dbt-assay[mcp]' "
+        console.print(f"   MCP: claude mcp add assay --scope project -- uvx --from 'dbt-assay[mcp]' "
                       f"assay mcp --target {tdir}", style="dim", markup=False)
 
     console.print("\n[bold]6. next[/]")
