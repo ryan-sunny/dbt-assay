@@ -586,6 +586,20 @@ TOOLS = [
     ("review_queue", ("What is waiting for a PERSON to rule on, agent-read items first, with the "
                       "reason already attached. Call it before `rule` to see whether a subject "
                       "has been read, and after, to see the queue you are building.")),
+    # *** EVERY OTHER TOOL REPORTS. THIS ONE TEACHES. ***
+    # An agent could read every finding on a warehouse and could not help anybody write a
+    # vocabulary term, frame a question, or waive a finding with a reason that holds up -- which
+    # is most of what a project that has never run assay actually needs. The guidance is not
+    # generic: every rule in it was measured, and the ones the linter enforces are read from the
+    # linter rather than restated.
+    ("guide", ("HOW TO SET ASSAY UP, when the project has not been configured or the person you "
+               "are helping is new to it. Topics: `start` (the order to do things in, and what "
+               "costs nothing), `vocab` (what their words mean HERE, sent with every question), "
+               "`questions` (how to frame one this model can actually answer -- it cannot do "
+               "arithmetic, absence is not disagreement, options must be able to lose), "
+               "`waivers`, `policy` (what each check does on a build, and what may gate at all), "
+               "`explanations`, `ruling`. Call with no topic for the index. READ THIS BEFORE "
+               "writing anything into their audit.yml or assay_questions/.")),
 ]
 
 
@@ -629,6 +643,13 @@ def serve(target: str, store_path: str | None = None) -> None:
     @app.tool(description=TOOLS[0][1])
     def contract(model: str) -> str:
         return json.dumps(be.contract(model), default=str)
+
+    @app.tool(description=TOOLS[12][1])
+    def guide(topic: str = "") -> str:
+        # Markdown, not JSON: it is prose for the agent to read and act on, and wrapping prose in
+        # a JSON string only makes it harder to read for no gain.
+        from .guide import guide as _guide
+        return _guide(topic)
 
     @app.tool(description=TOOLS[1][1])
     def lineage(model: str, column: str) -> str:

@@ -35,7 +35,9 @@ means, and so does every agent and every person who queries it afterwards.
 ## Start with one command
 
 ```bash
-uvx dbt-assay onboard --target path/to/dbt/target
+uvx dbt-assay guide [topic]       # how to CONFIGURE it: vocab, questions, waivers,
+                          # policy, explanations, ruling. `start` for a new project
+assay onboard --target path/to/dbt/target
 ```
 
 No install, no config, no account. It reads your `manifest.json`, works out what it can and cannot
@@ -635,7 +637,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.27.3
+- uses: ryan-sunny/dbt-assay@v0.28.0
   with:
     target: target-head
     baseline: base/target

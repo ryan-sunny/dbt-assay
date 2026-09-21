@@ -2330,6 +2330,30 @@ if __name__ == "__main__":
     main()
 
 
+@app.command(name="guide")
+def guide_cmd(
+    topic: str = typer.Argument("", help="start | vocab | questions | waivers | policy | "
+                                         "explanations | ruling. Omit for the index."),
+) -> None:
+    """How to SET ASSAY UP, for somebody who has never used it.
+
+    *** THE TOOLS SAY WHAT ASSAY FOUND. NOTHING SAID HOW TO CONFIGURE IT. ***
+    Every other command reports. This one teaches: what a vocabulary term is for and how to write
+    one, how to frame a question the model can actually answer, what makes a waiver's reason hold
+    up, what each check should do on a build, and which of those may gate at all.
+
+    Not generic advice. Every rule in here was measured, and most are already enforced by the
+    linter or a refusal -- so the guide reads the rules from the code that enforces them rather
+    than keeping a second copy that drifts.
+    """
+    from rich.markdown import Markdown
+
+    from . import guide as guide_mod
+    console.print(Markdown(guide_mod.guide(topic)))
+    if not topic:
+        console.print("[dim]`assay guide start` if this project has never run assay.[/]")
+
+
 @app.command()
 def init(force: bool = typer.Option(False, "--force", help="overwrite an existing audit.yml")):
     """Write an audit.yml with the defaults. Asks nothing, enables no spend."""

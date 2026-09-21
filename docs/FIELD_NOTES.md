@@ -2203,3 +2203,69 @@ and this codebase's rule is that a question's text and its `prompt_version` move
 The first fix and the last one are the same defect from opposite ends: a test asserting `meters`
 against a bank saying `metres` failed immediately, which is the sweep catching its own
 one-fact-two-spellings the moment it created one.
+
+---
+
+## Round sixteen: twelve tools that report, and none that teach
+
+> *"ensure mcp and skills are still up to date... so someone relatively unfamiliar with assay can
+> be led by Claude to onboard and go through everything like defining vocab and questions and
+> waivers and per check policies and explanations... we can even provide some insight into how to
+> frame questions and vocab within the mcp and skills so Claude leading it isn't being a dumb
+> fuck."*
+
+Checked, and the gap was real. Twelve MCP tools, every one of them read-and-rule. The skill
+mentioned `audit.yml` once and `practices` once. So an agent could read every finding on a
+358-model warehouse and could not help anybody write a vocabulary term, frame a question, waive a
+finding with a reason that holds up, or decide what a check should do on a red build.
+
+**That is most of what a project which has never run assay actually needs**, and it was the one
+thing nothing surfaced.
+
+`assay guide <topic>` and `guide(topic)` over MCP, across seven topics: `start`, `vocab`,
+`questions`, `waivers`, `policy`, `explanations`, `ruling`.
+
+### The guidance is measurement, not advice
+
+The failure mode for a guide is confident generic advice, which reads exactly like earned advice
+and is worth less than nothing. So every rule in it is one that was paid for:
+
+- *It cannot do arithmetic and will not say so.* `land_acres` holding 218,235 read **consistent at
+  0.82**; that is square feet, wrong by 43,560x. If your question needs two numbers compared, it
+  is two questions.
+- *Absence is not disagreement, and you must say so in the criteria.* A claim about `d_class_cn`
+  read `contradicts` at **0.97** because the evidence listed thirty other columns and not that one.
+- *Choose the evidence BY the subject.* 0.96 with the state the claim needed, **0.47** with one
+  extra correct sentence added.
+- *An option must not route to another by name.* Measured: one subject under both options at 0.55
+  and 0.63, while the text check scored them disjoint at 0.63.
+- *A waiver's reason is a measurement.* Both waivers on the field warehouse were measured before
+  being waived, and the measurement IS the reason.
+- *Policy is keyed by the CHECK, never the family.* assay's own shipped example made that mistake,
+  and a config that parses but matches nothing looks exactly like one that works.
+
+### And it reads the rules from the code that enforces them
+
+A guide that quietly disagrees with the linter it describes is **worse than no guide**: somebody
+follows it, the check fires anyway, and now they distrust both. So the WHAT is derived and only
+the WHY is written down. The lint rule codes come out of `lint.py` by reading the codes it
+raises; the `audit.yml` sections come out of `DEFAULT_YML`; the family count comes out of the
+loaded banks. A test asserts each direction: **a rule the linter raises and the guide does not
+teach fails, and so does a key the guide names that `audit.yml` does not read.** That is the
+`else check_name` lesson applied to prose.
+
+### What the skill now tells an agent not to do
+
+> **Do not invent configuration on their behalf.** Vocabulary, waiver reasons and adjudication
+> options are domain knowledge you do not have. Ask, draft from what they say, and show them the
+> measurement that would justify a waiver rather than asserting one.
+
+An agent that writes a plausible `vocab` block from the model names alone has produced something
+that looks like knowledge and is not, and it will be sent with every judged question from then on.
+
+### The wiring guards earned their keep again
+
+Adding one tool failed three tests immediately: every CLI command must be named in the docs, every
+MCP tool must be in the skill, and the skill must work WITHOUT the server, which means every tool
+needs a command that answers the same question. None of those is something anyone would have
+remembered.

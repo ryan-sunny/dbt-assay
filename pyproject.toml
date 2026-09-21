@@ -1,6 +1,6 @@
 [project]
 name = "dbt-assay"
-version = "0.27.3"
+version = "0.28.0"
 description = "Recover the semantics your warehouse never wrote down. sqlglot for structure, TypeSafe's Jev for meaning."
 readme = "README.md"
 license = "Apache-2.0"

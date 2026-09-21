@@ -282,6 +282,8 @@ ruling works either way.
 
 ```bash
 # Start here
+assay guide               # HOW TO SET IT UP: vocab, questions, waivers, policy
+assay guide start         # ...the order for a project that has never run assay
 assay onboard             # look at the project and say what to run, in order
 assay onboard --compile   # ...and run `dbt compile` first where models lack compiled SQL
 assay config              # what was resolved: provider, spend cap, where your key came from

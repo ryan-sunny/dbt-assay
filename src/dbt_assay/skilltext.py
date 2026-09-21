@@ -59,6 +59,37 @@ was intended and it needs a version bump. Do not hand back work where the grain 
    construct: the partition and sort keys of the window, the predicate, the columns. Use it to
    find the code rather than re-deriving it, and use `marts` to decide how carefully to tread.
 
+## If the project has not been set up yet
+
+`guide(topic)`, or `assay guide <topic>`. **Read it before you write anything into their
+`audit.yml` or `assay_questions/`.** Every other tool here reports what assay found; this one
+carries the rules for configuring it, and those rules were measured rather than reasoned out.
+
+`guide("start")` is the order for a project that has never run assay, and steps 1 to 4 cost
+nothing at all -- no key, no network, no spend. Do not skip to the judged tier to look clever.
+
+The four things a project configures, and what you must know before helping with each:
+
+- **`guide("vocab")`** — what their words mean HERE, sent with every judged question. A term earns
+  its place when a competent stranger would read it WRONGLY, not merely because it is
+  domain-specific. Fifteen terms on one warehouse made `traverse` flag a join class nobody had
+  written a question about.
+- **`guide("questions")`** — how to frame one this model can answer. It cannot do arithmetic and
+  will not say so; absence must be stated as not-disagreement or it comes back as a confident
+  contradiction; every option needs to be able to lose; a choice with no way to decline turns a
+  shrug into a determination. Run `assay banks --lint` on anything you write: each rule in it is
+  a question that failed in a measurable way.
+- **`guide("waivers")`** — a reason is required and the reason is a MEASUREMENT. "Looks fine" is
+  how a real finding gets silenced. Before waiving, check whether the finding is telling you the
+  check is blind, which is usually a `meta:` declaration rather than a waiver.
+- **`guide("policy")`** — what each check does on a build. Keyed by the CHECK a finding carries,
+  never by the question family: a family name where a check name belongs configures nothing and
+  nothing tells you. A judged check cannot fail a build until humans have ruled on it.
+
+**Do not invent configuration on their behalf.** Vocabulary, waiver reasons and adjudication
+options are domain knowledge you do not have. Ask, draft from what they say, and show them the
+measurement that would justify a waiver rather than asserting one.
+
 ## Before you hand it back
 
 8. `violations()` — **what would actually fail a build**, under this project's own `audit.yml`.
@@ -142,6 +173,7 @@ and nothing is lost:
 | `violations()` | `assay check --json`, then read `action` |
 | `rule(finding, …)` | `assay review --subject <s> --question <q> --verdict <v> --note <why>` |
 | `review_queue()` | `assay review` |
+| `guide(topic)` | `assay guide <topic>` |
 
 The one difference worth knowing: the MCP tools reload when the manifest moves, and a CLI run
 reads whatever `target/` holds at that moment. Run `dbt compile` first if you have edited SQL.
