@@ -73,7 +73,7 @@ here means a green pipeline rather than an opinion that it should be.
 
 **6. It rules on what it read.**
 
-`rule(subject, question, verdict, why)` records what the agent concluded, **including when it
+`rule(finding, verdict, why)` records what the agent concluded, **including when it
 concludes the finding is wrong** — which is the most useful answer it can give, because a false
 positive nobody reports stays in the list forever. `review_queue()` shows what is still waiting
 for a person, agent-read items first.

@@ -73,7 +73,7 @@ was intended and it needs a version bump. Do not hand back work where the grain 
 
 ## When you have read a finding, rule on it
 
-9. `rule(subject, question, verdict, why)` — **record what you concluded, including when you
+9. `rule(finding, verdict, why)` — **record what you concluded, including when you
    conclude the finding is wrong.** That is the most useful answer you can give, because a false
    positive nobody reports stays in the list forever.
 
@@ -84,6 +84,14 @@ was intended and it needs a version bump. Do not hand back work where the grain 
 
    Rule only on what you actually read. A ruling with no reason is refused, and one with a
    reason you did not form by reading the SQL is worse than none.
+
+   **Pass the `finding` id** that `findings()` and `review_queue()` give you. A verdict on a
+   MODEL lands on every finding that model has, and one real model carries eight of the same
+   check. It is also how a correct finding gets ruled wrong: a model whose hops are mostly union
+   arms can still have two that genuinely fan out, and one keypress covered all six.
+
+   A subject `rule` cannot resolve to a model is **refused**, not recorded. It used to accept a
+   bare model name, answer `recorded: true`, and write rows that joined to nothing.
 
    If a **person** told you the answer, pass their name as `decided_by`. It records who decided
    it, so a reviewer can tell "the agent thinks" from "they said, and the agent typed it". It is

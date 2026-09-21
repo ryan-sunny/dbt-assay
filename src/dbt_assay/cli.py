@@ -2300,6 +2300,9 @@ def review(
     correction: str = typer.Option("", "--correction", help="what it should have been"),
     note: str = typer.Option("", "--note"),
     who: str = typer.Option("", "--by"),
+    repair: bool = typer.Option(False, "--repair",
+                                help="re-point rulings written under a bare model name at the "
+                                     "unique_id, so they join to findings again. Needs --target."),
 ):
     """List judgments nobody has ruled on, or record a verdict.
 
@@ -2308,6 +2311,10 @@ def review(
     this and still gate on anything honestly.
     """
     store = Store(store_path)
+    if repair:
+        _repair_subjects(store, target, dialect)
+        store.close()
+        raise typer.Exit(0)
     if from_labels:
         _record_from_labels(store, target, dialect)
         store.close()
@@ -3827,6 +3834,63 @@ def _show_evidence(ctx, key: str, question: str) -> None:
             console.print(f"  [dim]comes from: {p.kind} — {p.evidence[:70]}[/]")
     elif d and d.predicates_atomic:
         console.print(f"  [dim]filters: {', '.join(d.predicates_atomic[:2])[:110]}[/]")
+
+
+def _repair_subjects(store, target, dialect) -> None:
+    """Re-point rulings written under a bare model name at the unique_id.
+
+    *** NINETY-NINE ROWS SAID `recorded: true` AND JOINED TO NOTHING. ***
+    `findings.subject` is `model.sunny_data.int_azcc_owners` and the MCP write path accepted the
+    bare `int_azcc_owners`. Both spellings name the same model and nothing checked that they
+    matched, so the queue that was supposed to show what an agent had already read showed twenty
+    items and no readings. `rule` refuses such a write now; this fixes the ones already there.
+
+    It resolves and never guesses. A name that matches no model, or more than one, is reported and
+    left exactly as it is: a ruling moved to the wrong model would be worse than an orphaned one,
+    because it would look attached.
+    """
+    tdir = _find_target(target)
+    project, _d, _f, _sch, _s = _load(tdir, dialect)
+    by_name: dict = {}
+    for uid, m in project.models.items():
+        by_name.setdefault(m.name, []).append(uid)
+    rows = store.con.execute(
+        "select distinct subject from adjudications").fetchall()
+    fixed, ambiguous, unknown = [], [], []
+    for (subj,) in rows:
+        head = str(subj).split("::")[0]
+        if head in project.models:
+            continue
+        hits = by_name.get(head) or []
+        if len(hits) == 1:
+            fixed.append((subj, str(subj).replace(head, hits[0], 1)))
+        elif hits:
+            ambiguous.append(subj)
+        else:
+            unknown.append(subj)
+    if not fixed:
+        console.print("[green]nothing to repair[/] [dim]-- every ruling's subject is a model "
+                      "this project knows.[/]" if not (ambiguous or unknown) else
+                      "[yellow]nothing could be repaired safely.[/]")
+    for old_s, new_s in fixed:
+        # The key is (subject, question, prompt_version); an update can collide with a row already
+        # written under the right spelling, so the older orphan gives way rather than raising.
+        store.con.execute(
+            "delete from adjudications where subject = ? and (question, prompt_version) in "
+            "(select question, prompt_version from adjudications where subject = ?)",
+            [new_s, old_s])
+        store.con.execute("update adjudications set subject = ? where subject = ?",
+                          [new_s, old_s])
+    if fixed:
+        console.print(f"[bold]{len(fixed)}[/] subject(s) re-pointed at their unique_id. "
+                      f"[dim]They join to findings again.[/]")
+    for label, group, why in (("ambiguous", ambiguous, "names more than one model"),
+                              ("unknown", unknown, "names no model in this project")):
+        if group:
+            console.print(f"[yellow]{len(group)} left alone[/] [dim]({why}): "
+                          f"{', '.join(str(x) for x in group[:6])}[/]")
+            console.print("[dim]A ruling moved to the wrong model is worse than an orphaned one, "
+                          "because it would look attached.[/]")
 
 
 def _review_loop(store, limit: int, target=None, dialect: str | None = None) -> None:

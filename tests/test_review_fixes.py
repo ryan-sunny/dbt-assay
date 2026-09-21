@@ -178,7 +178,7 @@ def test_a_locked_store_does_not_report_itself_as_a_missing_one():
     assert "nowhere to write" in b._store_or_why()[1]
 
     b.store_path = str(ROOT / "pyproject.toml")          # exists, is not a duckdb store
-    got = b.rule("m", "q", "agree", "because")
+    got = b.rule("agree", "because", subject="m", question="q")
     assert "nothing was recorded" in got["error"]
 
     class _Boom:
@@ -219,8 +219,9 @@ def test_a_relayed_ruling_names_the_person_and_is_still_an_agent_ruling():
 
     b = Backend.__new__(Backend)
     b._store_or_why = lambda: (_Store(), "")
-    got = b.rule("model.p.m::edge::x", "hop__multiplies", "disagree", "it is a union",
-                 decided_by="Ryan")
+    b._resolve_subject = lambda subj, q, st: (subj, "a decision key", "")
+    got = b.rule("disagree", "it is a union", subject="model.p.m::edge::x",
+                 question="hop__multiplies", decided_by="Ryan")
     assert wrote["source"] == "agent", "a relayed ruling must never be filed as human"
     assert "Ryan" in wrote["who"]
     assert got["relayed_from"] == "Ryan" and "still filed as `agent`" in \
@@ -232,11 +233,11 @@ def test_the_review_queue_puts_read_findings_first_and_hides_nothing():
     from dbt_assay.mcp_server import Backend
 
     fs = [SimpleNamespace(check="a", subject="model.p.big", subject_name="big", file="b.sql",
-                          summary="s", marts=30),
+                          summary="s", marts=30, id="idbig"),
           SimpleNamespace(check="b", subject="model.p.read", subject_name="read", file="r.sql",
-                          summary="s", marts=1),
+                          summary="s", marts=1, id="idread"),
           SimpleNamespace(check="c", subject="model.p.done", subject_name="done", file="d.sql",
-                          summary="s", marts=99)]
+                          summary="s", marts=99, id="iddone")]
 
     class _Store:
         @staticmethod
@@ -252,7 +253,8 @@ def test_the_review_queue_puts_read_findings_first_and_hides_nothing():
             pass
 
     b = Backend.__new__(Backend)
-    b.state = lambda: None
+    b.state = lambda: SimpleNamespace(project=SimpleNamespace(
+        models={"model.p.big": 1, "model.p.read": 1, "model.p.done": 1}))
     b._store_or_why = lambda: (_Store(), "")
     from dbt_assay import live
     real = live.findings_for
@@ -439,7 +441,8 @@ def test_a_structural_ruling_carries_assay_s_own_version():
 
     b = Backend.__new__(Backend)
     b._store_or_why = lambda: (_Store(), "")
-    b.rule("model.p.m", "hop_multiplies_rows", "disagree", "it is a union")
+    b._resolve_subject = lambda subj, q, st: (subj, "a model unique_id", "")
+    b.rule("disagree", "it is a union", subject="model.p.m", question="hop_multiplies_rows")
     assert wrote["prompt_version"] == f"assay.{dbt_assay.__version__}"
 
 
@@ -633,3 +636,87 @@ def test_grouping_writes_no_verdict_of_its_own(tmp_path):
         assert s.con.execute("select count(*) from adjudications").fetchone()[0] == before
     finally:
         s.close()
+
+
+# --- rule() must resolve or refuse, and a finding is finer than a model --------------------
+
+def test_rule_refuses_a_subject_that_would_join_to_nothing():
+    """*** IT ACCEPTED A BARE NAME, ANSWERED `recorded: true`, AND WROTE 99 ORPHANS. ***
+
+    `findings.subject` is `model.sunny_data.int_azcc_owners`; `rule` was handed
+    `int_azcc_owners`. One fact, two spellings, silent when they disagree -- the ninth instance,
+    in the write path of the feature built to close the loop. A write that cannot be joined back
+    is not a write, and reporting it as one is worse than failing.
+    """
+    from dbt_assay.mcp_server import Backend
+
+    b = Backend.__new__(Backend)
+    b.state = lambda: SimpleNamespace(project=SimpleNamespace(
+        models={"model.p.thing": SimpleNamespace(name="thing")}))
+
+    class _Store:
+        con = SimpleNamespace(execute=lambda *_a, **_k: SimpleNamespace(fetchone=lambda: None))
+
+        def close(self):
+            pass
+
+    st = _Store()
+    key, how, err = b._resolve_subject("model.p.thing", "q", st)
+    assert key == "model.p.thing" and not err
+
+    key, how, err = b._resolve_subject("thing", "q", st)
+    assert key == "model.p.thing" and "resolved from the bare name" in how and not err
+
+    key, how, err = b._resolve_subject("no_such_model", "q", st)
+    assert not key and "nothing was recorded" in err and "review_queue" in err
+
+
+def test_a_finding_id_is_stable_across_runs_and_finer_than_its_model():
+    """*** A VERDICT ON A MODEL LANDS ON EVERY FINDING THAT MODEL HAS. ***
+
+    One real model carries eight `test_cannot_fail` findings. It is also how a CORRECT finding was
+    ruled wrong: `dim_business` is a union false positive on four of its six edges and a measured
+    1.48x fan-out on the other two, and a model-level verdict covered all six.
+    """
+    from dbt_assay.checks.structural import Finding
+
+    def f(**kw):
+        base = {"check": "test_cannot_fail", "subject": "model.p.m", "subject_name": "m",
+                "file": "m.sql", "summary": "s", "detail": "d"}
+        return Finding(**{**base, **kw})
+
+    assert f(evidence={"column": "a"}).id != f(evidence={"column": "b"}).id
+    assert f(summary="one").id != f(summary="two").id
+    assert f(check="arbitrary_pick").id != f().id
+
+    # *** A PROBABILITY MOVES EVERY RUN, AND HASHING IT WOULD ORPHAN EVERY RULING. ***
+    # Which is the exact bug the id exists to fix, reintroduced one layer down.
+    a = f(evidence={"hop": "x -> y", "probability": 0.81, "marts": 3})
+    b = f(evidence={"hop": "x -> y", "probability": 0.77, "marts": 9})
+    assert a.id == b.id, "the handle moved because a measurement moved"
+
+
+def test_repair_resolves_a_bare_name_and_refuses_an_ambiguous_one(tmp_path, monkeypatch):
+    """It resolves and never guesses. A ruling moved to the WRONG model is worse than an orphaned
+    one, because it would look attached."""
+    from types import SimpleNamespace as NS
+
+    from dbt_assay import cli
+    from dbt_assay.store import Store
+
+    s = Store(tmp_path / "s.duckdb")
+    s.adjudicate("thing", "chk", "chk", "x", "disagree", note="n", source="agent")
+    s.adjudicate("twice", "chk", "chk", "x", "disagree", note="n", source="agent")
+    s.adjudicate("ghost", "chk", "chk", "x", "disagree", note="n", source="agent")
+
+    project = NS(models={"model.p.thing": NS(name="thing"),
+                         "model.a.twice": NS(name="twice"), "model.b.twice": NS(name="twice")})
+    monkeypatch.setattr(cli, "_find_target", lambda _t: "target")
+    monkeypatch.setattr(cli, "_load", lambda *_a, **_k: (project, {}, [], None, None))
+    cli._repair_subjects(s, "target", None)
+
+    got = {r[0] for r in s.con.execute("select subject from adjudications").fetchall()}
+    s.close()
+    assert "model.p.thing" in got, "the unambiguous name was not repaired"
+    assert "twice" in got, "an ambiguous name must be left exactly as it is"
+    assert "ghost" in got, "a name matching no model must be left exactly as it is"

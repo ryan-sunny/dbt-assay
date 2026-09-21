@@ -11,6 +11,8 @@ node feeding nine marts are not the same finding, and nobody should have to reme
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 
@@ -36,6 +38,22 @@ DEGREE_MAGNITUDE_FUNCS = {"ST_LENGTH", "ST_AREA", "ST_PERIMETER"}
 BBOX_FUNCS = {"ST_MAKEENVELOPE", "ST_EXPAND", "ST_ENVELOPE"}
 
 
+# *** WHAT MAKES A FINDING THIS ONE, AND WHAT IS ONLY ITS CURRENT STRENGTH. ***
+# `arbitrary_pick` emits one finding per window function, and on a real warehouse four of them on
+# one model shared a summary and differed only in their `order_by`. So evidence has to be in the
+# handle. But a judged finding's evidence also carries a PROBABILITY, and that moves whenever the
+# model or the state moves -- hashing it would orphan every ruling on the next run, which is the
+# exact bug this id exists to fix. Measurements are excluded: a float is a probability or a share,
+# and reach is a property of the DAG rather than of the defect.
+_MEASURED = frozenset({"downstream", "marts", "probability", "confidence"})
+
+
+def _identity(evidence: dict) -> str:
+    keep = {k: v for k, v in sorted((evidence or {}).items())
+            if k not in _MEASURED and not isinstance(v, float)}
+    return json.dumps(keep, sort_keys=True, default=str)
+
+
 @dataclass
 class Finding:
     check: str
@@ -56,6 +74,26 @@ class Finding:
     evidence: dict = field(default_factory=dict)
     descendants: int = 0
     marts: int = 0
+
+    @property
+    def id(self) -> str:
+        """A stable handle for THIS finding, which is finer than the model it is about.
+
+        *** A VERDICT ON A MODEL LANDS ON EVERY FINDING THAT MODEL HAS. ***
+        Reported from the field: `az_section_summary` carries EIGHT `test_cannot_fail` findings
+        and `rule(subject, question)` could only say "this model, this check", so one keypress
+        answered all eight. It is also how a correct finding got ruled wrong -- `dim_business` was
+        read as a union false positive, which is true of four of its six edges, while two of them
+        join on (geography, building_key) against a grain of (geography, business_key,
+        building_key) and fan out 1.48x, measured at 69,966 rows over 47,178 pairs.
+        `silently_multiplied` was right about those two and the ruling covered them anyway.
+
+        Hashed over check, subject and summary rather than the run: a ruling has to survive the
+        next run or it is not a ruling. The summary carries the column or the hop, which is what
+        separates eight findings on one model.
+        """
+        raw = f"{self.check}|{self.subject}|{self.summary}|{_identity(self.evidence)}"
+        return hashlib.sha1(raw.encode()).hexdigest()[:12]
 
     @property
     def weight(self) -> float:

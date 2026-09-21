@@ -1064,3 +1064,48 @@ ruling comes from the store. The choice was a seventh parameter five kinds ignor
 The bundle, `SubjectSource`, because the case that needs it is the one being written: an optional
 argument added for a caller that already exists is a decision deferred rather than avoided. Two
 call sites, both internal, and a custom family declares `subject:` in YAML and never touches it.
+
+---
+
+## Round three: the write path orphaned every ruling it took
+
+`assay effectiveness` was built to close the loop. The tool that feeds it was throwing the input
+away.
+
+`findings.subject` is `model.sunny_data.int_azcc_owners`. `rule()` was handed the bare
+`int_azcc_owners`, answered **`recorded: true`**, and wrote 99 rows that join to zero findings. The
+visible symptom was `review_queue()` returning twenty items with no agent readings attached,
+directly underneath its own note promising that findings an agent has read come first.
+
+**Ninth instance of one fact, two spellings, silent when they disagree** — this time in the write
+path of the feature built to close the loop. There is one spelling now, and anything else is either
+resolved out loud (`resolved_as` comes back in the response) or refused. A write that cannot be
+joined back is not a write, and reporting it as one is worse than failing.
+
+`assay review --repair` re-points the ones already written. On the field store: **99 of 99**, and
+`review_queue` went from 0 of 20 items carrying a reading to 8 of 8. It resolves and never guesses:
+a name matching two models, or none, is reported and left exactly as it is, because a ruling moved
+to the wrong model is worse than an orphaned one — it would look attached.
+
+### And the ruling was coarser than the thing it ruled on
+
+`rule(subject, question)` could only say "this model, this check". `az_section_summary` carries
+eight `test_cannot_fail` findings and one keypress answered all eight.
+
+It is also how a **correct** finding got ruled wrong. `dim_business` was read as a union false
+positive, which is true of four of its six edges. The other two are `crime_leads` and
+`buyer_leads` reading it on `(geography, building_key)` against a grain of
+`(geography, business_key, building_key)`, measured at 69,966 rows over 47,178 pairs — a 1.48x
+fan-out. `silently_multiplied` was right about those two and the model-level verdict covered them
+anyway.
+
+Both fixes are one change, as reported: `Finding.id` is a stable handle, `findings()` and
+`review_queue()` hand it back, and `rule(finding=...)` takes it.
+
+**The id nearly reintroduced the bug it fixes.** A first version hashed check, subject and summary,
+and four `arbitrary_pick` findings on one model shared all three. Adding evidence fixed that and
+broke something worse: a judged finding's evidence carries a PROBABILITY, which moves whenever the
+model or the state moves, so every ruling would orphan itself on the next run. Measurements are
+excluded from the handle — a float is a probability or a share, and reach is a property of the DAG
+rather than of the defect. 94 findings, 90 distinct ids, and the four collapses are the same defect
+reported once per window function.

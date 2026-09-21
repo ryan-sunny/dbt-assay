@@ -123,7 +123,8 @@ class Backend:
         """
         st = self.state()
         fs = live.findings_for(st, model)[:limit]
-        out = {"findings": [{"check": f.check, "model": f.subject_name,
+        out = {"findings": [{"finding": f.id,
+                             "check": f.check, "model": f.subject_name,
                              "file": f.file,
                              "summary": f.summary, "detail": f.detail,
                              "evidence": f.evidence or {},
@@ -210,8 +211,43 @@ class Backend:
             out.append(row)
         return {"missing_uniqueness_tests": out}
 
-    def rule(self, subject: str, question: str, verdict: str, why: str,
-             correction: str = "", decided_by: str = "") -> dict:
+    def _resolve_subject(self, subject: str, question: str, store) -> tuple[str, str, str]:
+        """(key, how_it_resolved, error). *** IT ACCEPTED A NAME THAT JOINED TO NOTHING. ***
+
+        Reported from the field, and it is the ninth instance of this shape in this codebase --
+        this time in the write path of the feature built to close the loop. `findings.subject` is
+        `model.sunny_data.int_azcc_owners`. `rule()` was handed the bare `int_azcc_owners`,
+        answered `recorded: true`, and wrote NINETY-NINE rows that join to zero findings. The
+        visible symptom was `review_queue` returning twenty items with no agent readings attached,
+        directly under its own note promising that findings an agent has read come first.
+
+        One fact, two spellings, silent when they disagree. So there is now exactly one spelling
+        and anything else is either resolved out loud or REFUSED. A write that cannot be joined
+        back is not a write, and reporting it as one is worse than failing.
+        """
+        state = self.state()
+        if subject in state.project.models:
+            return subject, "a model unique_id", ""
+        row = store.con.execute(
+            "select 1 from model_decisions where decision_key = ? and question = ? limit 1",
+            [subject, question]).fetchone()
+        if row:
+            return subject, "a decision key", ""
+        if "::" in subject and subject.split("::")[0] in state.project.models:
+            return subject, "a decision key on a known model", ""
+        hits = [uid for uid, m in state.project.models.items() if m.name == subject]
+        if len(hits) == 1:
+            return hits[0], f"resolved from the bare name {subject!r}", ""
+        if len(hits) > 1:
+            return "", "", (f"{subject!r} is the name of {len(hits)} models. Pass the unique_id, "
+                            f"or call review_queue() and pass the `finding` id it gives you.")
+        return "", "", (f"nothing was recorded. {subject!r} is not a model unique_id, not a "
+                        f"decision key, and not the name of any model in this project -- so a "
+                        f"row written under it would join to no finding and no answer. Call "
+                        f"review_queue() and pass back the `finding` id, which is exact.")
+
+    def rule(self, verdict: str, why: str, finding: str = "", subject: str = "",
+             question: str = "", correction: str = "", decided_by: str = "") -> dict:
         """*** RULINGS ARE THE ONLY THING IN THIS SYSTEM THAT DO NOT COMPOUND. ***
 
         More checks find more. Better states judge better. The warehouse accrues. None of that
@@ -236,16 +272,44 @@ class Backend:
         the field that decides whether a question may fail a build. The person re-rules it in
         `assay review -i`, where their own keypress is the evidence, and that takes one keystroke
         because the reason is already on screen.
+
+        *** `finding` IS THE EXACT HANDLE AND `subject` IS THE COARSE ONE. ***
+        A verdict on a model lands on every finding that model has: `az_section_summary` carries
+        eight `test_cannot_fail` findings and one keypress answered all eight. It is also how a
+        CORRECT finding gets ruled wrong -- `dim_business` was read as a union false positive,
+        true of four of its six edges, while two join on (geography, building_key) against a grain
+        of (geography, business_key, building_key) and fan out 1.48x. `silently_multiplied` was
+        right about those two and the model-level ruling covered them anyway.
+
+        `review_queue()` and `findings()` both return a `finding` id. Pass it back.
         """
         if verdict not in ("agree", "disagree", "unclear"):
             return {"error": "verdict must be agree, disagree or unclear"}
         if not (why or "").strip():
             return {"error": "a reason is required. A ruling nobody can check is not evidence."}
-        st, why = self._store_or_why()
+        if not (finding or subject):
+            return {"error": "pass `finding` (the id from review_queue or findings), or "
+                             "`subject` and `question` for a judged answer."}
+        st, store_why = self._store_or_why()
         if st is None:
-            return {"error": f"nothing was recorded: {why}"}
+            return {"error": f"nothing was recorded: {store_why}"}
+        resolved_as = ""
         try:
-            answered, pv, mv = "", "", ""
+            if finding:
+                f = next((x for x in live.findings_for(self.state(), None) if x.id == finding),
+                         None)
+                if f is None:
+                    return {"error": f"no finding with id {finding!r} in this project right now. "
+                                     f"It may have been fixed, or the manifest may have moved. "
+                                     f"Call review_queue() for the current ids."}
+                subject = f"{f.subject}::finding::{f.id}"
+                question = question or f.check
+                resolved_as = f"finding {f.id} -- {f.check} on {f.subject_name}"
+            else:
+                subject, resolved_as, err = self._resolve_subject(subject, question, st)
+                if err:
+                    return {"error": err}
+            answered, pv, mv = "", "", "" 
             row = st.con.execute(
                 "select answer, prompt_version, model_version from model_decisions "
                 "where decision_key = ? and question = ? order by decided_at desc limit 1",
@@ -273,7 +337,7 @@ class Backend:
         finally:
             st.close()
         out = {
-            "recorded": True, "subject": subject, "verdict": verdict,
+            "recorded": True, "subject": subject, "resolved_as": resolved_as, "verdict": verdict,
             "agent_rulings_now": mine, "models_a_person_has_ruled_on": human,
             "what_this_does": ("It puts this in front of whoever reviews next, ranked above what "
                                "nobody has read. `assay review -i` shows your reason beside the "
@@ -306,22 +370,38 @@ class Backend:
         store, why = self._store_or_why()
         ruled: set = set()
         mine: dict = {}
+        orphans: list = []
         if store is not None:
             try:
                 ruled = store.ruled_subjects()
+                known = set(self.state().project.models)
                 for r in store.agent_rulings():
-                    mine.setdefault(str(r["subject"]).split("::")[0], r)
+                    key = str(r["subject"])
+                    if "::finding::" in key:
+                        mine[key.split("::finding::")[1]] = r          # exact
+                    else:
+                        mine.setdefault(key.split("::")[0], r)         # model-level
+                    if key.split("::")[0] not in known:
+                        # *** A RULING THAT JOINS TO NOTHING IS REPORTED, NOT SWALLOWED. ***
+                        # 99 of them existed before `rule` started refusing a subject it could
+                        # not resolve. `assay review --repair` resolves the ones whose model name
+                        # is unambiguous; nothing here guesses.
+                        orphans.append(key)
             finally:
                 store.close()
         rows = []
         for f in fs:
-            if f.subject in ruled:
+            if f.subject in ruled or f"{f.subject}::finding::{f.id}" in ruled:
                 continue
-            a = mine.get(str(f.subject).split("::")[0])
-            rows.append({"check": f.check, "model": f.subject_name, "file": f.file,
+            a = mine.get(f.id) or mine.get(str(f.subject).split("::")[0])
+            rows.append({"finding": f.id,
+                         "check": f.check, "model": f.subject_name, "file": f.file,
                          "summary": f.summary, "marts": f.marts,
                          "an_agent_already_said": (
-                             {"verdict": a["verdict"], "because": a["note"]} if a else None)})
+                             {"verdict": a["verdict"], "because": a["note"],
+                              "at": ("this exact finding" if mine.get(f.id) else
+                                     "the model, so it covers every finding on it")}
+                             if a else None)})
         rows.sort(key=lambda r: (r["an_agent_already_said"] is None, -r["marts"]))
         out = {
             "waiting_for_a_person": rows[:limit],
@@ -329,7 +409,18 @@ class Backend:
             "note": ("Findings an agent has read are first: a person confirming a reading is one "
                      "keypress, and a finding nobody has looked at is a cold start. Nothing here "
                      "is resolved -- an agent ruling never clears an item from this queue."),
+            "pass_the_finding_id_back": ("rule(finding='<id>', verdict=..., why=...). A verdict "
+                                         "on a MODEL lands on every finding that model has, and "
+                                         "one model here carries eight."),
         }
+        if orphans:
+            out["rulings_that_join_to_nothing"] = {
+                "count": len(orphans), "examples": sorted(set(orphans))[:5],
+                "why": ("these were written under a subject that is not a model unique_id, so "
+                        "they attach to no finding. `rule` now refuses such a write. Run "
+                        "`assay review --repair` to resolve the ones whose model name is "
+                        "unambiguous; it guesses nothing."),
+            }
         if store is None and why:
             out["and_no_rulings_could_be_read"] = why
         return out
@@ -446,7 +537,9 @@ TOOLS = [
     ("practices", ("Models with no uniqueness test, and the grain a test should cover. "
                    "A patch, not a nag.")),
     ("rebase", "Take a fresh baseline for changed_contracts."),
-    ("rule", ("Record what YOU concluded after reading a finding and its SQL. Filed as an agent "
+    ("rule", ("Record what YOU concluded after reading a finding and its SQL. Pass the `finding` "
+              "id from findings() or review_queue(): a verdict on a MODEL lands on every finding "
+              "that model has, and one real model carries eight. Filed as an agent "
               "ruling: it triages what a person should look at first and it never gates a build, "
               "never counts toward a question's verdicts, and never anchors a regression check. "
               "Rule on what you have actually read, including when you conclude the finding is "
@@ -526,10 +619,10 @@ def serve(target: str, store_path: str | None = None) -> None:
         return json.dumps(be.practices(model), default=str)
 
     @app.tool(description=TOOLS[7][1])
-    def rule(subject: str, question: str, verdict: str, why: str, correction: str = "",
-             decided_by: str = "") -> str:
-        return json.dumps(be.rule(subject, question, verdict, why, correction, decided_by),
-                          default=str)
+    def rule(verdict: str, why: str, finding: str = "", subject: str = "", question: str = "",
+             correction: str = "", decided_by: str = "") -> str:
+        return json.dumps(be.rule(verdict, why, finding, subject, question, correction,
+                                  decided_by), default=str)
 
     @app.tool(description=TOOLS[8][1])
     def violations(model: str = "") -> str:
