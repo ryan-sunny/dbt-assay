@@ -2936,3 +2936,50 @@ ten. The gaps in the new list are the set difference working: 15, 13 and 12 mode
 `test_outruns_its_source` found 7 of 646 `not_null` tests including `int_water_well_parcel.parcel_id`
 -- on a branch that does not carry the fix, which is assay correctly reporting the tree it was
 pointed at.
+
+### 0.33.2: the review procedure was a loose file, and the shipped one was stale
+
+`assay review -i` has existed for most of this project's life and the field warehouse still read
+**0 of 159 models ruled on by a person**. The tool was never missing. Ruling meant leaving the
+conversation you were already in, so it did not happen, and every gate that needs human verdicts
+stayed shut.
+
+A second skill fixes the place rather than the tool: one finding at a time, never a list, with the
+SQL already read and presented as claim / code with line numbers / the agent's own agree or
+disagree. The call costs ten seconds because the agent spent two minutes. It records only what was
+actually answered, checks whether an existing agent ruling answers *this* question (rulings are
+stored per model and land on every finding that model has), and skips `(subject, question)` pairs
+already ruled, since one verdict clears every finding of that check on that model.
+
+It shipped as a loose file in the repo, which is the draft rather than the thing. Now it is
+`REVIEW_SKILL_MD` in `skilltext.py`, written by `onboard --agent` alongside the first, emitted by
+`assay skill review` / `assay skill all --write <dir>`, and covered by the guard that asserts every
+MCP tool is named in a procedure an agent actually reads.
+
+**And the first skill had been stale since 0.10.2.** Checking the committed copy against the module
+turned up a pure subset: 140 lines added since, none removed. Twenty-three releases. Anyone opening
+this repository read a procedure that never mentioned `guide`, `violations`, `suggestions` or
+`evidence` -- every one a tool the agent would therefore never call, which is exactly what
+`test_every_mcp_tool_is_in_the_skill_file` exists to prevent, one copy further out. Two spellings of
+one document, and the stale one is the copy a person actually opens. A guard now asserts the
+checked-in files equal what the package writes.
+
+### The label is not load-bearing, and now it says so
+
+`assay review --verdict` writes `source = 'human'` because of the code path taken, not because of
+who ran it. `--by` fills `decided_by`, is free text, defaults to `unknown`, and nothing validates
+it. Any process that can run the binary can write a human verdict, including an agent.
+
+Left as it is: making the label unforgeable is a different piece of work than making it honest. But
+the skill states it plainly now rather than leaving a future reader to assume something checked,
+and the procedure that depends on it -- record nothing that was not actually answered -- is the
+entire mechanism.
+
+### A rewrap flattened four bullets into a paragraph
+
+Reflowing the new skill to 100 columns treated consecutive lines as one block, so
+`- Quote the actual claim ... - If an agent already ruled ... - Give your own read` came out as a
+single run-on paragraph with the dashes inline. Valid markdown, loads fine, and unreadable in the
+specific way that makes an agent skip the rules it is there to follow. Nothing structural was
+checked because the file had only ever been eyeballed. A guard now asserts frontmatter, balanced
+fences, bullets that are still bullets, and the column limit -- on both procedures.

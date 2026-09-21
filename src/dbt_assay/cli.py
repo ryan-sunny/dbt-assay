@@ -726,12 +726,22 @@ def onboard(
                       "with no recorded verdicts anyway.[/]")
 
     if agent:
-        from .skilltext import SKILL_MD
-        sp = Path(".claude/skills/dbt-assay/SKILL.md")
-        sp.parent.mkdir(parents=True, exist_ok=True)
-        sp.write_text(SKILL_MD)
-        console.print(f"   wrote [bold]{sp}[/] [dim](the procedure an agent follows when it edits "
-                      "a model)[/]")
+        # *** TWO PROCEDURES, BECAUSE THEY ARE INVOKED AT DIFFERENT MOMENTS. ***
+        # One is for an agent in the middle of an edit. The other is for sitting with the person
+        # whose warehouse it is and turning findings into verdicts -- the step that was never
+        # missing a tool, only a place to happen. `assay review -i` has existed for most of this
+        # project's life and the field warehouse still read 0 of 159 models ruled on, because
+        # ruling meant leaving the conversation.
+        from .skilltext import REVIEW_SKILL_MD, SKILL_MD
+        for name, text, what in (
+            ("dbt-assay", SKILL_MD, "what an agent follows when it edits a model"),
+            ("assay-review", REVIEW_SKILL_MD,
+             "walking the findings with a person and recording their verdicts"),
+        ):
+            sp = Path(f".claude/skills/{name}/SKILL.md")
+            sp.parent.mkdir(parents=True, exist_ok=True)
+            sp.write_text(text)
+            console.print(f"   wrote [bold]{sp}[/] [dim]({what})[/]")
         # markup=False, because rich reads `[mcp]` as a style tag and silently drops it -- which
         # would print an install line that installs no mcp.
         console.print(f"   MCP: claude mcp add assay --scope project -- uvx --from 'dbt-assay[mcp]' "
@@ -758,6 +768,16 @@ def onboard(
     if judged:
         steps.append(("assay claims --extract",
                       "pull every claim out of this project's own prose, as data you can audit"))
+    if findings:
+        # *** THE ONE NUMBER A RELEASE CANNOT MOVE. ***
+        # Every other line here improves when assay improves. Findings ruled on by a person moves
+        # only when somebody reads SQL, and on the warehouse this was built against it sat at 0 of
+        # 159 for months -- not for want of `assay review -i`, which has always existed, but
+        # because ruling meant leaving the conversation you were already in.
+        steps.append(("assay review -i",
+                      (f"{len(findings)} finding(s) and nobody has ruled on any of them. An agent "
+                       f"with the `assay-review` skill will walk them with you and read the SQL "
+                       f"first, so each call costs you ten seconds.")))
         steps.append(("assay verify",
                       "check each of those claims against what the code actually does"))
         steps.append(("assay traverse",
@@ -4573,22 +4593,49 @@ def practices(
 
 @app.command()
 def skill(
-    out: str = typer.Option(None, "--write", help="write to a path, e.g. "
-                                                  ".claude/skills/dbt-assay/SKILL.md"),
+    which: str = typer.Argument("edit", help="edit | review | all"),
+    out: str = typer.Option(None, "--write", help="a path for one procedure, or a DIRECTORY "
+                                                  "(with `all`) to write .claude/skills/ under"),
 ):
-    """Emit the agent procedure: what to call before and after editing a dbt model.
+    """Emit an agent procedure. `edit` is the one to follow around an edit; `review` walks the
+    findings with a person and records their verdicts.
 
     The MCP server gives an agent the ABILITY to check itself. This gives it the OBLIGATION.
     Without it an agent checks when it remembers; with it, checking is the procedure.
+
+    *** AND THE SECOND ONE MOVES THE NUMBER THE FIRST CANNOT. ***
+    `assay review -i` has existed for most of this project's life, and the warehouse this was
+    built against still read 0 of 159 models ruled on by a person. The tool was never missing.
+    Ruling meant leaving the conversation, so it did not happen -- and every gate that needs human
+    verdicts stayed shut.
     """
-    from .skilltext import SKILL_MD
-    if out:
-        p = Path(out)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(SKILL_MD)
-        console.print(f"wrote [bold]{p}[/]")
-    else:
-        print(SKILL_MD)
+    from .skilltext import REVIEW_SKILL_MD, SKILL_MD
+    known = {"edit": ("dbt-assay", SKILL_MD), "review": ("assay-review", REVIEW_SKILL_MD)}
+    if which not in {*known, "all"}:
+        console.print(f"[yellow]unknown procedure `{which}`.[/] Use: edit, review, all.")
+        raise typer.Exit(2)
+    picked = list(known.values()) if which == "all" else [known[which]]
+
+    if not out:
+        # Two documents down one pipe would be one file with two frontmatter blocks, which is not
+        # a skill and not an error either -- it just silently does not load.
+        if which == "all":
+            console.print("[yellow]`all` writes files; pass --write <dir>.[/] [dim]Two procedures "
+                          "concatenated on stdout is one file with two frontmatter blocks, which "
+                          "loads as neither.[/]")
+            raise typer.Exit(2)
+        print(picked[0][1])
+        return
+
+    p = Path(out)
+    # A directory means "lay the skills out", a file means "write this one here". With `all` the
+    # path can only be a directory: one path cannot hold two documents.
+    as_dir = which == "all" or p.is_dir() or not p.suffix
+    for name, text in picked:
+        dest = (p / ".claude" / "skills" / name / "SKILL.md") if as_dir else p
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(text)
+        console.print(f"wrote [bold]{dest}[/]")
 
 
 # *** THE GATE DISCIPLINE IS THEORETICAL UNTIL THIS IS FAST. ***

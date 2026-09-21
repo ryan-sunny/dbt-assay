@@ -72,11 +72,18 @@ def test_every_cli_command_is_named_in_the_docs():
 
 def test_every_mcp_tool_is_in_the_skill_file():
     """The skill file IS the agent's procedure. A tool missing from it is a tool the agent will
-    never call, however well it is implemented."""
+    never call, however well it is implemented.
+
+    Checked against BOTH shipped procedures together. A tool named in neither is unreachable; a
+    tool named in only one is fine and usually correct -- `rule` belongs in the review procedure
+    and `changed_contracts` in the editing one, and forcing every tool into both would make each
+    file a list of everything, which is what an agent skips.
+    """
     from dbt_assay.mcp_server import TOOLS
-    from dbt_assay.skilltext import SKILL_MD
+    from dbt_assay.skilltext import REVIEW_SKILL_MD, SKILL_MD
     assert TOOLS, "the tool list is empty; the reader is broken"
-    assert not [n for n, _d in TOOLS if n not in SKILL_MD]
+    both = SKILL_MD + REVIEW_SKILL_MD
+    assert not [n for n, _d in TOOLS if n not in both]
 
 
 def test_the_families_with_no_finding_are_marked_as_such_where_they_are_listed():
@@ -261,3 +268,75 @@ def test_the_product_doc_names_only_checks_and_families_that_exist():
         if name and name.group(1) not in known:
             bad.append(name.group(1))
     assert not bad, f"PRODUCT.md names checks or families that do not exist: {bad}"
+
+
+def test_the_checked_in_skills_are_what_the_package_would_write():
+    """*** THE REPO'S OWN SKILL FILE HAD BEEN STALE FOR TWENTY-THREE RELEASES. ***
+
+    `onboard --agent` writes `.claude/skills/<name>/SKILL.md` from `skilltext`, and the copies
+    committed here were last regenerated at 0.10.2. The module had grown 140 lines since and
+    removed none, so an agent opening this repository read a procedure that never mentioned
+    `guide`, `violations`, `suggestions` or `evidence` -- every one of them a tool the agent would
+    therefore never call, which is the exact failure `test_every_mcp_tool_is_in_the_skill_file`
+    exists to prevent, one copy further out.
+
+    Two spellings of one document, and the stale one is the copy a reader actually opens.
+    """
+    from dbt_assay import skilltext
+    if not (ROOT / ".claude").is_dir():
+        pytest.skip("no repo checkout here")
+    for name, text in (("dbt-assay", skilltext.SKILL_MD),
+                       ("assay-review", skilltext.REVIEW_SKILL_MD)):
+        p = ROOT / ".claude" / "skills" / name / "SKILL.md"
+        assert p.exists(), f"{p} is missing; `assay onboard --agent` writes it"
+        assert p.read_text() == text, (
+            f"{p} is not what the package ships. Run `assay onboard --agent`, or the copy people "
+            f"read here drifts from the copy they install.")
+
+
+def test_the_review_skill_says_what_the_human_label_does_not_prove():
+    """*** `--by` IS FREE TEXT AND `source='human'` IS SET BY THE CODE PATH. ***
+
+    Nothing binds a verdict to a person: `--by` fills `decided_by`, defaults to `unknown`, and is
+    never validated. The skill's own honesty is the entire mechanism, so it has to say that out
+    loud rather than leave a future reader to assume the label was checked by something.
+    """
+    from dbt_assay.skilltext import REVIEW_SKILL_MD as R
+    assert "label, not a proof" in R
+    assert "`--by` is free text" in R and "`unknown`" in R
+    assert "do not record anything" in R.lower()
+
+
+def test_the_shipped_skills_are_not_addressed_to_one_person():
+    """It installs into other people's projects. A procedure naming this author is a draft."""
+    import re
+
+    from dbt_assay import skilltext
+    for name in ("SKILL_MD", "REVIEW_SKILL_MD"):
+        body = getattr(skilltext, name)
+        bad = [ln for ln in body.splitlines() if re.search(r"\b(Ryan|sunny_data|sunnydata)\b", ln)]
+        assert not bad, f"{name}: {bad}"
+
+
+def test_the_shipped_skills_are_still_shaped_like_documents():
+    """*** A REFLOW MERGED FOUR BULLETS INTO ONE RUN-ON PARAGRAPH, AND NOTHING NOTICED. ***
+
+    Rewrapping the review procedure to 100 columns treated consecutive lines as one paragraph, so
+    `- Quote the actual claim ... - If an agent already ruled ... - Give your own read` came out
+    as a single block with the dashes inline. Still valid markdown. Still loads. Unreadable, and
+    unreadable in the specific way that makes an agent skip the rules it is there to follow.
+
+    Nothing structural was checked, because the file was only ever eyeballed.
+    """
+    from dbt_assay import skilltext
+    for name in ("SKILL_MD", "REVIEW_SKILL_MD"):
+        body = getattr(skilltext, name)
+        lines = body.splitlines()
+        assert lines[0] == "---" and "name: " in body[:200], f"{name} has no frontmatter"
+        assert body.count("```") % 2 == 0, f"{name} has an unclosed code fence"
+        assert sum(1 for ln in lines if ln.startswith("- ")) >= 4, f"{name} lost its bullets"
+        # A list item never continues a line that already holds one.
+        assert not [ln for ln in lines if ln.lstrip().startswith("- ") and " - " in ln], \
+            f"{name} has bullets folded into a paragraph"
+        over = [ln for ln in lines if len(ln) > 100 and "```" not in ln]
+        assert not over, f"{name} has lines past 100 columns: {[len(x) for x in over]}"

@@ -735,7 +735,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.33.1
+- uses: ryan-sunny/dbt-assay@v0.33.2
   with:
     target: target-head
     baseline: base/target
@@ -762,7 +762,34 @@ This is the part that compounds.
 assay onboard --agent
 ```
 
-writes `.claude/skills/dbt-assay/SKILL.md` and prints the MCP line:
+writes **two** procedures and prints the MCP line:
+
+| skill | when it runs |
+|---|---|
+| `.claude/skills/dbt-assay/SKILL.md` | what an agent follows around an edit: call `contract` and `claims` before, `changed_contracts` and `violations` after |
+| `.claude/skills/assay-review/SKILL.md` | walking the findings WITH the person whose warehouse it is, one at a time, and recording their verdicts |
+
+The second one exists because of a number that would not move. `assay review -i` has shipped for
+most of this project's life, and the field warehouse still read **0 of 159 models ruled on by a
+person**. The tool was never missing. Ruling meant leaving the conversation you were already in, so
+it did not happen, and every gate that needs human verdicts stayed shut. The procedure does the SQL
+reading first and presents one finding at a time with claim, code and line numbers, so the call
+costs ten seconds; it never records anything that was not actually answered.
+
+It also says plainly what the label does not prove. `assay review --verdict` writes
+`source = 'human'` because of the code path taken, not because of who ran it, and `--by` is free
+text that fills `decided_by` and defaults to `unknown`. Nothing validates either. The honesty of
+whoever runs it is the whole mechanism, and the skill says so rather than leaving a reader to
+assume something checked.
+
+Either can be emitted on its own:
+
+```bash
+assay skill review            # to stdout
+assay skill all --write .     # both, under .claude/skills/
+```
+
+
 
 ```bash
 claude mcp add assay --scope project -- uvx --from 'dbt-assay[mcp]' assay mcp --target target

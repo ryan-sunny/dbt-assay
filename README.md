@@ -127,7 +127,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.33.1
+- uses: ryan-sunny/dbt-assay@v0.33.2
   with:
     target: target-head
     baseline: base/target
@@ -219,7 +219,7 @@ explanation options are domain knowledge: `explanations:` in audit.yml holds one
 ```bash
 assay practices --keys-only     # models with no uniqueness test, and the grain a test should cover
 assay practices                 # the full standard set, adjudicated
-assay skill --write .claude/skills/dbt-assay/SKILL.md
+assay skill all --write .       # both agent procedures, under .claude/skills/
 ```
 
 assay does **not** reimplement dbt-project-evaluator. It reads that package's own `fct_*` tables
