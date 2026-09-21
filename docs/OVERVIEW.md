@@ -358,6 +358,10 @@ become relations *in* your warehouse.
 ```bash
 assay banks              # every question, where it came from, and whether its shape is sound
 assay banks --strict     # exit non-zero on a warning too
+assay banks              # ...and, for a question you replaced, which of its blocks are
+                         #   byte-identical COPIES of the shipped one. A copy nobody
+                         #   knows is stale reads as current. `forked_from: role.v2` in
+                         #   your override and assay says when the shipped one moves.
 assay banks --judge      # also ask whether any two options could both be right. ~a cent,
                          #   cached on the question, so it cannot flap in CI.
 ```
@@ -628,7 +632,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.22.0
+- uses: ryan-sunny/dbt-assay@v0.23.0
   with:
     target: target-head
     baseline: base/target

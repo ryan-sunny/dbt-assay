@@ -1417,3 +1417,44 @@ changed. `effectiveness` compares agreement per version, so a false bump splits 
 verdicts across two versions that are the same question and makes the before-and-after meaningless.
 Only the families whose criteria actually moved carry a new version. Caught by reading the diff,
 which is the only thing that could have caught it.
+
+---
+
+## Round seven: the one finding that could not have come from this warehouse
+
+Every other thing in eight rounds came from running assay here. The bank audit came from asking
+what it looks like on somebody ELSE'S warehouse -- noticing that the shipped
+`edge_preserves_the_grain` example matched this project's exact bug class, `case_number` unique
+only within a division, and not being able to tell whether that was coincidence, a generality
+problem, or evidence the check was built from a real case.
+
+It was the middle one, and one project can never tell you which.
+
+## A fork made to preserve one property silently forfeits another
+
+A cost of the pattern rather than a bug, and the report named it exactly. A project forked
+`edge_preserves_the_grain` and copied four options WORD FOR WORD on purpose, so the hand
+verification recorded against that family would still apply. That same copying is what stops every
+later improvement reaching it, and `assay banks` said only `yours, replacing`.
+
+assay holds both halves, so it can say it once:
+
+```
+note  edge_preserves_the_grain  override_copies_the_shipped_text
+  9 of 11 blocks are byte-identical to the shipped `edge_preserves_the_grain`. Those are
+  copies rather than changes, and a later improvement to them will not reach this fork.
+  Add `forked_from: edge.v2` and assay will tell you when the shipped one moves.
+```
+
+Three signals, all from what was already loaded:
+
+- **How many blocks are copies.** Byte-identical, field by field, over the sent text only.
+- **`forked_from`**, the declared half and the same pattern as `meta.read_by`: say which shipped
+  version you took it from and assay tells you when that moves.
+- **An override that keeps the shipped `prompt_version` while changing the text** is an ERROR, not
+  a note. Two different questions under one version means `effectiveness` cannot tell their
+  verdicts apart and the agreement rate mixes answers to two questions.
+
+It is a **note**, not a warning, and `--strict` stays green. A deliberate fork is the normal case;
+the note exists so it does not go stale unnoticed. Counting it as a warning would make a build red
+for doing exactly what the docs suggest.

@@ -1164,3 +1164,68 @@ def test_a_question_whose_sent_text_changed_carries_a_new_version():
         versions.setdefault(v, []).append(name)
     shared = {v: n for v, n in versions.items() if len(n) > 1}
     assert not shared, f"two questions share a version, so their verdicts cannot be told apart: {shared}"
+
+
+# --- round seven: a fork that preserves one property forfeits another ------------------------
+
+def _bank(**over):
+    base = {"id_prefix": "x", "type": "choice", "prompt_version": "x.v1",
+            "instructions": {"question": "Q?", "note": "N"},
+            "criteria": {"a": {"what": "A", "examples": ["one"]},
+                         "b": {"what": "B", "examples": ["two"]}},
+            "_source": "/shipped/x.yml"}
+    return {**base, **over}
+
+
+def test_a_fork_is_told_which_of_its_blocks_are_copies():
+    """*** `yours, replacing` WAS THE WHOLE STORY A FORK GOT. ***
+
+    A project forked `edge_preserves_the_grain` and copied four options WORD FOR WORD on purpose,
+    so the hand verification recorded against that family would still apply. That same copying is
+    what stops every later improvement reaching it, and a copy nobody knows is stale reads as
+    current.
+    """
+    from dbt_assay.lint import override_drift
+
+    shipped = {"x": _bank()}
+    # An override that changed one option and copied the rest.
+    mine = _bank(prompt_version="x.mine.v1", _source="/mine/x.yml",
+                 criteria={"a": {"what": "A", "examples": ["one"]},
+                           "b": {"what": "DIFFERENT", "examples": ["two"]}})
+    got = {i.rule: i for i in override_drift({"x": mine}, shipped)}
+    assert "override_copies_the_shipped_text" in got
+    d = got["override_copies_the_shipped_text"].detail
+    assert "5 of 6 blocks" in d, d
+    assert got["override_copies_the_shipped_text"].level == "note", \
+        "a deliberate fork is not a warning and must not fail --strict"
+
+    # Not an override at all: shipped and user are the same file.
+    assert override_drift(shipped, shipped) == []
+
+
+def test_an_override_that_keeps_the_shipped_version_string_is_an_error():
+    """Two different questions under one version: `effectiveness` cannot tell their verdicts
+    apart, so the agreement rate mixes answers to two questions."""
+    from dbt_assay.lint import override_drift
+
+    shipped = {"x": _bank()}
+    same_version = _bank(_source="/mine/x.yml",
+                         instructions={"question": "DIFFERENT?", "note": "N"})
+    rules = {i.rule for i in override_drift({"x": same_version}, shipped)}
+    assert "override_reuses_a_version" in rules
+    errs = [i for i in override_drift({"x": same_version}, shipped) if i.level == "error"]
+    assert errs, "it did not rise above a warning"
+
+
+def test_a_fork_that_declares_where_it_came_from_is_told_when_that_moved():
+    """`forked_from` is the declared half, the same pattern as `meta.read_by`."""
+    from dbt_assay.lint import override_drift
+
+    shipped = {"x": _bank(prompt_version="x.v3")}
+    behind = _bank(prompt_version="x.mine.v1", forked_from="x.v1", _source="/mine/x.yml")
+    got = [i for i in override_drift({"x": behind}, shipped) if i.rule == "override_is_behind"]
+    assert got and "x.v3" in got[0].detail
+
+    current = _bank(prompt_version="x.mine.v1", forked_from="x.v3", _source="/mine/x.yml")
+    assert not [i for i in override_drift({"x": current}, shipped)
+                if i.rule == "override_is_behind"]

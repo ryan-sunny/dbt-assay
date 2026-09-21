@@ -12,6 +12,7 @@ already been measured to fail.
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 
@@ -464,4 +465,79 @@ def judge_overlap(banks: dict, client, store=None) -> list[Issue]:
             out.append(Issue(
                 name, "warn", "options_fall_through",
                 f"a realistic subject fits NO option and there is no way to decline (p={through:.2f})."))
+    return out
+
+
+# *** A FORK MADE TO PRESERVE ONE PROPERTY SILENTLY FORFEITS ANOTHER. ***
+# Reported from the field, and it is a cost of the pattern rather than a bug. A project forked
+# `edge_preserves_the_grain` and copied four options WORD FOR WORD on purpose, so the hand
+# verification recorded against that family would still apply. That same copying is what stops
+# every later improvement reaching it, and `assay banks` said only `yours`, replacing, and nothing
+# more.
+#
+# assay holds both halves, so it can say it once. Not an error -- a fork is usually deliberate --
+# but a copy nobody knows is stale reads as current, which is the same argument as the stale-skill
+# check and the same argument as this whole tool.
+def _blocks(q: dict) -> dict:
+    """The sent text, one addressable piece at a time. Comments are not in here and never were."""
+    out: dict = {}
+    ins = q.get("instructions") or {}
+    if isinstance(ins, dict):
+        for k, v in ins.items():
+            out[f"instructions.{k}"] = json.dumps(v, sort_keys=True, default=str)
+    else:
+        out["instructions"] = json.dumps(ins, default=str)
+    crit = q.get("criteria") or {}
+    if isinstance(crit, dict):
+        for name, v in crit.items():
+            if isinstance(v, dict):
+                for k, vv in v.items():
+                    out[f"criteria.{name}.{k}"] = json.dumps(vv, sort_keys=True, default=str)
+            else:
+                out[f"criteria.{name}"] = json.dumps(v, sort_keys=True, default=str)
+    elif isinstance(crit, list):
+        for i, v in enumerate(crit):
+            out[f"criteria[{i}]"] = json.dumps(v, sort_keys=True, default=str)
+    return out
+
+
+def override_drift(banks: dict, shipped: dict) -> list[Issue]:
+    """What a project's own bank copied verbatim, and what it has not taken since.
+
+    `forked_from: role.v2` in the override is the declared half: say which shipped version it was
+    taken from and assay can tell you the shipped one has moved. Without it, the identical-block
+    count still says which parts are copies rather than changes.
+    """
+    out: list[Issue] = []
+    for name, q in sorted(banks.items()):
+        base = shipped.get(name)
+        if base is None or q.get("_source") == base.get("_source"):
+            continue
+        mine, theirs = _blocks(q), _blocks(base)
+        shared = [k for k in mine if k in theirs]
+        same = [k for k in shared if mine[k] == theirs[k]]
+        if q.get("prompt_version") and q["prompt_version"] == base.get("prompt_version") \
+                and mine != theirs:
+            out.append(Issue(
+                name, "error", "override_reuses_a_version",
+                f"this replaces `{name}` and keeps its prompt_version "
+                f"{base['prompt_version']!r} while the text differs. Two different questions "
+                f"under one version: `assay effectiveness` cannot tell their verdicts apart, so "
+                f"the agreement rate mixes answers to two questions. Give yours its own."))
+        forked = q.get("forked_from")
+        if forked and forked != base.get("prompt_version"):
+            out.append(Issue(
+                name, "warning", "override_is_behind",
+                f"forked from {forked!r} and the shipped question is now at "
+                f"{base.get('prompt_version')!r}. Whatever changed in between has not reached "
+                f"this copy."))
+        if same:
+            out.append(Issue(
+                name, "note", "override_copies_the_shipped_text",
+                f"{len(same)} of {len(shared)} blocks are byte-identical to the shipped "
+                f"`{name}` ({', '.join(sorted(same)[:4])}"
+                f"{', ...' if len(same) > 4 else ''}). Those are copies rather than changes, and "
+                f"a later improvement to them will not reach this fork. Add "
+                f"`forked_from: {base.get('prompt_version')}` and assay will tell you when the "
+                f"shipped one moves."))
     return out

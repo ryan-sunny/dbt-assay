@@ -1809,6 +1809,11 @@ def banks(
             console.print(f"  [cyan]ack[/]  [bold]{a.question}[/]  [dim]{a.rule}[/]")
             console.print(f"    {a.detail}")
     issues = lint_all(all_banks, SHIPPED)
+    # *** A FORK MADE TO PRESERVE ONE PROPERTY SILENTLY FORFEITS ANOTHER. ***
+    # `yours, replacing` was the whole story a fork got, and a copy nobody knows is stale reads
+    # as current.
+    from .lint import override_drift
+    issues += override_drift(all_banks, SHIPPED)
     if judge:
         # *** THE LINTER USING THE TOOL'S OWN ARGUMENT ON ITSELF. ***
         # A parser settles what it can; whether two descriptions pick out the same case is a
@@ -1834,12 +1839,19 @@ def banks(
                       "already ruled on says whether it is right.[/]")
         raise typer.Exit(0)
     errs = [i for i in issues if i.level == "error"]
-    console.print(f"\n[bold]{len(errs)} error(s), {len(issues) - len(errs)} warning(s)[/]")
-    for i in sorted(issues, key=lambda x: (x.level != "error", x.question)):
-        colour = "red" if i.level == "error" else "yellow"
+    # *** A NOTE IS NOT A PROBLEM AND MUST NOT FAIL A BUILD. ***
+    # A deliberate fork is the normal case; the note exists so it does not go stale unnoticed.
+    # Counting it as a warning would make `--strict` red for doing exactly what the docs suggest.
+    notes = [i for i in issues if i.level == "note"]
+    warns = [i for i in issues if i.level not in ("error", "note")]
+    console.print(f"\n[bold]{len(errs)} error(s), {len(warns)} warning(s)[/]"
+                  + (f", {len(notes)} note(s)" if notes else ""))
+    order = {"error": 0, "warning": 1, "warn": 1, "note": 2}
+    for i in sorted(issues, key=lambda x: (order.get(x.level, 1), x.question)):
+        colour = {"error": "red", "note": "cyan"}.get(i.level, "yellow")
         console.print(f"\n  [{colour}]{i.level}[/]  [bold]{i.question}[/]  [dim]{i.rule}[/]")
         console.print(f"    {i.detail}")
-    raise typer.Exit(1 if errs or (strict and issues) else 0)
+    raise typer.Exit(1 if errs or (strict and warns) else 0)
 
 
 def _estimate(subs, q: dict) -> float:
