@@ -300,3 +300,71 @@ that the API let me rule on six different edges with one keypress and one readin
   while `uv.lock` is at `./uv.lock`, one level up.
 - `--dbt-bin` on `practices`/`adjudicate`/`probe` versus `--dbt` on `patch`/`onboard`, and it
   flipped between 0.9.4 and 0.13.0.
+
+---
+
+# Round four, 0.17.0: the repair works, and MCP shows an agent 20 findings of 162
+
+## Verified on the real store
+
+```
+assay review --repair          99 subject(s) re-pointed
+rulings joining to a finding    0  ->  249
+review_queue()                  0 of 20 carrying a reading  ->  20 of 20
+rule() on a bare name           "resolved_as": "resolved from the bare name 'crime_leads'"
+```
+
+Each queue item now carries `finding: "fba0bdd8a45a"` with the verdict and reasoning inline, so a
+person sees the finding and the reading in one place. That is the loop the whole thing was for.
+
+## My `dim_business` self-criticism was half wrong, and the half that was right is worse
+
+The summary format is `parent -> child`, so the three findings stored under `dim_business` are its
+union arms — `stg_mesa_business`, `stg_care`, `stg_childcare` — and my `disagree` on those was
+correct.
+
+The fan-out belongs to **`crime_leads`**, which I had bucketed `unclear` with the reason *"probably
+a union false positive, not certain — the model contains a collapse somewhere."* It does contain
+one. The collapse is in the **parent**, not on this hop. `crime_leads.sql:30` joins `dim_business`
+on `(geography, building_key)` while that model ends `group by geography, business_key,
+building_key`, so the join omits `business_key`. Measured through dbt: **69,966 rows over 47,178
+distinct pairs, 1.48x**. Corrected to `agree`.
+
+So the honest version: one of my twelve disagrees was fine; one of my seventeen `unclear`s was a
+real finding I hedged on. The hedge was the right shape — the reason names exactly what I had not
+checked — and it was still wrong.
+
+## THE REMAINING GAP: judged families are invisible through MCP
+
+```
+findings in the latest run   162   across 7 families
+MCP findings() returns        20   across 2  (arbitrary_pick, test_cannot_fail)
+review_queue() checks              arbitrary_pick, test_cannot_fail
+```
+
+The structural shortfall is the granularity fix **working** — `arbitrary_pick` is 28 in the run and
+11 in the tool because my rulings were per-model and findings are per-finding, so it correctly shows
+what I have not actually read.
+
+The judged families are missing outright:
+
+```
+hop_multiplies_rows                58 findings   0 visible through MCP
+description_contradicts_the_code   18 findings   0 visible
+```
+
+I could only reach them through direct SQL against the store. **An agent working through MCP sees
+20 of 162 findings**, and the 76 it cannot see are the ones where the disagree rate is highest
+(`hop_multiplies_rows` at 0/10 agreed) and where a reading is worth the most — a description that
+contradicts its code needs prose read against SQL, which is precisely what an agent is for and a
+parser is not.
+
+> **Fix:** `findings()` and `review_queue()` should read the latest run from the store, not only the
+> live structural pass. The rulings already prove the tier separation holds; there is no reason the
+> agent can write about a family it cannot read.
+
+## Still open from earlier rounds
+
+- `practices` prints `holds: 0 rows, 0 distinct` where `patch` refuses the same table as `EMPTY`.
+- Lockfile detection looks beside `dbt_project.yml`; the lockfile is at the repo root one level up.
+- `--dbt-bin` versus `--dbt` across commands, and it flipped between 0.9.4 and 0.13.0.
