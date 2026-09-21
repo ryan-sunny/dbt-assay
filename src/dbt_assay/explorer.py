@@ -127,6 +127,9 @@ svg.lin .bt{font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:var(-
 svg.lin .bs{font:11px -apple-system,BlinkMacSystemFont,sans-serif;fill:var(--dim)}
 svg.lin .ln{fill:none;stroke:#c4d0d5;stroke-width:1.3}
 svg.lin .ln.drv{stroke:var(--blue);stroke-width:2}
+svg.lin .ln.nb{stroke:#c9a227;stroke-width:2;stroke-dasharray:5 3}
+svg.lin .par.nb rect{stroke:#c9a227}
+button.back.on{border-color:var(--blue);background:#eef5f8;color:var(--ink)}
 svg.lin marker path{fill:#c4d0d5}
 svg.lin .clk{cursor:pointer}
 svg.lin .clk:hover rect{stroke:var(--blue)}
@@ -247,7 +250,12 @@ def explorer_html(data: dict, record_html: str) -> str:
         "decisions": len(data["decisions"]), "questions": len(data["questions"]),
         "unreadable": len(data["unreadable"]),
     }
+    # *** THE OVERVIEW IS THE WAY IN, NOT THE LAST TAB. ***
+    # It is the only surface here with an argument to make rather than a table to show, and a
+    # person opening this file has not yet picked a model to look at. Landing on 358 rows asks
+    # them to choose before they have been told anything.
     tabs = [
+        ("understood", "Overview", None),
         ("models", "Models", counts["models"]),
         ("chain", "The chain", counts["edges"]),
         ("claims", "Claims", counts["claims"]),
@@ -255,7 +263,6 @@ def explorer_html(data: dict, record_html: str) -> str:
         ("answers", "Answers", counts["decisions"]),
         ("questions", "Questions", counts["questions"]),
         ("config", "Config", None),
-        ("understood", "Understood", None),
     ]
     nav = "".join(
         f'<button role="tab" data-tab="{t}" aria-selected="{"true" if i == 0 else "false"}">'
@@ -367,7 +374,13 @@ function conf(x) {
    Past BAND_MAX in a band it degrades to a list with one bracket, because 36 boxes with 36
    converging lines is the hairball this exists to avoid. That is 14 models of 358 on the parent
    side and 6 on the child side, and you can see it coming.                                    */
-const BAND_MAX = 9, BW = 148, BH = 54, GAPX = 12, BANDY = 116;
+const BAND_MAX = 9, BW = 210, BH = 66, GAPX = 16, BANDY = 152, MINW = 860;
+/* *** A BOX 148 WIDE HOLDING 22 MONOSPACE CHARACTERS IS A BOX THAT OVERFLOWS. ***
+   Reported from the field with a screenshot: `int_az_parcel_sections` painted through its own
+   border and then through the right edge of the drawing. Truncating by character count guesses
+   at the font metrics; a clip path does not, so the box is the boundary whatever renders it.
+   `MINW` keeps a two-box drawing filling its panel instead of huddling in the corner. */
+const CLIP = 'boxclip';
 
 function svg(tag, attrs, kids) {
   const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -394,11 +407,14 @@ function edgeNote(e) {
 function box(x, y, title, sub, cls, onclick) {
   const g = svg('g', {class: 'box ' + (cls || ''), transform: `translate(${x},${y})`});
   g.append(svg('rect', {width: BW, height: BH, rx: 5}));
-  g.append(svgText(9, 21, title.length > 22 ? title.slice(0, 21) + '…' : title, 'bt'));
-  if (sub) {
-    const s = sub.length > 30 ? sub.slice(0, 29) + '…' : sub;
-    g.append(svgText(9, 38, s, 'bs'));
-  }
+  /* Two layers, and both are needed. The ellipsis says "there is more here", which a hard cut
+     does not -- a name sliced mid-character just looks like a rendering fault. The clip is the
+     backstop that makes the box the boundary whatever font actually renders it. */
+  const cut = (t, n) => (t.length > n ? t.slice(0, n - 1) + '\u2026' : t);
+  const inner = svg('g', {'clip-path': 'url(#' + CLIP + ')'});
+  inner.append(svgText(11, 25, cut(title, 26), 'bt'));
+  if (sub) inner.append(svgText(11, 45, cut(sub, 34), 'bs'));
+  g.append(inner);
   /* `Node.append` returns undefined, so chaining `.textContent` off it sets a property on
      nothing. The hover title is how a truncated name stays readable, so it is built first. */
   const tt = svg('title', {});
@@ -429,20 +445,23 @@ function lineage(m) {
   const drawIn = ins.length <= BAND_MAX, drawOut = outs.length <= BAND_MAX;
   const nTop = drawIn ? ins.length : 0, nBot = drawOut ? outs.length : 0;
   const cols = Math.max(nTop, nBot, 1);
-  const W = Math.max(cols * (BW + GAPX) + GAPX, BW + 2 * GAPX + 40);
+  const W = Math.max(cols * (BW + GAPX) + GAPX, MINW);
   const H = BANDY * 2 + BH + 30;
   const s = svg('svg', {class: 'lin', width: W, height: H, viewBox: `0 0 ${W} ${H}`});
-  s.append(svg('defs', {}, [svg('marker', {id: 'ah', viewBox: '0 0 8 8', refX: 7, refY: 4,
-      markerWidth: 7, markerHeight: 7, orient: 'auto'}, [svg('path', {d: 'M0,0 L8,4 L0,8 z'})])]));
+  s.append(svg('defs', {}, [
+    svg('marker', {id: 'ah', viewBox: '0 0 8 8', refX: 7, refY: 4, markerWidth: 7,
+        markerHeight: 7, orient: 'auto'}, [svg('path', {d: 'M0,0 L8,4 L0,8 z'})]),
+    svg('clipPath', {id: CLIP}, [svg('rect', {width: BW - 6, height: BH})])]));
 
   const fx = (W - BW) / 2, fy = BANDY;
   const rowFor = (i, n) => (W - (n * (BW + GAPX) - GAPX)) / 2 + i * (BW + GAPX);
 
   if (drawIn) ins.forEach((e, i) => {
     const x = rowFor(i, ins.length);
-    s.append(svg('path', {class: 'ln' + (e.driving ? ' drv' : ''), 'marker-end': 'url(#ah)',
+    s.append(svg('path', {class: 'ln' + (e.driving ? ' drv' : '') + (why(e) ? ' nb' : ''),
+      'marker-end': 'url(#ah)',
       d: `M${x + BW / 2},${BH} C${x + BW / 2},${BH + 40} ${fx + BW / 2},${fy - 40} ${fx + BW / 2},${fy - 6}`}));
-    s.append(box(x, 0, e.parent_name, edgeNote(e), 'par',
+    s.append(box(x, 0, e.parent_name, edgeNote(e), 'par' + (why(e) ? ' nb' : ''),
                  () => GO.chain && GO.chain(e.parent_name)));
   });
   if (drawOut) outs.forEach((e, i) => {
@@ -569,49 +588,107 @@ function modelsTab(host) {
   const first = $('tbody tr', list); if (first) first.click();
 }
 
+/* *** "209 OF 573 WORTH A LOOK" IS NOT A SIGNAL, IT IS THE TABLE. ***
+   163 of those 209 came from one rule of mine: "a driving edge joining on nothing". A driving
+   edge IS the FROM clause. Of course it joins on nothing. It was flagging the normal case, which
+   is how a list of exceptions becomes a list.
+
+   Measured on 573 real hops before rewriting it -- dropped columns p75 12, p90 24, max 233; a
+   join carrying no resolvable key 46; judged fan-outs 13 -- and every threshold below is a number
+   off that distribution rather than a guess. A hop with nothing to say returns "" and is silent. */
+function why(e) {
+  const out = [];
+  if (!e.driving && !e.union_arm && !(e.joined_on || []).length)
+    out.push((e.kind || 'a') + ' join carrying no key assay could resolve');
+  if (e.dropped > 60) out.push('drops ' + e.dropped + ' columns');
+  if (e.row_loss && e.row_loss.length === 2 && e.row_loss[0] &&
+      e.row_loss[1] / e.row_loss[0] < 0.5)
+    out.push('keeps only ' + pct(e.row_loss[1] / e.row_loss[0]) + ' of the parent');
+  return out.join(' \u00b7 ');
+}
+const NOTABLE_BY_CHILD = {};
+for (const e of DATA.edges) if (why(e))
+  (NOTABLE_BY_CHILD[e.child] = NOTABLE_BY_CHILD[e.child] || []).push(e);
+
 /* --------------------------------------------------------------------------- The chain */
 function chainTab(host) {
   const detail = el('div', {class: 'detail'});
   const withEdges = M.filter(m => (EDGES_IN[m.uid] || []).length || (EDGES_OUT[m.uid] || []).length);
+  const nOf = m => (NOTABLE_BY_CHILD[m.uid] || []).length;
+  let onlyNotable = false;
+
+  /* *** THE OBSERVABILITY BELONGS IN THE PAGE, NOT BEHIND A DISCLOSURE TRIANGLE. ***
+     It was a collapsed `<details>` above the list, which is the same shape as every
+     absence-reads-as-nothing defect in this codebase: a closed summary and a check that found
+     nothing look identical. So the count sits in the model list as a column you can sort on, the
+     edges are drawn differently, and each model's own notable hops are named under its drawing. */
+  const toggle = el('button', {class: 'back'});
+  function paintToggle() {
+    toggle.textContent = onlyNotable
+      ? '\u2190 every model with an edge'
+      : 'only the ' + Object.keys(NOTABLE_BY_CHILD).length + ' models with something notable';
+    toggle.classList.toggle('on', onlyNotable);
+  }
+  toggle.onclick = () => { onlyNotable = !onlyNotable; paintToggle(); list.redraw(); };
+  paintToggle();
+
   const list = grid(withEdges, [
     {key: 'name', label: 'model', mono: 1, val: m => m.name},
     {key: 'in', label: 'reads', n: 1, val: m => (EDGES_IN[m.uid] || []).length},
     {key: 'out', label: 'read by', n: 1, val: m => (EDGES_OUT[m.uid] || []).length},
+    {key: 'note', label: 'notable', n: 1, val: m => nOf(m),
+     cell: m => el('span', {class: nOf(m) ? 'low' : 'tot', text: nOf(m) ? String(nOf(m)) : ''})},
   ], {placeholder: 'filter models...', scroll: 1, pick: m => show(m), sort: 'name',
+      where: m => !onlyNotable || nOf(m), controls: [toggle],
       text: m => m.name + ' ' + m.path});
 
-  /* *** LEAD WITH THE HOPS WORTH LOOKING AT. *** 573 rows sorted by name is a filing cabinet.
-     These are about twenty, and they are the ones where something is happening. */
-  const notable = DATA.edges.filter(e =>
-    e.dropped > 20 || (e.row_loss && e.row_loss.length === 2 && e.row_loss[0] &&
-      e.row_loss[1] / e.row_loss[0] < 0.5) || (e.driving && !(e.joined_on || []).length));
-
   function show(m) {
-    detail.replaceChildren(
-      el('h2', {text: m.name}),
-      el('div', {class: 'path mono', text: m.path}),
-      lineage(m));
+    const mine = NOTABLE_BY_CHILD[m.uid] || [];
+    const d = detail; d.replaceChildren();
+    d.append(el('h2', {text: m.name}));
+    d.append(el('div', {class: 'path mono', text: m.path}));
+    d.append(lineage(m));
+    if (mine.length) {
+      d.append(section('worth a look on this model (' + mine.length + ')', grid(mine, [
+        {key: 'parent', label: 'from', mono: 1, val: e => e.parent_name,
+         cell: e => link(e.parent_name, 'chain')},
+        {key: 'why', label: 'why', val: e => why(e),
+         cell: e => el('span', {class: 'low', text: why(e)})},
+        {key: 'on', label: 'joined on', mono: 1, val: e => (e.joined_on || []).join(', '),
+         cell: e => (e.joined_on || []).length
+           ? el('span', {class: 'mono', text: e.joined_on.join(', ')})
+           : el('span', {class: 'tot', text: 'nothing resolvable'})},
+      ], {placeholder: 'filter...', cap: 60})));
+    }
+    const all = (EDGES_IN[m.uid] || []).concat(EDGES_OUT[m.uid] || []);
+    d.append(section('every hop, in and out (' + all.length + ')', grid(all, [
+      {key: 'dir', label: '', val: e => e.child === m.uid ? 'reads' : 'read by',
+       cell: e => el('span', {class: 'pill', text: e.child === m.uid ? 'reads' : 'read by'})},
+      {key: 'other', label: 'model', mono: 1,
+       val: e => e.child === m.uid ? e.parent_name : e.child_name,
+       cell: e => link(e.child === m.uid ? e.parent_name : e.child_name, 'chain')},
+      {key: 'edge', label: 'edge', val: e => edgeNote(e)},
+      {key: 'dropped', label: 'dropped', n: 1, val: e => e.dropped,
+       cell: e => { if (!e.dropped) return el('span', {class: 'tot', text: '0'});
+         const t = el('details'); t.append(el('summary', {text: String(e.dropped)}));
+         t.append(el('pre', {text: (e.dropped_cols || []).join('\n')})); return t; }},
+    ], {placeholder: 'filter hops...', cap: 200, emptyText: 'no edges'})));
   }
 
-  const strip = el('details', {class: 'strip'});
-  strip.append(el('summary', {text: notable.length + ' hop(s) worth a look: big column drops, '
-    + 'most of the parent lost, or a driving edge joining on nothing'}));
-  strip.append(grid(notable, [
-    {key: 'child', label: 'child', mono: 1, val: e => e.child_name,
-     cell: e => link(e.child_name, 'chain')},
-    {key: 'parent', label: 'parent', mono: 1, val: e => e.parent_name,
-     cell: e => link(e.parent_name, 'chain')},
-    {key: 'edge', label: 'what happens', val: e => edgeNote(e)},
-    {key: 'dropped', label: 'dropped', n: 1, val: e => e.dropped},
-  ], {placeholder: 'filter...', sort: 'dropped', dir: -1, cap: 200}));
-
-  host.replaceChildren(strip, el('div', {class: 'wrap2'}, [list, detail]));
+  const n = DATA.edges.filter(e => why(e)).length;
+  host.replaceChildren(
+    el('p', {class: 'note', text: 'Every hop in the DAG, drawn one neighbourhood at a time. '
+      + n + ' of ' + DATA.edges.length + ' hops carry something worth a look: a join with no key '
+      + 'assay could resolve, an unusually large column drop, or most of the parent lost. Those '
+      + 'are counted in the notable column and named under each drawing.'}),
+    el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a model to see its lineage drawn: what feeds it, what it feeds, and what each edge carries and drops. A drawing is always one neighbourhood, never the whole DAG.'}));
   GO.chain = name => { const m = BY_NAME[name]; if (!m) return;
-    const s = $('#p-chain .wrap2 input[type=search]'); s.value = name;
+    if (onlyNotable && !nOf(m)) { onlyNotable = false; paintToggle(); }
+    const s = $('#p-chain input[type=search]'); s.value = name;
     s.dispatchEvent(new Event('input'));
-    const r = $('#p-chain .wrap2 tbody tr'); if (r) r.click(); };
-  const first = $('.wrap2 tbody tr', host); if (first) first.click();
+    const r = $('#p-chain tbody tr'); if (r) r.click(); };
+  const first = $('tbody tr', list); if (first) first.click();
 }
 
 /* ------------------------------------------------------------------------------- Claims */
@@ -670,6 +747,18 @@ function findingsTab(host) {
   }
   const checks = Object.values(byCheck).sort((a, b) => b.n - a.n);
 
+  /* *** ELEVEN CHIPS, EACH CARRYING A NAME, A COUNT AND "0 read", IS A WALL OF TEXT. ***
+     Reported from the field with a screenshot: two rows of controls above the thing they filter,
+     spending more space than the table. A select says the same thing in one line and sits in the
+     filter bar that already exists, so nothing is added above the list at all. */
+  const pickCheck = el('select');
+  const opt = (v, t) => { const o = document.createElement('option'); o.value = v; o.textContent = t;
+    return o; };
+  pickCheck.append(opt('', 'every check \u00b7 ' + DATA.findings.length));
+  for (const c of checks)
+    pickCheck.append(opt(c.check, c.check + ' \u00b7 ' + c.n + (c.ruled ? ' \u00b7 ' + c.ruled + ' read' : '')));
+  pickCheck.onchange = () => { only = pickCheck.value || null; list.redraw(); };
+
   const list = grid(DATA.findings, [
     {key: 'check', label: 'check', mono: 1, val: f => f.check},
     {key: 'model', label: 'model', mono: 1, val: f => f.model, cell: f => link(f.model)},
@@ -677,24 +766,9 @@ function findingsTab(host) {
      cell: f => el('span', {text: f.weight.toFixed(1)})},
     {key: 'marts', label: 'marts', n: 1, val: f => f.marts},
   ], {placeholder: 'filter findings...', scroll: 1, sort: 'w', dir: -1, pick: f => show(f),
-      where: f => !only || f.check === only,
+      where: f => !only || f.check === only, controls: [pickCheck],
       text: f => [f.check, f.model, f.summary].join(' ')});
 
-  /* The checks strip FILTERS the list rather than replacing the view. Findings are only 244, so
-     the list is still readable whole -- what was missing was seeing the shape before scrolling. */
-  const strip = el('div', {class: 'chips'});
-  function paint() {
-    strip.replaceChildren(...checks.map(c => {
-      const b = el('button', {class: 'chip' + (only === c.check ? ' on' : '')});
-      b.append(el('span', {class: 'mono', text: c.check}));
-      b.append(el('b', {text: String(c.n)}));
-      b.append(el('span', {class: c.ruled ? 'ok' : 'tot',
-                           text: c.ruled + ' read'}));
-      b.onclick = () => { only = only === c.check ? null : c.check; paint(); list.redraw(); };
-      return b;
-    }));
-  }
-  paint();
 
   function show(f) {
     detail.replaceChildren(
@@ -722,9 +796,8 @@ function findingsTab(host) {
 
   host.replaceChildren(
     el('p', {class: 'note', text: 'Ranked by weight, which is the base severity lifted by reach: '
-      + 'the same defect on a leaf and on a model nine marts read are not the same finding. '
-      + 'Pick a check to narrow the list.'}),
-    strip, el('div', {class: 'wrap2'}, [list, detail]));
+      + 'the same defect on a leaf and on a model nine marts read are not the same finding.'}),
+    el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a finding.'}));
   const first = $('tbody tr', list); if (first) first.click();
 }
@@ -1010,5 +1083,5 @@ function open(name) {
   catch (e) { /* no deep link, and every tab still works */ }
 }
 document.querySelectorAll('nav button').forEach(b => { b.onclick = () => open(b.dataset.tab); });
-open(VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'models');
+open(VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'understood');
 """

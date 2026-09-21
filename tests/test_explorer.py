@@ -411,9 +411,15 @@ def test_no_tab_opens_on_a_flat_list_of_everything():
         body = v[v.index("function " + tab):]
         body = body[:body.index("\n}")]
         assert "drill({" in body, f"{tab} still opens on a flat list"
-    # findings has only 244 rows, so the list stays whole and the check chips FILTER it
+    # *** FINDINGS IS 244 ROWS, SO THE LIST STAYS WHOLE AND A CONTROL NARROWS IT. ***
+    # That control was eleven chips carrying a name, a count and "0 read" each, which is two rows
+    # of furniture above the table it filters. Reported from the field with a screenshot. It is a
+    # select in the filter bar that already exists, so it adds no row at all.
     fb = v[v.index("function findingsTab"):]
-    assert "class: 'chips'" in fb[:fb.index("function answersTab")]
+    fb = fb[:fb.index("function answersTab")]
+    assert "el('select')" in fb, "the check filter is gone"
+    assert "controls: [pickCheck]" in fb, "the filter is not in the existing bar"
+    assert "class: 'chips'" not in fb, "the chip wall is back"
 
 
 def test_the_things_you_configure_by_hand_are_not_dumped_as_json():
@@ -443,3 +449,66 @@ def test_every_table_can_reach_the_model_it_is_about():
         body = v[v.index("function " + tab):]
         body = body[:body.index("\n}\n")]
         assert "link(" in body, f"{tab} has no way back to a model"
+
+
+# ---------------------------------------------------- 0.26.1: what a screenshot of it showed
+
+def test_the_overview_is_the_first_tab():
+    """*** A PERSON OPENING THIS FILE HAS NOT YET PICKED A MODEL. ***
+
+    Landing on 358 rows asks them to choose before they have been told anything. The record is
+    the only surface here with an argument to make rather than a table to show, so it is the way
+    in rather than the last tab.
+    """
+    import re
+    data = {"meta": {"project": "p", "models": 0, "sources": 0, "version": "0",
+                     "generated_at": "x", "coverage": {}},
+            "models": [], "edges": [], "claims": [], "findings": [], "decisions": [],
+            "questions": [], "adjudications": [], "config": {}, "runs": [], "unreadable": []}
+    doc = explorer.explorer_html(data, "<html></html>")
+    order = re.findall(r'<button role="tab" data-tab="([a-z]+)"', doc)
+    assert order[0] == "understood", f"the overview is not first: {order}"
+    assert 'data-tab="understood" aria-selected="true"' in doc, "it is not the selected tab"
+    assert "'understood');" in explorer._VIEWS, "the default hash target did not move"
+
+
+def test_a_driving_edge_joining_on_nothing_is_the_normal_case():
+    """*** "209 OF 573 WORTH A LOOK" IS NOT A SIGNAL, IT IS THE TABLE. ***
+
+    163 of those 209 came from one rule: "a driving edge joining on nothing". A driving edge IS
+    the FROM clause, so of course it joins on nothing. The rule was flagging the normal case,
+    which is how a list of exceptions becomes a list.
+
+    Measured on 573 real hops before rewriting it: dropped columns p75 12, p90 24, max 233; a
+    join carrying no resolvable key 46; judged fan-outs 13. Every threshold is off that
+    distribution. Asserted through the shipped rule text, because the numbers are the fix.
+    """
+    v = explorer._VIEWS
+    assert "function why(e)" in v
+    body = v[v.index("function why(e)"):]
+    body = body[:body.index("\n}")]
+    assert "!e.driving" in body, "the driving edge is not excluded, so the FROM clause flags"
+    assert "!e.union_arm" in body, "a union arm has no join key either"
+    assert "e.dropped > 60" in body, "the drop threshold is not the measured one"
+    # and it must stay a REASON, not a boolean: a hop with nothing to say returns ""
+    assert "return out.join(" in body
+
+
+def test_box_text_can_neither_overflow_its_box_nor_be_cut_without_saying_so():
+    """*** A BOX 148 WIDE HOLDING 22 MONOSPACE CHARACTERS OVERFLOWS. ***
+
+    Reported from the field with a screenshot: a parent name painted through its own border and
+    then through the right edge of the drawing. Two layers fix it and both are needed. The
+    ellipsis says "there is more here", which a hard cut does not -- a name sliced mid-character
+    reads as a rendering fault. The clip path is the backstop that makes the box the boundary
+    whatever font actually renders it, since truncating by character count guesses at metrics.
+    """
+    v = explorer._VIEWS
+    assert "const CLIP = 'boxclip';" in v
+    assert "clipPath" in v and "'clip-path': 'url(#' + CLIP + ')'" in v
+    cutline = v[v.index("const cut ="):v.index("const cut =") + 120]
+    # the JS source may carry the escape or the character; both render an ellipsis
+    assert "\\u2026" in cutline or "…" in cutline, cutline
+    # and the drawing fills its panel rather than huddling in a corner
+    assert "MINW = 860" in v
+    assert "Math.max(cols * (BW + GAPX) + GAPX, MINW)" in v

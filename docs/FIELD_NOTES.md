@@ -1927,3 +1927,72 @@ rendered an Understood tab that was silently empty, because the record was added
 `explorer_html` and so was never in the data that got written. Both are the same shape as round
 eleven's: invisible to anything that reads the source or the generated markup, obvious the moment
 the page is opened and clicked.
+
+---
+
+## Round thirteen: four things a screenshot showed that no test could
+
+0.26.0 opened in a browser and photographed. Every item below is invisible to the suite, to the
+DOM driver, and to reading the source, because all four are about what the page LOOKS like once
+real data is in it.
+
+### "209 hop(s) worth a look" was my own bad rule, hidden behind a disclosure triangle
+
+Two defects in one control. It was a collapsed `<details>`, which is the same shape as every
+absence-reads-as-nothing failure in this file: a closed summary and a check that found nothing
+are the same picture.
+
+And 209 of 573 is not a signal, it is the table. **163 of those 209 came from one rule: "a driving
+edge joining on nothing".** A driving edge IS the `FROM` clause. Of course it joins on nothing. It
+was flagging the normal case.
+
+Measured on the 573 real hops before rewriting it:
+
+```
+dropped columns per hop   median 5   p75 12   p90 24   max 233
+a join carrying no resolvable key                       46
+judged silently_multiplied                              13
+driving edge with no join key            163   <- the normal case
+union arms                               195   <- also normal
+```
+
+Every threshold now comes off that distribution: **65 of 573**, each with a reason rather than a
+boolean. And it is in the page instead of behind a triangle -- a `notable` column in the model
+list you can sort on, a toggle that narrows the list to the 47 models that have one, the notable
+edges drawn dashed and amber in the lineage, and each model's own named under its drawing.
+
+### The boxes overflowed, and then the drawing overflowed
+
+`int_az_parcel_sections` painted straight through its own border and then through the right edge
+of the canvas. The box was 148 wide and the title truncated at 22 monospace characters, which at
+12px is about 158px. Truncating by character count guesses at font metrics and the guess was
+wrong.
+
+Two layers now, and both are needed. An **ellipsis** says "there is more here", which a hard cut
+does not -- a name sliced mid-character reads as a rendering fault rather than as an abbreviation.
+A **clip path** is the backstop that makes the box the boundary whatever font renders it.
+
+The drawing was also small: 148x54 boxes on a 316px canvas inside a panel twice that tall. Now
+210x66 on a 400px canvas with a minimum width, so a two-box lineage fills its panel instead of
+huddling in the corner, and a wide one scrolls rather than being cut.
+
+### Eleven chips carrying a name, a count and "0 read" each
+
+Two rows of furniture above the table they filtered, spending more space than the thing itself.
+It is a `select` in the filter bar that already exists, so it adds no row at all: *"every check ·
+244"*, then one line per check. Same function, one control, no new row.
+
+### The overview was the last tab
+
+A person opening this file has not picked a model yet, and landing on 358 rows asks them to
+choose before they have been told anything. The record is the only surface here with an argument
+to make rather than a table to show, so it is the way in. First tab, and the default when there is
+no hash.
+
+### What this round is actually about
+
+Rounds eleven and twelve were caught by driving the page in a DOM, which finds a tab that throws
+and a tab that renders nothing. It cannot find a control that is technically correct and visually
+a wall, a box whose text paints outside it, or a threshold that is a bad idea rather than a bug.
+**65 of 573 and 209 of 573 are both "working".** The only thing that separated them was somebody
+looking at the page and saying the number was absurd.
