@@ -32,7 +32,7 @@ same_concept:
 edge_preserves_the_grain:
   id_prefix: "edge"
   type: choice
-  prompt_version: "edge.v1"
+  prompt_version: "edge.v2"
   instructions:
     question: >-
       `parent` produces rows of one kind and `child` reads it. Given what the child joins on and
@@ -52,7 +52,7 @@ edge_preserves_the_grain:
         One child row is MANY parent rows, and the code says so plainly -- a group by, a distinct,
         an aggregate. Narrowing on purpose.
       examples: ["child groups the parent by section and counts",
-                 "child selects distinct owner from a per-parcel parent"]
+                 "child selects distinct customer from a per-order parent"]
     silently_multiplied:
       what: >-
         One parent row becomes SEVERAL child rows without the code declaring it. A join on part of
@@ -64,6 +64,6 @@ edge_preserves_the_grain:
       what: >-
         The child's row is about a DIFFERENT thing than the parent's, not more or fewer of the same
         thing. The hop changes the subject.
-      examples: ["parent is one row per permit, child is one row per contractor"]
+      examples: ["parent is one row per order, child is one row per customer"]
     cannot_tell:
       what: "The join keys or grouping are not visible enough to decide."

@@ -18,7 +18,7 @@ version: 1
 row_explanation:
   id_prefix: "explanation"
   type: choice
-  prompt_version: "row.v1"
+  prompt_version: "row.v2"
   instructions:
     question: >-
       A deterministic rule flagged this row. Does the rest of `row` explain why it looks that way?
@@ -31,7 +31,7 @@ row_explanation:
     normal_for_this_kind_of_row:
       what: >-
         The row is of a kind where this pattern is expected, and another field in the row says so.
-      examples: ["a claim on water not yet diverted, so its structure legitimately does not exist"]
+      examples: ["a pending application, so the identifier it would carry does not exist yet"]
     explained_by_another_field:
       what: "Some other value in the row accounts for it directly."
     genuinely_wrong:

@@ -710,7 +710,8 @@ def test_repair_resolves_a_bare_name_and_refuses_an_ambiguous_one(tmp_path, monk
     s.adjudicate("ghost", "chk", "chk", "x", "disagree", note="n", source="agent")
 
     project = NS(models={"model.p.thing": NS(name="thing"),
-                         "model.a.twice": NS(name="twice"), "model.b.twice": NS(name="twice")})
+                         "model.a.twice": NS(name="twice"), "model.b.twice": NS(name="twice")},
+                 sources={}, raw={})
     monkeypatch.setattr(cli, "_find_target", lambda _t: "target")
     monkeypatch.setattr(cli, "_load", lambda *_a, **_k: (project, {}, [], None, None))
     cli._repair_subjects(s, "target", None)
@@ -1080,3 +1081,86 @@ def test_row_loss_is_judged_only_on_the_driving_edge_of_an_inner_join():
     # No FROM information at all: fall back to judging every INNER edge rather than nothing.
     blind = child(driving_parents=set())
     assert [p for _e, p in row_loss_candidates([blind])] == ["driver"]
+
+
+# --- it must translate to a warehouse that is not this one -----------------------------------
+
+DOMAIN_WORDS = ("water", "decree", "wdid", "adwr", "cdss", "diversion", "appropriation",
+                "aquifer", "streamflow", "well_depth", "irrigated", "parcel", "permit",
+                "lead", "broker", "contractor")
+
+
+def _sent_text(q: dict) -> str:
+    """Only what actually reaches the model. Comments and `_source` do not."""
+    import json as _j
+    return _j.dumps({k: v for k, v in q.items()
+                     if k in ("instructions", "criteria")}, default=str).lower()
+
+
+def test_no_shipped_question_sends_this_warehouse_s_vocabulary():
+    """*** `criteria.examples` ARE SENT, AND DOMAIN NOUNS IN THEM STEER THE ANSWER. ***
+
+    The shipped unit question carried `examples: ["decreed_af", "amount_acre_feet",
+    "storage_af"]` and the claim question `"one row per water division and case number"`. On a
+    retail warehouse that is water-rights vocabulary arriving as the definition of the question.
+
+    Comments in the YAML are fine and stay: they are for whoever maintains the bank and are never
+    sent. This reads the sent half only.
+    """
+    from dbt_assay.contracts import SHIPPED
+
+    assert len(SHIPPED) >= 15, "the reader is broken; it found almost no questions"
+    bad = {}
+    for name, q in SHIPPED.items():
+        text = _sent_text(q)
+        hits = sorted({w for w in DOMAIN_WORDS if w in text})
+        if hits:
+            bad[name] = hits
+    assert not bad, f"shipped questions send domain vocabulary: {bad}"
+
+
+def test_nothing_in_the_package_hardcodes_a_model_or_column_from_one_project():
+    """A default, a fallback or a help string naming a real table here is a tell that the tool was
+    fitted to one warehouse."""
+    import ast
+
+    import dbt_assay
+
+    root = Path(dbt_assay.__file__).parent
+    bad = []
+    seen = 0
+    for f in sorted(root.rglob("*.py")):
+        tree = ast.parse(f.read_text())
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            seen += 1
+            v = node.value.lower()
+            if len(v) > 220 or "\n" in v:
+                continue                      # a docstring or a paragraph of prose
+            if any(w in v for w in ("wdid", "adwr", "cdss", "water_right", "decreed_af")):
+                bad.append(f"{f.name}:{node.lineno}: {node.value[:70]}")
+    assert seen > 500, "the reader is broken"
+    assert not bad, "project-specific identifiers in shipped strings:\n  " + "\n  ".join(bad)
+
+
+def test_a_question_whose_sent_text_changed_carries_a_new_version():
+    """*** A VERSION BUMP THAT IS NOT TIED TO A REAL CHANGE IS A LIE ABOUT WHAT MOVED. ***
+
+    Removing domain vocabulary from four criteria blocks, a blanket regex bumped EVERY question
+    in those files -- including four whose sent text never changed. `effectiveness` compares
+    agreement per version, so a false bump splits a family's verdicts across two versions that
+    are the same question and makes the before-and-after meaningless.
+
+    This cannot check history, so it checks the invariant that made the mistake possible: every
+    shipped question has a version, and two questions never share one.
+    """
+    from dbt_assay.contracts import SHIPPED
+
+    versions = {}
+    for name, q in SHIPPED.items():
+        v = q.get("prompt_version")
+        assert v, f"{name} has no prompt_version, so its verdicts cannot be dated"
+        versions.setdefault(v, []).append(name)
+    shared = {v: n for v, n in versions.items() if len(n) > 1}
+    assert not shared, f"two questions share a version, so their verdicts cannot be told apart: {shared}"

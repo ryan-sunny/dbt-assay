@@ -2614,6 +2614,7 @@ def review(
                          verdict, correction, note, who,
                          prompt_version=(row[1] if row else f"assay.{_pkg_version()}"),
                          model_version=row[2] if row else "")
+        _warn_orphan_family(fam, question)
         acc = store.accuracy(fam)
         console.print(f"recorded. [bold]{fam}[/] now has {acc['n']} verdicts, "
                       f"{acc['agree']} agreeing.")
@@ -2822,7 +2823,7 @@ def export(
 
 @app.command()
 def trace(
-    column: str = typer.Argument(..., help="model.column, e.g. water_rights.decreed_af"),
+    column: str = typer.Argument(..., help="model.column, e.g. orders.total_amount"),
     target: str = typer.Option(None, "--target", "-t"),
 ):
     """Where did this number come from?
@@ -4024,7 +4025,42 @@ def _prompt_version(name: str) -> str:
 
 
 def _family_of(question: str) -> str:
-    return _FAMILY.get(question.split("__")[0], question.split("__")[0])
+    """The bank family a verdict is filed under, resolved LATE.
+
+    *** A SNAPSHOT TAKEN AT IMPORT DEGRADED TO THE id_prefix AND NOTHING SAID SO. ***
+    Reported from the field: eight human verdicts filed under `family='water.prio'`, which is a
+    question's ID PREFIX and not any bank's name. `assay config` keys on the family name, so it
+    read `human: 0` on every question and the gate floor said "20 more" when it was 12.
+    `effectiveness` found them fine, because it groups by whatever is stored.
+
+    Third instance of one fact, two spellings. `_FAMILY` is built at import because fourteen
+    modules bind their question at module level, and a bank found later would add a family and
+    silently fail to override one -- so the snapshot has to stay. What must not stay is trusting
+    it alone: the live banks are consulted before falling back, and `_unresolved_family` makes
+    the fallback loud instead of silent.
+    """
+    prefix = question.split("__")[0]
+    if prefix in _FAMILY:
+        return _FAMILY[prefix]
+    from .contracts import family_of
+    return family_of(question) or prefix
+
+
+def _unresolved_family(fam: str) -> bool:
+    """Is this family a name nothing can join back to?"""
+    from .config import known_checks
+    from .contracts import load_all_banks
+    return bool(fam) and fam not in load_all_banks() and fam not in known_checks()
+
+
+def _warn_orphan_family(fam: str, question: str) -> None:
+    if not _unresolved_family(fam):
+        return
+    console.print(
+        f"[yellow]recorded, but under family {fam!r}, which no bank claims.[/] [dim]It is the id "
+        f"prefix of {question!r}. `assay config` keys on the family NAME, so this verdict will "
+        f"not count toward that question's gate floor. Run from the directory holding "
+        f"`assay_questions/`, or set ASSAY_QUESTIONS, then `assay review --repair`.[/]")
 
 
 def _resolve_family(recorded: str, banks: dict) -> str | None:
@@ -4135,7 +4171,11 @@ def _repair_subjects(store, target, dialect) -> None:
     fixed, ambiguous, unknown = [], [], []
     for (subj,) in rows:
         head = str(subj).split("::")[0]
-        if head in project.models:
+        # *** A SOURCE IS A VALID SUBJECT AND IS NOT A MODEL. ***
+        # The completeness checks file findings against `source.<pkg>.<src>.<table>`, and the
+        # first version of this repair reported every one of them as unrepairable -- a repair
+        # that cries wolf about correct rows teaches a reader to ignore it.
+        if head in project.models or head in project.sources:
             continue
         hits = by_name.get(head) or []
         if len(hits) == 1:
@@ -4160,6 +4200,7 @@ def _repair_subjects(store, target, dialect) -> None:
     if fixed:
         console.print(f"[bold]{len(fixed)}[/] subject(s) re-pointed at their unique_id. "
                       f"[dim]They join to findings again.[/]")
+    _repair_families(store)
     for label, group, why in (("ambiguous", ambiguous, "names more than one model"),
                               ("unknown", unknown, "names no model in this project")):
         if group:
@@ -4167,6 +4208,46 @@ def _repair_subjects(store, target, dialect) -> None:
                           f"{', '.join(str(x) for x in group[:6])}[/]")
             console.print("[dim]A ruling moved to the wrong model is worse than an orphaned one, "
                           "because it would look attached.[/]")
+
+
+def _repair_families(store) -> None:
+    """Re-file verdicts written under a question's id PREFIX instead of its bank family.
+
+    *** `assay config` READ `human: 0` WHILE EIGHT VERDICTS EXISTED. ***
+    They were filed under `family='water.prio'`, which is an id prefix and not any bank's name,
+    so the gate floor said "20 more" when it was 12. Third instance of one fact and two
+    spellings, in the same table as the first two.
+
+    It resolves and never guesses: a family the banks can now claim is re-filed, and anything
+    else is reported and left where it is. Re-filing a verdict under the WRONG question would be
+    worse than leaving it unattached, because it would count toward a gate it says nothing about.
+    """
+    from .contracts import load_all_banks
+    banks = load_all_banks()
+    rows = store.con.execute(
+        "select distinct family, question from adjudications").fetchall()
+    moved, stuck = [], []
+    for fam, question in rows:
+        if not _unresolved_family(fam):
+            continue
+        want = _family_of(question)
+        if want != fam and want in banks:
+            moved.append((fam, question, want))
+        else:
+            stuck.append((fam, question))
+    for fam, question, want in moved:
+        store.con.execute(
+            "update adjudications set family = ? where family = ? and question = ?",
+            [want, fam, question])
+    if moved:
+        console.print(f"[bold]{len(moved)}[/] family name(s) re-filed: "
+                      + ", ".join(f"{f} -> {w}" for f, _q, w in moved[:6])
+                      + "  [dim]they count toward a gate floor again.[/]")
+    if stuck:
+        console.print(f"[yellow]{len(stuck)} left alone[/] [dim]-- no bank claims "
+                      f"{', '.join(sorted({f for f, _q in stuck}))[:80]}. Load the bank that "
+                      f"defines it (run from the directory holding `assay_questions/`, or set "
+                      f"ASSAY_QUESTIONS) and run this again.[/]")
 
 
 def _review_loop(store, limit: int, target=None, dialect: str | None = None) -> None:
@@ -4231,6 +4312,7 @@ def _review_loop(store, limit: int, target=None, dialect: str | None = None) -> 
             continue
         store.adjudicate(key, q, fam, str(ans), v, who="review",
                          prompt_version=pv or "", model_version=mv or "")
+        _warn_orphan_family(fam, q)
         done += 1
         colour = {"agree": "green", "disagree": "red", "unclear": "yellow"}[v]
         console.print(f"  [{colour}]{v}[/]\n")

@@ -103,6 +103,19 @@ def to_parquet(store, directory: str | Path) -> list[Exported]:
     return out
 
 
+# Types for the generated seed schema. Everything not named here is varchar on purpose: a seed is
+# a transport format, and a column that arrives as text and is cast where it is used cannot be
+# mis-sniffed into a number on one machine and a string on another.
+_SEED_TYPE = {
+    "weight": "double", "confidence": "double", "base": "double",
+    "descendants": "integer", "marts": "integer", "input_tokens": "integer",
+    "models": "integer", "sources": "integer", "tests": "integer", "edges": "integer",
+    "readable": "integer", "unreadable": "integer", "parse_ok": "integer",
+    "parse_failed": "integer", "rows": "integer", "n": "integer",
+    "decided_at": "timestamp", "started_at": "timestamp", "decided_on": "timestamp",
+}
+
+
 def schema_yml(store, exported: list[Exported]) -> str:
     """Document assay's own tables. It has opinions about undocumented models."""
     lines = ["version: 2", "", "seeds:"]
@@ -111,6 +124,20 @@ def schema_yml(store, exported: list[Exported]) -> str:
         lines.append(f"  - name: {PREFIX}{e.table}")
         lines.append("    description: >")
         lines.append(f"      {TABLES[e.table]}")
+        # *** PIN EVERY TYPE, BECAUSE THE SNIFFER FAILS ON OUR OWN TEXT. ***
+        # These tables carry the reasoning somebody wrote when they ruled, and a ruling's `note` is
+        # prose full of commas, quotes and colons. dbt-duckdb sniffs a seed's dialect, and on a real
+        # store it gives up: "It was not possible to automatically detect the CSV parsing dialect".
+        # The files are well formed -- Python's csv module reads them with zero ragged rows -- so
+        # this is the sniffer guessing, not the export being wrong.
+        #
+        # IT ONLY BREAKS AT SCALE, which is why it shipped. Eight rulings seeded fine; a hundred and
+        # seven did not. `dbt seed` is the last line this command prints, so the instruction has to
+        # work on a store somebody has actually used.
+        lines.append("    config:")
+        lines.append("      column_types:")
+        for c in cols:
+            lines.append(f"        {c}: {_SEED_TYPE.get(c, 'varchar')}")
         lines.append("    columns:")
         for c in cols:
             doc = COLUMN_DOCS.get(c)

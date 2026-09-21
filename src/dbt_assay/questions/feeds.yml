@@ -12,7 +12,7 @@ version: 1
 field_matches_its_name:
   id_prefix: "name"
   type: choice
-  prompt_version: "feed.name.v1"
+  prompt_version: "feed.name.v2"
   instructions:
     question: >-
       Do the values in `sample` look like what a column called `column` should hold in a table
@@ -26,7 +26,7 @@ field_matches_its_name:
     holds_something_else:
       what: "The values are consistently a DIFFERENT kind of thing from what the name says."
       examples: ["a column called county holding city names",
-                 "a column called water_source holding numeric codes",
+                 "a column called status holding numeric codes",
                  "a column called date holding free text"]
     mixed:
       what: "Some values match the name and others are a different kind entirely."
@@ -37,7 +37,7 @@ field_matches_its_name:
 units_are_what_the_column_claims:
   id_prefix: "unit"
   type: choice
-  prompt_version: "feed.units.v2"
+  prompt_version: "feed.units.v3"
   # *** v1 ASKED WHETHER THE MAGNITUDES WERE PLAUSIBLE, AND JEV CANNOT DO THAT. ***
   # Verified against real values: it called 218,235 "acres" CONSISTENT at 0.82 and 4,073,925
   # "acre-feet" CONSISTENT at 0.54 -- wrong by 43,560x and 325,851x. TypeSafe publish the reason:
@@ -57,28 +57,28 @@ units_are_what_the_column_claims:
   criteria:
     acres:
       what: "The name claims acres."
-      examples: ["land_acres", "irrigated_acres", "acreage"]
+      examples: ["land_acres", "lot_acres", "acreage"]
     square_feet:
       what: "The name claims square feet."
       examples: ["land_sqft", "building_area_sf", "footprint_square_feet"]
     acre_feet:
       what: "The name claims acre-feet."
-      examples: ["decreed_af", "amount_acre_feet", "storage_af"]
+      examples: ["volume_acre_feet", "storage_af", "allocation_acreft"]
     gallons:
       what: "The name claims gallons."
       examples: ["volume_gallons", "daily_gal"]
     cubic_feet_per_second:
       what: "The name claims cfs, a rate of flow."
-      examples: ["rate_cfs", "decreed_cfs"]
+      examples: ["flow_cfs", "discharge_cubic_feet_per_second"]
     gallons_per_minute:
       what: "The name claims gpm, a rate of flow."
       examples: ["pump_gpm", "yield_gallons_per_minute"]
     feet:
       what: "The name claims feet, as a depth, height or length."
-      examples: ["well_depth_ft", "elevation_feet", "water_level_ft"]
+      examples: ["depth_ft", "elevation_feet", "ceiling_height_feet"]
     miles:
       what: "The name claims miles."
-      examples: ["reach_length_miles", "distance_mi"]
+      examples: ["route_length_miles", "distance_mi"]
     metres:
       what: "The name claims metres."
       examples: ["depth_m", "elevation_metres"]
@@ -92,6 +92,6 @@ units_are_what_the_column_claims:
       what: >-
         The name promises no unit at all. A count, an identifier, a code, a flag, a name, a date,
         or a measurement whose name does not say what it is measured in.
-      examples: ["permit_id", "county", "n_records", "is_completed", "amount", "value"]
+      examples: ["order_id", "county", "n_records", "is_completed", "amount", "value"]
     cannot_tell:
       what: "The name is too abbreviated or ambiguous to say which unit it claims."

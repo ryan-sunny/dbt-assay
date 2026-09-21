@@ -19,7 +19,7 @@ column_role:
       with 57 of 61 free labels overall, which is evidence about the family and not about this
       sentence. Worth a controlled rewrite.
   type: choice
-  prompt_version: "role.v2"
+  prompt_version: "role.v3"
   instructions:
     question: >-
       What job does `column` do in this model? Judge the column named in `column`, using its
@@ -47,7 +47,7 @@ column_role:
     event_time:
       what: "When the real-world thing happened."
       not_for: "When the ROW was written or loaded, which is audit_time."
-      examples: ["appropriation_date", "inspection_date", "issue_date"]
+      examples: ["signup_date", "inspection_date", "issue_date"]
     audit_time:
       what: "When this record was created, loaded or last refreshed by a pipeline."
       not_for: "When the real-world event happened."
@@ -95,7 +95,7 @@ column_role:
 null_meaning:
   id_prefix: "null"
   type: choice
-  prompt_version: "null.v2"
+  prompt_version: "null.v3"
   instructions:
     question: >-
       A NULL is possible in `column`. When one occurs, what does it mean about the real world?
@@ -109,7 +109,7 @@ null_meaning:
       examples: ["a phone number nobody recorded", "an owner name the feed omitted"]
     not_applicable:
       what: "The fact does not apply to this kind of row, so there is nothing to know."
-      examples: ["a diversion structure on a right that is not a diversion",
+      examples: ["a shipping address on an order that is never shipped",
                  "a terminus on a right that has no reach"]
     not_yet:
       what: "It will have a value later; the event has not happened yet."

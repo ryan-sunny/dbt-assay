@@ -9,7 +9,7 @@ version: 1
 predicate_intent:
   id_prefix: "pred"
   type: choice
-  prompt_version: "pred.v1"
+  prompt_version: "pred.v2"
   instructions:
     question: >-
       Why is the filter in `predicate` here? Judge only this one condition; the model's other
@@ -34,7 +34,7 @@ predicate_intent:
       what: >-
         It defines what this model is ABOUT. Removing it would not fix anything; it would make a
         different model.
-      examples: ["where state = 'CO'", "where division = 1", "only commercial parcels"]
+      examples: ["where state = 'CO'", "where division = 1", "only active accounts"]
     performance_prefilter:
       what: >-
         Narrowing purely to make the query cheaper, where a later step does the exact test anyway.
@@ -54,7 +54,7 @@ predicate_intent:
 sentence_is_a_claim:
   id_prefix: "sentence"
   type: choice
-  prompt_version: "sentence.v1"
+  prompt_version: "sentence.v2"
   instructions:
     question: >-
       Each sentence in `sentences_under_judgement` was written in this model's documentation. For
@@ -67,9 +67,9 @@ sentence_is_a_claim:
       what: >-
         It asserts something checkable about what this model produces -- its grain, its filters,
         which rows it keeps or drops, what a column contains or means.
-      examples: ["one row per water division and case number",
-                 "residential permits are filtered out",
-                 "amount is in acre-feet, never gallons"]
+      examples: ["one row per customer and order date",
+                 "cancelled rows are filtered out",
+                 "amount is in cents, never dollars"]
     claim_about_a_rule:
       what: >-
         It asserts that the model follows a rule from somewhere outside this project -- a statute,
@@ -85,12 +85,12 @@ sentence_is_a_claim:
       what: >-
         It records something that WAS true, was found, or was fixed. It is about the past, not
         about what the code does now.
-      examples: ["B-sweep found 53 dateless Peoria permits",
+      examples: ["the March backfill found 53 dateless rows",
                  "this used to group by year and silently split entities"]
     instruction_to_maintainers:
       what: "It tells whoever reads it next what to do or not do. A TODO, a warning, a pointer."
       examples: ["do not add a filter here without checking the crosswalk",
-                 "see docs/water_law.md before changing this"]
+                 "see docs/pricing_rules.md before changing this"]
     not_a_statement:
       what: "A heading, a fragment, a label, or anything with no assertion in it at all."
 

@@ -1366,3 +1366,54 @@ Scattered ratios are what a wrong candidate set would have produced.
 It is verified against a **planted control** only: a driving INNER edge that really does lose its
 rows, which fires. Nobody has yet watched it catch a real join that was failing to match, and this
 warehouse cannot supply one. Recorded in `VERIFICATION.md` rather than counted as a clean result.
+
+---
+
+## Round six: a third orphaning, and the shipped questions were fitted to one warehouse
+
+### `assay config` read `human: 0` while eight verdicts existed
+
+They were filed under `family='water.prio'`, which is a question's id PREFIX and not any bank's
+name. `config` keys on the family name, so the gate floor said "20 more" when it was 12.
+`effectiveness` found them fine, because it groups by whatever is stored.
+
+**Third instance of one fact and two spellings, in the same table as the first two.** `_FAMILY` is
+a snapshot built at import, because fourteen modules bind their question at module level and a bank
+found later would add a family while silently failing to override one. The snapshot has to stay.
+What did not have to stay was trusting it alone: the live banks are consulted before falling back,
+and the fallback is now LOUD -- a verdict filed under a name no bank claims says so on the spot and
+names the fix.
+
+`assay review --repair` re-files them. On the field store: `water.prio ->
+seniority_ordered_by_the_wrong_date`, and the eight verdicts count toward a gate floor again.
+
+The repair also cried wolf about every completeness finding, because their subjects are
+`source.<pkg>.<src>.<table>` and it only knew about models. A repair that reports correct rows as
+broken teaches a reader to ignore it.
+
+### The shipped questions sent this warehouse's vocabulary
+
+Asked directly: does any of this translate to a warehouse that is not this one? It did not, in the
+place that matters most.
+
+`criteria.examples` are **sent to the model**. The shipped unit question carried
+`examples: ["decreed_af", "amount_acre_feet", "storage_af"]`, the claim question `"one row per
+water division and case number"`, and six other families carried `permit_id`,
+`appropriation_date`, `only commercial parcels`, `a diversion structure on a right that is not a
+diversion`. On a retail warehouse that is water-rights vocabulary arriving as part of the question.
+
+Comments in the YAML are fine and stay: they are for whoever maintains the bank and are never sent.
+Eight families were rewritten with examples spread across several domains, which is better than
+neutral ones because they show the PATTERN rather than one industry's nouns.
+
+The guard reads the sent half only -- `instructions` and `criteria`, never comments -- and a second
+one refuses any project identifier in a shipped string. It caught `--model.column, e.g.
+water_rights.decreed_af` in a help message.
+
+### And the version bump was a lie before it was a fix
+
+A blanket regex bumped every question in the touched files, including four whose sent text never
+changed. `effectiveness` compares agreement per version, so a false bump splits one question's
+verdicts across two versions that are the same question and makes the before-and-after meaningless.
+Only the families whose criteria actually moved carry a new version. Caught by reading the diff,
+which is the only thing that could have caught it.
