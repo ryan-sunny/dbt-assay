@@ -153,6 +153,12 @@ Anything that needs the warehouse goes **through your own dbt**, so assay never 
 The last one needs `--verify` and it ships with its refusals, because most edges drop rows on
 purpose. On a 357-model warehouse that is 45 candidate hops out of 358 models, and two findings.
 
+`assay probe -n 8` takes the **least-recently-observed** relations, so a bounded probe on a
+schedule walks the project instead of re-reading the front of the list, and a relation that could
+not be counted still records the attempt so one unreadable relation cannot starve the cycle. A
+drift check needs two observations of a relation, so on 275 relations at `-n 8` that is about 35
+passes to first coverage and about 70 before anything can fire.
+
 **And `observed_keys` keeps its series.** Every other table in the store that records a
 measurement keeps one; this was the only one that overwrote, so assay could say a key holds today
 and could never say a key that held last week has stopped. Probe twice and the comparison exists.

@@ -508,3 +508,38 @@ def changes(store, project=None) -> list:
                         "to be.\n\n" + when + "."),
                 evidence={"was": mini_was, "now": mini_now}))
     return out
+
+
+def order_by_staleness(targets_: list, store) -> list:
+    """Least-recently-observed first, so -n walks the project instead of re-probing the front.
+
+    *** WITHOUT THIS, `-n 8` PROBES THE SAME EIGHT FOREVER. ***
+    The order was whatever the manifest yielded, so a bounded probe on a 277-relation project read
+    the first eight on every run and the other 269 were never seen. Coverage could not grow, and
+    the drift checks -- which need TWO observations of a relation before they can say anything --
+    could never reach a second one.
+
+    *** THE TIE-BREAK IS NOT OPTIONAL. ***
+    A probe writes one timestamp for the whole batch, so every relation observed in the same pass
+    sorts EQUAL. Ties are the normal case here, not the edge case. Without a total order two runs
+    against an unchanged store pick different subsets, which is `arbitrary_pick` -- the check this
+    tool runs against other people's SQL -- and it is the same defect already fixed twice here:
+    the `count(*) desc` run selection, and the page writing different bytes on identical input.
+
+    A relation that FAILED to count still advances, because `observe` records `unknown` rather
+    than nothing. If a failure wrote no row its `max(observed_at)` would stay NULL, it would sort
+    first forever, and one unreadable relation would starve the whole cycle -- silently, with the
+    symptom "probe seems to work but coverage never grows".
+    """
+    if store is None:
+        return sorted(targets_, key=lambda t: t.relation)
+    store.con.execute(DDL)
+    try:
+        seen = {str(r[0]).lower(): r[1] for r in store.con.execute(
+            "select relation, max(observed_at) from observed_keys group by relation").fetchall()}
+    except Exception:                                            # noqa: BLE001
+        seen = {}
+    # NULL first, then oldest, then the name. Three keys, and the last one makes it total.
+    return sorted(targets_, key=lambda t: (seen.get(t.relation.lower()) is not None,
+                                           seen.get(t.relation.lower()) or 0,
+                                           t.relation))

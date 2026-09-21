@@ -2636,14 +2636,30 @@ def probe(
     _tdir, project, digests, schema, declared, proposed = _grain_setup(target, store_path)
     known = {uid: [c.lower() for c in c_.columns] for uid, c_ in proposed.items()}
     tg = probe_mod.targets(project, digests, schema, declared, known)
+    n_all = len(tg)
+    # Opened here rather than below, because the ORDER depends on what is already in it.
+    store = Store(store_path)
+    # *** LEAST RECENTLY OBSERVED FIRST, OR `-n` READS THE SAME FRONT OF THE LIST FOREVER. ***
+    # Not a flag: the previous order was whatever the manifest yielded, which is arbitrary, and
+    # nothing can depend on it. This is what lets a bounded probe walk a project over several
+    # runs, which is what the drift checks need -- they cannot say anything about a relation with
+    # only one observation.
+    tg = probe_mod.order_by_staleness(tg, store)
     if limit:
         tg = tg[:limit]
+        console.print(f"[dim]{len(tg)} least-recently-observed of {n_all:,} candidate(s). Run it "
+                      f"again to advance: each relation needs TWO observations before a drift "
+                      f"check can say anything about it, so first coverage is about "
+                      f"{-(-n_all // max(limit, 1))} passes and first drift is about "
+                      f"{2 * -(-n_all // max(limit, 1))}.[/]")
 
     console.print(f"[bold]{len(tg)}[/] relations have no settled grain and are read by a model.")
     if not tg:
+        store.close()
         raise typer.Exit(0)
 
     if emit:
+        store.close()
         print(probe_mod.emit(tg, dialect))
         raise typer.Exit(0)
 
@@ -2652,9 +2668,9 @@ def probe(
             console.print(f"\n[bold]{t_.relation}[/]  [dim]{t_.why}[/]")
             console.print(f"  [dim]{probe_mod.build_sql(t_, dialect)[:220]}[/]")
         console.print(f"\n[dim]{len(tg)} statements, one scan each. Nothing was run.[/]")
+        store.close()
         raise typer.Exit(0)
 
-    store = Store(store_path)
     if load:
         payload = _json.loads(Path(load).read_text())
         obs = []

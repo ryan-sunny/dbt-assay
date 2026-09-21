@@ -280,6 +280,16 @@ There is one set per mart because the answers differ per mart. A generic fallbac
 available, so start with two or three options on the mart whose tests actually fail, and add more
 when an answer keeps coming back as the decline.
 
+**A bounded probe walks the project.** `assay probe -n 8` takes the eight least-recently-observed
+relations, so running it on a schedule covers everything rather than re-reading the front of the
+list. A relation that could not be counted still records the attempt, so one unreadable relation
+cannot starve the cycle.
+
+**And the timeline is worth saying out loud.** A drift check needs TWO observations of a relation
+before it can say anything, so on a 275-relation project at `-n 8` that is about 35 passes to
+first coverage and about 70 before `key_stopped_holding` can fire anywhere. On an hourly build,
+roughly a day and a half, then three. It is not broken in week one; it has not finished looking.
+
 **Measured worth:** on the field warehouse this called wells `genuinely_wrong` at 0.50–0.70 on a
 290-foot well with a water level of 26,018 feet. The `accepted_range` test that surfaced them
 catches 12 rows; the real invariant, `water_level_ft <= well_depth_ft`, holds on 708. It found a

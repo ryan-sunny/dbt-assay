@@ -2586,3 +2586,42 @@ The largest family on that warehouse, 115 findings, unconfigured.
 `{action: x}`, which silently missed every check written in the block form — `duckdb_full_match`
 among them — and every one configured with `act:` thresholds instead of a flat action. A reader
 that handles one spelling of a fact, written into the fix for exactly that. It parses the YAML now.
+
+### A bounded probe that re-read the same eight forever
+
+`observed_keys` keeping its series is worth nothing if the same relations are observed every time,
+and that is what `-n` did: the order was whatever the manifest yielded, so `probe -n 8` on a
+275-relation project read the first eight on every run. Coverage could not grow, and the drift
+checks -- which need TWO observations of one relation before they can say anything -- could never
+reach a second observation of anything past the front of the list.
+
+Least-recently-observed first now, and not behind a flag: the previous order was arbitrary and
+nothing can depend on it.
+
+**The tie-break is not optional.** A probe writes one timestamp for the whole batch, so every
+relation observed in the same pass sorts EQUAL — ties are the normal case here, not the edge case.
+Without a total order two runs against an unchanged store choose different subsets, which is
+`arbitrary_pick`, the check this tool runs against other people's SQL, and the same defect already
+fixed twice: the `count(*) desc` run selection and the page writing different bytes on identical
+input. Three keys: never-observed first, then oldest, then the relation name.
+
+**And the requirement that would have bitten.** If a failed count wrote no row, that relation's
+`max(observed_at)` stays NULL, it sorts first forever, and it is re-probed on every run while
+nothing else advances. One unreadable relation starves the whole cycle, silently, and the symptom
+is *"probe seems to work but coverage never grows"*. `observe` already records `unknown` rather
+than nothing and `write` is called unconditionally, so an attempt is always logged — confirmed
+against the code rather than assumed, and then pinned with a test that makes one relation
+permanently uncountable and asserts the other five still advance.
+
+Measured on the field warehouse: 275 candidates, 24 already observed, the next eight all
+never-observed, and the same eight chosen on twenty consecutive orderings.
+
+**The timeline belongs in the docs.** Two observations per relation before a drift check can fire
+means 275 relations at `-n 8` is about 35 passes to first coverage and about 70 before
+`key_stopped_holding` can fire anywhere. On an hourly build that is a day and a half, then three.
+It is not broken in week one; it has not finished looking. The command prints both numbers now.
+
+Deliberately not in scope, and recorded so it is not re-proposed: no snapshot copy, no quiet-window
+scheduling, and no design work around the DuckDB lock in general. Cross-process read-only is
+blocked too, but that is an embedded-file constraint — on Snowflake, BigQuery or Postgres a probe
+runs whenever. It belongs in guidance for the DuckDB case, not in the shape of the tool.
