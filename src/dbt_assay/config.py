@@ -105,10 +105,16 @@ def known_checks() -> set:
     import ast
     import inspect
 
-    from . import judged, relate
+    # *** EVERY MODULE THAT CONSTRUCTS A `Finding`, OR THE SCANNER LIES BY OMISSION. ***
+    # `practices` and `checks.sources` started building findings in 0.18.0 and this still read
+    # three modules, so five real checks came back as UNKNOWN: `assay config` would have told
+    # somebody their `hop_drops_most_rows: {action: annotate}` configured nothing. The floor
+    # below catches a reader that finds nothing; it cannot catch one that finds most things.
+    from . import judged, practices, relate
+    from .checks import sources as source_checks
     from .checks import structural
     out = set()
-    for mod in (judged, structural, relate):
+    for mod in (judged, structural, relate, practices, source_checks):
         for node in ast.walk(ast.parse(inspect.getsource(mod))):
             if not (isinstance(node, ast.Call) and getattr(node.func, "id", "") == "Finding"):
                 continue
@@ -331,6 +337,18 @@ questions:
   # immediately: a parser decided it, and there is no error rate to measure first.
   duckdb_full_match:
     action: queue
+
+  # *** COMPLETENESS: COVERAGE OF WHAT THIS PROJECT ITSELF DECLARES. ***
+  # Named here so `assay config` shows them and you can see what to change. All annotate: they
+  # are true and cheap, and none is worth failing a build over until somebody has read a few and
+  # said which ones matter here.
+  source_reaches_nothing:      {action: annotate}
+  source_only_a_test_reads:    {action: annotate}
+  source_freshness_undeclared: {action: annotate}
+  source_freshness_stale:      {action: annotate}
+  # Needs `--verify`: it counts parent and child rows through your own dbt. An uncounted hop
+  # produces nothing at all, which is correct -- an absent measurement is not a pass.
+  hop_drops_most_rows:         {action: annotate}
   # `when.select` scopes a question. assay errors on syntax it does not understand rather than
   # silently matching everything.
   #  when:

@@ -135,6 +135,25 @@ Anything that needs the warehouse goes **through your own dbt**, so assay never 
 - `assay check --verify` counts each flagged hop's join key. A join onto a key that is unique **in
   the data** cannot fan out, and dbt only knows which keys are *declared* unique.
 
+### Completeness: do we have all of it?
+
+`assay completeness`. Coverage of what the project itself declares, and nothing more.
+
+| check | what it catches |
+|---|---|
+| `source_reaches_nothing` | declared, loaded on every run, and no model or test refers to it |
+| `source_only_a_test_reads` | you are paying to test data nothing consumes |
+| `source_freshness_undeclared` | nothing says how current it should be. Silent when `dbt_project_evaluator` is installed, because it already answers this |
+| `source_freshness_stale` | the project states how current it should be and the last load does not meet it |
+| `hop_drops_most_rows` | a child with no filter, no group by and no collapse that still emits a fraction of the parent. A join that is not matching |
+
+The last one needs `--verify` and it ships with its refusals, because most edges drop rows on
+purpose. On a 357-model warehouse that is 45 candidate hops out of 358 models, and two findings.
+
+**The line that keeps this in scope:** assay can say a column is 99% its default. It cannot say
+whether that is bad. The first is a fact about code and rows; the second is intent, and the ruling
+loop already exists for it. No funnels, no conversion rates, no anomaly on a trend.
+
 ### Tier 4: what only meaning settles
 
 **17 question families**, asked through Jev. A few of them:
@@ -190,6 +209,23 @@ it.
 > the design working.
 
 ---
+
+## The page
+
+`assay page assay.html` writes one self-contained file answering *is this warehouse understood,
+and by whom*. The ruled-on number first and largest, then agreement per question version, then
+findings by defect class and reach, then coverage, then what moved since the last run.
+
+It is **deterministic**: it carries the manifest's own `generated_at` and never a wall clock, so a
+rerun that changes nothing writes an identical file. That is the whole argument for a file over a
+dashboard. A file that diffs accrues; a server shows you today and forgets.
+
+## Two ways in: MCP, or a skill
+
+The MCP server gives an agent the tools. `assay skill --write .claude/skills/dbt-assay/SKILL.md`
+gives it the **procedure**, and the skill works with or without the server: every tool has a
+command that answers the same question, and the CLI's `--json` carries the same `finding` ids, so
+ruling works either way.
 
 ## Every command
 

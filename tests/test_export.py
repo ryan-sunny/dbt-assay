@@ -6,8 +6,14 @@ from dbt_assay.store import Store
 
 def _store(tmp_path):
     s = Store(tmp_path / "e.duckdb")
-    s.con.execute("""insert into findings values
-        ('r1','test_cannot_fail','model.p.m','m','m.sql','s','d',2,5.0,3,1,'{}')""")
+    # Named, never positional. A positional insert assumes a column order and a migration appends
+    # at the END, so the two disagree the moment the store is upgraded -- which is exactly what
+    # happened when `finding_id` was added.
+    s.con.execute("""insert into findings
+        (run_id, check_name, subject, subject_name, file, summary, detail,
+         base, weight, descendants, marts, evidence, finding_id)
+        values ('r1','test_cannot_fail','model.p.m','m','m.sql','s','d',2,5.0,3,1,'{}','abc123')
+    """)
     s.adjudicate("model.p.m", "role__x", "column_role", "measure", "agree", note="ok")
     return s
 

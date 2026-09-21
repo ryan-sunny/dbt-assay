@@ -124,9 +124,41 @@ was intended and it needs a version bump. Do not hand back work where the grain 
 - **Report what assay said, not what you concluded from it.** If it was uncertain, say it was
   uncertain.
 
+## Without the MCP server
+
+**Every tool above has a command that answers the same question**, and the CLI's `--json` carries
+the same `finding` ids, so `rule` works either way. If the MCP server is not connected, use these
+and nothing is lost:
+
+| tool | command |
+|---|---|
+| `contract(model)` | `assay inventory --model <model> --json` |
+| `blast_radius(model)` | `assay inventory --model <model> --json` (`descendants`, `marts`) |
+| `claims(model)` | `assay claims --model <model>` then `assay verify --model <model>` |
+| `traversal(model)` | `assay traverse --model <model>` |
+| `lineage(model, column)` | `assay trace <column> --model <model>` |
+| `findings(model)` | `assay check --json` — one object with a `findings` list |
+| `changed_contracts()` | `assay diff --baseline <main target>` |
+| `violations()` | `assay check --json`, then read `action` |
+| `rule(finding, …)` | `assay review --subject <s> --question <q> --verdict <v> --note <why>` |
+| `review_queue()` | `assay review` |
+
+The one difference worth knowing: the MCP tools reload when the manifest moves, and a CLI run
+reads whatever `target/` holds at that moment. Run `dbt compile` first if you have edited SQL.
+
 ## Checking the whole project
 
 - `assay check` — structural and judged findings in one stream, ranked by blast radius.
+- `assay completeness` — do we have all of it? Sources nothing reads, feeds behind their own
+  declared freshness, hops that lose most of the parent. Add `--verify` to count empty models and
+  row loss through the project's own dbt; without it those are **not counted**, which is not a
+  pass.
+- `assay effectiveness` — whether the questions themselves are any good: agreement per family per
+  version, and how many disagreements are still open.
+- `assay disagreements` — group the findings people rejected. N rejections are usually far fewer
+  than N bugs.
+- `assay page assay.html` — one self-contained page answering "is this warehouse understood, and
+  by whom". Deterministic, so it can be committed and diffed.
 - `assay diff --baseline <main target>` — what changed about what models MEAN, for a review.
 - `assay version-check --baseline <main target>` — whether anything owes a version bump.
 - `assay practices --keys-only` — models with no uniqueness test, and the grain a test should cover.
@@ -141,6 +173,16 @@ was intended and it needs a version bump. Do not hand back work where the grain 
 `rebase()` takes a fresh baseline. Use it when you have deliberately changed what several models
 mean and have already reported that, so the next check compares against your new normal rather
 than repeating what you have already said.
+
+## Completeness findings are coverage, never a judgment about the business
+
+`source_reaches_nothing`, `source_only_a_test_reads`, `source_freshness_stale` and
+`hop_drops_most_rows` are all coverage of what **this project itself declares**: it declared a
+source, so something should read it; it declared a freshness, so something should meet it.
+
+assay can say a column is 99% its default. **It cannot say whether that is bad.** Do not treat one
+of these as a defect to fix on your own initiative — read it, and rule on it. Whether a gap matters
+is a question about intent, and intent is the thing this tool refuses to guess at.
 
 ## What assay is not
 

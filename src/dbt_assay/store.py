@@ -52,6 +52,12 @@ create table if not exists findings (
     descendants  integer,
     marts        integer,
     evidence     varchar,
+    -- *** THE HANDLE A RULING IS FILED UNDER, SO THE TWO TABLES CAN BE JOINED. ***
+    -- An agent rules with `rule(finding=...)` and the verdict is stored under
+    -- `<uid>::finding::<id>`. Without this column that id exists on one side of the store and
+    -- nowhere on the other, so nothing -- not `export`, not a seed, not the page -- could put a
+    -- ruling next to the finding it is about. The same orphaning as 0.17.0, one layer down.
+    finding_id   varchar,
     primary key (run_id, check_name, subject, summary)
 );
 create table if not exists adjudications (
@@ -146,6 +152,7 @@ class Store:
     # applied on open; adding a column is cheap, safe and keeps every row that was already there.
     ADDED_COLUMNS: ClassVar[dict] = {
         "adjudications": [("source", "varchar")],
+        "findings": [("finding_id", "varchar")],
         "model_decisions": [("input_tokens", "integer"), ("context", "varchar")],
     }
 
@@ -243,11 +250,17 @@ class Store:
 
     def write_findings(self, run_id: str, findings) -> None:
         rows = [[run_id, f.check, f.subject, f.subject_name, f.file, f.summary, f.detail,
-                 f.base, f.weight, f.descendants, f.marts, json.dumps(f.evidence, default=str)]
+                 f.base, f.weight, f.descendants, f.marts, json.dumps(f.evidence, default=str),
+                 f.id]
                 for f in findings]
         if rows:
+            # Named, never positional: a migration appends at the END and a positional insert
+            # then writes the id into whichever column happens to sit there.
             self.con.executemany(
-                "insert or replace into findings values (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+                """insert or replace into findings
+                   (run_id, check_name, subject, subject_name, file, summary, detail,
+                    base, weight, descendants, marts, evidence, finding_id)
+                   values (?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
 
     def write_edge_facts(self, run_id: str, facts) -> None:
         rows = [[run_id, f.parent, f.child, f.parent_name, f.child_name,

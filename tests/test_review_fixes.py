@@ -867,3 +867,76 @@ def test_an_uncounted_hop_produces_no_finding_and_a_share_never_reads_as_zero():
     assert share(0, 100) == "0%"
     assert share(1, 10_000_000) not in ("0%", "0.0%")
     assert share(5, 0) == "?"
+
+
+def test_the_check_scanner_sees_every_module_that_builds_a_finding():
+    """*** A SCANNER THAT FINDS MOST THINGS PASSES ITS OWN FLOOR. ***
+
+    `known_checks()` read three modules. `practices` and `checks.sources` started constructing
+    findings in 0.18.0, so five real checks came back UNKNOWN and `assay config` would have told
+    somebody their `hop_drops_most_rows: {action: annotate}` configured nothing. The existing
+    floor caught a reader that finds NOTHING and could not catch one that finds most things.
+
+    This walks the package instead of naming modules.
+    """
+    import ast
+
+    import dbt_assay
+    from dbt_assay.config import known_checks
+
+    known = known_checks()
+    builds: dict = {}
+    root = Path(dbt_assay.__file__).parent
+    for f in sorted(root.rglob("*.py")):
+        for node in ast.walk(ast.parse(f.read_text())):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "id", "") == "Finding"):
+                continue
+            c = {k.arg: k.value for k in node.keywords}.get("check")
+            if isinstance(c, ast.Constant):
+                builds.setdefault(c.value, f.name)
+    assert len(builds) >= 15, f"only found {len(builds)} construction sites; the reader is broken"
+    missed = {c: where for c, where in builds.items() if c not in known}
+    assert not missed, f"known_checks() cannot see these, so audit.yml calls them unknown: {missed}"
+
+
+def test_the_shipped_audit_yml_names_the_completeness_checks():
+    """A check nobody can find in the config is a check nobody tunes."""
+    import yaml
+
+    from dbt_assay.config import DEFAULT_YML, Config
+
+    cfg = Config.from_dict(yaml.safe_load(DEFAULT_YML))
+    assert cfg.unknown_questions == [], f"the shipped template has dead keys: {cfg.unknown_questions}"
+    for c in ("source_reaches_nothing", "source_only_a_test_reads", "source_freshness_stale",
+              "hop_drops_most_rows"):
+        assert cfg.questions.get(c) and cfg.questions[c].action == "annotate", c
+
+
+def test_the_skill_works_without_the_mcp_server():
+    """*** SKILLS ARE THE OTHER WAY IN, AND THE SKILL ONLY DOCUMENTED TOOLS. ***
+
+    An agent with the skill file and no MCP connection had a procedure it could not perform. Every
+    tool needs a command that answers the same question, and the CLI's `--json` carries the same
+    `finding` ids so `rule` works either way.
+    """
+    from dbt_assay.mcp_server import TOOLS
+    from dbt_assay.skilltext import SKILL_MD
+
+    i = SKILL_MD.find("## Without the MCP server")
+    assert i > 0, "the skill has no CLI path at all"
+    table = SKILL_MD[i:SKILL_MD.find("\n## ", i + 10)]
+    # Tools that are project-wide bookkeeping rather than part of the edit procedure.
+    exempt = {"rebase", "practices", "changed_contracts"}
+    missing = [n for n, _d in TOOLS if n not in exempt and f"`{n}(" not in table]
+    assert not missing, f"no command given for: {missing}"
+    assert table.count("assay ") >= 8, "the reader is broken; it found almost no commands"
+
+
+def test_the_skill_names_the_commands_that_ship_now():
+    """A procedure that does not mention a tier is a tier the agent never runs."""
+    from dbt_assay.skilltext import SKILL_MD
+
+    for cmd in ("assay completeness", "assay effectiveness", "assay disagreements", "assay page"):
+        assert cmd in SKILL_MD, f"{cmd} is not in the agent procedure"
+    assert "cannot say whether that is bad" in SKILL_MD, \
+        "the skill does not tell the agent completeness findings are coverage, not defects"

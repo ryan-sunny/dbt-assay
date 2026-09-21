@@ -139,3 +139,197 @@ def inventory_html(entries, project_name: str, describe) -> str:
 the DAG, and <b>judged</b> carries the probability a model answered with. A judgement is not a
 fact, and nothing here pretends otherwise.</footer>
 <script>{JS}</script></body></html>"""
+
+
+# *** A FILE THAT DIFFS ACCRUES. A SERVER SHOWS YOU TODAY AND FORGETS. ***
+# Same argument as findings-becoming-a-table rather than findings-becoming-a-report. So this is
+# one file, no network, no build step, and DETERMINISTIC: it carries the manifest's own
+# `generated_at` and never a wall clock, because a page that churns on every run cannot be
+# committed and a page that cannot be committed cannot show you what moved.
+PAGE_CSS = """
+:root{
+  --deep:#0d3d73; --blue:#1a5fa8; --sky:#b8d8e8;
+  --gold:#f2c14e; --amber:#e8a020; --ink:#12333a;
+  --barn:#9e2b20; --maroon:#7d2016; --cream:#f7f2e4; --sage:#8a9a5b;
+}
+*{box-sizing:border-box}
+body{margin:0;color:var(--cream);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",
+Helvetica,Arial,sans-serif;
+background:var(--deep);
+background-image:repeating-radial-gradient(circle at 50% 38%,
+  var(--blue) 0 58px, #17559a 58px 72px, var(--blue) 72px 130px);
+background-attachment:fixed}
+.wrap{max-width:1080px;margin:0 auto;padding:30px 22px 70px}
+h1{margin:0;font-size:52px;line-height:1.02;letter-spacing:-1.4px;font-weight:900;
+  color:var(--gold); -webkit-text-stroke:3px var(--ink); paint-order:stroke fill;
+  text-shadow:0 5px 0 var(--ink), 0 9px 20px rgba(0,0,0,.4); max-width:16ch}
+h1 .small{display:block;font-size:22px;letter-spacing:-.3px;color:var(--sky);
+  -webkit-text-stroke:0;text-shadow:none;font-weight:700;margin-top:10px}
+h2{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--sky);
+  margin:34px 0 12px;font-weight:700}
+.sub{color:var(--sky);margin-top:8px;font-size:14px}
+.hero{display:flex;gap:18px;flex-wrap:wrap;align-items:stretch;margin:22px 0 4px}
+.big{flex:1 1 300px;background:var(--cream);color:var(--ink);border-radius:16px;
+  padding:22px 26px;border:3px solid var(--ink);box-shadow:0 6px 0 rgba(0,0,0,.22)}
+.big .n{font-size:66px;line-height:1;font-weight:800;color:var(--barn);letter-spacing:-2px}
+.big .of{font-size:17px;color:#5a6a2f;font-weight:700}
+.big .lab{font-size:12px;letter-spacing:1.4px;text-transform:uppercase;color:#4a5b63;
+  font-weight:700;margin-bottom:8px}
+.big p{margin:12px 0 0;font-size:13px;color:#3d4d55;line-height:1.5}
+.card{background:rgba(247,242,228,.96);color:var(--ink);border-radius:14px;padding:16px 18px;
+  border:3px solid var(--ink);box-shadow:0 5px 0 rgba(0,0,0,.2)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:14px}
+.stat{background:var(--cream);color:var(--ink);border-radius:12px;padding:13px 15px;
+  border:3px solid var(--ink);box-shadow:0 4px 0 rgba(0,0,0,.2)}
+.stat b{display:block;font-size:27px;line-height:1.15;color:var(--maroon)}
+.stat span{font-size:12px;color:#4a5b63;font-weight:600}
+.stat em{display:block;font-style:normal;font-size:11.5px;color:#6b7a80;margin-top:5px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th{text-align:left;font-size:11px;letter-spacing:1.1px;text-transform:uppercase;color:#5d6d74;
+  padding:0 10px 7px 0;border-bottom:2px solid var(--ink)}
+td{padding:7px 10px 7px 0;border-bottom:1px solid rgba(18,51,58,.16);vertical-align:top}
+td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+.bar{display:inline-block;height:9px;border-radius:5px;background:var(--barn);vertical-align:middle}
+.bar.ok{background:var(--sage)} .bar.mid{background:var(--amber)}
+.tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;
+  border:2px solid var(--ink);white-space:nowrap}
+.t-bad{background:var(--barn);color:var(--cream)}
+.t-mid{background:var(--gold);color:var(--ink)}
+.t-ok{background:var(--sage);color:#17281a}
+.note{color:var(--sky);font-size:12.5px;margin:9px 0 0;max-width:78ch}
+footer{color:var(--sky);font-size:12px;margin-top:40px;max-width:82ch;line-height:1.65}
+footer b{color:var(--gold)}
+a{color:var(--gold)}
+"""
+
+
+def _pct(x) -> str:
+    return "&mdash;" if x is None else f"{x:.0%}"
+
+
+def _red(n) -> str:
+    """A zero is not news and must not look like one. A non-zero is."""
+    return f'<b style="color:#9e2b20">{n}</b>' if n else ""
+
+
+def _tag(level: str, text: str) -> str:
+    return f'<span class="tag t-{level}">{html.escape(text)}</span>'
+
+
+def _bar(share: float, width: int = 96) -> str:
+    cls = "ok" if share >= 0.8 else ("mid" if share >= 0.5 else "")
+    return f'<span class="bar {cls}" style="width:{max(3, int(share * width))}px"></span>'
+
+
+def page_html(data: dict) -> str:
+    """The one question the rest of the tool is built to answer: is this warehouse understood?
+
+    Not a dashboard of metrics. The ruled-on number goes first and largest because everything else
+    on the page is downstream of whether anybody has actually read any of it -- and it is the only
+    figure a release cannot improve, so a good release makes it look worse.
+    """
+    e = html.escape
+    ruled, total = data["ruled"], data["findings_total"]
+    share = (ruled / total) if total else 0.0
+
+    eff = "".join(
+        f"<tr><td class='mono'>{e(r['family'])}</td>"
+        f"<td class='mono' style='color:#6b7a80'>{e(r['prompt_version'])}</td>"
+        f"<td class='n'>{r['n']}</td>"
+        f"<td class='n'>{_bar(r['agreement']) if r['agreement'] is not None else ''} "
+        f"{_pct(r['agreement'])}</td>"
+        f"<td class='n'>{r['unclear'] or ''}</td>"
+        f"<td class='n'>{_red(r['open_disagreements'])}</td>"
+        f"</tr>" for r in data["effectiveness"])
+
+    by_check = "".join(
+        f"<tr><td class='mono'>{e(c)}</td><td class='n'>{n}</td>"
+        f"<td class='n'>{m}</td>"
+        f"<td>{_tag('bad', f'0 of {n}') if not r else _tag('ok', f'{r} of {n}')}</td>"
+        f"</tr>" for c, n, m, r in data["by_check"])
+
+    comp = "".join(
+        f"<tr><td>{e(label)}</td><td class='n'>"
+        f"{_red(n) or chr(60) + 'span style=' + chr(34) + 'color:#6b7a80' + chr(34) + chr(62) + '0</span>'}"
+        f"</td><td style='color:#4a5b63'>{e(why)}</td></tr>"
+        for label, n, why in data["completeness"])
+
+    moved = data.get("moved") or {}
+    moved_html = (
+        f"<div class='grid'>"
+        f"<div class='stat'><b>{len(moved.get('new', []))}</b><span>appeared</span>"
+        f"<em>since the previous recorded run</em></div>"
+        f"<div class='stat'><b>{len(moved.get('gone', []))}</b><span>went away</span>"
+        f"<em>fixed, or the check stopped seeing it</em></div>"
+        f"<div class='stat'><b>{moved.get('same', 0)}</b><span>unchanged</span>"
+        f"<em>still true and still unread unless ruled</em></div></div>"
+        if moved else
+        "<div class='card'>Only one run is recorded, so nothing can have moved yet. "
+        "Run <span class='mono'>assay check</span> again after your next change.</div>")
+
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{e(data['project'])} &middot; assay</title><style>{PAGE_CSS}</style></head><body>
+<div class="wrap">
+<h1>Is this warehouse understood?<span class="small">and by whom</span></h1>
+<div class="sub">{e(data['project'])} &middot; {data['models']} models &middot;
+manifest generated {e(data['generated_at'])}</div>
+
+<div class="hero">
+  <div class="big">
+    <div class="lab">findings a person has ruled on</div>
+    <div><span class="n">{ruled}</span> <span class="of">of {total}</span></div>
+    <p>The only number here a release cannot improve. A sharper check finds more, a fuller
+    state raises a confidence, the DAG moves the blast radius &mdash; none of that moves this,
+    because it moves when somebody reads SQL and at no other time.
+    <b>A good release makes it look worse.</b> That is the design working.</p>
+  </div>
+  <div class="big" style="flex:1 1 230px">
+    <div class="lab">and by whom</div>
+    <div><span class="n" style="color:#5a6a2f">{data['agent_rulings']}</span></div>
+    <p>agent rulings, kept apart. They triage what a person should read first. They gate nothing,
+    satisfy no verdict floor, anchor no regression check, and cannot move the number on the left.
+    An agent able to raise it would destroy the property that makes it worth printing.</p>
+  </div>
+</div>
+<p class="note">{share:.0%} of what assay currently sees has been read by a
+person.</p>
+
+<h2>Did the questions get better?</h2>
+<div class="card">
+<table><thead><tr><th>family</th><th>version</th><th class="n">ruled</th>
+<th class="n">agreed</th><th class="n">unclear</th><th class="n">open</th></tr></thead>
+<tbody>{eff or '<tr><td colspan="6" style="color:#6b7a80">No verdicts recorded yet. '
+                'assay review -i is one keypress each.</td></tr>'}</tbody></table>
+</div>
+<p class="note">A verdict is about a <em>version</em> of a question, so agreement is per version.
+Unclear is never in the denominator: disagreement means the criteria are wrong, unclear means the
+state does not carry what the question asks. Reword an option to fix one, add a field to fix the
+other.</p>
+
+<h2>What is wrong, and how far it reaches</h2>
+<div class="card">
+<table><thead><tr><th>check</th><th class="n">findings</th><th class="n">deepest reach</th>
+<th>read by a person</th></tr></thead><tbody>{by_check}</tbody></table>
+</div>
+
+<h2>Do we have all of it?</h2>
+<div class="card">
+<table><thead><tr><th>coverage</th><th class="n">n</th><th>meaning</th></tr></thead>
+<tbody>{comp}</tbody></table>
+</div>
+<p class="note">Coverage of what this project itself declares. assay can say a column is 99% its
+default; it cannot say whether that is bad. The first is a fact about code and rows, the second is
+a ruling.</p>
+
+<h2>What moved</h2>
+{moved_html}
+
+<footer>
+This file is self-contained and deterministic: it carries the manifest's own
+<b>generated_at</b> and never a wall clock, so a rerun that changes nothing produces an identical
+file. Commit it. A file that diffs accrues; a server shows you today and forgets.<br><br>
+Written by <b>assay {e(data['version'])}</b>.
+</footer>
+</div></body></html>"""

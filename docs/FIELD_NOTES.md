@@ -1220,3 +1220,51 @@ why the findings are worth reading. The line, from the review that prompted this
 > assay can say a column is 99% its default. It cannot say whether that is bad.
 
 The first is a fact about code and rows. The second is a ruling, and that loop already exists.
+
+---
+
+## The wiring audit: what the new knowledge was not reaching
+
+After three releases of new facts (finding ids, completeness checks, effectiveness, row loss), the
+question was whether anything already built had been left behind. Six things had.
+
+**The store could not join a ruling to its finding.** An agent rules with `rule(finding=...)` and
+the verdict is filed under `<uid>::finding::<id>`. The `findings` table had no `finding_id` column,
+so that id existed on one side of the store and nowhere on the other: nothing -- not `export`, not
+a seed, not the page -- could put a ruling next to the finding it was about. The same orphaning as
+0.17.0, one layer down.
+
+**`check --json` had no finding id and the MCP tool did.** One document, two spellings. Anything
+reading the CLI's JSON could see a finding and had no handle to rule on it.
+
+**`known_checks()` read three modules and five real checks were built in two others.** So
+`hop_drops_most_rows: {action: annotate}` in an `audit.yml` would have been reported as configuring
+nothing. The existing floor catches a reader that finds NOTHING; it cannot catch one that finds
+most things. The guard walks the package now and compares against every `Finding(check=...)` site.
+
+**The shipped `audit.yml` did not name the new checks**, so a reader could not see they existed or
+what to change. They defaulted to annotate by severity, which was right by accident.
+
+**The skill file was MCP-only.** An agent with the procedure and no server had steps it could not
+perform. Every tool has a command that answers the same question, and now that the CLI's `--json`
+carries the same finding ids, ruling works either way. The skill also never mentioned
+`completeness`, `effectiveness`, `disagreements` or `page`, so an agent following it ran none of
+them.
+
+**And it did not say what a completeness finding IS.** They are coverage of what the project
+declares, not defects to go and fix. An agent told "this source is read by nothing" will helpfully
+delete it. The skill now says: read it, rule on it, and do not act on your own initiative, because
+whether a gap matters is a question about intent.
+
+## The page
+
+`assay page` writes one self-contained file: the ruled-on number first and largest, then agreement
+per question version, then findings by defect class and reach, then coverage, then what moved.
+
+It is deterministic. It carries the manifest's own `generated_at` and never a wall clock, so a
+rerun that changes nothing writes a byte-identical file. That is the whole argument for a file over
+a dashboard, and a page that churned on every run could not be committed at all.
+
+On the field warehouse it opens with **0 of 149**. Nobody has ruled on a finding: all 99 rulings
+are an agent's, and the eight human verdicts are on window subjects rather than findings. That is
+the number doing its job on the first run.

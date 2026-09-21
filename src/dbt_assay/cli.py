@@ -300,7 +300,11 @@ def check(
             "unevaluable_tests": [{"model": m, "test": t, "column": c, "why": w}
                                   for m, t, c, w in unevaluable_tests(project, digests)],
             **({"verified": _verified} if _verified else {}),
-            "findings": [{"check": f.check, "model": f.subject_name, "file": f.file,
+            # *** `--json` AND THE MCP TOOL ARE ONE DOCUMENT WITH TWO SPELLINGS OTHERWISE. ***
+            # MCP returns `finding`; this did not, so anything reading the CLI's JSON could see a
+            # finding and had no handle to rule on it.
+            "findings": [{"finding": f.id,
+                          "check": f.check, "model": f.subject_name, "file": f.file,
                           "summary": f.summary, "detail": f.detail, "weight": round(f.weight, 2),
                           "descendants": f.descendants, "marts": f.marts, "evidence": f.evidence}
                          for f in findings],
@@ -1581,6 +1585,96 @@ _COMPLETENESS_MEANING = {
     "source_freshness_stale": "the project states how current it should be and it is not",
     "hop_drops_most_rows": "no filter, no group by, no collapse -- a join that is not matching",
 }
+
+
+@app.command()
+def page(
+    out: str = typer.Argument("assay.html", help="where to write it"),
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    dialect: str = typer.Option(None, "--dialect"),
+) -> None:
+    """One page answering "is this warehouse understood, and by whom".
+
+    *** NOT A DASHBOARD OF METRICS. *** The ruled-on number goes first and largest, because
+    everything else on the page is downstream of whether anybody has read any of it, and because
+    it is the only figure a release cannot improve.
+
+    Self-contained, no network, no build step, and DETERMINISTIC: it carries the manifest's own
+    `generated_at` and never a wall clock, so a rerun that changes nothing writes an identical
+    file. That is the whole argument for a file over a server -- a file that diffs accrues, and
+    one that churns on every run cannot be committed at all.
+    """
+    from . import render
+
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
+    store = Store(store_path) if Path(store_path).exists() else None
+    facts, _ = relate.run_all(project, digests, schema)
+    entries = inv_mod.build(project, digests, schema, store,
+                            probe_mod.read(store) if store else {}, facts=facts)
+    fs = live.all_findings(project, digests, schema, entries, cfg.row_loss_threshold)
+
+    ruled_keys: set = set()
+    agent_n, eff, moved = 0, [], {}
+    if store is not None:
+        ruled_keys = store.ruled_subjects()
+        agent_n = len(store.agent_rulings())
+        eff = store.effectiveness("human")
+        run = store.con.execute(
+            "select run_id from runs order by started_at desc limit 1").fetchone()
+        if run:
+            prev = store.previous_run(project.project_name, run[0])
+            if prev:
+                moved = store.diff(prev, run[0])
+
+    def _is_ruled(f) -> bool:
+        return f.subject in ruled_keys or f"{f.subject}::finding::{f.id}" in ruled_keys
+
+    per: dict = {}
+    for f in fs:
+        d = per.setdefault(f.check, [0, 0, 0])
+        d[0] += 1
+        d[1] = max(d[1], f.marts)
+        d[2] += _is_ruled(f)
+    by_check = sorted(((c, n, m, r) for c, (n, m, r) in per.items()), key=lambda x: -x[1])
+
+    counts = {c: sum(1 for f in fs if f.check == c) for c in (
+        "source_reaches_nothing", "source_only_a_test_reads", "source_freshness_undeclared",
+        "source_freshness_stale", "hop_drops_most_rows")}
+    cov = project.coverage()
+    completeness = [
+        ("models assay could not read", cov["models"] - cov["readable"],
+         "not audited, and an absent audit is not a pass"),
+        ("sources nothing reads", counts["source_reaches_nothing"],
+         "declared, loaded every run, no model and no test refers to it"),
+        ("sources only a test reads", counts["source_only_a_test_reads"],
+         "you are paying to test data nothing consumes"),
+        ("sources declaring no freshness", counts["source_freshness_undeclared"],
+         "silent when dbt_project_evaluator is installed"),
+        ("sources behind their own freshness", counts["source_freshness_stale"],
+         "the project states how current it should be and it is not"),
+        ("hops that lose most of the parent", counts["hop_drops_most_rows"],
+         "needs --verify; no filter, no group by, no collapse"),
+    ]
+
+    doc = render.page_html({
+        "project": project.project_name or "this project",
+        "models": len(project.models),
+        # *** NEVER A WALL CLOCK. *** A page that churns cannot be committed.
+        "generated_at": (project.raw.get("metadata") or {}).get("generated_at", "unknown"),
+        "version": __version__,
+        "ruled": sum(1 for f in fs if _is_ruled(f)), "findings_total": len(fs),
+        "agent_rulings": agent_n, "effectiveness": eff,
+        "by_check": by_check, "completeness": completeness, "moved": moved,
+    })
+    if store is not None:
+        store.close()
+    Path(out).write_text(doc)
+    console.print(f"wrote [bold]{out}[/]  [dim]{len(doc):,} bytes, self-contained. "
+                  f"Commit it: a rerun that changes nothing writes an identical file.[/]")
 
 
 @app.command()
