@@ -2150,3 +2150,33 @@ whether you cared. It carries the model's description now, and the filter box se
 model                  what it is                                      claims  contradicted
 buyer_leads_enriched   buyer_leads + enrichment joined on building_key      44             4
 ```
+
+### And the card was cut off by the box it lived in
+
+> *"it gets cut off bruh it needs to fit in the window"*
+
+It was absolutely positioned inside `.linwrap`, which needs `overflow-x: auto` so a wide graph can
+scroll. A node near the left edge therefore had half its card clipped away by the very container
+that made the graph readable.
+
+`position: fixed` on the body escapes every ancestor's overflow, so the only thing left that can
+cut it is the viewport, and that is clamped: centred under the node, pushed inside on either edge,
+flipped above when there is no room below, pinned to the top and scrolling inside itself when
+there is room for neither.
+
+The clamp is pure arithmetic, so it is tested as arithmetic in the five positions that matter
+rather than by hoping a browser agrees:
+
+```
+node at the far left    left=   12  top= 400   fits
+node in the middle      left=  420  top= 400   fits
+node at the far right   left=  828  top= 400   fits
+no room below           left=  420  top= 392   fits
+no room either way      left=  420  top=  12   fits
+```
+
+**A card on the body does not outlive what it points at**, which is the cost of escaping the
+panel: nothing removes it when that panel changes. Scrolling moves the node out from under it and
+switching tabs replaces everything it described, so both dismiss it, as do Escape and a click
+anywhere outside -- the last being the only way out on a touch device, where there is no canvas
+to click. A click INSIDE the card must not dismiss it, or its own buttons could never be reached.

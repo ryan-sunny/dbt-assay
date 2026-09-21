@@ -119,8 +119,8 @@ background:var(--card)}
 .sub{margin:3px 0}
 .linwrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--card);
 padding:10px;position:relative}
-.pop{position:absolute;transform:translate(-50%,0);z-index:5;min-width:300px;max-width:400px;
-background:var(--card);border:1px solid #b9ccd6;border-radius:8px;
+.pop{position:fixed;z-index:50;width:360px;max-width:calc(100vw - 24px);max-height:70vh;
+overflow:auto;background:var(--card);border:1px solid #b9ccd6;border-radius:8px;
 box-shadow:0 6px 20px rgba(22,35,42,.16);padding:12px 14px 10px}
 .pop .popname{font-weight:650;font-size:13px;padding-right:18px}
 .pop .path{font-size:11.5px;margin:2px 0 6px}
@@ -512,12 +512,33 @@ function bandList(title, edges, other) {
    ideally if you're clicking a node it's just a popup right there with the relevant info."
 
    So a click opens a card where the node is, and going there is a deliberate second click. */
-function nodeCard(host, x, y, name, e) {
-  host.querySelectorAll('.pop').forEach(n => n.remove());
+/* *** A CARD INSIDE A SCROLLING BOX GETS CUT BY THE SCROLLING BOX. ***
+   It was absolutely positioned inside `.linwrap`, which needs `overflow-x: auto` for a wide
+   graph, so a node near the left edge had half its card clipped away. Reported from the field
+   with a screenshot: "it gets cut off bruh it needs to fit in the window".
+
+   `position: fixed` escapes every ancestor's overflow, and then the only thing that can cut it
+   is the viewport -- which is what this clamps against. Pure, so it is tested as arithmetic
+   rather than by hoping a browser agrees. */
+function clampToViewport(w, h, cx, below, vw, vh, pad) {
+  pad = pad == null ? 12 : pad;
+  const left = Math.max(pad, Math.min(cx - w / 2, vw - w - pad));
+  // Below the node by preference; above it when that would run off the bottom. If it fits in
+  // neither, pin to the top and let the card scroll inside itself.
+  let top = below;
+  if (top + h + pad > vh) top = Math.max(pad, below - h - 8);
+  if (top + h + pad > vh) top = pad;
+  return {left: Math.round(left), top: Math.round(top)};
+}
+
+function dismissCards() {
+  document.querySelectorAll('.pop').forEach(n => n.remove());
+}
+
+function nodeCard(node, name, e) {
+  dismissCards();
   const m = BY_NAME[name];
   const pop = el('div', {class: 'pop'});
-  pop.style.left = Math.round(x) + 'px';
-  pop.style.top = Math.round(y) + 'px';
   const close = el('button', {class: 'popx', text: '\u00d7'});
   close.onclick = ev => { ev.stopPropagation(); pop.remove(); };
   pop.append(close);
@@ -549,7 +570,16 @@ function nodeCard(host, x, y, name, e) {
     row.append(go, go2);
   }
   pop.append(row);
-  host.append(pop);
+  /* On the BODY, not in the drawing: nothing an ancestor does with overflow can clip it. */
+  document.body.append(pop);
+  const r = node.getBoundingClientRect
+    ? node.getBoundingClientRect() : {left: 0, right: 0, bottom: 0, width: 0};
+  const box = pop.getBoundingClientRect ? pop.getBoundingClientRect() : {width: 340, height: 300};
+  const at = clampToViewport(box.width || 340, box.height || 300,
+                             (r.left + r.right) / 2, r.bottom + 8,
+                             window.innerWidth || 1200, window.innerHeight || 800);
+  pop.style.left = at.left + 'px';
+  pop.style.top = at.top + 'px';
   return pop;
 }
 
@@ -583,7 +613,7 @@ function lineage(m) {
       d: `M${x + BW / 2},${BH} C${x + BW / 2},${BH + 40} ${fx + BW / 2},${fy - 40} ${fx + BW / 2},${fy - 6}`}));
     s.append(box(x, 0, e.parent_name, edgeNote(e), 'par' + (why(e) ? ' nb' : ''),
                  ev => { ev.stopPropagation();
-                   nodeCard(wrap, x + BW / 2, BH + 6, e.parent_name, e); }));
+                   nodeCard(ev.currentTarget, e.parent_name, e); }));
   });
   if (drawOut) outs.forEach((e, i) => {
     const x = rowFor(i, outs.length);
@@ -591,7 +621,7 @@ function lineage(m) {
       d: `M${fx + BW / 2},${fy + BH} C${fx + BW / 2},${fy + BH + 40} ${x + BW / 2},${BANDY * 2 - 40} ${x + BW / 2},${BANDY * 2 - 6}`}));
     s.append(box(x, BANDY * 2, e.child_name, edgeNote(e), 'chi',
                  ev => { ev.stopPropagation();
-                   nodeCard(wrap, x + BW / 2, BANDY * 2 - 8, e.child_name, e); }));
+                   nodeCard(ev.currentTarget, e.child_name, e); }));
   });
   const g = m.grain ? (Array.isArray(m.grain.value) ? m.grain.value.join(', ') : String(m.grain.value)) : 'grain not settled';
   s.append(box(fx, fy, m.name, g, 'foc'));
@@ -602,7 +632,7 @@ function lineage(m) {
   wrap.append(s);
   /* Clicking the canvas anywhere but a node dismisses the card, which is what people expect and
      is also the only way out on a touch device. */
-  wrap.onclick = () => wrap.querySelectorAll('.pop').forEach(n => n.remove());
+  wrap.onclick = () => dismissCards();
   host.append(wrap);
   if (!drawOut && outs.length)
     host.append(bandList(outs.length + ' children, too many to draw:', outs, e => e.child_name));
@@ -1240,6 +1270,19 @@ function open(name) {
   try { if (location.hash.slice(1) !== name) history.replaceState(null, '', '#' + name); }
   catch (e) { /* no deep link, and every tab still works */ }
 }
-document.querySelectorAll('nav button').forEach(b => { b.onclick = () => open(b.dataset.tab); });
+/* *** A FIXED CARD MUST NOT OUTLIVE THE THING IT POINTS AT. ***
+   It sits on the body, so nothing removes it when the panel under it changes. Scrolling moves
+   the node out from under it; switching tabs replaces everything it described. Both dismiss it,
+   as do Escape and a click anywhere else -- the last one being the only way out on a touch
+   device, where there is no canvas to click. */
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape') dismissCards(); });
+document.addEventListener('click', ev => {
+  if (!ev.target.closest || !ev.target.closest('.pop')) dismissCards();
+}, true);
+document.addEventListener('scroll', () => dismissCards(), true);
+window.addEventListener('resize', () => dismissCards());
+
+document.querySelectorAll('nav button').forEach(b => {
+  b.onclick = () => { dismissCards(); open(b.dataset.tab); }; });
 open(VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'understood');
 """

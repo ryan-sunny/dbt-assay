@@ -699,7 +699,7 @@ def test_clicking_a_node_opens_a_card_and_never_types_into_the_filter():
     """
     v = explorer._VIEWS
     assert "function nodeCard(" in v, "a node click has no card"
-    assert "nodeCard(wrap," in v, "the boxes do not open it"
+    assert "nodeCard(ev.currentTarget," in v, "the boxes do not open it"
     # nothing anywhere sets the value of a search input
     assert "input[type=search]'); s.value" not in v, "navigation still types into the filter"
     assert ".value = name" not in v, "something still types a model name into a control"
@@ -733,3 +733,61 @@ def test_a_group_of_claims_says_what_its_model_is():
     assert "label: 'what it is'" in cb, "the description is not a column"
     assert "'no description'" in cb, "a model with none reads as blank rather than as absent"
     assert "g.model + ' ' + (g.desc" in cb, "the filter box does not search descriptions"
+
+
+_CLAMP_RULE = (
+    "Math.max(pad, Math.min(cx - w / 2, vw - w - pad))",
+    "if (top + h + pad > vh) top = Math.max(pad, below - h - 8);",
+    "if (top + h + pad > vh) top = pad;",
+)
+
+
+def test_the_card_cannot_be_cut_off_by_anything():
+    """*** A CARD INSIDE A SCROLLING BOX GETS CUT BY THE SCROLLING BOX. ***
+
+    It was absolutely positioned inside `.linwrap`, which needs `overflow-x: auto` for a wide
+    graph, so a node near the left edge had half its card clipped away. Reported with a
+    screenshot: "it gets cut off bruh it needs to fit in the window".
+
+    `position: fixed` on the body escapes every ancestor's overflow, so the only thing left that
+    can cut it is the viewport. The clamp is pure arithmetic and is asserted as arithmetic, in
+    the positions that actually failed, rather than by hoping a browser agrees.
+    """
+    v = explorer._VIEWS
+    assert "function clampToViewport(" in v
+    assert "document.body.append(pop)" in v, "the card is still inside the drawing"
+    assert "position:fixed" in explorer.CSS.replace(" ", ""), "the card is not fixed"
+
+    # The arithmetic, restated and run. It is duplicated on purpose and the duplication is
+    # checked: `_CLAMP_RULE` below must appear in the shipped source, so a change to one without
+    # the other fails here rather than in a browser.
+    for line in _CLAMP_RULE:
+        assert line in v, f"the shipped clamp no longer does: {line}"
+
+    def clamp(w, h, cx, below, vw, vh, pad=12):
+        left = max(pad, min(cx - w / 2, vw - w - pad))
+        top = below
+        if top + h + pad > vh:
+            top = max(pad, below - h - 8)
+        if top + h + pad > vh:
+            top = pad
+        return round(left), round(top)
+
+    W, H, VW, VH = 360, 300, 1200, 800
+    for label, cx, below, vh in [("far left", 20, 400, VH), ("middle", 600, 400, VH),
+                                 ("far right", 1190, 400, VH), ("no room below", 600, 700, VH),
+                                 ("no room either way", 600, 700, 350)]:
+        left, top = clamp(W, H, cx, below, VW, vh)
+        assert left >= 0 and left + W <= VW, f"{label}: cut off horizontally at {left}"
+        assert top >= 0, f"{label}: off the top at {top}"
+
+
+def test_a_card_on_the_body_does_not_outlive_what_it_points_at():
+    """It sits outside the panel, so nothing removes it when that panel changes. Scrolling moves
+    the node out from under it and switching tabs replaces everything it described."""
+    v = explorer._VIEWS
+    assert "function dismissCards()" in v
+    for path in ("'Escape'", "'scroll'", "'resize'", "b.onclick = () => { dismissCards();"):
+        assert path in v, f"no dismiss on {path}"
+    # and a click inside the card must NOT dismiss it, or its own buttons could never be used
+    assert "closest('.pop')" in v, "a click on the card's own buttons would dismiss it first"
