@@ -2109,3 +2109,44 @@ declared (a uniqueness test a person wrote) over derived (a `GROUP BY` or dedup 
 over judged over none, never added together -- 236/17/6/99 here. **Roles** come from the
 `column_role` question plus free labels off the project's own tests. **Provenance** is pure code
 and asks nothing.
+
+---
+
+## Round fifteen: reading the graph walked you out of the graph
+
+Two more from opening it, and the first has a cause worth naming.
+
+### A click that types into the search box
+
+Going to a model was implemented by **typing its name into the filter**. Which worked, and left
+the list showing one row and the box full of text you had to clear by hand before you could see
+anything else. It fired on every node click, so reading the lineage walked you out of the lineage.
+
+> *"clicking a node adds it to the search thing and just FUCKS the ui... making it impossible to
+> even see the graph view again without removing the search and clicking back... ideally if you're
+> clicking a node it's just a popup right there with the relevant info."*
+
+Two rules, and they are separate.
+
+**A node click opens a card where the node is.** It says what the model is -- description, grain,
+reads, read by, reach, findings, claims -- plus what this particular hop carries, so you can
+decide from where you are standing. A node that is a SOURCE has no model entry, and the card says
+that rather than rendering empty. Clicking the canvas dismisses it.
+
+**Navigation is a second, deliberate click, and it still never touches what you typed.** The
+detail pane is authoritative and the list is an index into it, so going somewhere shows the model
+and then *highlights* its row if that row happens to be on screen. If it is filtered out or past
+the cap, nothing happens, which is correct.
+
+Driving a control by writing into another control is the same defect as everything else in this
+file: one fact with two spellings, where the second one is a text box somebody else owns.
+
+### A group that will not say what it is a group of
+
+Claims groups by model, and the group table was a name and two counts, so you clicked to find out
+whether you cared. It carries the model's description now, and the filter box searches it.
+
+```
+model                  what it is                                      claims  contradicted
+buyer_leads_enriched   buyer_leads + enrichment joined on building_key      44             4
+```

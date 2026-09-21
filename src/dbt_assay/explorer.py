@@ -118,7 +118,19 @@ background:var(--card)}
 .kv.sub{margin:2px 0 6px 0;padding-left:10px;border-left:1px solid var(--line)}
 .sub{margin:3px 0}
 .linwrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--card);
-padding:10px}
+padding:10px;position:relative}
+.pop{position:absolute;transform:translate(-50%,0);z-index:5;min-width:300px;max-width:400px;
+background:var(--card);border:1px solid #b9ccd6;border-radius:8px;
+box-shadow:0 6px 20px rgba(22,35,42,.16);padding:12px 14px 10px}
+.pop .popname{font-weight:650;font-size:13px;padding-right:18px}
+.pop .path{font-size:11.5px;margin:2px 0 6px}
+.pop .prose{font-size:12.5px}
+.pop .kv{margin-top:8px;font-size:12.5px}
+.pop h3{margin:12px 0 4px}
+.pop .bar{margin:10px 0 0}
+.popx{position:absolute;top:6px;right:8px;appearance:none;border:none;background:none;
+font-size:17px;line-height:1;color:var(--faint);cursor:pointer;padding:0 2px}
+.popx:hover{color:var(--ink)}
 .bandlist{margin:8px 0}
 svg.lin{display:block}
 svg.lin rect{fill:#fff;stroke:var(--line);stroke-width:1}
@@ -348,6 +360,21 @@ function packageFilter(redraw) {
 const mine = m => showPackaged || m.yours;
 
 const GO = {};
+/* Mark the row for `name` as the selected one, and scroll it into view, WITHOUT filtering. If it
+   is not in the current view -- filtered out, or past the cap -- nothing happens, which is
+   correct: the detail already shows the model and the list is only an index into it. */
+function highlight(panel, name) {
+  const host = document.querySelector(panel); if (!host) return;
+  host.querySelectorAll('tbody tr.on').forEach(r => r.classList.remove('on'));
+  for (const tr of host.querySelectorAll('tbody tr')) {
+    const first = tr.querySelector('td');
+    if (first && first.textContent.trim() === name) {
+      tr.classList.add('on');
+      if (tr.scrollIntoView) tr.scrollIntoView({block: 'nearest'});
+      return;
+    }
+  }
+}
 function link(name, where) {
   if (!BY_NAME[name]) return el('span', {class: 'mono', text: name || ''});
   const a = el('a', {class: 'mono lk', href: '#', text: name});
@@ -478,6 +505,54 @@ function bandList(title, edges, other) {
     ], {placeholder: 'filter...', cap: 60})]);
 }
 
+/* *** CLICKING A NODE MUST NOT DRIVE THE SEARCH BOX. ***
+   It used to jump to that model by typing its name into the filter, which left the list showing
+   one row and the box full of text you then had to clear by hand to get the graph back.
+   Reported from the field: "clicking a node adds it to the search thing and just FUCKS the ui...
+   ideally if you're clicking a node it's just a popup right there with the relevant info."
+
+   So a click opens a card where the node is, and going there is a deliberate second click. */
+function nodeCard(host, x, y, name, e) {
+  host.querySelectorAll('.pop').forEach(n => n.remove());
+  const m = BY_NAME[name];
+  const pop = el('div', {class: 'pop'});
+  pop.style.left = Math.round(x) + 'px';
+  pop.style.top = Math.round(y) + 'px';
+  const close = el('button', {class: 'popx', text: '\u00d7'});
+  close.onclick = ev => { ev.stopPropagation(); pop.remove(); };
+  pop.append(close);
+  pop.append(el('div', {class: 'popname mono', text: name}));
+  if (!m) {
+    pop.append(el('p', {class: 'note', text: 'A source, or a relation outside this project. '
+      + 'assay knows it only as the other end of this hop.'}));
+  } else {
+    pop.append(el('div', {class: 'path mono', text: m.path}));
+    if (m.description) pop.append(el('p', {class: 'prose', text: m.description.slice(0, 260)
+      + (m.description.length > 260 ? '\u2026' : '')}));
+    pop.append(kv([
+      ['grain', fact(m.grain)],
+      ['reads', String((EDGES_IN[m.uid] || []).length)],
+      ['read by', String((EDGES_OUT[m.uid] || []).length)],
+      ['reach', m.marts + ' mart(s)'],
+      ['findings', el('span', {class: m.findings.length ? 'bad' : 'tot',
+                               text: String(m.findings.length)})],
+      ['claims', String(m.claims.length)],
+    ]));
+  }
+  if (e) pop.append(section('this hop', el('p', {class: 'prose', text: edgeNote(e) || 'no join'})));
+  const row = el('div', {class: 'bar'});
+  if (m) {
+    const go = el('button', {class: 'back', text: 'centre the graph here'});
+    go.onclick = ev => { ev.stopPropagation(); pop.remove(); GO.chain(name); };
+    const go2 = el('button', {class: 'back', text: 'open in Models'});
+    go2.onclick = ev => { ev.stopPropagation(); pop.remove(); open('models'); GO.models(name); };
+    row.append(go, go2);
+  }
+  pop.append(row);
+  host.append(pop);
+  return pop;
+}
+
 function lineage(m) {
   const ins = (EDGES_IN[m.uid] || []).slice(), outs = (EDGES_OUT[m.uid] || []).slice();
   /* Driving parents first: the driving edge is the spine, and everything else hangs off it.
@@ -486,6 +561,7 @@ function lineage(m) {
   outs.sort((a, b) => a.child_name.localeCompare(b.child_name));
 
   const host = el('div');
+  const wrap = el('div', {class: 'linwrap'});
   const drawIn = ins.length <= BAND_MAX, drawOut = outs.length <= BAND_MAX;
   const nTop = drawIn ? ins.length : 0, nBot = drawOut ? outs.length : 0;
   const cols = Math.max(nTop, nBot, 1);
@@ -506,14 +582,16 @@ function lineage(m) {
       'marker-end': 'url(#ah)',
       d: `M${x + BW / 2},${BH} C${x + BW / 2},${BH + 40} ${fx + BW / 2},${fy - 40} ${fx + BW / 2},${fy - 6}`}));
     s.append(box(x, 0, e.parent_name, edgeNote(e), 'par' + (why(e) ? ' nb' : ''),
-                 () => GO.chain && GO.chain(e.parent_name)));
+                 ev => { ev.stopPropagation();
+                   nodeCard(wrap, x + BW / 2, BH + 6, e.parent_name, e); }));
   });
   if (drawOut) outs.forEach((e, i) => {
     const x = rowFor(i, outs.length);
     s.append(svg('path', {class: 'ln', 'marker-end': 'url(#ah)',
       d: `M${fx + BW / 2},${fy + BH} C${fx + BW / 2},${fy + BH + 40} ${x + BW / 2},${BANDY * 2 - 40} ${x + BW / 2},${BANDY * 2 - 6}`}));
     s.append(box(x, BANDY * 2, e.child_name, edgeNote(e), 'chi',
-                 () => GO.chain && GO.chain(e.child_name)));
+                 ev => { ev.stopPropagation();
+                   nodeCard(wrap, x + BW / 2, BANDY * 2 - 8, e.child_name, e); }));
   });
   const g = m.grain ? (Array.isArray(m.grain.value) ? m.grain.value.join(', ') : String(m.grain.value)) : 'grain not settled';
   s.append(box(fx, fy, m.name, g, 'foc'));
@@ -521,7 +599,11 @@ function lineage(m) {
   if (!drawIn && ins.length)
     host.append(bandList(ins.length + ' parents, too many to draw. The same facts as a list:',
                          ins, e => e.parent_name));
-  host.append(el('div', {class: 'linwrap'}, [s]));
+  wrap.append(s);
+  /* Clicking the canvas anywhere but a node dismisses the card, which is what people expect and
+     is also the only way out on a touch device. */
+  wrap.onclick = () => wrap.querySelectorAll('.pop').forEach(n => n.remove());
+  host.append(wrap);
   if (!drawOut && outs.length)
     host.append(bandList(outs.length + ' children, too many to draw:', outs, e => e.child_name));
   if (!ins.length && !outs.length)
@@ -638,9 +720,8 @@ function modelsTab(host) {
   host.replaceChildren(el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a model. Everything assay knows about it is here: what one row is and who settled that, every column with its role and where its value came from, every hop in and out, what the project claims about it, and every answer ever given.'}));
   GO.models = name => { const m = BY_NAME[name]; if (!m) return;
-    const s = $('#p-models input[type=search]'); s.value = name;
-    s.dispatchEvent(new Event('input'));
-    const r = $('#p-models tbody tr'); if (r) r.click(); };
+    show(m);
+    highlight('#p-models', name); };
   const first = $('tbody tr', list); if (first) first.click();
 }
 
@@ -740,11 +821,14 @@ function chainTab(host) {
       + 'are counted in the notable column and named under each drawing.'}),
     el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a model to see its lineage drawn: what feeds it, what it feeds, and what each edge carries and drops. A drawing is always one neighbourhood, never the whole DAG.'}));
+  /* *** THE DETAIL IS AUTHORITATIVE; THE LIST IS AN INDEX. ***
+     Going to a model used to work by TYPING ITS NAME INTO THE FILTER, which left the list showing
+     one row and the box full of text somebody had to clear by hand before they could see anything
+     else. Show the model, then highlight its row if it happens to be on screen. Nothing the user
+     typed is touched. */
   GO.chain = name => { const m = BY_NAME[name]; if (!m) return;
-    if (onlyNotable && !nOf(m)) { onlyNotable = false; paintToggle(); }
-    const s = $('#p-chain input[type=search]'); s.value = name;
-    s.dispatchEvent(new Event('input'));
-    const r = $('#p-chain tbody tr'); if (r) r.click(); };
+    show(m);
+    highlight('#p-chain', name); };
   const first = $('tbody tr', list); if (first) first.click();
 }
 
@@ -753,7 +837,10 @@ function claimsTab(host) {
   const byModel = {};
   for (const c of DATA.claims) {
     const g = byModel[c.subject_name] = byModel[c.subject_name] ||
-      {model: c.subject_name, rows: [], bad: 0};
+      {model: c.subject_name, rows: [], bad: 0,
+       // *** THE GROUP IS A MODEL, SO IT SHOULD SAY WHAT THE MODEL IS. ***
+       // A list of 349 names and two counts makes you click to find out whether you care.
+       desc: ((BY_NAME[c.subject_name] || {}).description || '').split('\n')[0]};
     g.rows.push(c); if (c.contradicted != null) g.bad++;
   }
   const groups = Object.values(byModel).sort((a, b) => a.model.localeCompare(b.model));
@@ -789,10 +876,13 @@ function claimsTab(host) {
       + 'comments, grouped by the model it is about. A claim with no verdict was never asked, '
       + 'which is not the same as supported.',
     groupFilter: 'filter models...',
-    groupText: g => g.model,
+    groupText: g => g.model + ' ' + (g.desc || ''),
     label: g => g.model + ' · ' + g.rows.length + ' claim(s)',
     groupCols: [
       {key: 'model', label: 'model', mono: 1, val: g => g.model},
+      {key: 'desc', label: 'what it is', val: g => g.desc,
+       cell: g => g.desc ? el('span', {text: g.desc.slice(0, 150)})
+         : el('span', {class: 'tot', text: 'no description'})},
       {key: 'n', label: 'claims', n: 1, val: g => g.rows.length},
       {key: 'bad', label: 'contradicted', n: 1, val: g => g.bad,
        cell: g => el('span', {class: g.bad ? 'bad' : 'tot', text: String(g.bad)})},

@@ -682,3 +682,54 @@ def test_an_empty_column_on_every_row_says_why_rather_than_printing_nothing():
     assert "if (HAS_ROLES) colCols.push(" in v, "the role column is shown even when empty"
     assert "nothing has asked" in v, "it does not name the reason"
     assert "assay columns" in v, "it does not name the command that would fill it"
+
+
+def test_clicking_a_node_opens_a_card_and_never_types_into_the_filter():
+    """*** GOING TO A MODEL USED TO WORK BY TYPING ITS NAME INTO THE SEARCH BOX. ***
+
+    Which left the list showing one row and the box full of text somebody had to clear by hand
+    before they could see anything else, and it happened on every node click, so reading the graph
+    walked you out of the graph. Reported from the field: "clicking a node adds it to the search
+    thing and just FUCKS the ui... ideally if you're clicking a node it's just a popup right there
+    with the relevant info."
+
+    Two separate rules now. A node click opens a CARD where the node is. Navigation is a second,
+    deliberate click, and even that never touches what the user typed: the detail is authoritative
+    and the list is only an index into it.
+    """
+    v = explorer._VIEWS
+    assert "function nodeCard(" in v, "a node click has no card"
+    assert "nodeCard(wrap," in v, "the boxes do not open it"
+    # nothing anywhere sets the value of a search input
+    assert "input[type=search]'); s.value" not in v, "navigation still types into the filter"
+    assert ".value = name" not in v, "something still types a model name into a control"
+    assert "function highlight(panel, name)" in v, "there is no way to mark a row without filtering"
+    go = v[v.index("GO.chain = name =>"):]
+    go = go[:go.index("};")]
+    assert "show(m)" in go and "highlight(" in go, go
+
+
+def test_the_card_says_what_the_model_is_before_you_go_there():
+    """The whole point of not navigating is that you can decide from where you are."""
+    v = explorer._VIEWS
+    card = v[v.index("function nodeCard("):]
+    card = card[:card.index("\nfunction lineage(")]
+    for want in ("grain", "reads", "read by", "findings", "claims"):
+        assert f"'{want}'" in card, f"the card does not say {want}"
+    assert "m.description" in card, "the card does not say what the model is"
+    # a node can be a SOURCE, which has no model entry, and that must not render an empty card
+    assert "A source, or a relation outside this project" in card
+    assert "centre the graph here" in card and "open in Models" in card
+
+
+def test_a_group_of_claims_says_what_its_model_is():
+    """349 names and two counts makes you click to find out whether you care. Reported from the
+    field: "in claims, since it's by model, it should also show the model description so it's
+    easier to know before clicking in"."""
+    v = explorer._VIEWS
+    cb = v[v.index("function claimsTab"):]
+    cb = cb[:cb.index("\n/* ---")]
+    assert "desc:" in cb and "description || ''" in cb, "the group does not carry a description"
+    assert "label: 'what it is'" in cb, "the description is not a column"
+    assert "'no description'" in cb, "a model with none reads as blank rather than as absent"
+    assert "g.model + ' ' + (g.desc" in cb, "the filter box does not search descriptions"
