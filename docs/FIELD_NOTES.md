@@ -1522,3 +1522,75 @@ one release added a check. The shipped example groups by `check_name` for that r
 so: a hand-written class list is a second copy of the check list, and the second copy is what
 drifts. If you want named classes, `else check_name` makes a new check name itself instead of
 disappearing.
+
+---
+
+## Round nine: the fix from round eight hid two whole families
+
+0.24.0's version filter took a real project from 349 findings to 103 and reported it as
+**0 new, 246 resolved**. Fifteen of those were real. **231 were hidden.**
+
+```
+check                              0.23.0   0.24.0
+hop_multiplies_rows                    22        7   the actual fix
+code_contradicts_a_claim              213        0
+description_contradicts_the_code       18        0
+everything else                        96       96   unchanged
+```
+
+Two families to exactly zero, and nothing about those models had changed.
+
+### The cause: a mapping that was never the right one
+
+`live_decisions` resolved "the version shipping now" as `question_id.split("__")[0]` -> the bank
+claiming that prefix -> its `prompt_version`. Three shipped questions file under an id that is not
+their own bank's prefix, so each lookup landed on a NEIGHBOURING family:
+
+```
+stored question   written by            stored version   prefix resolves to   shipping
+claim__0..7       sentence_is_a_claim   sentence.v1      claim_alignment      claim.v2    retired
+align             claim_alignment       claim.v2         same_concept         align.v1    retired
+desc              description_...       desc.v1+comments+scoped               desc.v1     retired
+edge              edge_preserves...     edge.water.v2    edge_preserves...    (match)     kept
+```
+
+The `edge` row is the only one whose id and bank agree, which is why the one family the fix was
+built for worked and the rest did not.
+
+The `desc` case is separate and worse: the writer stores
+`DESC_Q["prompt_version"] + "+comments+scoped"` and the reader compared against the bare string, so
+re-asking writes the same suffixed value and that family could never come back by re-running.
+
+### `check_question_ids` asserted the wrong invariant, for eight releases
+
+It asserts that SOME bank claims the prefix, and one always does. It never asserted that the prefix
+claims the RIGHT bank. `contracts.id_prefix_conflicts` asserts the real one and `assay banks`
+reports all three as errors. It also catches the deeper problem: `claim_alignment` and
+`same_concept` both file under `align`, so NO mapping from a question id to a family can be correct
+for them.
+
+### So the reader stopped resolving families at all
+
+The latest answer to a question wins. That needs no mapping and cannot land on the wrong bank. A
+version bump hides nothing: re-running writes a newer row and that row wins, and until it is
+re-run the old answer is the only answer there is -- hiding it leaves the caller with nothing,
+which is strictly worse than serving it dated. `stale_decisions` dates them instead, comparing the
+base version against the set of ALL shipping versions, which needs no per-question resolution.
+
+Restored on the field store: 213 and 18 back, `hop_multiplies_rows` still correctly 7.
+
+### And nothing said a word
+
+`retired_decisions` was read in exactly one place, inside an MCP tool. `check` never touched it, so
+7,656 dropped decisions printed as "246 resolved" -- the failure `VERIFICATION.md` opens by
+describing, where *it reported nothing* and *it is not configured* read identically from outside.
+`check` prints both counts now:
+
+```
+stored judgments: 1,496 older answer(s) superseded by a newer one;
+                  5,842 answer(s) given against a question that has since changed, still used.
+Nothing is hidden -- re-ask with the command that owns the family and the newer answer wins.
+```
+
+A number that moves for a reason that is not the reader's code has to say so where the reader is
+watching it move.

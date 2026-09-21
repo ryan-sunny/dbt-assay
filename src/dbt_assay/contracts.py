@@ -344,6 +344,48 @@ def family_of(question_id: str) -> str | None:
     return None
 
 
+# *** THE INVARIANT THAT WAS NEVER ASSERTED. ***
+# `check_question_ids` asserts that SOME bank claims a prefix, and one always does. It never
+# asserted that the prefix claims the RIGHT bank, which is the actual invariant, and three shipped
+# questions violated it: `sentence_is_a_claim` (prefix `sentence`) files under `claim__N`,
+# `claim_alignment` (prefix `claim`) files under `align`, and `same_concept` declares `align`. Each
+# read the next one's version.
+EMITTED_IDS = {
+    # family: the id its writer actually puts in the question dict, and where.
+    "sentence_is_a_claim":              ("claim__<i>", "claims.kind_questions"),
+    "claim_alignment":                  ("align", "claims.align_question"),
+    "same_concept":                     ("align__<i>", "align.pair_questions"),
+    "severity_fit":                     ("sev__<i>", "testing.questions"),
+    "predicate_intent":                 ("pred__<i>", "semantics.predicate_questions"),
+    "description_contradicts_the_code": ("desc", "semantics.description_question"),
+    "practice_exception":               ("exception", "practices.question_for"),
+    "options_overlap":                  ("overlap", "lint.judge_overlap"),
+}
+
+
+def id_prefix_conflicts() -> list[str]:
+    """Where a family's declared `id_prefix` disagrees with the id its writer emits, or where two
+    families would resolve from the same prefix. Either one makes `family_of` land on the wrong
+    bank, and nothing in this codebase may resolve a version through it while they exist."""
+    banks = load_all_banks()
+    out, by_prefix = [], {}
+    for fam, (emitted, where) in sorted(EMITTED_IDS.items()):
+        q = banks.get(fam)
+        if q is None:
+            continue
+        declared, actual = q.get("id_prefix"), emitted.split("__")[0]
+        if declared != actual:
+            out.append(f"{fam} declares id_prefix {declared!r} and {where} files under "
+                       f"{emitted!r}, so `family_of` resolves it to whichever bank claims "
+                       f"{actual!r}")
+        by_prefix.setdefault(actual, []).append(fam)
+    for prefix, fams in sorted(by_prefix.items()):
+        if len(fams) > 1:
+            out.append(f"{', '.join(fams)} all file under the prefix {prefix!r}, so no mapping "
+                       f"from a question id to a family can be correct for them")
+    return out
+
+
 def check_question_ids(question_ids) -> None:
     """Raise on any id no bank claims. Called before a request is built, so a mis-prefixed
     question fails on its first run rather than filing verdicts nobody can count."""

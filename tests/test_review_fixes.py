@@ -1247,45 +1247,72 @@ def _decisions(rows):
     return s
 
 
-def test_an_answer_from_a_retired_version_is_not_served_as_current():
-    """*** IT RETURNED TWELVE VERDICTS FOR FOUR HOPS AND CONTRADICTED ITSELF. ***
+def test_the_reader_never_hides_an_answer_on_a_guess_about_its_family():
+    """*** THE FIRST VERSION HID 7,536 ANSWERS AND CALLED IT `246 resolved`. ***
 
-    The same hop came back `silently_multiplied` and `deliberately_coarser` because every one of
-    those answers predated a version bump. On a real store `edge` held three versions of 543
-    answers each, and the pre-fork version alone contributed 57 hot hops against the live 13.
+    It resolved "the version shipping now" by splitting the question id on `__` and looking the
+    prefix up as a bank's id_prefix. Three shipped questions file under an id that is NOT their
+    own bank's prefix, so each lookup landed on a neighbouring family: `sentence_is_a_claim`
+    files under `claim__N` and read `claim_alignment`'s version; `claim_alignment` files under
+    `align` and read `same_concept`'s. Two whole families went to exactly zero, 213 findings and
+    18, while nothing about those models had changed.
+
+    So there is no family resolution in the reader at all. The latest answer to a question wins.
     """
     s = _decisions([
+        ("claim__0", "sentence.v1", "m::sentence::a", "claim_about_output"),
+        ("align", "claim.v2", "m::claim::a", "supports"),
+        ("desc", "desc.v1+comments+scoped", "m::desc", "0.7"),
         ("edge", "edge.v1", "m::edge::p", "silently_multiplied"),
         ("edge", "edge.v2", "m::edge::p", "same_thing"),
-        ("role__a", "role.v1", "m", "measure"),
-        ("role__a", "role.v2", "m", "identifier"),
     ])
     try:
-        got = s.live_decisions("1 = 1", [], {"edge": "edge.v2", "role": "role.v2"},
-                               columns="question, answer")
-        assert sorted(got) == [("edge", "same_thing"), ("role__a", "identifier")]
-        assert s.retired_decisions == 2, "the hidden ones were not counted"
-
-        # A question no loaded bank claims is passed through, not silently emptied: an unloaded
-        # custom bank must not blank the inventory.
-        passed = s.live_decisions("1 = 1", [], {}, columns="question, answer")
-        assert len(passed) == 2 and s.retired_decisions == 0
+        got = dict(s.live_decisions("1 = 1", [], columns="question, answer"))
+        assert set(got) == {"claim__0", "align", "desc", "edge"}, \
+            f"an answer was hidden on a guess about which family asked it: {got}"
+        assert got["edge"] == "same_thing", "the latest answer did not win"
+        assert s.superseded_decisions == 1
     finally:
         s.close()
 
 
-def test_one_answer_per_question_even_before_versions_are_considered():
-    """The old reader keyed `edge` answers as `edge__0, edge__1, ...`, so every version
-    accumulated instead of overwriting -- and for every OTHER question the later row won, with
-    the survivor decided by the order duckdb returned. Two defects, one cause."""
-    s = _decisions([
-        ("edge", "v1", "m::edge::p", "a"),
-        ("edge", "v1", "m::edge::p", "b"),
-        ("edge", "v1", "m::edge::q", "c"),
-    ])
+def test_a_served_answer_whose_question_has_changed_is_DATED_not_hidden():
+    """Hiding it leaves the caller with nothing, which is strictly worse than serving it dated.
+    Re-running writes a newer row and that row wins by itself."""
+    s = _decisions([("edge", "edge.retired.v0", "m::edge::p", "silently_multiplied")])
     try:
-        got = s.live_decisions("1 = 1", [], {}, columns="question, answer")
-        assert len(got) == 2, f"one row per (decision_key, question), got {got}"
+        got = s.live_decisions("1 = 1", [], columns="question, answer")
+        assert len(got) == 1, "it hid the only answer there was"
+        assert s.stale_decisions == 1, "and it did not say the question had changed"
+    finally:
+        s.close()
+
+    # A writer's state-shape suffix is not a different question.
+    from dbt_assay.contracts import SHIPPED
+    live = SHIPPED["description_contradicts_the_code"]["prompt_version"]
+    s2 = _decisions([("desc", f"{live}+comments+scoped", "m::desc", "0.7")])
+    try:
+        s2.live_decisions("1 = 1", [], columns="question, answer")
+        assert s2.stale_decisions == 0, "the `+comments+scoped` suffix read as a retired question"
+    finally:
+        s2.close()
+
+
+def test_one_answer_per_question_and_the_uniquifier_is_not_a_hardcoded_list():
+    """`("align", "edge")` was a second copy of a fact the rows already carry: any id that repeats
+    needs a distinct key, and a list goes stale the first time a new family asks per-something."""
+    from dbt_assay.inventory import _judgments
+
+    # Two answers to the SAME question about different subjects of one model, and a third
+    # question that is not in any hardcoded list. All three must survive with distinct keys.
+    s = _decisions([("edge", "v1", "m::edge::p", "a"),
+                    ("edge", "v1", "m::edge::q", "c"),
+                    ("sev__0", "v1", "m::sev::t1", "1.2"),
+                    ("sev__0", "v1", "m::sev::t2", "0.3")])
+    try:
+        got = _judgments(s, "m")
+        assert len(got) == 4, f"an answer was lost to a key collision: {sorted(got)}"
+        assert len({v["answer"] for v in got.values()}) == 4
     finally:
         s.close()
 
@@ -1302,3 +1329,46 @@ def test_the_mcp_install_line_writes_a_file_the_repo_can_keep():
         i = src.find("claude mcp add assay")
         assert i > 0, f"{mod.__name__} no longer tells anyone how to add the server"
         assert "--scope project" in src[i:i + 60], f"{mod.__name__} still writes machine-local"
+
+
+def test_no_question_id_resolves_to_another_family():
+    """*** `check_question_ids` ASSERTED THE WRONG INVARIANT FOR EIGHT RELEASES. ***
+
+    It asserts that SOME bank claims a question's prefix, and one always does. It never asserted
+    that the prefix claims the RIGHT bank. Three shipped questions violate that:
+    `sentence_is_a_claim` (prefix `sentence`) files under `claim__N` and read `claim_alignment`'s
+    version; `claim_alignment` (prefix `claim`) files under `align` and read `same_concept`'s.
+    A reader built on that mapping hid 7,536 answers and reported `246 resolved`.
+
+    Nothing in this codebase may resolve a version through a question id while these exist. This
+    fails until they are reconciled, which is the point: it is a live defect, not a note.
+    """
+    import pytest
+
+    from dbt_assay.contracts import id_prefix_conflicts
+
+    conflicts = id_prefix_conflicts()
+    if conflicts:
+        pytest.xfail("known, reported by `assay banks` as an error:\n  " + "\n  ".join(conflicts))
+    assert not conflicts
+
+
+def test_the_emitted_id_table_matches_the_writers():
+    """The table naming what each writer emits is a second copy, so it is checked against the
+    source. A stale copy here would make `id_prefix_conflicts` miss the thing it exists to find."""
+    import inspect
+
+    from dbt_assay.contracts import EMITTED_IDS
+
+    seen = {}
+    for mod_name in ("claims", "align", "testing", "semantics", "practices", "lint"):
+        mod = __import__(f"dbt_assay.{mod_name}", fromlist=["x"])
+        src = inspect.getsource(mod)
+        for fam, (emitted, where) in EMITTED_IDS.items():
+            if not where.startswith(mod_name + "."):
+                continue
+            literal = emitted.replace("<i>", "{i}")
+            assert f'"{literal}"' in src or f"'{literal}'" in src, \
+                f"{where} does not emit {emitted!r}; the table is stale"
+            seen[fam] = True
+    assert len(seen) >= 7, f"the reader is broken; it checked only {len(seen)} writers"

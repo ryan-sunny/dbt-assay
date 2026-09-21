@@ -536,17 +536,17 @@ class Backend:
                 # The same hop came back `silently_multiplied` and `deliberately_coarser`
                 # because every one of those answers predated a version bump. An agent reading
                 # this to decide about a hop was handed both and no way to tell which was live.
-                from .contracts import current_versions
                 rows = st.live_decisions(
                     "question = 'edge' and decision_key like ?", [uid + "::edge::%"],
-                    current_versions(), columns="question, context, answer")
+                    columns="question, context, answer")
                 out["judged"] = [{"hop": r[1], "verdict": r[2]} for r in rows]
-                if st.retired_decisions:
-                    out["verdicts_from_a_retired_version_of_the_question"] = st.retired_decisions
-                    out["why_they_are_not_shown"] = (
-                        "the question was rewritten since they were given, so they are answers "
-                        "to a question that no longer exists. `assay traverse` re-asks; "
-                        "`assay effectiveness` shows agreement per version.")
+                if st.superseded_decisions:
+                    out["older_answers_to_the_same_hop_not_shown"] = st.superseded_decisions
+                if st.stale_decisions:
+                    # Dated, never hidden: the question was rewritten since these were given, so
+                    # they are the only answers there are until `assay traverse` re-asks.
+                    out["answers_given_against_a_question_that_has_since_changed"] = (
+                        st.stale_decisions)
             finally:
                 st.close()
         return out

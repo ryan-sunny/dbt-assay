@@ -21,6 +21,18 @@ import duckdb
 
 from .jev import DDL as JEV_DDL
 
+
+def _shipping_versions() -> set:
+    """Every prompt_version any loaded bank currently ships. A SET, so nothing has to guess which
+    family a question id belongs to -- the mapping that broke was never needed for this."""
+    try:
+        from .contracts import load_all_banks
+        return {str(q["prompt_version"]).split("+")[0]
+                for q in load_all_banks().values() if q.get("prompt_version")}
+    except Exception:                                            # noqa: BLE001
+        return set()
+
+
 DDL = JEV_DDL + """
 create table if not exists runs (
     run_id       varchar primary key,
@@ -145,7 +157,8 @@ class Store:
                 f"The structural checks work without a store at all.") from e
         self.con.execute(DDL)
         self._migrate()
-        self.retired_decisions = 0
+        self.superseded_decisions = 0
+        self.stale_decisions = 0
 
     # *** `create table if not exists` IS NOT A MIGRATION. ***
     # A store written by an older assay keeps its old shape forever, and the next insert fails with
@@ -515,36 +528,49 @@ class Store:
                 "unclear": rows.get("unclear", 0),
                 "agreement": (rows.get("agree", 0) / n) if n else None}
 
-    def live_decisions(self, where: str, args: list, versions: dict,
+    def live_decisions(self, where: str, args: list,
                        columns: str = "question, answer, confidence, probabilities, context",
                        ) -> list[tuple]:
-        """Answers given against the version of their question that is SHIPPING NOW.
+        """The CURRENT answer to each question: one row per (decision_key, question), the latest.
 
-        One row per (decision_key, question): the latest. Everything older, and everything from a
-        retired version, is left out -- and `retired_decisions` counts what was left out, because
-        an answer that is hidden without being counted is the same defect as one that is served
-        without being dated.
+        *** THE FIRST VERSION HID 7,536 ANSWERS AND CALLED IT `246 resolved`. ***
+        It resolved "the version shipping now" by splitting the question id on `__` and looking
+        the prefix up as a bank's id_prefix. Three shipped questions file under an id that is not
+        their own bank's prefix, so each lookup landed on a NEIGHBOURING family and compared its
+        version against someone else's. Two whole families -- `code_contradicts_a_claim` (213
+        findings) and `description_contradicts_the_code` (18) -- went to exactly zero while
+        nothing about those models had changed.
 
-        A question whose prefix no bank claims is passed through rather than hidden: a custom
-        bank that is not loaded right now should not silently empty the inventory.
+        So there is no family resolution here at all. The latest answer to a question wins, which
+        needs no mapping and cannot land on the wrong bank. A version bump does not hide anything:
+        re-running writes a newer row and that row wins, and until it is re-run the old answer is
+        the only answer there is -- hiding it leaves the caller with nothing, which is strictly
+        worse than serving it dated.
+
+        `superseded_decisions` counts the older rows dropped, and `stale_decisions` counts served
+        answers whose version no bank still ships. NOTHING is silent: being hidden without being
+        counted is the failure this whole tool opens by describing.
         """
         self.con.execute(DDL)
         rows = self.con.execute(
-            f"select {columns}, prompt_version, decision_key, decided_at "
+            f"select {columns}, prompt_version, decision_key, question, decided_at "
             f"from model_decisions where {where} order by decided_at desc", args).fetchall()
+        shipping = _shipping_versions()
         seen: set = set()
-        out, retired = [], 0
+        out, superseded, stale = [], 0, 0
         for r in rows:
-            q, pv, key = r[0], r[-3], r[-2]
-            want = versions.get(str(q).split("__")[0])
-            if want and pv != want:
-                retired += 1
-                continue
+            pv, key, q = r[-4], r[-3], r[-2]
             if (key, q) in seen:
+                superseded += 1
                 continue
             seen.add((key, q))
-            out.append(tuple(r[:-3]))
-        self.retired_decisions = retired
+            # The suffix a writer appends records the STATE SHAPE, not the question text, so the
+            # base is what says whether this is still the question being asked.
+            if shipping and str(pv).split("+")[0] not in shipping:
+                stale += 1
+            out.append(tuple(r[:-4]))
+        self.superseded_decisions = superseded
+        self.stale_decisions = stale
         return out
 
     def pending(self, limit: int = 25) -> list:

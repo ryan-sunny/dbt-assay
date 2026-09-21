@@ -155,13 +155,15 @@ def _judgments(store, uid: str) -> dict:
     # This used to read every version and let a later row overwrite an earlier one, so which
     # answer reached a finding depended on the order duckdb returned -- `arbitrary_pick`, the
     # defect this tool checks other people's code for, in its own inventory.
-    from .contracts import current_versions
     rows = store.live_decisions("decision_key = ? or decision_key like ?",
-                                [uid, uid + "::%"], current_versions())
+                                [uid, uid + "::%"])
     out: dict = {}
     for i, (q, a, c, probs, ctx) in enumerate(rows):
-        # A model has ONE grain answer but MANY claim answers, so claim keys are made unique.
-        key = q if q not in ("align", "edge") else f"{q}__{i}"
+        # *** UNIQUIFY ON COLLISION, NOT FROM A LIST OF IDS. ***
+        # This named `("align", "edge")` as the questions asked more than once per model, which
+        # is a second copy of a fact the rows already carry: any id that repeats needs a distinct
+        # key, and a hardcoded list goes stale the first time a new family asks per-something.
+        key = q if q not in out else f"{q}__{i}"
         out[key] = {"answer": a, "confidence": c,
                     "probabilities": json.loads(probs or "{}"), "context": ctx}
     return out

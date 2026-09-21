@@ -276,6 +276,20 @@ def check(
     _cfg_pre = Config.load(config_path)
     findings = live.all_findings(project, digests, schema, _entries,
                                  _cfg_pre.row_loss_threshold)
+    # *** 7,656 DROPPED DECISIONS PRINTED AS "246 resolved". ***
+    # The count existed and was read in exactly one place, inside an MCP tool. `check` is where
+    # somebody watches a number move, so it is where a number moving for a reason that is not
+    # their code has to be said out loud.
+    _dropped = {}
+    if _entries is not None:
+        _s2 = Store(store_path)
+        try:
+            _s2.live_decisions("1 = 0", [])
+            _dropped = {"superseded": _s2.superseded_decisions, "stale": _s2.stale_decisions}
+            _s2.live_decisions("1 = 1", [])
+            _dropped = {"superseded": _s2.superseded_decisions, "stale": _s2.stale_decisions}
+        finally:
+            _s2.close()
     _verified = {"hops_retired_by_counting": n_retired} if verify else {}
     if check_name:
         findings = [f for f in findings if f.check == check_name]
@@ -311,6 +325,16 @@ def check(
         }, indent=2))
         raise typer.Exit(0)
 
+    if _dropped.get("stale") or _dropped.get("superseded"):
+        bits = []
+        if _dropped["superseded"]:
+            bits.append(f"{_dropped['superseded']:,} older answer(s) superseded by a newer one")
+        if _dropped["stale"]:
+            bits.append(f"{_dropped['stale']:,} answer(s) given against a question that has "
+                        f"since changed, still used")
+        console.print(f"[dim]stored judgments: {'; '.join(bits)}. "
+                      f"Nothing is hidden -- re-ask with the command that owns the family and "
+                      f"the newer answer wins.[/]")
     _coverage_panel(project, digests, failures)
     _schema_panel(schema, sstats)
 
@@ -1812,8 +1836,12 @@ def banks(
     # *** A FORK MADE TO PRESERVE ONE PROPERTY SILENTLY FORFEITS ANOTHER. ***
     # `yours, replacing` was the whole story a fork got, and a copy nobody knows is stale reads
     # as current.
-    from .lint import override_drift
+    from .contracts import id_prefix_conflicts
+    from .lint import Issue, override_drift
     issues += override_drift(all_banks, SHIPPED)
+    # *** A PREFIX THAT RESOLVES TO THE WRONG BANK IS HOW 7,536 ANSWERS WENT MISSING. ***
+    issues += [Issue("question ids", "error", "id_prefix_resolves_to_another_family", c)
+               for c in id_prefix_conflicts()]
     if judge:
         # *** THE LINTER USING THE TOOL'S OWN ARGUMENT ON ITSELF. ***
         # A parser settles what it can; whether two descriptions pick out the same case is a
