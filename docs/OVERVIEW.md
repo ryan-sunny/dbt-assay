@@ -423,7 +423,7 @@ acknowledge:
 ```
 
 **A reason is required**, exactly as it is for a waiver, and `assay banks` prints every
-acknowledgement with its reason rather than hiding it. A rule silenced without a reason is how a
+acknowledgment with its reason rather than hiding it. A rule silenced without a reason is how a
 finding goes to die — and a lint with no way to say *"I know, and here is why"* gets muted
 wholesale instead.
 
@@ -500,7 +500,7 @@ like a working check for weeks.
 | `multi_hop` | one lumped question over three rules read 0.64 where the split rule that applied read 0.85 |
 | `no_match_option` | without one the model must pick a wrong answer. A real division bug surfaced **only** because it could say "not on the list" |
 | `options_not_separated` | two options described alike give the model nothing to cut on; assay's own pair sat at 0.36–0.39 until they were merged |
-| `option_routes_to_another` | an option whose description names ANOTHER option is routing, and the answering model may not honour it. Measured: a question doing this passed the judged overlap check at 0.63 while the model put one subject under both options at 0.55 and 0.63 |
+| `option_routes_to_another` | an option whose description names ANOTHER option is routing, and the answering model may not honor it. Measured: a question doing this passed the judged overlap check at 0.63 while the model put one subject under both options at 0.55 and 0.63 |
 | `options_overlap` *(`--judge`)* | the static rule compares WORDS. Two options can share a **situation** and no vocabulary: a real pair scored 0.25 against a 0.75 threshold and passed, while both correctly described the same window. This asks Jev instead, and it independently flagged `predicate_intent` — already proven weak by hand |
 | `state_size` | unrelated detail is a distractor: one correct extra sentence took a claim from 0.96 to 0.47 |
 | `id_prefix` | two families sharing a prefix means one silently absorbs the other's verdicts |
@@ -606,7 +606,7 @@ What it does is triage. Sixty-nine models with a finding and none read is a wall
 believes are real is a place to start. `assay review -i` shows its reason beside the finding, and
 your keypress is still the only one that counts.
 
-**A verdict is a regression test for the question, before it is ever a licence to gate.** Reported
+**A verdict is a regression test for the question, before it is ever a license to gate.** Reported
 from the field: after rewriting a question's criteria, 8 of 8 recorded verdicts still agreed — the
 first time that session could change a question and know immediately what it had *not* broken. That
 cost eight keypresses. `min_adjudications` is the second reason to record them; this is the first.
@@ -635,7 +635,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.27.2
+- uses: ryan-sunny/dbt-assay@v0.27.3
   with:
     target: target-head
     baseline: base/target
@@ -742,7 +742,7 @@ adapter and auth scheme your dbt already handles works unchanged and `assay` nev
 
 **Nothing leaves your machine until you turn the judgment tier on.** The structural tier is
 entirely local. When the judged tier runs, what goes out is the compiled SQL of the model under
-judgement and the question — never your data, never your rows.
+judgment and the question — never your data, never your rows.
 
 ---
 

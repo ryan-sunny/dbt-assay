@@ -103,8 +103,8 @@ def _review_coverage(findings, store_path: str) -> None:
     seen = {m for m in models if m in ruled}
     pct = len(seen) / len(models) if models else 0
     by_agent = {a["subject"].split("::")[0] for a in agent} - seen
-    colour = "green" if pct >= 0.5 else ("yellow" if seen else "red")
-    console.print(f"\n[{colour}]{len(seen)} of {len(models)} model(s) with a finding have been "
+    color = "green" if pct >= 0.5 else ("yellow" if seen else "red")
+    console.print(f"\n[{color}]{len(seen)} of {len(models)} model(s) with a finding have been "
                   f"ruled on by a person.[/]")
     if by_agent:
         console.print(f"[cyan]{len(by_agent)} more have an agent's reading[/] [dim]-- which is a "
@@ -365,9 +365,9 @@ def check(
         for f in findings[:limit]:
             reach = f"{f.descendants} downstream, {f.marts} marts" if f.descendants else "leaf"
             act = actions.get((f.check, f.subject), "annotate")
-            colour = {"fail": "red", "queue": "yellow"}.get(act, "dim")
+            color = {"fail": "red", "queue": "yellow"}.get(act, "dim")
             console.print(f"[bold]{f.subject_name}[/]  [dim]{f.file}[/]")
-            console.print(f"  [{colour}]{act}[/]  {f.check}: {f.summary}  [dim]({reach})[/]")
+            console.print(f"  [{color}]{act}[/]  {f.check}: {f.summary}  [dim]({reach})[/]")
             console.print(f"  [dim]{f.detail}[/]\n")
         if len(findings) > limit:
             console.print(f"[dim]... {len(findings) - limit} more. --limit to see them, "
@@ -989,7 +989,7 @@ def claims(
         uniq.append(c)
     if merged:
         # *** SAY WHAT WAS MERGED, WITH BOTH SENTENCES. ***
-        # A normaliser that collapses two claims that genuinely differ loses one of them, and it
+        # A normalizer that collapses two claims that genuinely differ loses one of them, and it
         # loses it quietly. Printing the pair is what makes that reviewable rather than trusted.
         console.print(f"[dim]{len(merged)} sentence(s) merged as the same claim written twice, "
                       f"once in a description and once in a comment.[/]")
@@ -1376,7 +1376,7 @@ def effectiveness(
                       f"subject state failing to carry what the question asks about. Reword an "
                       f"option to fix a disagreement; add a field to fix an unclear.[/]")
     if stale:
-        console.print(f"[dim]{stale} row(s) greyed: recorded against a version of the question "
+        console.print(f"[dim]{stale} row(s) grayed: recorded against a version of the question "
                       f"that is no longer shipping. They still count as evidence and they do not "
                       f"count toward the agreement floor.[/]")
     unver = sum(1 for r in rows if r["prompt_version"] == "(unversioned)")
@@ -1411,7 +1411,7 @@ def disagreements(
     import json
 
     from .contracts import QUESTIONS
-    from .subjects import candidate_pairs, normalise_reason, open_disagreements
+    from .subjects import candidate_pairs, normalize_reason, open_disagreements
 
     if not Path(store_path).exists():
         console.print(f"[yellow]no store at {store_path}.[/]")
@@ -1426,7 +1426,7 @@ def disagreements(
             raise typer.Exit(0)
 
         # *** CODE CLUSTERS FIRST AND FOR FREE. ***
-        # Identical first sentences are the same defect and no judgement is needed to say so.
+        # Identical first sentences are the same defect and no judgment is needed to say so.
         ids = [f"{r['subject']}#{r['question']}" for r in rows]
         pos = {k: i for i, k in enumerate(ids)}
         parent = list(range(len(rows)))
@@ -1446,7 +1446,7 @@ def disagreements(
 
         seen: dict = {}
         for i, r in enumerate(rows):
-            k = (r["family"], normalise_reason(r["note"]))
+            k = (r["family"], normalize_reason(r["note"]))
             if k in seen:
                 union(seen[k], i)
             else:
@@ -1523,9 +1523,9 @@ def disagreements(
 
     if judge:
         # *** THE DELTA IS THE MEASUREMENT OF WHETHER ASKING WAS WORTH ANYTHING. ***
-        # Code grouped the identical first sentences for nothing. If judgement adds no groups on a
+        # Code grouped the identical first sentences for nothing. If judgment adds no groups on a
         # real corpus, that is a finding about this family and it belongs in VERIFICATION.md.
-        console.print(f"\n[dim]code alone found {free_clusters} group(s); judgement merged "
+        console.print(f"\n[dim]code alone found {free_clusters} group(s); judgment merged "
                       f"{joined} more pair(s) that were worded differently.[/]")
     else:
         console.print("\n[dim]grouped by identical first sentence only, which costs nothing. "
@@ -1763,7 +1763,7 @@ def page(
     ]
 
     # *** WHAT IS ONE ROW OF THIS -- AND WHO SAID SO. ***
-    # A grain a person declared and one a judgement reached at 0.53 are not the same fact, so the
+    # A grain a person declared and one a judgment reached at 0.53 are not the same fact, so the
     # page never adds them together.
     grain = {"declared": 0, "derived": 0, "judged": 0, "none": 0}
     for en in entries:
@@ -1912,7 +1912,7 @@ def banks(
     from .lint import acknowledged_issues
     acks = acknowledged_issues(all_banks, SHIPPED)
     if acks:
-        # Shown, never hidden: an acknowledgement is a decision someone made, and the next reader
+        # Shown, never hidden: an acknowledgment is a decision someone made, and the next reader
         # deserves to see what was silenced and why.
         console.print(f"\n[bold]{len(acks)} rule(s) acknowledged[/]")
         for a in acks:
@@ -1962,8 +1962,8 @@ def banks(
                   + (f", {len(notes)} note(s)" if notes else ""))
     order = {"error": 0, "warning": 1, "warn": 1, "note": 2}
     for i in sorted(issues, key=lambda x: (order.get(x.level, 1), x.question)):
-        colour = {"error": "red", "note": "cyan"}.get(i.level, "yellow")
-        console.print(f"\n  [{colour}]{i.level}[/]  [bold]{i.question}[/]  [dim]{i.rule}[/]")
+        color = {"error": "red", "note": "cyan"}.get(i.level, "yellow")
+        console.print(f"\n  [{color}]{i.level}[/]  [bold]{i.question}[/]  [dim]{i.rule}[/]")
         console.print(f"    {i.detail}")
     raise typer.Exit(1 if errs or (strict and warns) else 0)
 
@@ -2432,7 +2432,7 @@ def calibrate(
 ):
     """Measure the grain judgment against the keys this project already declares.
 
-    *** THE LABELLED SET IS FREE AND ALREADY IN THE REPO. ***
+    *** THE LABELED SET IS FREE AND ALREADY IN THE REPO. ***
     Every `unique` and `unique_combination_of_columns` test is a human statement of a model's key.
     So the first thing this tier produces is a confusion matrix, not an impression -- which is the
     only thing that ever earns a question the right to fail a build.
@@ -2446,7 +2446,7 @@ def calibrate(
 
     code_exact = sum(1 for uid, c in work
                      if sorted(x.lower() for x in c.columns) == sorted(declared[uid]))
-    console.print(f"[bold]{len(work)}[/] labelled models with surplus candidates "
+    console.print(f"[bold]{len(work)}[/] labeled models with surplus candidates "
                   f"(code alone is exactly right on {code_exact})")
 
     client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
@@ -2608,7 +2608,7 @@ def columns(
         if control:
             # *** ASK ABOUT WHAT IS ALREADY KNOWN. ***
             # A not_null test declares NULL impossible; a unique test declares an identifier.
-            # Agreement on those is measurable today, with no human labelling at all.
+            # Agreement on those is measurable today, with no human labeling at all.
             # *** ONLY THE ROLE FAMILY HAS USABLE FREE LABELS. ***
             # A not_null test says a column cannot be NULL, which code now decides, so it is not
             # evidence about what a NULL would MEAN. Using it as such measured 0/25 and measured
@@ -2708,7 +2708,7 @@ def review(
 ):
     """List judgments nobody has ruled on, or record a verdict.
 
-    *** THIS LOOP IS WHAT MANUFACTURES THE LABELLED SET. ***
+    *** THIS LOOP IS WHAT MANUFACTURES THE LABELED SET. ***
     Until a question has verdicts, config refuses to let it fail a build. There is no way to skip
     this and still gate on anything honestly.
     """
@@ -3021,7 +3021,7 @@ def diff_cmd(
         raise typer.Exit(0)
 
     if markdown:
-        print(diff_mod.summarise(changes[:limit]))
+        print(diff_mod.summarize(changes[:limit]))
         raise typer.Exit(0)
 
     grain = [c for c in changes if c.kind in ("grain", "grain_in_sql")]
@@ -3071,7 +3071,7 @@ def backtest(
 ):
     """Replay this repo's own history and measure whether the checks catch what it already fixed.
 
-    A commit whose message says it fixed something is a defect and its repair, already labelled by
+    A commit whose message says it fixed something is a defect and its repair, already labeled by
     whoever wrote it. Did the check fire before the fix and go quiet after?
 
     Reads blobs out of the object store with `git show`. No checkout, no stash, nothing that could
@@ -3207,10 +3207,10 @@ def watch(
                 continue
             console.print()
             for c in changes[:8]:
-                colour = "red" if c.severity >= 3 else "yellow"
+                color = "red" if c.severity >= 3 else "yellow"
                 # Found by actually using it: a column change printed no column name at all.
                 what = f"`{c.column}`" if c.column else ""
-                console.print(f"[{colour}]{c.kind}[/] [bold]{c.model}[/] {what} "
+                console.print(f"[{color}]{c.kind}[/] [bold]{c.model}[/] {what} "
                               f"{c.detail or ''}".rstrip())
                 if c.aggregating_consumers:
                     console.print(f"  [red]{len(c.aggregating_consumers)} downstream models "
@@ -3608,9 +3608,9 @@ def align(
 
     joined = align_mod.joined_pairs(project, digests, schema)
     pairs = align_mod.candidates(entries, joined, max_pairs=max_pairs)
-    labelled = [p for p in pairs if p.label]
+    labeled = [p for p in pairs if p.label]
     console.print(f"[bold]{len(pairs)}[/] candidate pairs · "
-                  f"[bold]{len(labelled)}[/] already asserted same by a join in this project")
+                  f"[bold]{len(labeled)}[/] already asserted same by a join in this project")
     if not pairs:
         raise typer.Exit(0)
 
@@ -4436,7 +4436,7 @@ def _review_loop(store, limit: int, target=None, dialect: str | None = None) -> 
     ctx = _review_context(target, dialect)
     if ctx is None and target:
         console.print("[yellow]could not read the project, so no evidence will be shown.[/]")
-    # *** SAY WHICH OF THESE WILL EVER AUTHORISE ANYTHING, BEFORE THE KEYPRESSES START. ***
+    # *** SAY WHICH OF THESE WILL EVER AUTHORIZE ANYTHING, BEFORE THE KEYPRESSES START. ***
     # Nine of ten families have no finding resting on them. Their answers are still worth having,
     # and someone sitting down to move a GATE should know which rows are not going to move it.
     from .judged import FAMILIES_WITHOUT_FINDINGS
@@ -4483,8 +4483,8 @@ def _review_loop(store, limit: int, target=None, dialect: str | None = None) -> 
                          prompt_version=pv or "", model_version=mv or "")
         _warn_orphan_family(fam, q)
         done += 1
-        colour = {"agree": "green", "disagree": "red", "unclear": "yellow"}[v]
-        console.print(f"  [{colour}]{v}[/]\n")
+        color = {"agree": "green", "disagree": "red", "unclear": "yellow"}[v]
+        console.print(f"  [{color}]{v}[/]\n")
 
     if not done:
         return

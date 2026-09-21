@@ -75,7 +75,7 @@ def test_severity_is_lifted_by_reach(findings):
 
 
 def test_a_distance_measured_after_reprojection_is_not_flagged():
-    """Correct code: transform to a metre-based CRS, THEN measure. A guard that bans the function
+    """Correct code: transform to a meter-based CRS, THEN measure. A guard that bans the function
     outright catches the one model that already did the right thing."""
     from dbt_assay.parse import digest as dg
     bad = dg("select row_number() over (order by ST_Distance(a.geom, b.pt)) rn from t a join u b on true")
@@ -120,7 +120,7 @@ def test_an_unparsed_model_makes_its_tests_unevaluable_too(project_dir):
 
 
 def test_taking_the_first_element_of_a_multivalued_field_is_detected():
-    """sqlglot names SPLIT_PART's arguments rather than positioning them, and normalises `arr[1]`
+    """sqlglot names SPLIT_PART's arguments rather than positioning them, and normalizes `arr[1]`
     to `arr[0]`. Reading positional args and looking for a literal 1 found nothing at all."""
     from dbt_assay.parse import digest as dg
     assert dg("select split_part(cases, ',', 1) as c from t").first_element_picks
@@ -132,7 +132,7 @@ def test_taking_the_first_element_of_a_multivalued_field_is_detected():
 
 def test_parsing_a_structured_string_is_not_picking_from_a_list():
     """All 8 findings on a real project were deliberate parses: the street out of an address, the
-    prefix of a licence number, the first word of a status. The column's own name is what
+    prefix of a license number, the first word of a status. The column's own name is what
     separates a structured string from a list of equivalent values."""
     from dbt_assay.checks.structural import _LISTY
     for parse in ("SPLIT_PART(street_address, ',', 1)", "SPLIT_PART(license_number, '-', 1)",

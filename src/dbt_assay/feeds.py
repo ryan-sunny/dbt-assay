@@ -53,7 +53,7 @@ def column_samples(subject: FeedSubject, col: str, n: int = 12) -> list:
 def build_state(subject: FeedSubject, cols: list, vocab: dict | None = None) -> dict:
     state = {
         "relation": subject.relation,
-        "columns_under_judgement": [
+        "columns_under_judgment": [
             {"column": c,
              "sample": column_samples(subject, c),
              "profile": _profile_for(subject, c)}
@@ -120,7 +120,7 @@ UNIT_MAX: dict[str, tuple[float, str]] = {
     "gallons_per_minute":    (1.0e7,  "gpm"),
     "feet":                  (1.0e5,  "feet"),       # Everest is 2.9e4
     "miles":                 (1.0e4,  "miles"),
-    "metres":                (1.0e5,  "metres"),
+    "meters":                (1.0e5,  "meters"),
     "currency":              (1.0e12, "a currency amount"),
     "days":                  (1.0e6,  "days"),
 }
@@ -146,6 +146,6 @@ def range_conflicts(unit_family: str, profile: dict, col_index: int | None) -> s
     if mx is not None and mx > hi:
         return (f"the name claims {human}, and the largest value is {mx:,.0f}, "
                 f"which is more than {hi:,.0f}")
-    if mn is not None and mn < 0 and unit_family not in ("currency", "feet", "metres"):
+    if mn is not None and mn < 0 and unit_family not in ("currency", "feet", "meters"):
         return f"the name claims {human}, and the smallest value is {mn:,.2f}, which is negative"
     return None

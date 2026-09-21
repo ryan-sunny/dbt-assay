@@ -354,7 +354,7 @@ def apply_policy(findings, cfg, store, project=None) -> tuple[list, list]:
 
     counts = store.adjudication_counts() if store else {}
     # *** THE RATE IS MEASURED ON THE VERSION SHIPPING NOW. ***
-    # A verdict recorded against v1 of a question is evidence about v1. Letting it authorise v4 to
+    # A verdict recorded against v1 of a question is evidence about v1. Letting it authorize v4 to
     # fail a build is the same error as letting an agent's ruling count as a person's: the number
     # is real and it is about something else.
     rates: dict = {}

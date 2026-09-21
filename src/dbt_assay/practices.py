@@ -433,7 +433,7 @@ def verify_grains(patches: list, project, probe_mod, project_dir: str,
 # What survives is a child that reads a parent, joins it, declares no filter, no group by and no
 # collapse, and still emits a fraction of the rows. That is an inner join dropping silently.
 def row_loss_candidates(entries) -> list[tuple]:
-    """(entry, parent_name) for hops where losing rows would NOT be declared behaviour."""
+    """(entry, parent_name) for hops where losing rows would NOT be declared behavior."""
     out = []
     for e in entries:
         if e.filters_rows or e.aggregates or e.unreadable:

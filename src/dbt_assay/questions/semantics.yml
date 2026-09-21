@@ -57,7 +57,7 @@ sentence_is_a_claim:
   prompt_version: "sentence.v2"
   instructions:
     question: >-
-      Each sentence in `sentences_under_judgement` was written in this model's documentation. For
+      Each sentence in `sentences_under_judgment` was written in this model's documentation. For
       the one named in the question id, what job is that sentence doing?
     note: >-
       Judge the sentence as written. A sentence can be true and still not be a claim about what
@@ -68,7 +68,7 @@ sentence_is_a_claim:
         It asserts something checkable about what this model produces -- its grain, its filters,
         which rows it keeps or drops, what a column contains or means.
       examples: ["one row per customer and order date",
-                 "cancelled rows are filtered out",
+                 "canceled rows are filtered out",
                  "amount is in cents, never dollars"]
     claim_about_a_rule:
       what: >-
@@ -79,7 +79,7 @@ sentence_is_a_claim:
     rationale:
       what: >-
         It explains WHY the code is the way it is, without asserting what the code does.
-      examples: ["a degree of longitude compresses by cos(latitude), so metres matter here",
+      examples: ["a degree of longitude compresses by cos(latitude), so meters matter here",
                  "this is cheaper than the obvious join"]
     incident_or_history:
       what: >-
@@ -108,7 +108,7 @@ claim_alignment:
   # itself, which IS the routing the lint warns about. Kept because it was measured, not assumed:
   # adding that sentence took contradictions from 8 to 5 on a real slice while says_nothing rose
   # from 8 to 14, and a hand-verified false positive disappeared. The field's warning stands --
-  # the answering model may not honour a routing sentence -- and here it demonstrably did.
+  # the answering model may not honor a routing sentence -- and here it demonstrably did.
   acknowledge:
     option_routes_to_another: >-
       measured: naming says_nothing inside contradicts moved a real slice from 8 contradictions to
@@ -162,7 +162,7 @@ description_contradicts_the_code:
       something about this model that the code in `contract` and `filters` does not do?
     note: >-
       Judge CONTRADICTION, not completeness. A summary is not a contradiction of the thing it
-      summarises: prose that is brief, or silent about some column, or that describes the model's
+      summarizes: prose that is brief, or silent about some column, or that describes the model's
       main purpose while the model also emits supporting columns, is NOT wrong. Say yes only if
       something the documentation claims is not true of the code.
   criteria:

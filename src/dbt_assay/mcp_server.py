@@ -200,7 +200,7 @@ class Backend:
                          "before": c.before, "after": c.after, "detail": c.detail,
                          "consumers": len(c.consumers),
                          "aggregating_consumers": c.aggregating_consumers} for c in ch],
-            "summary": diff_mod.summarise(ch) if ch else "Nothing means anything different.",
+            "summary": diff_mod.summarize(ch) if ch else "Nothing means anything different.",
             "still_typing": st.unparsed,
         }
 

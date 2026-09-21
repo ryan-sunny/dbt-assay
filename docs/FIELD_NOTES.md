@@ -167,7 +167,7 @@ Three more, all fixed in 0.7.1.
 - **A question earned a `multi_hop` warning it did not have a version earlier**, kept deliberately
   because one hop could not distinguish the shapes. The lint was right and the trade was not
   expressible. `acknowledge: {multi_hop: "..."}` expresses it, a reason is required, and
-  `assay banks` prints every acknowledgement rather than hiding it.
+  `assay banks` prints every acknowledgment rather than hiding it.
 - **`subject: expression` yields thousands of subjects where `window` yields tens.**
   `assay ask` now prints the count and a cost estimate per family before asking anything, and
   refuses outright above `jev.max_spend_usd`.
@@ -254,7 +254,7 @@ states are cached), and a forced move was caught and failed the command.
 - **The overlap false negative, reproduced with your numbers.** `no_overlap` 0.63 against an
   overlap mass of 0.35, not borderline. Your candidate was right: the sentence that routes to
   another option **by name**. A text check reads that as a disjointness guarantee; the answering
-  model does not honour it. There is now a static rule — `option_routes_to_another` — which needs
+  model does not honor it. There is now a static rule — `option_routes_to_another` — which needs
   no model to be consistent about anything. It caught two shipped families, and both are real:
   `claim_alignment` (kept, with the measurement, acknowledged) and `column_role` (acknowledged as
   **not** separately measured, which is the honest record).
@@ -1027,7 +1027,7 @@ The first was the one recommended before measuring. It would have been a check t
 nothing, which is the class this project has found eight times in other people's code.
 
 **Code clusters first and for free.** Identical first sentences are the same defect and no
-judgement is needed to say so. On the field store that alone took 12 disagreements to 4 groups,
+judgment is needed to say so. On the field store that alone took 12 disagreements to 4 groups,
 and those pairs are never sent to be judged.
 
 **Then the delta, which is the measurement of whether asking was worth anything:**
@@ -1038,7 +1038,7 @@ and those pairs are never sent to be judged.
   2 ruling(s)  hop_multiplies_rows   the join key is unique in the data    (fixed 0.15.0)
   2 ruling(s)  bbox_as_radius        the envelope is a grid cell           (fixed 0.12.0)
 
-code alone found 4 group(s); judgement merged 1 more pair(s) that were worded differently.
+code alone found 4 group(s); judgment merged 1 more pair(s) that were worded differently.
 17 questions, 13,930 input tokens, $0.00059.
 ```
 
@@ -1280,7 +1280,7 @@ assay already held:
 
 - **What is one row of this**, split by who said so: 236 declared by a test, 23 worked out from the
   SQL, 0 judged, and **99 where nothing settles it**. Never summed, because a grain a person wrote
-  down and one a judgement reached at 0.53 are not the same fact. Plus the 21 models with no
+  down and one a judgment reached at 0.53 are not the same fact. Plus the 21 models with no
   uniqueness test at all.
 - **The findings themselves**, eighteen by reach. A page that says `test_cannot_fail 50` and shows
   none of them is a page nobody acts on.
@@ -1505,8 +1505,8 @@ tie-break is not total. assay's own code is Python. The entire structural tier i
 
 `test_assay_on_assay.py` runs assay's METHOD on assay -- claims extracted from its own docstrings,
 plus mechanical guards -- and that is a real loop which has caught real defects. What it cannot do
-is see a dict assignment in a loop and recognise it as the same defect as a non-total window
-ordering. Recognising those two as one class is exactly the semantic step, and the tier that would
+is see a dict assignment in a loop and recognize it as the same defect as a non-total window
+ordering. Recognizing those two as one class is exactly the semantic step, and the tier that would
 do it is the one that does not exist yet: tree-sitter where sqlglot is, a call graph where the DAG
 is.
 
@@ -1544,7 +1544,7 @@ Two families to exactly zero, and nothing about those models had changed.
 
 `live_decisions` resolved "the version shipping now" as `question_id.split("__")[0]` -> the bank
 claiming that prefix -> its `prompt_version`. Three shipped questions file under an id that is not
-their own bank's prefix, so each lookup landed on a NEIGHBOURING family:
+their own bank's prefix, so each lookup landed on a NEIGHBORING family:
 
 ```
 stored question   written by            stored version   prefix resolves to   shipping
@@ -1642,7 +1642,7 @@ claim__0     -> claim_alignment      written by sentence_is_a_claim
 align        -> same_concept         written by claim_alignment
 ```
 
-Two of three shipped questions filed their verdicts under a neighbouring family's name. That
+Two of three shipped questions filed their verdicts under a neighboring family's name. That
 reaches `mcp_server.rule()`, which writes that name into `adjudications.family`; `store`'s
 per-family human counts, which are what `min_adjudications` gates on; and `review -i`, which
 prints it. **A human verdict on a `claim_alignment` question counted toward `same_concept`'s gate
@@ -1671,7 +1671,7 @@ byte-identical text, so what survived in the field were pairs differing by a bac
 full stop — `int_water_diversion_history` at 0.95 and again at 0.93, one sentence a person had put
 in both a header and a schema description. The key strips punctuation **and nothing else**:
 dropping stop words or stemming would collapse two claims that genuinely differ, and the louder a
-normaliser is the more quietly it loses one of them. Both sentences are printed for every merge.
+normalizer is the more quietly it loses one of them. Both sentences are printed for every merge.
 
 ### `hop_drops_most_rows` has an end-to-end control
 
@@ -1848,7 +1848,7 @@ children per model   median 1   p95 4    max 20   (stg_adwr_sections)
 boxes in a drawing   median 3   p95 12   max 37
 ```
 
-A drawing is always one model's neighbourhood, so 95% of them are twelve boxes or fewer and need
+A drawing is always one model's neighborhood, so 95% of them are twelve boxes or fewer and need
 no graph algorithm: three bands, straight lines, driving parents first because the driving edge is
 the spine.
 
@@ -1916,7 +1916,7 @@ runs, as tables. Zero `<pre>` blobs on either tab, asserted.
 There were two record stylesheets, a loud one and a sober one, and the loud one was the default.
 Once the record moved inside the explorer as a tab it was the only styled surface on a dense page
 of plain tables, which reads as an accident rather than as emphasis. One style now, the sober one,
-and `PAGE_CSS` is deleted rather than left unused. Colour stays where it carries meaning: a pill
+and `PAGE_CSS` is deleted rather than left unused. Color stays where it carries meaning: a pill
 for provenance, red for a contradiction, amber for a confidence under the gate.
 
 ### Two defects, both found by driving it again
@@ -2160,7 +2160,7 @@ scroll. A node near the left edge therefore had half its card clipped away by th
 that made the graph readable.
 
 `position: fixed` on the body escapes every ancestor's overflow, so the only thing left that can
-cut it is the viewport, and that is clamped: centred under the node, pushed inside on either edge,
+cut it is the viewport, and that is clamped: centered under the node, pushed inside on either edge,
 flipped above when there is no room below, pinned to the top and scrolling inside itself when
 there is room for neither.
 
@@ -2180,3 +2180,26 @@ panel: nothing removes it when that panel changes. Scrolling moves the node out 
 switching tabs replaces everything it described, so both dismiss it, as do Escape and a click
 anywhere outside -- the last being the only way out on a touch device, where there is no canvas
 to click. A click INSIDE the card must not dismiss it, or its own buttons could never be reached.
+
+### And we speak American English here
+
+A UI button read `centre the graph here`. Sweeping the rest found 155 British spellings across 40
+files: `colour`, `neighbourhood`, `normalise`, `judgement`, `labelled`, `metres`, and a handful of
+identifiers (`normalise_reason`, `summarise`) that needed their call sites moved with them.
+
+**The question banks were the part worth thinking about**, because their text is what gets SENT,
+and this codebase's rule is that a question's text and its `prompt_version` move together.
+
+- `metres` in `feeds.yml` is an **option name**. The model returns that literal string and the
+  code keys its unit bounds on it, so a spelling change there is material in both directions.
+  `feed.units.v3` became `v4`. Zero stored answers on the field warehouse, so it cost nothing,
+  and it would have cost a re-ask on a warehouse that had used it.
+- The rest were **prose in a note, an example, or a YAML comment**. Those changed without a
+  version bump, and the reason is worth recording rather than assuming: *a version boundary that
+  means nothing is a false signal in `effectiveness`*. The version exists so a rewrite that moved
+  answers can be detected. An orthography change cannot move an answer, and bumping for one would
+  permanently split that family's agreement history at a point where nothing happened.
+
+The first fix and the last one are the same defect from opposite ends: a test asserting `meters`
+against a bank saying `metres` failed immediately, which is the sweep catching its own
+one-fact-two-spellings the moment it created one.

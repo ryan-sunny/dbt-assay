@@ -241,17 +241,17 @@ def lint_question(name: str, q: dict, shipped: dict | None = None) -> list[Issue
     if not crit and kind != "noul":
         add("error", "criteria", "no criteria. The options are the question.")
     # An acknowledged rule is silenced HERE, at the end, so the checks above stay simple and an
-    # acknowledgement of a rule that never fired is itself visible as dead config.
+    # acknowledgment of a rule that never fired is itself visible as dead config.
     return [i for i in out if i.rule not in ack or i.rule == "acknowledge"]
 
 
 def _check_cross_references(name: str, crit: dict, out: list[Issue]) -> None:
-    """*** AN OPTION THAT NAMES ANOTHER OPTION IS ROUTING, AND THE MODEL MAY NOT HONOUR IT. ***
+    """*** AN OPTION THAT NAMES ANOTHER OPTION IS ROUTING, AND THE MODEL MAY NOT HONOR IT. ***
 
     Reported from the field with numbers. A question whose `something_else` said "if they are
     ranked by a non-priority column the answer is something_else, not this" scored `no_overlap`
     0.63 against an overlap mass of 0.35 -- the judged check read the routing as a disjointness
-    guarantee and passed it. The answering model did NOT honour it: the same subject came back
+    guarantee and passed it. The answering model did NOT honor it: the same subject came back
     under both options at 0.55 and 0.63.
 
     A text check believes prose. This is the one shape where believing it is known to be wrong,
@@ -276,7 +276,7 @@ def _check_cross_references(name: str, crit: dict, out: list[Issue]) -> None:
                     name, "warn", "option_routes_to_another",
                     f"option {k!r} names {other!r} in its own description. That tells the model "
                     f"where to send a case instead of describing this option, and it may not "
-                    f"honour it -- measured: a question doing exactly this passed the overlap "
+                    f"honor it -- measured: a question doing exactly this passed the overlap "
                     f"check at 0.63 while the answering model put one subject under both options. "
                     f"Describe what {k!r} IS; let the other option describe itself."))
                 return
@@ -288,7 +288,7 @@ def _check_options_separate(name: str, crit: dict, out: list[Issue]) -> None:
     Measured on assay's own question: `documentation_states_it` and `documentation_implies_it`
     both lead to the same action and are not separable, and the answers sat at 0.36-0.39 until
     they were merged. A description that explains an option without distinguishing it from its
-    neighbour gives the model nothing to cut on.
+    neighbor gives the model nothing to cut on.
     """
     described = {k: _text(v).lower() for k, v in crit.items()}
     for k, t in described.items():
@@ -325,7 +325,7 @@ def lint_all(banks: dict, shipped: dict | None = None) -> list[Issue]:
 
 
 def acknowledged_issues(banks: dict, shipped: dict | None = None) -> list[Issue]:
-    """What each question silenced, and why. Shown rather than hidden: an acknowledgement is a
+    """What each question silenced, and why. Shown rather than hidden: an acknowledgment is a
     decision someone made, and the next reader deserves to see it."""
     out: list[Issue] = []
     for name, q in sorted(banks.items()):

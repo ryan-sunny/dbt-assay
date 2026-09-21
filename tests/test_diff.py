@@ -70,7 +70,7 @@ def test_the_summary_says_what_a_reviewer_needs_not_a_data_structure():
     c = diff.compare([before], [after])
     c[0].consumers = ["a", "b"]
     c[0].aggregating_consumers = ["b"]
-    text = diff.summarise(c)
+    text = diff.summarize(c)
     assert "one row per" not in text.lower() or "moves from" in text
     assert "2 models consume it" in text
     assert "aggregates over it" in text          # one aggregating consumer, so singular
@@ -80,11 +80,11 @@ def test_the_summary_says_what_a_reviewer_needs_not_a_data_structure():
 def test_the_summary_reads_as_english_for_one_and_for_many():
     """This paragraph is the headline output; it should not say '1 models consume it'."""
     c = diff.Change("m", "grain", detail="d", consumers=["a"], aggregating_consumers=["a"], marts=1)
-    one = diff.summarise([c])
+    one = diff.summarize([c])
     assert "1 model consumes it" in one and "1 of them aggregates over it" in one
     assert "1 mart downstream" in one
     c2 = diff.Change("m", "grain", detail="d", consumers=["a", "b"],
                      aggregating_consumers=["a", "b"], marts=3)
-    many = diff.summarise([c2])
+    many = diff.summarize([c2])
     assert "2 models consume it" in many and "2 of them aggregate over it" in many
     assert "3 marts downstream" in many

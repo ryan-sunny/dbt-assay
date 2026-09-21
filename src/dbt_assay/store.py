@@ -73,7 +73,7 @@ create table if not exists findings (
     primary key (run_id, check_name, subject, summary)
 );
 create table if not exists adjudications (
-    -- *** THE LABELLED SET, MANUFACTURED BY USE. ***
+    -- *** THE LABELED SET, MANUFACTURED BY USE. ***
     -- Every human verdict recorded here is one row of evidence about a QUESTION, not just about a
     -- finding. It is the only thing that ever earns a question the right to fail a build, which is
     -- why config refuses to gate below min_adjudications. A tool without this loop ships flag-only
@@ -115,7 +115,7 @@ create table if not exists edge_facts (
     primary key (run_id, parent, child)
 );
 -- *** CLAIMS ARE DATA, NOT PROSE, AND THE ID MUST OUTLIVE A REWORDING. ***
--- A verdict attaches to claim_id. It is a hash of (subject, normalised text), so reflowing a
+-- A verdict attaches to claim_id. It is a hash of (subject, normalized text), so reflowing a
 -- paragraph around a claim does not orphan the ruling that was made on it.
 create table if not exists claims (
     claim_id      varchar primary key,
@@ -206,7 +206,7 @@ class Store:
 
     # *** A QUESTION THAT MOVES TO ITS OWN PREFIX TAKES ITS STORED ANSWERS WITH IT. ***
     # `sentence_is_a_claim` filed under `claim__N` and `claim_alignment` filed under `align`, each
-    # one a prefix a NEIGHBOURING bank declares. Fixing the emitted ids without moving the rows
+    # one a prefix a NEIGHBORING bank declares. Fixing the emitted ids without moving the rows
     # would orphan 7,536 answers on the field store: the writer would ask under the new id, find
     # no cached answer, and pay to re-ask a question whose TEXT never changed. So the ids move and
     # the answers move with them, which is a rename and not a re-ask -- state hashes are unchanged,
@@ -650,7 +650,7 @@ class Store:
         *** THE FIRST VERSION HID 7,536 ANSWERS AND CALLED IT `246 resolved`. ***
         It resolved "the version shipping now" by splitting the question id on `__` and looking
         the prefix up as a bank's id_prefix. Three shipped questions file under an id that is not
-        their own bank's prefix, so each lookup landed on a NEIGHBOURING family and compared its
+        their own bank's prefix, so each lookup landed on a NEIGHBORING family and compared its
         version against someone else's. Two whole families -- `code_contradicts_a_claim` (213
         findings) and `description_contradicts_the_code` (18) -- went to exactly zero while
         nothing about those models had changed.

@@ -562,10 +562,10 @@ def test_code_groups_identical_reasons_before_anything_is_asked():
     Eight of ten reasons on a real store opened with the same sentence. Code grouped those for
     nothing, and the pairs it settled are never sent: if a parser can answer it, Jev is not asked.
     """
-    from dbt_assay.subjects import candidate_pairs, normalise_reason
+    from dbt_assay.subjects import candidate_pairs, normalize_reason
 
-    assert normalise_reason("A UNION MEMBER cannot multiply. Several of these aggregate.") == \
-           normalise_reason("a union member cannot multiply! and then something else entirely")
+    assert normalize_reason("A UNION MEMBER cannot multiply. Several of these aggregate.") == \
+           normalize_reason("a union member cannot multiply! and then something else entirely")
 
     s = _dis_store([("hop", "Union member. Detail one."),
                     ("hop", "Union member! Detail two, quite different."),
@@ -574,7 +574,7 @@ def test_code_groups_identical_reasons_before_anything_is_asked():
         pairs = candidate_pairs(s)
     finally:
         s.close()
-    asked = {(a["family"], normalise_reason(a["note"]), normalise_reason(b["note"]))
+    asked = {(a["family"], normalize_reason(a["note"]), normalize_reason(b["note"]))
              for _k, a, b in pairs}
     assert len(pairs) == 2, "the two identical-first-sentence rulings were sent to be judged"
     assert all(x[1] != x[2] for x in asked)
@@ -982,7 +982,7 @@ def test_the_record_has_one_style_and_nothing_to_explain():
 
 
 def test_the_page_never_adds_a_declared_grain_to_a_judged_one():
-    """A grain a person wrote down and one a judgement reached at 0.53 are not the same fact."""
+    """A grain a person wrote down and one a judgment reached at 0.53 are not the same fact."""
     doc = _page(grain={"declared": 7, "derived": 11, "judged": 3, "none": 5})
     for n in ("7", "11", "3", "5"):
         assert f">{n}</b>" in doc or f">{n}<" in doc, n
@@ -1263,7 +1263,7 @@ def test_the_reader_never_hides_an_answer_on_a_guess_about_its_family():
 
     It resolved "the version shipping now" by splitting the question id on `__` and looking the
     prefix up as a bank's id_prefix. Three shipped questions file under an id that is NOT their
-    own bank's prefix, so each lookup landed on a neighbouring family: `sentence_is_a_claim`
+    own bank's prefix, so each lookup landed on a neighboring family: `sentence_is_a_claim`
     files under `claim__N` and read `claim_alignment`'s version; `claim_alignment` files under
     `align` and read `same_concept`'s. Two whole families went to exactly zero, 213 findings and
     18, while nothing about those models had changed.
@@ -1358,7 +1358,7 @@ def test_no_question_id_resolves_to_another_family():
     RECONCILED IN 0.24.2. `kind_questions` emits `sentence__N` and `align_question` emits
     `claim`, each matching its own bank's declared `id_prefix`, and `Store.MOVED_QUESTION_IDS`
     carried the 7,536 stored answers across without re-asking anything. This was an xfail for one
-    release; it is an assertion now, and a new question that files under a neighbour's prefix
+    release; it is an assertion now, and a new question that files under a neighbor's prefix
     fails here rather than being discovered by 231 findings going missing.
     """
     from dbt_assay.contracts import id_prefix_conflicts
@@ -1420,7 +1420,7 @@ def test_a_question_that_moved_prefix_takes_its_stored_answers_with_it(tmp_path)
     """*** A RENAME, NOT A RE-ASK. ***
 
     `sentence_is_a_claim` filed under `claim__N` and `claim_alignment` under `align`, each a
-    prefix a neighbouring bank declares. Fixing the emitted ids alone would have orphaned 7,536
+    prefix a neighboring bank declares. Fixing the emitted ids alone would have orphaned 7,536
     answers on the field store: the writer asks under the new id, finds no cached answer, and pays
     to re-ask a question whose TEXT never changed. The answers move with the id.
 
@@ -1492,7 +1492,7 @@ def test_a_question_id_that_cannot_move_is_kept_and_named(tmp_path):
 def test_the_rename_does_not_match_a_single_underscore_wildcard(tmp_path):
     """`like 'claim__%'` matches `claimXY` too, because `_` is a wildcard in LIKE and the ids
     being moved end in a DOUBLE underscore. `starts_with` is the whole fix and this is what says
-    so: a neighbouring id that merely begins with the same letters must not move."""
+    so: a neighboring id that merely begins with the same letters must not move."""
     from dbt_assay.store import Store
 
     p = _planted_store(tmp_path, [("m::x", "claimXY", "v1", "untouched"),
@@ -1519,7 +1519,7 @@ def test_near_duplicate_claims_collapse_but_two_real_claims_do_not():
     description. `claim_id` collapses byte-identical text, so the survivors differed by a
     backtick or a trailing full stop.
 
-    The other half matters more: a normaliser aggressive enough to collapse two claims that
+    The other half matters more: a normalizer aggressive enough to collapse two claims that
     genuinely differ loses one of them quietly, so this asserts what must NOT collapse.
     """
     from dbt_assay.claims import near_duplicate_key as k

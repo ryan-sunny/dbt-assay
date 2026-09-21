@@ -30,7 +30,7 @@ TABLES = {
                 "with the blast radius that ranks them.",
     "model_decisions": "One row per ANSWER. The full probability distribution, the state hash, and "
                        "the prompt and model versions that produced it.",
-    "adjudications": "One row per human verdict. The labelled set, manufactured by use; nothing "
+    "adjudications": "One row per human verdict. The labeled set, manufactured by use; nothing "
                      "gates a build until a question has enough of these.",
     "observed_keys": "One row per (relation, column) the probe counted, with the row count and the "
                      "day it was observed. Unique in that day's data is not a constraint.",

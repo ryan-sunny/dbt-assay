@@ -7,7 +7,7 @@ cannot hallucinate. A judgment is only reached for meaning the AST does not carr
 *** POSITION IS THE WHOLE POINT. ***
 A defect is rarely "this function appears". It is "this function appears HERE". Measured on a real
 model: `ST_Distance` (degrees) sits in a projection where it is only reported, while the ranking
-orders by `ST_Distance_Sphere` (metres) and is correct. A text search flags that model; the AST
+orders by `ST_Distance_Sphere` (meters) and is correct. A text search flags that model; the AST
 clears it. Four hand-written static guards failed on this exact distinction before -- one missed a
 sort on an ALIAS, one ran a character window past the clause -- and an AST has neither failure mode.
 """
@@ -40,7 +40,7 @@ def func_name(node: exp.Expression) -> str:
     sqlglot returns `sql_name()` (already upper) for a function it models natively and the verbatim
     source spelling for an `Anonymous` one, so `ST_Distance` and `ST_MakeEnvelope` came back in
     different cases from the same query. A caller comparing against a constant set would then match
-    one and miss the other, which is a silent miss rather than an error. Normalised here so no
+    one and miss the other, which is a silent miss rather than an error. Normalized here so no
     caller has to remember.
     """
     if isinstance(node, exp.Anonymous):
@@ -302,7 +302,7 @@ class WindowFact:
     partition_columns: list[str] = field(default_factory=list)
     order_roots: list[str] = field(default_factory=list)  # what each order key roots in
     order_sql: list[str] = field(default_factory=list)
-    # *** A DISTANCE MEASURED AFTER A REPROJECTION IS IN METRES, NOT DEGREES. ***
+    # *** A DISTANCE MEASURED AFTER A REPROJECTION IS IN METERS, NOT DEGREES. ***
     # `ST_Distance(ST_Transform(p, 'EPSG:4326', 'EPSG:5070'), ..)` is CORRECT code. Flagging it is
     # how a hand-written guard failed on its second attempt: it banned the function outright and
     # caught the one model that had already done the right thing.
@@ -608,9 +608,9 @@ def _extract(tree, name: str, dialect: str) -> Digest:
     # Referencing it unconditionally makes assay fail to parse ANY model on an older sqlglot,
     # which is worse than losing one dialect check. The declared floor is 28 for this reason and
     # the fallback keeps a narrower floor viable for anyone who pins deliberately.
-    # *** THE ARGUMENT IS NAMED, NOT POSITIONAL, AND THE INDEX IS NORMALISED. ***
+    # *** THE ARGUMENT IS NAMED, NOT POSITIONAL, AND THE INDEX IS NORMALIZED. ***
     # sqlglot parses SPLIT_PART into a node whose parts are `this`/`delimiter`/`part_index`, so
-    # reading positional arguments found nothing at all. And `arr[1]` is normalised to `arr[0]`,
+    # reading positional arguments found nothing at all. And `arr[1]` is normalized to `arr[0]`,
     # so a check looking only for a literal 1 is silently blind to every array pick.
     for _fn in tree.find_all(exp.Func):
         if func_name(_fn) in ("SPLIT_PART", "SPLITPART"):

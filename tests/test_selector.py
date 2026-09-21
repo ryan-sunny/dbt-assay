@@ -4,7 +4,7 @@ from dbt_assay.manifest import Project
 from dbt_assay.selector import SelectorError, resolve, validate
 
 
-def test_syntax_assay_cannot_honour_is_an_error_not_a_silent_match_all():
+def test_syntax_assay_cannot_honor_is_an_error_not_a_silent_match_all():
     """A selector that is silently ignored scopes nothing while looking as though it did."""
     for bad in ("fqn:a.b", "source:raw.x", "exposure:dash", "test_type:generic"):
         with pytest.raises(SelectorError):

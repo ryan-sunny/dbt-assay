@@ -20,7 +20,7 @@ assay reads your compiled SQL and recovers the meaning. It does it with two thin
   was already filtered away? Is this hop a union or a join? Those are facts, and facts are free.
 - **Jev** answers the rest. Jev is a TypeSafe System One model: you give it a small piece of state
   and a question with named options, and it returns a typed answer with a probability. No prose,
-  no reasoning trace, no essay to parse. A judgement you can put in an `if`.
+  no reasoning trace, no essay to parse. A judgment you can put in an `if`.
 
 And then the part that makes it a tool instead of a demo: every answer is **stored**, a person can
 **rule on it**, and those rulings are what decide whether a check is allowed to fail your build.
@@ -240,7 +240,7 @@ model, answers by the question family that asked them, findings by check. And a 
 table is a link to that model, so the tabs are one thing rather than eight islands.
 
 **The chain is drawn, not listed.** You never draw 573 hops; that is the whole graph. A drawing is
-always one model's neighbourhood, and those are small: on a 358-model warehouse the median is 3
+always one model's neighborhood, and those are small: on a 358-model warehouse the median is 3
 boxes, p95 is 12, the worst is 37. So it is three bands and straight lines, with each edge's join
 kind, keys and dropped count written on the parent box rather than on the line, because eight
 lines converging on one focus turn line labels into mush. Past nine in a band it degrades to a

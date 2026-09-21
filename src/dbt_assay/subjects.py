@@ -174,7 +174,7 @@ def _predicates(project, digests, schema) -> list[Subject]:
                                if x.strip() not in ("1 = 1", "TRUE", "true")][:20]):
             out.append(Subject(
                 "predicate", f"{uid}::pred::{i}", uid, f"{m.name}: {p[:48]}", file=m.path,
-                state=_prune({"model": m.name, "predicate_under_judgement": p,
+                state=_prune({"model": m.name, "predicate_under_judgment": p,
                               "the_models_other_filters":
                                   [x for x in (d.predicates_atomic or []) if x != p][:8],
                               "reads": [project.name_of(x) for x in (m.parents or [])][:6]})))
@@ -239,7 +239,7 @@ def _add_what_a_row_is(subs: list[Subject], project, digests, schema) -> None:
     the state to be found.
 
     assay already knows. `relate.declared_keys` has what a person wrote down, and the inventory
-    has what code worked out. Both go in, labelled by which is which, because a declared key is a
+    has what code worked out. Both go in, labeled by which is which, because a declared key is a
     human judgment and an inferred grain is not.
     """
     from . import relate
@@ -303,7 +303,7 @@ _PUNCT = re.compile(r"[^a-z0-9 ]+")
 _WS = re.compile(r"\s+")
 
 
-def normalise_reason(text: str) -> str:
+def normalize_reason(text: str) -> str:
     """The first sentence, lowercased and stripped, which is the free half of the clustering."""
     first = re.split(r"(?<=[.!?])\s", (text or "").strip(), maxsplit=1)[0]
     return _WS.sub(" ", _PUNCT.sub(" ", first.lower())).strip()
@@ -336,7 +336,7 @@ def candidate_pairs(store, cap: int = 300) -> list[tuple]:
     *** THE STRUCTURAL TIER FIRST, AS EVERYWHERE ELSE. ***
     Pairing is O(n^2), so only same-family pairs are built and the whole thing is capped. Two
     reasons whose first sentence is already identical are NOT asked about: code settled it, so Jev
-    is never asked, and the delta between what code clusters and what judgement clusters is the
+    is never asked, and the delta between what code clusters and what judgment clusters is the
     measurement of whether asking was worth anything at all. On the warehouse this was built
     against, eight of ten reasons opened with the same sentence and code grouped them for free.
     """
@@ -349,7 +349,7 @@ def candidate_pairs(store, cap: int = 300) -> list[tuple]:
         for i in range(len(items)):
             for j in range(i + 1, len(items)):
                 a, b = items[i], items[j]
-                if normalise_reason(a["note"]) == normalise_reason(b["note"]):
+                if normalize_reason(a["note"]) == normalize_reason(b["note"]):
                     continue                  # code already grouped these; asking adds nothing
                 out.append((f"pair::{fam}::{_pair_id(a, b)}", a, b))
                 if len(out) >= cap:

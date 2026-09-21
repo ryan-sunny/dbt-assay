@@ -383,7 +383,7 @@ def test_one_added_ruling_is_one_added_line(tmp_path):
 def test_the_lineage_never_draws_the_whole_dag():
     """*** YOU NEVER DRAW 573 HOPS. ***
 
-    Measured on a 358-model warehouse: median 3 boxes in a neighbourhood, p95 12, max 37. So the
+    Measured on a 358-model warehouse: median 3 boxes in a neighborhood, p95 12, max 37. So the
     drawing is three bands and straight lines, and past `BAND_MAX` it degrades to a list, because
     36 boxes with 36 converging lines is the hairball the drawing exists to avoid.
 
@@ -719,7 +719,7 @@ def test_the_card_says_what_the_model_is_before_you_go_there():
     assert "m.description" in card, "the card does not say what the model is"
     # a node can be a SOURCE, which has no model entry, and that must not render an empty card
     assert "A source, or a relation outside this project" in card
-    assert "centre the graph here" in card and "open in Models" in card
+    assert "center the graph here" in card and "open in Models" in card
 
 
 def test_a_group_of_claims_says_what_its_model_is():

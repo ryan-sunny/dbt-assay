@@ -124,7 +124,7 @@ answer: `adjudications` carries `decided_by` and `source`.
 - The overlap judge scored one five-option family at mass **0.35** where a reconstruction scored
   0.74. The likeliest difference is an option that **routes to another by name** — "the answer is
   `something_else`, not this" — which reads as disjoint to a text check while the answering model
-  does not honour it.
+  does not honor it.
 
 ---
 
@@ -265,7 +265,7 @@ defects in `FIELD_NOTES.md`, this time in the write path of the feature built to
 while its own note says *"Findings an agent has read are first: a person confirming a reading is one
 keypress."* The feature is described in its own output and does not work.
 
-> **Fix:** normalise in `rule()` — resolve a bare name to the model's `unique_id` — and reject a
+> **Fix:** normalize in `rule()` — resolve a bare name to the model's `unique_id` — and reject a
 > subject that matches no finding and no decision. A ruling nobody can join is not evidence, which
 > is the same argument the tool already makes for a waiver without a reason.
 
@@ -411,7 +411,7 @@ next**, so a silent truncation there chooses its reading order for it.
 ## One smaller thing
 
 `findings()` carries no reading — `an_agent_already_said` exists only on `review_queue()` items. That
-is defensible as a division of labour, but an agent that calls `findings(check='hop_multiplies_rows')`
+is defensible as a division of labor, but an agent that calls `findings(check='hop_multiplies_rows')`
 to read a family end to end gets 30 findings with no indication that 9 of the 11 models already
 have a reading recorded. It re-reads what it already read.
 
@@ -522,7 +522,7 @@ is worse than no verify pass, because the true contradictions are buried in it.
 
 **Duplicates are also inflating the count.** `int_water_diversion_history` appears at 0.95 and 0.93
 with near-identical sentences, `stg_cdss_dams` at 0.95 and 0.93 — the same claim extracted from a
-model header and from its schema description. Deduplicating on normalised text would cut the list
+model header and from its schema description. Deduplicating on normalized text would cut the list
 before anyone reads it.
 
 ## Smaller
@@ -543,7 +543,7 @@ config             seniority: human 8, "12 more"      was human 0, "20 more"
                    column_is_part_of_the_key: labels 82, still "20 more"
 ```
 
-Both behaviours right: the eight verdicts count toward a gate floor, and the 82 labels correctly do
+Both behaviors right: the eight verdicts count toward a gate floor, and the 82 labels correctly do
 not. `meta.read_by` on `well_documents` suppresses its completeness finding and the wording is now
 *"nothing in this dbt project reads"*, which is the true statement.
 

@@ -1,6 +1,6 @@
 """Replay a repository's own history and measure whether the checks catch what it already fixed.
 
-*** THE LABELLED SET NOBODY WROTE ON PURPOSE. ***
+*** THE LABELED SET NOBODY WROTE ON PURPOSE. ***
 A commit that removed a defect is that defect and its repair, sitting in the history. Replaying the
 pair asks the only question that matters about a check: did it fire before and go quiet after? That
 is a regression suite, a way for a stranger to verify the tool on their OWN repo before adopting

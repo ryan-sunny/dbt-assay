@@ -14,7 +14,7 @@ from __future__ import annotations
 import html
 from datetime import datetime, timezone
 
-SOURCE_COLOUR = {
+SOURCE_COLOR = {
     "declared": ("#1f6f43", "a human wrote it down"),
     "observed": ("#1d4e89", "the probe counted it"),
     "derived": ("#6b5b1f", "code worked it out"),
@@ -70,9 +70,9 @@ cards.forEach(c=>c.classList.toggle('hidden',t&&!c.dataset.hay.includes(t)));});
 
 
 def _pill(source: str, confidence=None) -> str:
-    colour, why = SOURCE_COLOUR.get(source, SOURCE_COLOUR["unknown"])
+    color, why = SOURCE_COLOR.get(source, SOURCE_COLOR["unknown"])
     label = source if confidence is None else f"{source} {confidence:.2f}"
-    return f'<span class="pill" style="background:{colour}" title="{why}">{label}</span>'
+    return f'<span class="pill" style="background:{color}" title="{why}">{label}</span>'
 
 
 def inventory_html(entries, project_name: str, describe) -> str:
@@ -136,7 +136,7 @@ def inventory_html(entries, project_name: str, describe) -> str:
 {''.join(cards)}</div>
 <footer>Every cell says where it came from. <b>declared</b> means a human wrote it down,
 <b>observed</b> means the probe counted it, <b>derived</b> means code worked it out from the SQL and
-the DAG, and <b>judged</b> carries the probability a model answered with. A judgement is not a
+the DAG, and <b>judged</b> carries the probability a model answered with. A judgment is not a
 fact, and nothing here pretends otherwise.</footer>
 <script>{JS}</script></body></html>"""
 
@@ -147,7 +147,7 @@ fact, and nothing here pretends otherwise.</footer>
 # `generated_at` and never a wall clock, because a page that churns on every run cannot be
 # committed and a page that cannot be committed cannot show you what moved.
 # *** ONE RECORD STYLE, AND IT IS THE SOBER ONE. ***
-# There used to be a second, colourful stylesheet for the default page. Once the record moved
+# There used to be a second, colorful stylesheet for the default page. Once the record moved
 # inside the explorer as a tab it became the only styled surface on a dense page of plain tables,
 # which reads as an accident rather than as emphasis. A half-applied theme is worse than none.
 PLAIN_CSS = """
@@ -347,7 +347,7 @@ other.</p>
   <em>nobody knows what one row of these is</em></div>
 </div>
 <p class="note">Responsibility number one, and the one every other answer rests on. A grain a
-person declared and one a judgement reached at 0.53 are not the same fact, so they are not counted
+person declared and one a judgment reached at 0.53 are not the same fact, so they are not counted
 together. <b>{data['no_unique_test']}</b> model(s) have no uniqueness test at all.</p>
 
 <h2>The findings themselves</h2>

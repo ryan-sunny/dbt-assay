@@ -186,7 +186,7 @@ def _claim_is_unanswerable(v: dict, claim_text: dict, uid, project, digests, sch
     *** THE SAME REFUSAL THE CALL SITE APPLIES, ON THE ANSWERS THAT PREDATE IT. ***
     `claims.unanswerable_from_sql` decides what `verify` is willing to ask. A stored answer given
     before that shipped has no idea, and the two hand-read false positives at p=0.95 were both of
-    exactly this shape. Re-asking would clear them too, at a cost; recognising them costs nothing
+    exactly this shape. Re-asking would clear them too, at a cost; recognizing them costs nothing
     and does not depend on anyone remembering to re-run.
 
     The claim text comes from the claims table by way of the decision key, NOT from the stored
@@ -220,7 +220,7 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
             by_child.setdefault(f.child, {})[f.parent_name] = list(f.joined_on)
     name_to_uid = {m.name: uid for uid, m in project.models.items()}
     # *** THE REFUSAL RAN AT THE CALL SITE AND NOWHERE ELSE, SO OLD ANSWERS KEPT PRODUCING
-    # FINDINGS. *** 0.23.0 taught `verify` to recognise the two claim shapes SQL cannot settle and
+    # FINDINGS. *** 0.23.0 taught `verify` to recognize the two claim shapes SQL cannot settle and
     # not to ask them, which cut contradictions 389 -> 240. It changed no `prompt_version`, because
     # the QUESTION did not change -- only which subjects are worth sending. So every answer given
     # before it shipped is still the live answer, is not stale, and still becomes a finding here.

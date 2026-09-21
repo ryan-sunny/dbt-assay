@@ -53,8 +53,8 @@ class Claim:
 def claim_id(subject: str, text: str) -> str:
     """Stable across rewording of everything EXCEPT this claim.
 
-    A verdict is attached to this id, so it must not move when a neighbouring sentence changes.
-    Normalised on whitespace and case so reflowing a paragraph does not orphan a ruling.
+    A verdict is attached to this id, so it must not move when a neighboring sentence changes.
+    Normalized on whitespace and case so reflowing a paragraph does not orphan a ruling.
     """
     norm = " ".join(text.lower().split())
     return hashlib.sha256(f"{subject}\x00{norm}".encode()).hexdigest()[:16]
@@ -168,7 +168,7 @@ def near_duplicate_key(subject: str, text: str) -> tuple[str, str]:
 
     *** IT STRIPS PUNCTUATION AND NOTHING ELSE. ***
     Dropping stop words or stemming would collapse two claims that genuinely differ, and the
-    louder a normaliser is the more quietly it loses one of them. Scoped to the model, because
+    louder a normalizer is the more quietly it loses one of them. Scoped to the model, because
     the same sentence about two models is two claims.
     """
     return subject, " ".join(_PUNCT.sub(" ", (text or "").lower()).split())
@@ -198,7 +198,7 @@ def candidates(project, digests, shared: set[str] | None = None) -> list[Claim]:
 
 
 def kind_questions(items: list[Claim]) -> dict:
-    # *** THE ID MUST CARRY ITS OWN BANK'S PREFIX, AND FOR EIGHT RELEASES IT CARRIED A NEIGHBOUR'S.
+    # *** THE ID MUST CARRY ITS OWN BANK'S PREFIX, AND FOR EIGHT RELEASES IT CARRIED A NEIGHBOR'S.
     # This is `sentence_is_a_claim`, whose bank declares `id_prefix: sentence`. It filed under
     # `claim__N`, which `claim_alignment` declares, so every resolution from a stored id to a
     # family landed one family over: verdicts counted toward the wrong gate floor, `review -i`
@@ -212,7 +212,7 @@ def kind_questions(items: list[Claim]) -> dict:
 def kind_state(model_name: str, items: list[Claim], purpose: str = "",
                vocab: dict | None = None) -> dict:
     st: dict = {"model": model_name,
-                "sentences_under_judgement": [c.text for c in items]}
+                "sentences_under_judgment": [c.text for c in items]}
     if purpose:
         st["what_this_model_is_for"] = purpose[:300]
     if vocab:
@@ -274,7 +274,7 @@ def unanswerable_from_sql(claim_text: str, ev: dict) -> str:
 
     Both are the shape claim_alignment v4 already addressed with "absence is not disagreement",
     which holds for one claim at a time and stops holding at scale. So the two cases that cannot
-    be answered are now RECOGNISED BEFORE THE CALL rather than argued into the criteria, which
+    be answered are now RECOGNIZED BEFORE THE CALL rather than argued into the criteria, which
     also means they cost nothing.
     """
     named = ev.get("columns_this_claim_names") or {}

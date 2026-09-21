@@ -1,6 +1,6 @@
 # Do two columns in different models mean the same thing?
 #
-# *** THE PROJECT ALREADY LABELLED THIS AND NOBODY NOTICED. ***
+# *** THE PROJECT ALREADY LABELED THIS AND NOBODY NOTICED. ***
 # If a model joins `a.county = b.county_name`, somebody asserted those are the same concept. That
 # is a free positive label set, the same trick the declared keys gave grain, and it is what makes
 # this family measurable on day one.

@@ -1,8 +1,8 @@
 """Grain: candidates from code, the minimal key from a judgment.
 
 *** THE QUESTION IS NOT 'WHAT IS THE GRAIN'. ***
-Measured against the 209 models in a real project that declare their own key -- a labelled set the
-project already contained, needing no human labelling -- code alone proposes a candidate column set
+Measured against the 209 models in a real project that declare their own key -- a labeled set the
+project already contained, needing no human labeling -- code alone proposes a candidate column set
 for 80 of them, is exactly right on 45%, and on 62% the declared key is a SUBSET of what code
 proposed, with a median of 3 surplus columns.
 
@@ -30,7 +30,7 @@ from .parse import Digest
 
 
 def _load_bank(path: Path) -> dict:
-    """Normalise YAML's boolean keys back to strings.
+    """Normalize YAML's boolean keys back to strings.
 
     YAML 1.1 reads a bare `true:` key as the boolean True, so a hand-written bank that omits the
     quotes loads with {True: ..} and every lookup by "true" raises. assay ships quoted keys, but a

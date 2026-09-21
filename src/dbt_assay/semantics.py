@@ -32,7 +32,7 @@ _SKIP = ("1 = 1", "TRUE", "true")
 # *** THE REAL DOCUMENTATION IS OFTEN IN THE FILE, NOT IN schema.yml. ***
 # Judged against only a one-line yaml description, this family flagged 11 of 25 models -- and
 # reading the top one showed the description was accurate and the header comment above the SQL
-# explained the rest. A summary is not a contradiction of the thing it summarises. The file's own
+# explained the rest. A summary is not a contradiction of the thing it summarizes. The file's own
 # leading comment block is documentation too, so it is sent.
 #
 # Note this is the OPPOSITE call from the defect checks, where comments measurably hurt: there a
@@ -64,7 +64,7 @@ def all_comments(sql: str, max_lines: int = 140) -> str:
 
     This is deliberately the opposite call from the defect checks, where comments measurably hurt.
     There a header about case numbers made a clean model look guilty; here the prose IS the thing
-    under judgement.
+    under judgment.
     """
     out = []
     for line in (sql or "").splitlines():
@@ -154,9 +154,9 @@ def build_state(s: Subject, preds: list, vocab: dict | None = None) -> dict:
         "model": s.name,
         "model_purpose": s.purpose,
         "contract": {k: v for k, v in s.contract.items() if v},
-        "predicates_under_judgement": preds,
+        "predicates_under_judgment": preds,
         "the_models_other_filters": [p for p in s.predicates if p not in preds][:12],
-        "filters_inside_subqueries_not_under_judgement": s.nested[:8],
+        "filters_inside_subqueries_not_under_judgment": s.nested[:8],
     }
     if vocab:
         state["vocabulary"] = vocab

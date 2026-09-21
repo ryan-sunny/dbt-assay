@@ -393,7 +393,7 @@ def test_an_option_that_names_another_option_is_flagged():
 
     Reported with numbers: a question whose option said "the answer is <other>, not this" scored
     no_overlap 0.63 against an overlap mass of 0.35 -- the judged check read the routing as a
-    disjointness guarantee. The answering model did not honour it, putting one subject under both
+    disjointness guarantee. The answering model did not honor it, putting one subject under both
     options at 0.55 and 0.63.
     """
     from dbt_assay.lint import lint_question

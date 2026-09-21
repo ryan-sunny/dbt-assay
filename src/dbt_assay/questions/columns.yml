@@ -11,7 +11,7 @@ version: 1
 column_role:
   id_prefix: "role"
   # `identifier` names `foreign_key` to push references away from itself. Same shape as the
-  # acknowledgement on claim_alignment, and this one is NOT separately measured -- it is inherited
+  # acknowledgment on claim_alignment, and this one is NOT separately measured -- it is inherited
   # from a bank written before the rule existed. Recorded honestly rather than quietly exempted.
   acknowledge:
     option_routes_to_another: >-

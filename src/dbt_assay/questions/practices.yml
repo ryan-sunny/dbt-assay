@@ -1,7 +1,7 @@
 # Adjudicating the standard checks that have real exceptions.
 #
 # *** dbt-project-evaluator IS ANOTHER CANDIDATE GENERATOR. ***
-# The same division of labour as `store_failures` for the row layer and a deterministic rule for
+# The same division of labor as `store_failures` for the row layer and a deterministic rule for
 # the mart layer: a cheap exact rule narrows, and a judgment says whether the context explains it.
 # A dimension with twelve children IS what a dimension is; a model missing an intermediate layer
 # with twelve children is not. Evaluator cannot tell those apart and neither can a threshold, so

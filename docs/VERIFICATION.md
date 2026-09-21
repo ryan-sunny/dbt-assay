@@ -30,7 +30,7 @@ Verified on a 357-model Colorado water-rights warehouse and two public dbt repos
 
 It read `land_acres ~ land_sqft` as **1.9 (same)**. Defensible — they *are* the same concept — but
 "same concept" and "safe to equate numerically" are different questions, and only the first is
-being asked. Do not use this family to authorise a join.
+being asked. Do not use this family to authorize a join.
 
 ---
 

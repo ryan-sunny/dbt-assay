@@ -21,7 +21,7 @@ from ..parse import Digest, case_branch_values
 # Functions that return DEGREES on geographic coordinates. Ranking by one of these orders an
 # east-west offset nearer than it truly is: a degree of longitude compresses by cos(latitude),
 # 0.78 at Colorado's 39N. Measured in the warehouse this tool was built for: 11.3% of termini and
-# 18.4% of structures picked a different segment when ranked in metres instead.
+# 18.4% of structures picked a different segment when ranked in meters instead.
 # *** ONLY DISTANCE RANKS WRONGLY. MEASURED, NOT ASSUMED. ***
 # The distortion is ANISOTROPIC: it shrinks the east-west axis and leaves north-south alone, so
 # ranking candidates that lie at different BEARINGS from one point reorders them. That is the real
@@ -63,11 +63,11 @@ class Finding:
     summary: str
     detail: str
     base: int = 2                   # 1 low, 2 medium, 3 high; the graph scales it
-    # *** THE QUESTION WHOSE VERDICTS AUTHORISE THIS FINDING. ***
+    # *** THE QUESTION WHOSE VERDICTS AUTHORIZE THIS FINDING. ***
     # Empty means the finding is structural: a parser decided it, there is no error rate to
     # measure, and it may gate immediately. A JUDGED finding must name the family it rests on,
     # because verdicts are recorded per QUESTION and a finding is not a question. Nine of ten
-    # families authorised nothing while this was inferred from `check` instead: you could rule on
+    # families authorized nothing while this was inferred from `check` instead: you could rule on
     # `column_role` all afternoon and no finding was ever named `column_role`, so the gate floor
     # was never satisfied and nobody could see why.
     rests_on: str = ""
@@ -230,7 +230,7 @@ def ranks_by_degrees(project, digests: dict[str, Digest]) -> list[Finding]:
                     base, note = 3, (
                         "A degree of longitude compresses by cos(latitude) while a degree of "
                         "latitude does not, so ranking candidates that lie at different bearings "
-                        "from one point reorders them. Rank in a metre-based measure, or transform "
+                        "from one point reorders them. Rank in a meter-based measure, or transform "
                         "to a projected CRS first.")
                 elif ru in DEGREE_MAGNITUDE_FUNCS:
                     base, note = 1, (
@@ -403,7 +403,7 @@ def arbitrary_pick(project, digests: dict[str, Digest]) -> list[Finding]:
 
 # *** PARSING A STRUCTURED STRING IS NOT PICKING FROM A LIST. ***
 # The first version flagged any first-element access, and all 8 findings on a real project were
-# deliberate parses: the street out of "123 Main St, Denver, CO", the prefix of a licence number,
+# deliberate parses: the street out of "123 Main St, Denver, CO", the prefix of a license number,
 # the first word of a status. `SPLIT_PART(address, ',', 1)` IS the street.
 #
 # The real defect is a list of EQUIVALENT values -- `associated_case_numbers` is a comma list and

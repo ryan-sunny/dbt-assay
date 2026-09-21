@@ -74,8 +74,8 @@ def _col_entry(model, cols):
     return e
 
 
-def test_labelled_pairs_are_put_first_or_calibration_never_happens():
-    """Walking columns in order filled the cap with unlabelled pairs and reported '0 already
+def test_labeled_pairs_are_put_first_or_calibration_never_happens():
+    """Walking columns in order filled the cap with unlabeled pairs and reported '0 already
     asserted' on a project that had 26 such assertions."""
     entries = [_col_entry("a", [("zzz_thing", "identifier"), ("county", "dimension")]),
                _col_entry("b", [("zzz_thing_name", "identifier"), ("county_name", "dimension")])]

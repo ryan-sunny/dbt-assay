@@ -157,7 +157,7 @@ def _plural(n: int, one: str, many: str) -> str:
     return one if n == 1 else many
 
 
-def summarise(changes: list[Change]) -> str:
+def summarize(changes: list[Change]) -> str:
     """The paragraph a reviewer actually needs, assembled from facts."""
     if not changes:
         return "No model in this project changed meaning."

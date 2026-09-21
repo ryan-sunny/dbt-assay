@@ -1,4 +1,4 @@
-"""*** NINE OF TEN VERDICT FAMILIES AUTHORISED NOTHING, AND NOTHING COULD SHOW IT. ***
+"""*** NINE OF TEN VERDICT FAMILIES AUTHORIZED NOTHING, AND NOTHING COULD SHOW IT. ***
 
 Verdicts are recorded per QUESTION FAMILY (`column_role`). `apply_policy` counted them per FINDING
 (`identifier_outside_grain`). No finding was ever named `column_role`, so an afternoon of ruling on
@@ -81,7 +81,7 @@ def test_the_gate_counts_on_the_question_and_not_on_the_finding(tmp_path):
         def adjudication_counts(self, source="human"):
             return self._c
 
-    # Verdicts recorded under the FINDING's name must not authorise it...
+    # Verdicts recorded under the FINDING's name must not authorize it...
     kept, _w = judged.apply_policy([f], cfg, _Store({"identifier_outside_grain": 99}))
     assert kept[0][1] == "queue", "a finding's own name is not a question and must not gate it"
 

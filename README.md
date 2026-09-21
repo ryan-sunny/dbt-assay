@@ -58,7 +58,7 @@ judged finding can be *ranked* without trusting the judgment. `assay patch` refu
 by *counting* it rather than by asking. Everywhere this has been right, code did the deciding and
 judgment did the noticing.
 
-**So the parser and the judgment are not two products.** They are one division of labour, and it is
+**So the parser and the judgment are not two products.** They are one division of labor, and it is
 the whole design: *if a parser can answer it, Jev is never asked.* A grain, a column's provenance,
 a test that cannot fail — those are facts, settled exactly and for free, and putting them to a
 model would be spending money to make a certainty approximate.
@@ -66,7 +66,7 @@ model would be spending money to make a certainty approximate.
 What is left over is not a gap in the parser. It is a different kind of question.
 
 ```sql
-where status != 'CANCELLED'
+where status != 'CANCELED'
 ```
 
 That is domain logic, a patch over a bad feed, or the thing that makes the model mean what it
@@ -119,7 +119,7 @@ assay inventory --html docs/warehouse.html
 ```
 
 One self-contained file: every model, what one row is, what each column does, where each value came
-from, and **who said so**. Colour-coded, searchable, no build step, opens from a `file://` URL.
+from, and **who said so**. Color-coded, searchable, no build step, opens from a `file://` URL.
 Commit it and a change in what your warehouse MEANS shows up as a diff.
 
 dbt docs shows you lineage. This shows you meaning.
@@ -127,7 +127,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.27.2
+- uses: ryan-sunny/dbt-assay@v0.27.3
   with:
     target: target-head
     baseline: base/target
@@ -563,7 +563,7 @@ assay review -i               # a, d, u, s -- least certain first
 `min_adjudications` is 20 per question, counted per question rather than overall, so gating on
 three families is sixty verdicts and not twenty. Only verdicts marked `human` count.
 `--from-labels` is real evidence and is deliberately excluded, because a `unique` test can itself
-be the thing that is wrong, and letting a project's own assertions authorise a gate over those
+be the thing that is wrong, and letting a project's own assertions authorize a gate over those
 assertions is circular.
 
 ```bash
@@ -574,7 +574,7 @@ assay config       # how far each question is from its floor, and which gate not
 asking -- their answers fill the inventory, the page and `trace` -- but no finding derives from
 them yet, so ruling on them records evidence and moves no gate. `assay config` marks them and
 `assay review -i` says so before the keypresses start, because an afternoon spent on a question
-that authorises nothing is an afternoon nobody gets back.
+that authorizes nothing is an afternoon nobody gets back.
 
 This was a bug before it was a feature. Verdicts are recorded per question and the gate counted
 them per *finding*, so nine of ten families satisfied nothing, silently. The one that worked did so
@@ -728,6 +728,6 @@ Where there is no compiled SQL, assay strips the Jinja and says so. That is not 
 macro-generated model will not survive it, but it means a project can be audited by somebody with
 no credentials -- a reviewer, a security team, or you evaluating this tool.
 
-## Licence
+## License
 
 Apache-2.0

@@ -46,7 +46,7 @@ SQL = {
     "int_bad_degrees":
         "select id, row_number() over (partition by id order by ST_Distance(a.geom, b.pt)) as rn "
         "from raw.a a join raw.b b on true",
-    # ST_Distance only in a PROJECTION, ranked by a metre measure -- must NOT fire
+    # ST_Distance only in a PROJECTION, ranked by a meter measure -- must NOT fire
     "int_ok_degrees":
         "select id, ST_Distance(a.geom, b.pt) as deg, "
         "row_number() over (partition by id order by ST_Distance_Sphere(a.geom, b.pt)) as rn "

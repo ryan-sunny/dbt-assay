@@ -1,6 +1,6 @@
 """Do two columns in different models mean the same thing?
 
-*** THE PROJECT ALREADY LABELLED THIS AND NOBODY NOTICED. ***
+*** THE PROJECT ALREADY LABELED THIS AND NOBODY NOTICED. ***
 Every join condition in the warehouse is somebody asserting that two columns hold the same concept.
 `a.county = b.county_name` is a positive label, free, already written, and never used. That is the
 same trick the declared keys gave grain, and it is what makes this family measurable on day one
@@ -121,8 +121,8 @@ def candidates(entries, joined: set, min_relatedness: float = 0.5,
             seen.add(k)
             lab = "same" if tuple(sorted((ca.lower(), cb.lower()))) in labels else None
             out.append(Pair(ma, ca, mb, cb, ra, rb, lab))
-    # *** LABELLED PAIRS GO FIRST, OR CALIBRATION NEVER HAPPENS. ***
-    # Walking columns in order filled the cap with unlabelled pairs and reported "0 already
+    # *** LABELED PAIRS GO FIRST, OR CALIBRATION NEVER HAPPENS. ***
+    # Walking columns in order filled the cap with unlabeled pairs and reported "0 already
     # asserted by a join" on a project that had 26 such assertions. The measurement is the point,
     # so the pairs that can be scored are always in the sample.
     out.sort(key=lambda p: (p.label is None, p.model_a, p.column_a))

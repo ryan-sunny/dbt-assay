@@ -2,7 +2,7 @@
 
 *** dbt ALREADY BUILT THE CANDIDATE GENERATOR. ***
 `store_failures` writes every failing row to `dbt_test__audit`. That IS the population this layer
-needs, produced for free, by code, with the exact division of labour the design calls for: the
+needs, produced for free, by code, with the exact division of labor the design calls for: the
 cheap exact check narrows, the judgment adjudicates what survives.
 
 *** IT CHANGES WHAT A dbt TEST IS FOR. ***

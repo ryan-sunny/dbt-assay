@@ -26,7 +26,7 @@ def test_every_choice_carries_a_no_match_option():
     assert "other" in qs["role__a"]["criteria"]
 
 
-def test_the_column_under_judgement_is_named_inside_the_question():
+def test_the_column_under_judgment_is_named_inside_the_question():
     """Question ids are for code and are never sent to the model."""
     qs = columns.questions_for(["amount"])
     assert qs["role__amount"]["instructions"]["column"] == "amount"
@@ -42,7 +42,7 @@ def test_code_established_provenance_is_sent_as_fact(project_dir):
     uid = "model.p.stg_bad_notnull"
     facts = columns.facts_for(uid, p, d, sch, decl)
     st = columns.build_state(uid, p, sch, facts, ["amount"])
-    entry = st["columns_under_judgement"][0]
+    entry = st["columns_under_judgment"][0]
     assert entry["provenance"] == "defaulted"
     assert "coalesce" in entry["provenance_means"].lower() or "literal" in entry["provenance_means"]
 
@@ -84,7 +84,7 @@ def test_the_reason_a_column_can_never_be_null_is_stated_in_the_state(project_di
     p, d, sch, decl = _load(project_dir)
     facts = columns.facts_for("model.p.stg_bad_notnull", p, d, sch, decl)
     st = columns.build_state("model.p.stg_bad_notnull", p, sch, facts, ["amount"])
-    e = st["columns_under_judgement"][0]
+    e = st["columns_under_judgment"][0]
     assert e["can_be_null"] is False and e["never_null_because"]
 
 

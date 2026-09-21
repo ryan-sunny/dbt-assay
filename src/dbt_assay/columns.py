@@ -124,7 +124,7 @@ def build_state(uid: str, project, schema, facts: dict[str, ColumnFacts], cols: 
     state = {
         "model": {"name": m.name, "materialized": m.materialized},
         "grain": grain or None,
-        "columns_under_judgement": [
+        "columns_under_judgment": [
             {
                 "name": c,
                 "expression": facts[c].expression or None,

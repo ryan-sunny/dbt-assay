@@ -436,7 +436,7 @@ function conf(x) {
 /* ------------------------------------------------------------------- the drawn lineage
 
    *** YOU NEVER DRAW 573 HOPS. *** That is the whole graph. A drawing is always ONE model's
-   neighbourhood, and measured on a 358-model warehouse those are small: median 3 boxes, p95 12,
+   neighborhood, and measured on a 358-model warehouse those are small: median 3 boxes, p95 12,
    max 37. So three bands and straight lines, no graph algorithm, no force layout, no hairball.
 
    The edge label goes ON the parent box rather than on the line. With eight parents converging
@@ -563,7 +563,7 @@ function nodeCard(node, name, e) {
   if (e) pop.append(section('this hop', el('p', {class: 'prose', text: edgeNote(e) || 'no join'})));
   const row = el('div', {class: 'bar'});
   if (m) {
-    const go = el('button', {class: 'back', text: 'centre the graph here'});
+    const go = el('button', {class: 'back', text: 'center the graph here'});
     go.onclick = ev => { ev.stopPropagation(); pop.remove(); GO.chain(name); };
     const go2 = el('button', {class: 'back', text: 'open in Models'});
     go2.onclick = ev => { ev.stopPropagation(); pop.remove(); open('models'); GO.models(name); };
@@ -845,12 +845,12 @@ function chainTab(host) {
 
   const n = DATA.edges.filter(e => why(e)).length;
   host.replaceChildren(
-    el('p', {class: 'note', text: 'Every hop in the DAG, drawn one neighbourhood at a time. '
+    el('p', {class: 'note', text: 'Every hop in the DAG, drawn one neighborhood at a time. '
       + n + ' of ' + DATA.edges.length + ' hops carry something worth a look: a join with no key '
       + 'assay could resolve, an unusually large column drop, or most of the parent lost. Those '
       + 'are counted in the notable column and named under each drawing.'}),
     el('div', {class: 'wrap2'}, [list, detail]));
-  detail.append(el('p', {class: 'empty', text: 'Pick a model to see its lineage drawn: what feeds it, what it feeds, and what each edge carries and drops. A drawing is always one neighbourhood, never the whole DAG.'}));
+  detail.append(el('p', {class: 'empty', text: 'Pick a model to see its lineage drawn: what feeds it, what it feeds, and what each edge carries and drops. A drawing is always one neighborhood, never the whole DAG.'}));
   /* *** THE DETAIL IS AUTHORITATIVE; THE LIST IS AN INDEX. ***
      Going to a model used to work by TYPING ITS NAME INTO THE FILTER, which left the list showing
      one row and the box full of text somebody had to clear by hand before they could see anything

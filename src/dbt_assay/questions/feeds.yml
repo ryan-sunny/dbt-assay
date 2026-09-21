@@ -37,7 +37,7 @@ field_matches_its_name:
 units_are_what_the_column_claims:
   id_prefix: "unit"
   type: choice
-  prompt_version: "feed.units.v3"
+  prompt_version: "feed.units.v4"
   # *** v1 ASKED WHETHER THE MAGNITUDES WERE PLAUSIBLE, AND JEV CANNOT DO THAT. ***
   # Verified against real values: it called 218,235 "acres" CONSISTENT at 0.82 and 4,073,925
   # "acre-feet" CONSISTENT at 0.54 -- wrong by 43,560x and 325,851x. TypeSafe publish the reason:
@@ -79,9 +79,9 @@ units_are_what_the_column_claims:
     miles:
       what: "The name claims miles."
       examples: ["route_length_miles", "distance_mi"]
-    metres:
-      what: "The name claims metres."
-      examples: ["depth_m", "elevation_metres"]
+    meters:
+      what: "The name claims meters."
+      examples: ["depth_m", "elevation_meters"]
     currency:
       what: "The name claims a currency amount."
       examples: ["sale_price_usd", "assessed_value", "cost_dollars"]

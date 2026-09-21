@@ -27,7 +27,7 @@ def test_a_semicolon_joins_two_claims_as_surely_as_a_full_stop():
     assert "numeric codes" in got[1]
 
 
-def test_a_claim_id_survives_its_neighbours_being_reworded():
+def test_a_claim_id_survives_its_neighbors_being_reworded():
     """A verdict hangs off this id. If it moved when the paragraph reflowed, every ruling would be
     orphaned by an unrelated edit."""
     a = C.claim_id("model.p.m", "One row per section.")

@@ -117,7 +117,7 @@ def questions_for(subs: list[TestSubject]) -> dict:
 
 
 def mismatch(sub: TestSubject, answer: dict) -> tuple[str, str] | None:
-    """(judged_level, why) where the judgement and the configured severity disagree."""
+    """(judged_level, why) where the judgment and the configured severity disagree."""
     try:
         lvl = round(float(answer["answer"]))
     except (TypeError, ValueError, KeyError):
