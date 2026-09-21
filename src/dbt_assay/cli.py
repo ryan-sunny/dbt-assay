@@ -330,6 +330,7 @@ def check(
 
     _report_moved_question_ids()
     _report_refused_claim_findings()
+    _report_unconfigured_checks(cfg, findings)
 
     if _dropped.get("stale") or _dropped.get("superseded"):
         bits = []
@@ -4327,6 +4328,39 @@ def _report_refused_claim_findings() -> None:
                   f"Absent evidence is not disagreement.[/]")
     for name, why in REFUSED_CLAIM_FINDINGS[:4]:
         console.print(f"[dim]  {name}: {why[:150]}[/]")
+
+
+def _report_unconfigured_checks(cfg, findings) -> None:
+    """Checks that fired and audit.yml does not name.
+
+    *** "IT REPORTED NOTHING" AND "IT IS NOT CONFIGURED" READ IDENTICALLY FROM THE OUTSIDE. ***
+    That sentence is audit.yml's own, and it was the promise the file broke: `unknown_questions`
+    catches a config naming a check that does not exist, and nothing caught the other direction --
+    a check that exists and the config does not name. Which is the direction that grows by itself,
+    because every release adds checks and nobody's config grows with it.
+
+    Reported from the field on a warehouse where four were firing unnamed, including the largest
+    family at 115 findings. The shipped opinion is shown beside each one, so the difference
+    between what assay would suggest and what is actually happening is visible rather than a thing
+    you have to know to go looking for.
+    """
+    firing = {f.check for f in findings}
+    gap = cfg.unconfigured(firing)
+    if not gap:
+        return
+    console.print(f"\n[yellow]{len(gap)} check(s) fired that your audit.yml does not name[/] "
+                  f"[dim]-- they fall back to their severity and can never fail a build. That is "
+                  f"deliberate: a release adding a gating check must not turn a green build red. "
+                  f"It also means nothing here is tuned.[/]")
+    t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    t.add_column("check"); t.add_column("findings", justify="right")
+    t.add_column("assay would suggest")
+    for name, shipped in gap:
+        n = sum(1 for f in findings if f.check == name)
+        t.add_row(name, str(n), shipped or "[dim]nothing; severity decides[/]")
+    console.print(t)
+    console.print("[dim]Add them to `questions:` in audit.yml to tune or gate them. "
+                  "`assay guide policy` is what each action does.[/]")
 
 
 def _report_moved_question_ids() -> None:

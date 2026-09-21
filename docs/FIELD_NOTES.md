@@ -2534,3 +2534,55 @@ the source that constructs findings -- from a hand-written list of five modules,
 comment explaining that an earlier hand list had missed two modules and five checks for exactly
 this reason. The test for it already walked the package. The reader does now too, so adding a
 check to any module IS registering it, and there is no list left to drift.
+
+### The shipped config was not a fallback, and for eighteen rounds it said it was
+
+Verification of the release above came back with `violations()` reporting **0 would fail the
+build** while a `key_stopped_holding` finding was live, and `config.py` ships that check as
+`{action: fail}`.
+
+Checked, and the framing needed correcting in one direction and sharpening in another.
+
+**It is not silent.** An unconfigured check falls back to its severity, and the reason it carries
+says so in as many words:
+
+```
+key_stopped_holding    base=3   action=queue      because: default by severity
+seed_reaches_nothing   base=1   action=annotate   because: default by severity
+```
+
+**And the fallback is right.** A release that adds a gating check must not turn somebody's green
+build red on upgrade. `queue` for a severe finding and `annotate` otherwise, never `fail`, is the
+correct behavior and should stay.
+
+**What was actually wrong is the sentence.** `DEFAULT_YML` opened with *"the defaults below are
+what runs without this file"*, and nothing has ever parsed that template — `assay init` only
+WRITES it. So for every release up to 0.30.0 the config file described behavior the code did not
+have, in the one place a person reads to find out what the tool does. That is this codebase's own
+defect class, sitting in its config template.
+
+**And the direction nobody was watching.** `unknown_questions` has always caught a config naming a
+check that does not exist. Nothing caught a check that exists and the config does not name — which
+is the direction that grows by itself, because every release adds checks and nobody's config grows
+with it. audit.yml's own opening sentence is the promise it was breaking:
+
+> "A check absent from this file is a check nobody can find to tune, and 'it reported nothing' and
+> 'it is not configured' read identically from the outside."
+
+`assay check` names them now, with the shipped opinion beside each, so the difference between what
+assay would suggest and what is actually happening is visible rather than something you have to
+know to go looking for:
+
+```
+3 check(s) fired that your audit.yml does not name
+  code_contradicts_a_claim    115   nothing; severity decides
+  seed_reaches_nothing          7   annotate
+  grain_unresolved              6   queue above a threshold
+```
+
+The largest family on that warehouse, 115 findings, unconfigured.
+
+**And once more, inside the fix.** The first reader for the shipped opinion was a regex for
+`{action: x}`, which silently missed every check written in the block form — `duckdb_full_match`
+among them — and every one configured with `act:` thresholds instead of a flat action. A reader
+that handles one spelling of a fact, written into the fix for exactly that. It parses the YAML now.

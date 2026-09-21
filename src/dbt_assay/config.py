@@ -96,6 +96,43 @@ class Threshold:
             ) from None
 
 
+def shipped_action(check: str) -> str:
+    """The action `assay init` would write for this check today, or "" if it writes none.
+
+    *** THE SHIPPED FILE IS NOT A FALLBACK, AND IT SAID IT WAS. ***
+    `DEFAULT_YML` is only ever WRITTEN, by `assay init`. It is never parsed, so a check added
+    after somebody ran `init` never gets the action it ships with -- it falls back to severity
+    instead. That is the right behavior: a release must not turn a green build red because it
+    added a `fail` check. But the file's first line claimed the opposite for every release up to
+    0.30.0, which is documentation promising behavior the code does not have, in the one place a
+    person reads to find out what the tool does.
+
+    So the opinion is READABLE now, without being applied. `assay config` shows what assay would
+    suggest next to what is actually happening, and adopting it stays a deliberate edit.
+    """
+    # *** PARSE IT, DO NOT PATTERN-MATCH IT. ***
+    # The first version regexed for `{action: x}` and silently missed every check written in the
+    # block form -- `duckdb_full_match` among them -- and every one configured with `act:`
+    # thresholds instead of a flat action. A reader that handles one spelling of a fact is the
+    # defect this whole file is about, and it appeared inside the fix for it.
+    import yaml
+    try:
+        q = (yaml.safe_load(DEFAULT_YML) or {}).get("questions") or {}
+    except Exception:                                            # noqa: BLE001
+        return ""
+    cfg = q.get(check)
+    if not isinstance(cfg, dict):
+        return ""
+    if cfg.get("action"):
+        return str(cfg["action"])
+    if cfg.get("act"):
+        # A thresholded opinion is still an opinion. Name the strongest action it can reach.
+        order = ["annotate", "queue", "fail"]
+        got = [a for a in order if a in cfg["act"]]
+        return f"{got[-1]} above a threshold" if got else ""
+    return ""
+
+
 def known_checks() -> set:
     """Every `check` a Finding can carry, read from the source that constructs them.
 
@@ -291,6 +328,24 @@ class Config:
     def for_question(self, name: str) -> QuestionConfig:
         return self.questions.get(name) or QuestionConfig(name=name)
 
+    def unconfigured(self, firing: set) -> list:
+        """Checks that FIRED and this config does not name. The other direction of the same set.
+
+        *** `unknown_questions` CATCHES A CONFIG NAMING A CHECK THAT DOES NOT EXIST. ***
+        Nothing caught a check that exists and the config does not name, which is the direction
+        that grows on its own: every release that adds a check silently widens the gap, and this
+        file's own opening line is the promise it breaks --
+
+            "A check absent from this file is a check nobody can find to tune, and 'it reported
+             nothing' and 'it is not configured' read identically from the outside."
+
+        Reported from the field on a warehouse where FOUR checks were firing unnamed, including
+        the largest family at 115 findings. Each returns the SHIPPED opinion alongside, so the
+        difference between what assay would suggest and what is actually happening is visible
+        rather than inferred.
+        """
+        return [(c, shipped_action(c)) for c in sorted(firing - set(self.questions))]
+
     def waived(self, model: str, question: str) -> Waiver | None:
         from datetime import datetime, timezone
         for w in self.waivers.get(model, []):
@@ -304,7 +359,18 @@ class Config:
 
 
 DEFAULT_YML = """\
-# assay configuration. Every field is optional; the defaults below are what runs without this file.
+# assay configuration. Every field is optional.
+#
+# *** WITHOUT THIS FILE, A CHECK FALLS BACK TO ITS SEVERITY, NOT TO WHAT IS WRITTEN BELOW. ***
+# This line used to say "the defaults below are what runs without this file", and that was false:
+# nothing parses this template, `assay init` only WRITES it. An unconfigured check gets `queue` if
+# its severity is high and `annotate` otherwise, and it can never `fail` -- which is deliberate,
+# because a release that adds a gating check must not turn a green build red on upgrade.
+#
+# So the actions below are an OPINION you adopt by editing this file, not a default you inherit.
+# `assay check` names every check that is firing and is not in here, with the action assay would
+# suggest for it, because "it reported nothing" and "it is not configured" read identically from
+# the outside.
 
 jev:
   # THE KEY IS NEVER IN THIS FILE, because this file belongs in git. assay reads

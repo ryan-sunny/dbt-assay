@@ -139,3 +139,81 @@ def test_verdicts_recorded_before_the_column_existed_are_kept_as_human(tmp_path)
     s = Store(p)
     assert s.adjudication_counts("human") == {"column_role": 1}
     s.close()
+
+
+def test_a_check_that_fires_and_is_not_configured_is_named():
+    """*** "IT REPORTED NOTHING" AND "IT IS NOT CONFIGURED" READ IDENTICALLY FROM THE OUTSIDE. ***
+
+    That is audit.yml's own opening sentence, and it was the promise the file broke.
+    `unknown_questions` catches a config naming a check that does not exist. Nothing caught the
+    other direction -- a check that exists and the config does not name -- which is the direction
+    that grows by itself, because every release adds checks and nobody's config grows with it.
+
+    Reported from the field on a warehouse where four were firing unnamed, including the largest
+    family at 115 findings.
+    """
+    from dbt_assay.config import Config
+
+    cfg = Config(questions={"arbitrary_pick": object()})
+    got = dict(cfg.unconfigured({"arbitrary_pick", "key_stopped_holding", "seed_reaches_nothing"}))
+    assert "arbitrary_pick" not in got, "a configured check was reported as a gap"
+    assert set(got) == {"key_stopped_holding", "seed_reaches_nothing"}
+    # and it carries the shipped opinion, so the difference between what assay would suggest and
+    # what is actually happening is visible rather than something you must know to look for
+    assert got["key_stopped_holding"] == "fail"
+    assert got["seed_reaches_nothing"] == "annotate"
+    assert cfg.unconfigured(set()) == [], "it invents a gap when nothing fired"
+
+
+def test_the_shipped_opinion_is_parsed_not_pattern_matched():
+    """*** A READER THAT HANDLES ONE SPELLING OF A FACT IS THIS FILE'S OWN DEFECT. ***
+
+    The first version regexed for `{action: x}` and silently missed every check written in the
+    block form -- `duckdb_full_match` among them -- and every one configured with `act:`
+    thresholds rather than a flat action. It appeared inside the fix for exactly that class.
+    """
+    import yaml
+
+    from dbt_assay.config import DEFAULT_YML, shipped_action
+
+    named = yaml.safe_load(DEFAULT_YML)["questions"]
+    assert len(named) >= 10
+    for check in named:
+        assert shipped_action(check), f"{check} is named in the template and reads as unshipped"
+    # the two spellings that broke it
+    assert shipped_action("duckdb_full_match") == "queue"          # block form
+    assert "threshold" in shipped_action("grain_unresolved")       # act: thresholds
+    assert shipped_action("not_a_real_check") == ""
+
+
+def test_an_unconfigured_check_falls_back_to_severity_and_can_never_fail():
+    """*** THE SHIPPED FILE IS NOT A FALLBACK, AND FOR EVERY RELEASE UP TO 0.30.0 IT SAID IT WAS.
+
+    `DEFAULT_YML` is only ever WRITTEN, by `assay init`; nothing parses it. So a check added after
+    somebody ran `init` never gets the action it ships with. That is the RIGHT behavior -- a
+    release adding a gating check must not turn a green build red on upgrade -- but the file's
+    first line claimed the opposite, which is documentation promising behavior the code does not
+    have, in the one place a person reads to find out what the tool does.
+    """
+    from dbt_assay.checks.structural import Finding
+    from dbt_assay.config import DEFAULT_YML, Config
+    from dbt_assay.judged import apply_policy
+
+    # The claim is gone. It survives quoted, inside the comment explaining that it was false,
+    # which is the record and not the promise -- so this checks the line that makes claims.
+    head = "\n".join(DEFAULT_YML.splitlines()[:3]).lower()
+    assert "the defaults below are what runs" not in head, head
+    assert "falls back to its severity" in DEFAULT_YML.lower()
+    assert "used to say" in DEFAULT_YML, "the correction was made silently"
+
+    def _f(check, base):
+        return Finding(check=check, subject="s", subject_name="m", file="", summary="x",
+                       detail="y", base=base)
+
+    kept, _ = apply_policy([_f("key_stopped_holding", 3), _f("seed_reaches_nothing", 1)],
+                           Config(), None, None)
+    got = {f.check: (act, why) for f, act, why in kept}
+    # ships as `fail`, arrives as `queue`, and SAYS which
+    assert got["key_stopped_holding"] == ("queue", "default by severity")
+    assert got["seed_reaches_nothing"] == ("annotate", "default by severity")
+    assert all(act != "fail" for act, _ in got.values()), "an unconfigured check gated a build"
