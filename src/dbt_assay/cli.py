@@ -1659,8 +1659,17 @@ def page(
     config_path: str = typer.Option(".", "--config"),
     dialect: str = typer.Option(None, "--dialect"),
     plain: bool = typer.Option(False, "--plain",
-                               help="a sober report: no colour, no background, nothing to "
-                                    "explain before somebody reads it"),
+                               help="write only THE RECORD: the small report that answers 'is "
+                                    "this warehouse understood', which is also the first tab"),
+    data_dir: str = typer.Option(None, "--data",
+                                 help="where to write the data artifact. Defaults to "
+                                      "<out>-data/ beside the page. This is the thing worth "
+                                      "committing: one JSONL line per entity, so a diff reads as "
+                                      "'these 3 models changed'"),
+    from_data: str = typer.Option(None, "--from",
+                                  help="render the page from a data artifact instead of from a "
+                                       "warehouse. No dbt target and no store needed, so any "
+                                       "past commit's artifact renders as the page it was"),
 ) -> None:
     """Everything assay knows about this warehouse, as one file you can open.
 
@@ -1687,6 +1696,19 @@ def page(
     one that churns on every run cannot be committed at all.
     """
     from . import render
+
+    # *** `--from` NEEDS NO WAREHOUSE, WHICH IS MOST OF WHY THE ARTIFACT EXISTS. ***
+    # The artifact is what gets committed, so rendering one from a past commit has to work with
+    # no dbt target, no store and no manifest -- otherwise the committed thing is only readable
+    # from the machine that produced it, which is not a record.
+    if from_data:
+        from . import explore, explorer
+        data = explore.read_data(from_data)
+        doc = explorer.explorer_html(data, data.pop("record", "") or "")
+        Path(out).write_text(doc)
+        console.print(f"wrote [bold]{out}[/]  [dim]{len(doc):,} bytes, rendered from "
+                       f"{from_data} with no warehouse read.[/]")
+        return
 
     cfg = Config.load(config_path)
     tdir = _find_target(target)
@@ -1789,21 +1811,34 @@ def page(
     # is THE EXPLORER: everything assay knows, for the person who owns the warehouse. An explorer
     # has no determinism requirement of its own -- nobody diffs an explorer -- but it keeps one
     # anyway, because the record rides inside it as a tab.
+    written = []
     if plain:
         doc = record
     else:
         from . import explore, explorer
-        doc = explorer.explorer_html(
-            explore.assemble(project, digests, schema, entries, fs, store, cfg,
-                             (project.raw.get("metadata") or {}).get("generated_at", "unknown"),
-                             __version__),
-            record)
+        data = explore.assemble(project, digests, schema, entries, fs, store, cfg,
+                                (project.raw.get("metadata") or {}).get("generated_at", "unknown"),
+                                __version__)
+        # *** THE ARTIFACT IS THE THING WORTH COMMITTING, SO IT IS WRITTEN EVERY TIME. ***
+        # Not behind a flag: a page and an artifact that can disagree is the two-spellings defect
+        # this codebase keeps finding, and the only way they cannot is if one run writes both.
+        ddir = data_dir or str(Path(out).with_suffix("").name + "-data")
+        ddir = str(Path(out).parent / ddir) if not Path(ddir).is_absolute() else ddir
+        written = explore.write_data(data, ddir, record)
+        doc = explorer.explorer_html(data, record)
     if store is not None:
         store.close()
     Path(out).write_text(doc)
     what = "the record" if plain else "the explorer"
     console.print(f"wrote [bold]{out}[/]  [dim]{len(doc):,} bytes, {what}, self-contained. "
                   f"A rerun that changes nothing writes an identical file.[/]")
+    if written:
+        n = sum(r for _p, r in written)
+        console.print(f"wrote [bold]{Path(written[0][0]).parent}/[/]  "
+                      f"[dim]{len(written)} file(s), {n:,} rows. COMMIT THIS ONE: it is one JSONL "
+                      f"line per entity, so a diff reads as 'these 3 models changed' rather than "
+                      f"as 8 MB of markup. Re-render it any time with "
+                      f"`assay page {out} --from {Path(written[0][0]).parent}`.[/]")
 
 
 @app.command()

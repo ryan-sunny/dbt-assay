@@ -285,3 +285,161 @@ def test_the_record_stays_small_and_the_explorer_carries_it(project_dir, tmp_pat
     doc = explorer.explorer_html(data, record)
     assert len(doc) > len(record), "the explorer is not carrying the record"
     assert '"record":' in doc
+
+
+# -------------------------------------------------------------- 0.26.0: the artifact that diffs
+
+def _tiny():
+    return {"meta": {"project": "p", "models": 1, "sources": 0, "version": "0",
+                     "generated_at": "x", "coverage": {}},
+            "models": [{"uid": "m", "name": "a"}], "edges": [], "claims": [],
+            "findings": [{"id": "f1", "check": "c"}], "decisions": [], "questions": [],
+            "adjudications": [], "config": {"provider": "auto"}, "runs": [], "unreadable": []}
+
+
+def test_the_artifact_is_one_line_per_entity(tmp_path):
+    """*** AN 8 MB PAGE DIFFS AS ONE UNREADABLE BLOB. ***
+
+    Measured on the field warehouse: the same content is 8.12 MB as JSON Lines and 8.12 MB
+    minified, while pretty-printing costs 2 MB more and turns the models into a 110,000-line file
+    nobody reads. JSONL costs nothing and diffs as one line per entity, so a commit reads as
+    "these 3 models changed, these 12 findings appeared", which is what the accrual argument was
+    always about.
+    """
+    out = explore.write_data(_tiny(), tmp_path / "d", record="<html>rec</html>")
+    by = {p.name: p for p, _n in out}
+    assert "models.jsonl" in by and "findings.jsonl" in by
+    assert by["models.jsonl"].read_text() == '{"name":"a","uid":"m"}\n'
+    # A jsonl file ending without a newline makes the next append show as a MODIFICATION of the
+    # final entity rather than as an addition, so every one of them ends with one.
+    for name, p in by.items():
+        if name.endswith(".jsonl") and p.stat().st_size:
+            assert p.read_text().endswith("\n"), f"{name} has no trailing newline"
+    # *** AND THE WRITER NEVER EDITS WHAT IT IS HANDED. ***
+    # `record.html` is written byte for byte. A writer that tidies its input is a writer that
+    # disagrees with its reader, which is the two-spellings defect in the one place it would
+    # break the round trip silently. The newline on the record comes from `page_html`.
+    from dbt_assay import render
+    assert by["record.html"].read_text() == "<html>rec</html>"
+    rendered = render.page_html({
+        "project": "p", "models": 1, "generated_at": "x", "version": "0", "ruled": 0,
+        "findings_total": 0, "agent_rulings": 0, "effectiveness": [], "by_check": [],
+        "completeness": [], "moved": {}, "plain": True, "no_unique_test": 0, "claims": {},
+        "grain": {"declared": 0, "derived": 0, "judged": 0, "none": 1},
+        "not_counted_note": "", "top_findings": [], "shown": 0})
+    assert rendered.endswith("\n"), "the record itself has no trailing newline"
+    # meta and config stay whole and pretty: they are read by a person, and the useful diff on
+    # them is field-level rather than entity-level
+    assert "\n  " in by["config.json"].read_text()
+
+
+def test_an_artifact_round_trips_to_the_same_page(tmp_path):
+    """`--from` renders with no warehouse, no store and no manifest, which is most of why the
+    artifact exists: a committed artifact only readable from the machine that produced it is not
+    a record."""
+    data = _tiny()
+    explore.write_data(data, tmp_path / "d", record="<html>rec</html>")
+    back = explore.read_data(tmp_path / "d")
+    assert back["record"] == "<html>rec</html>"
+    for k in ("models", "findings", "meta", "config"):
+        assert back[k] == data[k], k
+    a = explorer.explorer_html({k: v for k, v in data.items()}, "<html>rec</html>")
+    b = explorer.explorer_html({k: v for k, v in back.items() if k != "record"}, back["record"])
+    assert a == b, "a page rendered from the artifact differs from one rendered from the store"
+
+
+def test_a_directory_that_is_not_an_artifact_refuses_rather_than_rendering_empty(tmp_path):
+    """*** AN ARTIFACT MISSING ITS TABLES IS NOT AN EMPTY WAREHOUSE. ***
+
+    Rendering some other directory would produce a page saying nothing has been asked, which is
+    the absence-reads-as-a-result defect this codebase keeps finding, one layer out.
+    """
+    import pytest
+    (tmp_path / "notours").mkdir()
+    with pytest.raises(ValueError, match="not an assay data artifact"):
+        explore.read_data(tmp_path / "notours")
+    with pytest.raises(FileNotFoundError):
+        explore.read_data(tmp_path / "missing")
+
+
+def test_one_added_ruling_is_one_added_line(tmp_path):
+    """The property stated as a diff. Asserted on the bytes, because "it diffs well" is the whole
+    argument for committing the artifact instead of the page."""
+    a = _tiny()
+    b = {**a, "adjudications": [{"subject": "m", "verdict": "agree", "source": "human"}]}
+    explore.write_data(a, tmp_path / "a")
+    explore.write_data(b, tmp_path / "b")
+    la = (tmp_path / "a" / "adjudications.jsonl").read_text().splitlines()
+    lb = (tmp_path / "b" / "adjudications.jsonl").read_text().splitlines()
+    assert len(lb) == len(la) + 1
+    assert set(la) <= set(lb), "an unrelated line moved"
+    for name in ("models.jsonl", "findings.jsonl", "config.json"):
+        assert (tmp_path / "a" / name).read_text() == (tmp_path / "b" / name).read_text(), \
+            f"{name} churned for an unrelated change"
+
+
+# --------------------------------------------------------------- 0.26.0: the views it renders
+
+def test_the_lineage_never_draws_the_whole_dag():
+    """*** YOU NEVER DRAW 573 HOPS. ***
+
+    Measured on a 358-model warehouse: median 3 boxes in a neighbourhood, p95 12, max 37. So the
+    drawing is three bands and straight lines, and past `BAND_MAX` it degrades to a list, because
+    36 boxes with 36 converging lines is the hairball the drawing exists to avoid.
+
+    Asserted on the source constants and the degradation branch, and exercised end to end by the
+    DOM driver in `scripts/`; a warehouse with a 36-parent model is what this is sized for.
+    """
+    v = explorer._VIEWS
+    assert "BAND_MAX = 9" in v, "the degradation threshold is gone"
+    assert "bandList" in v and "too many to draw" in v
+    # the edge label goes ON the box, never on the line: with eight parents converging on one
+    # focus, labels on the lines overlap into mush
+    assert "edgeNote(e), 'par'" in v, "the parent box no longer carries its edge label"
+
+
+def test_no_tab_opens_on_a_flat_list_of_everything():
+    """*** 5,794 CLAIMS IN ONE SCROLL IS NOT MORE INFORMATION THAN 358 MODELS IN ONE SCROLL. ***
+
+    Reported from the field in those terms: the long lists were fine as data and useless as
+    navigation. So the high-volume tabs open on a grouped summary and the rows are one click in,
+    already filtered.
+    """
+    v = explorer._VIEWS
+    assert "function drill(" in v
+    for tab in ("claimsTab", "answersTab"):
+        body = v[v.index("function " + tab):]
+        body = body[:body.index("\n}")]
+        assert "drill({" in body, f"{tab} still opens on a flat list"
+    # findings has only 244 rows, so the list stays whole and the check chips FILTER it
+    fb = v[v.index("function findingsTab"):]
+    assert "class: 'chips'" in fb[:fb.index("function answersTab")]
+
+
+def test_the_things_you_configure_by_hand_are_not_dumped_as_json():
+    """*** THE HAND-MAINTAINED HALF WAS THE ONLY PART RENDERED AS A BLOB. ***
+
+    The vocabulary, the question text and the per-check policy are what a person opens this page
+    to read, and they were `JSON.stringify(..., null, 2)` inside a `<pre>`. Fifteen vocabulary
+    terms written once made `traverse` flag `wdid` joins without anyone writing a water question;
+    that is the promise, and it was being skimmed past.
+    """
+    v = explorer._VIEWS
+    for tab in ("questionsTab", "configTab"):
+        body = v[v.index("function " + tab):]
+        body = body[:body.index("\n/* ---")] if "\n/* ---" in body else body
+        assert "JSON.stringify" not in body or "null, 2" not in body, \
+            f"{tab} still dumps raw JSON"
+    assert "function kvAny(" in v, "there is no structured renderer"
+    assert "vocabulary (" in v, "the vocabulary has no section of its own"
+
+
+def test_every_table_can_reach_the_model_it_is_about():
+    """The tabs were eight islands. A model name is the one thing every table has in common, so
+    every one of them is a way back to that model."""
+    v = explorer._VIEWS
+    assert "function link(" in v and "GO.models" in v and "GO.chain" in v
+    for tab in ("claimsTab", "findingsTab"):
+        body = v[v.index("function " + tab):]
+        body = body[:body.index("\n}\n")]
+        assert "link(" in body, f"{tab} has no way back to a model"

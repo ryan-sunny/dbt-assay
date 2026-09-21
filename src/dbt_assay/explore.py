@@ -383,3 +383,83 @@ def _unreadable(store, project) -> list:
         if name not in seen:
             out.append({"uid": "", "name": name, "path": path or "", "why": err or "parse failed"})
     return out
+
+
+# ------------------------------------------------------------------ the artifact that gets committed
+
+# *** THE HTML IS NOT THE THING WORTH KEEPING. THE DATA IS. ***
+# An 8 MB page diffs as one unreadable blob. The same content as JSON Lines is the same size --
+# measured: 8.12 MB either way, where pretty-printing costs 2 MB more and turns the models into a
+# 110,000-line file nobody reads -- and it diffs as ONE LINE PER ENTITY. A commit then reads as
+# "these 3 models changed, these 12 findings appeared", which is what the accrual argument was
+# always about. So the artifact is committed and the page is regenerated from it.
+#
+# The page still EMBEDS this rather than fetching it, because browsers block `fetch` on `file://`.
+# Reading the artifact is a build step, not a runtime load.
+_LINES = ("models", "edges", "claims", "findings", "decisions", "questions",
+          "adjudications", "unreadable", "runs")
+_WHOLE = ("meta", "config")
+
+
+def write_data(data: dict, directory, record: str = "") -> list:
+    """The data artifact: one `.jsonl` per table, one line per entity, sorted keys.
+
+    Returns [(path, rows)]. Small objects stay whole and pretty-printed, because `meta` and
+    `config` are read by a person and you want a field-level diff on them; the big tables are one
+    line per row, because you want an entity-level one.
+    """
+    from pathlib import Path
+    d = Path(directory)
+    d.mkdir(parents=True, exist_ok=True)
+    out = []
+    for name in _LINES:
+        rows = data.get(name) or []
+        p = d / f"{name}.jsonl"
+        # A trailing newline on every line, including the last: a file that ends without one makes
+        # the next append show as a modification of the final entity rather than as an addition.
+        p.write_text("".join(
+            json.dumps(r, sort_keys=True, separators=(",", ":"), default=str) + "\n"
+            for r in rows))
+        out.append((p, len(rows)))
+    for name in _WHOLE:
+        p = d / f"{name}.json"
+        p.write_text(json.dumps(data.get(name) or {}, sort_keys=True, indent=2, default=str) + "\n")
+        out.append((p, 1))
+    # *** THE RECORD LIVES IN THE ARTIFACT TOO, AND IT IS THE HALF A PERSON READS. ***
+    # 15 KB, diffs line by line, and it is the one file here you would open directly. Without it
+    # `--from` would render an Understood tab that is silently empty, which is the same shape as
+    # every other absence-reads-as-a-result defect in this codebase.
+    if record:
+        p = d / "record.html"
+        p.write_text(record)
+        out.append((p, 1))
+    return out
+
+
+def read_data(directory) -> dict:
+    """Load an artifact back. `assay page --from` renders without a warehouse present, which also
+    means any past commit's artifact can be rendered as the page it was."""
+    from pathlib import Path
+    d = Path(directory)
+    if not d.is_dir():
+        raise FileNotFoundError(f"no data artifact at {d}")
+    data: dict = {}
+    for name in _LINES:
+        p = d / f"{name}.jsonl"
+        data[name] = [json.loads(line) for line in p.read_text().splitlines() if line.strip()] \
+            if p.exists() else []
+    for name in _WHOLE:
+        p = d / f"{name}.json"
+        data[name] = json.loads(p.read_text()) if p.exists() else {}
+    rec = d / "record.html"
+    data["record"] = rec.read_text() if rec.exists() else ""
+    # *** AN ARTIFACT MISSING A TABLE IS NOT AN EMPTY WAREHOUSE. ***
+    # A directory that is not one of ours, or one written by a version that knew fewer tables,
+    # would otherwise render as a project where nothing has been asked -- the absence-reads-as-a-
+    # pass defect, one layer out. The page needs `meta` to say anything at all, so that is the
+    # one whose absence is fatal.
+    if not data["meta"]:
+        raise ValueError(
+            f"{d} has no meta.json, so it is not an assay data artifact. Rendering it would show "
+            f"an empty warehouse, which is not the same as a warehouse with nothing in it.")
+    return data

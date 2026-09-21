@@ -88,6 +88,48 @@ summary{cursor:pointer;color:var(--dim);font-size:12.5px}
 pre{background:#f6f9fa;border:1px solid var(--line);border-radius:6px;padding:9px 11px;
 overflow:auto;font-size:11.5px;margin:6px 0;white-space:pre-wrap;word-break:break-word}
 .tot{color:var(--faint)}
+.bad{color:var(--red);font-weight:600}
+.ok{color:var(--green)}
+.low{color:var(--amber);font-weight:600}
+a.lk{color:var(--blue);text-decoration:none;border-bottom:1px dotted #b9ccd6}
+a.lk:hover{border-bottom-style:solid}
+button.back{appearance:none;border:1px solid var(--line);background:var(--card);font:inherit;
+font-size:12.5px;color:var(--blue);padding:4px 10px;border-radius:6px;cursor:pointer;
+margin:0 8px 10px 0}
+button.back:hover{background:#f2f7f9}
+.crumb{color:var(--dim);font-size:13px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}
+.chips.flat{margin:6px 0 0}
+.chip{appearance:none;font:inherit;font-size:12px;border:1px solid var(--line);background:var(--card);
+border-radius:6px;padding:3px 9px;cursor:pointer;display:inline-flex;gap:7px;align-items:center;
+color:var(--dim)}
+.chip:hover{border-color:#b9ccd6}
+.chip.on{border-color:var(--blue);color:var(--ink);background:#eef5f8}
+.chip b{font-weight:650;color:var(--ink)}
+.chips.flat .chip{cursor:default;color:var(--dim);background:var(--bg)}
+details.strip{margin:0 0 14px;border:1px solid var(--line);border-radius:8px;background:var(--card);
+padding:9px 12px}
+details.strip summary{color:var(--ink);font-size:13px}
+.quote{margin:4px 0 8px;padding-left:11px;border-left:2px solid var(--line);color:#2b3c44;
+font-size:13.5px}
+.opt{border:1px solid var(--line);border-radius:7px;padding:9px 12px;margin:7px 0;
+background:var(--card)}
+.optname{font-weight:650;color:var(--ink);font-size:12.5px;margin-bottom:3px}
+.kv.sub{margin:2px 0 6px 0;padding-left:10px;border-left:1px solid var(--line)}
+.sub{margin:3px 0}
+.linwrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--card);
+padding:10px}
+.bandlist{margin:8px 0}
+svg.lin{display:block}
+svg.lin rect{fill:#fff;stroke:var(--line);stroke-width:1}
+svg.lin .foc rect{fill:#eef5f8;stroke:var(--blue);stroke-width:1.5}
+svg.lin .bt{font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:var(--ink)}
+svg.lin .bs{font:11px -apple-system,BlinkMacSystemFont,sans-serif;fill:var(--dim)}
+svg.lin .ln{fill:none;stroke:#c4d0d5;stroke-width:1.3}
+svg.lin .ln.drv{stroke:var(--blue);stroke-width:2}
+svg.lin marker path{fill:#c4d0d5}
+svg.lin .clk{cursor:pointer}
+svg.lin .clk:hover rect{stroke:var(--blue)}
 footer{color:var(--faint);font-size:12px;padding:18px 24px;border-top:1px solid var(--line)}
 """
 
@@ -258,8 +300,173 @@ const M = DATA.models, BY_UID = Object.fromEntries(M.map(m => [m.uid, m]));
 const BY_NAME = Object.fromEntries(M.map(m => [m.name, m]));
 const CLAIM = Object.fromEntries(DATA.claims.map(c => [c.id, c]));
 const FIND = Object.fromEntries(DATA.findings.map(f => [f.id, f]));
+const EDGES_IN = {}, EDGES_OUT = {};
+for (const e of DATA.edges) {
+  (EDGES_IN[e.child] = EDGES_IN[e.child] || []).push(e);
+  (EDGES_OUT[e.parent] = EDGES_OUT[e.parent] || []).push(e);
+}
 
-/* ---------------------------------------------------------------------------- Models, the front door */
+/* *** THE TABS WERE EIGHT ISLANDS. *** A model name is the one thing every table has in common,
+   so every one of them is a way back to that model. This is the cheapest thing on the page and
+   the one that turns separate lists into somewhere you can actually move around. */
+const GO = {};
+function link(name, where) {
+  if (!BY_NAME[name]) return el('span', {class: 'mono', text: name || ''});
+  const a = el('a', {class: 'mono lk', href: '#', text: name});
+  a.onclick = ev => { ev.preventDefault(); ev.stopPropagation();
+    open(where || 'models'); (GO[where || 'models'] || (() => {}))(name); };
+  return a;
+}
+
+/* A grouped front door. *** NO TAB OPENS ON A FLAT LIST OF EVERYTHING. ***
+   5,794 claims in one scroll is not more information than 358 models in one scroll, it is less:
+   the first screen tells you nothing about the shape of what is there and gives you nowhere
+   obvious to click. So the summary is the view, and the rows are one click in, already filtered. */
+function drill(opts) {
+  const host = el('div');
+  const back = el('button', {class: 'back', text: '← all ' + opts.noun});
+  const head = el('div', {class: 'bar'});
+  const body = el('div');
+  back.onclick = () => showGroups();
+
+  function showGroups() {
+    head.replaceChildren(el('p', {class: 'note', text: opts.blurb}));
+    body.replaceChildren(grid(opts.groups, opts.groupCols, {
+      placeholder: opts.groupFilter || 'filter...', pick: g => showRows(g),
+      sort: opts.groupSort, dir: opts.groupDir || -1, cap: 800,
+      text: opts.groupText}));
+  }
+  function showRows(g) {
+    head.replaceChildren(back, el('span', {class: 'crumb', text: opts.label(g)}));
+    body.replaceChildren(grid(opts.rowsOf(g), opts.rowCols, {
+      placeholder: 'filter...', cap: 2000, sort: opts.rowSort, dir: opts.rowDir || 1,
+      text: opts.rowText, emptyText: 'nothing here'}));
+  }
+  host.append(head, body);
+  showGroups();
+  host.showGroups = showGroups;
+  host.showRows = showRows;
+  return host;
+}
+
+function conf(x) {
+  if (x == null) return el('span', {class: 'tot', text: ''});
+  /* Under the 0.6 gate an answer reports nothing as a finding, so the number is the point. */
+  return el('span', {class: x < 0.6 ? 'low' : '', text: x.toFixed(2)});
+}
+
+/* ------------------------------------------------------------------- the drawn lineage
+
+   *** YOU NEVER DRAW 573 HOPS. *** That is the whole graph. A drawing is always ONE model's
+   neighbourhood, and measured on a 358-model warehouse those are small: median 3 boxes, p95 12,
+   max 37. So three bands and straight lines, no graph algorithm, no force layout, no hairball.
+
+   The edge label goes ON the parent box rather than on the line. With eight parents converging
+   on one focus, labels on the lines overlap into mush; on the boxes they never can.
+
+   Past BAND_MAX in a band it degrades to a list with one bracket, because 36 boxes with 36
+   converging lines is the hairball this exists to avoid. That is 14 models of 358 on the parent
+   side and 6 on the child side, and you can see it coming.                                    */
+const BAND_MAX = 9, BW = 148, BH = 54, GAPX = 12, BANDY = 116;
+
+function svg(tag, attrs, kids) {
+  const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in (attrs || {})) if (attrs[k] != null) n.setAttribute(k, attrs[k]);
+  for (const c of (kids || [])) n.append(c);
+  return n;
+}
+function svgText(x, y, s, cls) {
+  const t = svg('text', {x: x, y: y, class: cls || ''}); t.textContent = s; return t;
+}
+
+function edgeNote(e) {
+  const bits = [];
+  if (e.kind) bits.push(e.kind);
+  if (e.driving) bits.push('drives');
+  if (e.union_arm) bits.push('union');
+  if ((e.joined_on || []).length) bits.push('on ' + e.joined_on.join('+'));
+  if (e.dropped) bits.push(e.dropped + ' dropped');
+  if (e.row_loss && e.row_loss.length === 2 && e.row_loss[0])
+    bits.push(pct(e.row_loss[1] / e.row_loss[0]) + ' kept');
+  return bits.join(' · ');
+}
+
+function box(x, y, title, sub, cls, onclick) {
+  const g = svg('g', {class: 'box ' + (cls || ''), transform: `translate(${x},${y})`});
+  g.append(svg('rect', {width: BW, height: BH, rx: 5}));
+  g.append(svgText(9, 21, title.length > 22 ? title.slice(0, 21) + '…' : title, 'bt'));
+  if (sub) {
+    const s = sub.length > 30 ? sub.slice(0, 29) + '…' : sub;
+    g.append(svgText(9, 38, s, 'bs'));
+  }
+  /* `Node.append` returns undefined, so chaining `.textContent` off it sets a property on
+     nothing. The hover title is how a truncated name stays readable, so it is built first. */
+  const tt = svg('title', {});
+  tt.textContent = title + (sub ? '\n' + sub : '');
+  g.append(tt);
+  if (onclick) { g.classList.add('clk'); g.onclick = onclick; }
+  return g;
+}
+
+function bandList(title, edges, other) {
+  /* The degradation. A table, with the same facts the boxes would have carried. */
+  return el('div', {class: 'bandlist'}, [
+    el('p', {class: 'note', text: title}),
+    grid(edges, [
+      {key: 'n', label: 'model', mono: 1, val: e => other(e), cell: e => link(other(e), 'chain')},
+      {key: 'j', label: 'edge', val: e => edgeNote(e)},
+    ], {placeholder: 'filter...', cap: 60})]);
+}
+
+function lineage(m) {
+  const ins = (EDGES_IN[m.uid] || []).slice(), outs = (EDGES_OUT[m.uid] || []).slice();
+  /* Driving parents first: the driving edge is the spine, and everything else hangs off it.
+     Then by name, so the picture is the same on every machine and in every rerun. */
+  ins.sort((a, b) => (b.driving - a.driving) || a.parent_name.localeCompare(b.parent_name));
+  outs.sort((a, b) => a.child_name.localeCompare(b.child_name));
+
+  const host = el('div');
+  const drawIn = ins.length <= BAND_MAX, drawOut = outs.length <= BAND_MAX;
+  const nTop = drawIn ? ins.length : 0, nBot = drawOut ? outs.length : 0;
+  const cols = Math.max(nTop, nBot, 1);
+  const W = Math.max(cols * (BW + GAPX) + GAPX, BW + 2 * GAPX + 40);
+  const H = BANDY * 2 + BH + 30;
+  const s = svg('svg', {class: 'lin', width: W, height: H, viewBox: `0 0 ${W} ${H}`});
+  s.append(svg('defs', {}, [svg('marker', {id: 'ah', viewBox: '0 0 8 8', refX: 7, refY: 4,
+      markerWidth: 7, markerHeight: 7, orient: 'auto'}, [svg('path', {d: 'M0,0 L8,4 L0,8 z'})])]));
+
+  const fx = (W - BW) / 2, fy = BANDY;
+  const rowFor = (i, n) => (W - (n * (BW + GAPX) - GAPX)) / 2 + i * (BW + GAPX);
+
+  if (drawIn) ins.forEach((e, i) => {
+    const x = rowFor(i, ins.length);
+    s.append(svg('path', {class: 'ln' + (e.driving ? ' drv' : ''), 'marker-end': 'url(#ah)',
+      d: `M${x + BW / 2},${BH} C${x + BW / 2},${BH + 40} ${fx + BW / 2},${fy - 40} ${fx + BW / 2},${fy - 6}`}));
+    s.append(box(x, 0, e.parent_name, edgeNote(e), 'par',
+                 () => GO.chain && GO.chain(e.parent_name)));
+  });
+  if (drawOut) outs.forEach((e, i) => {
+    const x = rowFor(i, outs.length);
+    s.append(svg('path', {class: 'ln', 'marker-end': 'url(#ah)',
+      d: `M${fx + BW / 2},${fy + BH} C${fx + BW / 2},${fy + BH + 40} ${x + BW / 2},${BANDY * 2 - 40} ${x + BW / 2},${BANDY * 2 - 6}`}));
+    s.append(box(x, BANDY * 2, e.child_name, edgeNote(e), 'chi',
+                 () => GO.chain && GO.chain(e.child_name)));
+  });
+  const g = m.grain ? (Array.isArray(m.grain.value) ? m.grain.value.join(', ') : String(m.grain.value)) : 'grain not settled';
+  s.append(box(fx, fy, m.name, g, 'foc'));
+
+  if (!drawIn && ins.length)
+    host.append(bandList(ins.length + ' parents, too many to draw. The same facts as a list:',
+                         ins, e => e.parent_name));
+  host.append(el('div', {class: 'linwrap'}, [s]));
+  if (!drawOut && outs.length)
+    host.append(bandList(outs.length + ' children, too many to draw:', outs, e => e.child_name));
+  if (!ins.length && !outs.length)
+    host.append(el('p', {class: 'empty', text: 'This model has no edges recorded: nothing reads it and it reads nothing that assay could resolve.'}));
+  return host;
+}
+
+/* ------------------------------------------------------------------------------- Models */
 function modelsTab(host) {
   const detail = el('div', {class: 'detail'});
   const list = grid(M, [
@@ -267,7 +474,8 @@ function modelsTab(host) {
     {key: 'layer', label: 'layer', val: m => m.layer},
     {key: 'marts', label: 'marts', n: 1, val: m => m.marts},
     {key: 'findings', label: 'find', n: 1, val: m => m.findings.length,
-     cell: m => el('span', {text: m.findings.length || '', class: m.findings.length ? '' : 'tot'})},
+     cell: m => el('span', {class: m.findings.length ? 'bad' : 'tot',
+                            text: String(m.findings.length || 0)})},
   ], {placeholder: 'filter models, paths, descriptions...', scroll: 1, pick: m => show(m),
       text: m => [m.name, m.path, m.layer, m.description].join(' ')});
 
@@ -281,7 +489,9 @@ function modelsTab(host) {
 
     d.append(section('what one row is', kv([
       ['grain', fact(m.grain)],
-      ['the SQL says', m.derived_grain.length ? el('span', {class: 'mono', text: m.derived_grain.join(', ')}) : el('span', {class: 'tot', text: 'nothing settles it'})],
+      ['the SQL says', m.derived_grain.length
+        ? el('span', {class: 'mono', text: m.derived_grain.join(', ')})
+        : el('span', {class: 'tot', text: 'nothing settles it'})],
       ['materialized', m.materialized],
       ['reach', el('span', {text: m.marts + ' mart(s), ' + m.descendants + ' descendant(s)'})],
     ])));
@@ -295,26 +505,24 @@ function modelsTab(host) {
        cell: c => fact(c.provenance)},
     ], {placeholder: 'filter columns...', cap: 400, emptyText: 'no columns known'})));
 
-    const hops = DATA.edges.filter(x => x.child === m.uid);
-    d.append(section('what it reads, hop by hop (' + hops.length + ')', hops.length ? grid(hops, [
-      {key: 'p', label: 'parent', mono: 1, val: h => h.parent_name},
-      {key: 'kind', label: 'join', val: h => h.kind || '',
-       cell: h => { const s = el('span', {});
-         if (h.kind) s.append(el('span', {class: 'pill', text: h.kind}));
-         if (h.driving) s.append(el('span', {class: 'pill on', text: 'drives'}));
-         if (h.union_arm) s.append(el('span', {class: 'pill', text: 'union arm'}));
-         if (h.unique_key) s.append(el('span', {class: 'pill declared', text: 'unique key'}));
-         return s; }},
-      {key: 'on', label: 'on', mono: 1, val: h => (h.joined_on || []).join(', ')},
-      {key: 'carried', label: 'carried', n: 1, val: h => h.carried},
-      {key: 'dropped', label: 'dropped', n: 1, val: h => h.dropped,
-       cell: h => { if (!h.dropped) return el('span', {class: 'tot', text: '0'});
-         const det = el('details'); det.append(el('summary', {text: String(h.dropped)}));
-         det.append(el('pre', {text: (h.dropped_cols || []).join('\n')})); return det; }},
-    ], {placeholder: 'filter hops...', cap: 200}) : el('p', {class: 'empty', text: 'reads nothing; this is a leaf'})));
-
-    if (m.read_by.length) d.append(section('read by (' + m.read_by.length + ')',
-      el('p', {class: 'mono prose', text: m.read_by.join(', ')})));
+    const ins = EDGES_IN[m.uid] || [], outs = EDGES_OUT[m.uid] || [];
+    const lin = el('button', {class: 'back', text: 'see it drawn →'});
+    lin.onclick = () => { open('chain'); GO.chain(m.name); };
+    d.append(section('reads ' + ins.length + ', read by ' + outs.length, el('div', {}, [
+      lin,
+      grid(ins.concat(outs), [
+        {key: 'dir', label: '', val: e => e.child === m.uid ? 'reads' : 'read by',
+         cell: e => el('span', {class: 'pill', text: e.child === m.uid ? 'reads' : 'read by'})},
+        {key: 'other', label: 'model', mono: 1,
+         val: e => e.child === m.uid ? e.parent_name : e.child_name,
+         cell: e => link(e.child === m.uid ? e.parent_name : e.child_name, 'chain')},
+        {key: 'edge', label: 'edge', val: e => edgeNote(e)},
+        {key: 'dropped', label: 'dropped', n: 1, val: e => e.dropped,
+         cell: e => { if (!e.dropped) return el('span', {class: 'tot', text: '0'});
+           const t = el('details'); t.append(el('summary', {text: String(e.dropped)}));
+           t.append(el('pre', {text: (e.dropped_cols || []).join('\n')})); return t; }},
+      ], {placeholder: 'filter hops...', cap: 200,
+          emptyText: 'no edges: a leaf that nothing reads'})])));
 
     const fs = m.findings.map(i => FIND[i]).filter(Boolean);
     d.append(section('findings (' + fs.length + ')', fs.length ? grid(fs, [
@@ -322,144 +530,288 @@ function modelsTab(host) {
       {key: 'what', label: 'what', val: f => f.summary},
       {key: 'ruled', label: 'ruled', val: f => f.ruled_finding ? 1 : 0,
        cell: f => el('span', {class: 'pill ' + (f.ruled_finding ? 'on' : ''),
-         text: f.ruled_finding ? 'a person read this' : (f.ruled_model ? 'model ruled, not this finding' : 'unread')})},
-    ], {placeholder: 'filter findings...', cap: 200}) : el('p', {class: 'empty', text: 'nothing found on this model'})));
+         text: f.ruled_finding ? 'read by a person'
+           : (f.ruled_model ? 'model ruled, not this' : 'unread')})},
+    ], {placeholder: 'filter findings...', cap: 200})
+      : el('p', {class: 'empty', text: 'nothing found on this model'})));
 
     const cs = m.claims.map(i => CLAIM[i]).filter(Boolean);
-    d.append(section('what this project claims about it (' + cs.length + ')', cs.length ? grid(cs, [
-      {key: 'text', label: 'claim', val: c => c.text},
-      {key: 'where', label: 'written', mono: 1, val: c => c.source_ref},
-      {key: 'v', label: 'the code', val: c => c.contradicted == null ? 0 : c.contradicted,
-       cell: c => c.contradicted == null
-         ? el('span', {class: 'tot', text: 'not contradicted'})
-         : el('span', {class: 'pill bad', text: 'contradicts @' + c.contradicted.toFixed(2)})},
-    ], {placeholder: 'filter claims...', cap: 300}) : el('p', {class: 'empty', text: 'no claims extracted for this model'})));
+    const bad = cs.filter(c => c.contradicted != null).length;
+    d.append(section('claims (' + cs.length + (bad ? ', ' + bad + ' contradicted' : '') + ')',
+      cs.length ? grid(cs, [
+        {key: 'text', label: 'claim', val: c => c.text},
+        {key: 'where', label: 'written', mono: 1, val: c => c.source_ref},
+        {key: 'v', label: 'the code', val: c => c.contradicted == null ? -1 : c.contradicted,
+         cell: c => c.contradicted == null ? el('span', {class: 'tot', text: 'not contradicted'})
+           : el('span', {class: 'pill bad', text: 'contradicts @' + c.contradicted.toFixed(2)})},
+      ], {placeholder: 'filter claims...', cap: 300})
+        : el('p', {class: 'empty', text: 'no claims extracted for this model'})));
 
     const ds = m.decisions.map(i => DATA.decisions[i]).filter(Boolean);
-    d.append(section('every answer given about it (' + ds.length + ')', ds.length ? grid(ds, [
+    d.append(section('answers (' + ds.length + ')', ds.length ? grid(ds, [
       {key: 'q', label: 'question', mono: 1, val: a => a.question},
       {key: 'a', label: 'answered', val: a => a.answer},
-      {key: 'c', label: 'conf', n: 1, val: a => a.confidence,
-       cell: a => el('span', {text: a.confidence == null ? '' : a.confidence.toFixed(2)})},
+      {key: 'c', label: 'conf', n: 1, val: a => a.confidence, cell: a => conf(a.confidence)},
       {key: 'r', label: 'next best', val: a => a.runner_up && a.runner_up[0],
        cell: a => a.runner_up ? el('span', {class: 'tot',
          text: a.runner_up[0] + ' ' + a.runner_up[1].toFixed(2)}) : el('span')},
       {key: 'ctx', label: 'about', val: a => a.context},
-    ], {placeholder: 'filter answers...', cap: 400}) : el('p', {class: 'empty', text: 'nothing has been asked about this model'})));
+    ], {placeholder: 'filter answers...', cap: 400})
+      : el('p', {class: 'empty', text: 'nothing has been asked about this model'})));
   }
 
   host.replaceChildren(el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a model. Everything assay knows about it is here: what one row is and who settled that, every column with its role and where its value came from, every hop in and out, what the project claims about it, and every answer ever given.'}));
-  if (M.length) { const first = $('tbody tr', list); if (first) first.click(); }
+  GO.models = name => { const m = BY_NAME[name]; if (!m) return;
+    const s = $('#p-models input[type=search]'); s.value = name;
+    s.dispatchEvent(new Event('input'));
+    const r = $('#p-models tbody tr'); if (r) r.click(); };
+  const first = $('tbody tr', list); if (first) first.click();
 }
 
-/* ------------------------------------------------------------------------------------ The chain */
+/* --------------------------------------------------------------------------- The chain */
 function chainTab(host) {
-  const rows = DATA.edges;
-  host.replaceChildren(
-    el('p', {class: 'note', text: 'Every hop in the DAG and what it carries. The dropped columns are the answer to "why does this mart not have that field", and no other surface shows them.'}),
-    grid(rows, [
-      {key: 'child', label: 'child', mono: 1, val: h => h.child_name},
-      {key: 'parent', label: 'parent', mono: 1, val: h => h.parent_name},
-      {key: 'kind', label: 'join', val: h => h.kind || '',
-       cell: h => { const s = el('span', {});
-         if (h.kind) s.append(el('span', {class: 'pill', text: h.kind}));
-         if (h.driving) s.append(el('span', {class: 'pill on', text: 'drives'}));
-         if (h.union_arm) s.append(el('span', {class: 'pill', text: 'union arm'}));
-         return s; }},
-      {key: 'on', label: 'joined on', mono: 1, val: h => (h.joined_on || []).join(', ')},
-      {key: 'avail', label: 'available', n: 1, val: h => h.available},
-      {key: 'carried', label: 'carried', n: 1, val: h => h.carried},
-      {key: 'dropped', label: 'dropped', n: 1, val: h => h.dropped,
-       cell: h => { if (!h.dropped) return el('span', {class: 'tot', text: '0'});
-         const det = el('details'); det.append(el('summary', {text: String(h.dropped)}));
-         det.append(el('pre', {text: (h.dropped_cols || []).join('\n')})); return det; }},
-      {key: 'loss', label: 'rows kept', n: 1,
-       val: h => (h.row_loss && h.row_loss.length === 2 && h.row_loss[0]) ? h.row_loss[1] / h.row_loss[0] : null,
-       cell: h => (h.row_loss && h.row_loss.length === 2 && h.row_loss[0])
-         ? el('span', {text: pct(h.row_loss[1] / h.row_loss[0]) + ' (' + num(h.row_loss[1]) + ' of ' + num(h.row_loss[0]) + ')'})
-         : el('span', {class: 'tot', text: 'not counted'})},
-    ], {placeholder: 'filter by model, parent, column...', sort: 'child',
-        text: h => [h.child_name, h.parent_name, (h.joined_on || []).join(' '), (h.dropped_cols || []).join(' ')].join(' '),
-        cap: 2000}));
+  const detail = el('div', {class: 'detail'});
+  const withEdges = M.filter(m => (EDGES_IN[m.uid] || []).length || (EDGES_OUT[m.uid] || []).length);
+  const list = grid(withEdges, [
+    {key: 'name', label: 'model', mono: 1, val: m => m.name},
+    {key: 'in', label: 'reads', n: 1, val: m => (EDGES_IN[m.uid] || []).length},
+    {key: 'out', label: 'read by', n: 1, val: m => (EDGES_OUT[m.uid] || []).length},
+  ], {placeholder: 'filter models...', scroll: 1, pick: m => show(m), sort: 'name',
+      text: m => m.name + ' ' + m.path});
+
+  /* *** LEAD WITH THE HOPS WORTH LOOKING AT. *** 573 rows sorted by name is a filing cabinet.
+     These are about twenty, and they are the ones where something is happening. */
+  const notable = DATA.edges.filter(e =>
+    e.dropped > 20 || (e.row_loss && e.row_loss.length === 2 && e.row_loss[0] &&
+      e.row_loss[1] / e.row_loss[0] < 0.5) || (e.driving && !(e.joined_on || []).length));
+
+  function show(m) {
+    detail.replaceChildren(
+      el('h2', {text: m.name}),
+      el('div', {class: 'path mono', text: m.path}),
+      lineage(m));
+  }
+
+  const strip = el('details', {class: 'strip'});
+  strip.append(el('summary', {text: notable.length + ' hop(s) worth a look: big column drops, '
+    + 'most of the parent lost, or a driving edge joining on nothing'}));
+  strip.append(grid(notable, [
+    {key: 'child', label: 'child', mono: 1, val: e => e.child_name,
+     cell: e => link(e.child_name, 'chain')},
+    {key: 'parent', label: 'parent', mono: 1, val: e => e.parent_name,
+     cell: e => link(e.parent_name, 'chain')},
+    {key: 'edge', label: 'what happens', val: e => edgeNote(e)},
+    {key: 'dropped', label: 'dropped', n: 1, val: e => e.dropped},
+  ], {placeholder: 'filter...', sort: 'dropped', dir: -1, cap: 200}));
+
+  host.replaceChildren(strip, el('div', {class: 'wrap2'}, [list, detail]));
+  detail.append(el('p', {class: 'empty', text: 'Pick a model to see its lineage drawn: what feeds it, what it feeds, and what each edge carries and drops. A drawing is always one neighbourhood, never the whole DAG.'}));
+  GO.chain = name => { const m = BY_NAME[name]; if (!m) return;
+    const s = $('#p-chain .wrap2 input[type=search]'); s.value = name;
+    s.dispatchEvent(new Event('input'));
+    const r = $('#p-chain .wrap2 tbody tr'); if (r) r.click(); };
+  const first = $('.wrap2 tbody tr', host); if (first) first.click();
 }
 
-/* ----------------------------------------------------------------------------------- Claims */
+/* ------------------------------------------------------------------------------- Claims */
 function claimsTab(host) {
-  host.replaceChildren(
-    el('p', {class: 'note', text: 'Every sentence this project says about itself, extracted from descriptions and SQL comments, with where it was written and what the code said back. A claim with no verdict was never asked, which is not the same as supported.'}),
-    grid(DATA.claims, [
-      {key: 'model', label: 'model', mono: 1, val: c => c.subject_name},
-      {key: 'text', label: 'claim', val: c => c.text},
-      {key: 'kind', label: 'kind', val: c => c.kind,
-       cell: c => el('span', {class: 'pill', text: c.kind || 'unclassified'})},
-      {key: 'from', label: 'written', mono: 1, val: c => c.source_ref},
-      {key: 'v', label: 'the code', val: c => c.contradicted == null ? -1 : c.contradicted,
-       cell: c => c.contradicted == null
-         ? el('span', {class: 'tot', text: 'not contradicted'})
-         : el('span', {class: 'pill bad', text: 'contradicts @' + c.contradicted.toFixed(2)})},
-    ], {placeholder: 'filter claims...', sort: 'model', cap: 2000,
-        text: c => [c.subject_name, c.text, c.source_ref, c.kind].join(' ')}));
+  const byModel = {};
+  for (const c of DATA.claims) {
+    const g = byModel[c.subject_name] = byModel[c.subject_name] ||
+      {model: c.subject_name, rows: [], bad: 0};
+    g.rows.push(c); if (c.contradicted != null) g.bad++;
+  }
+  const groups = Object.values(byModel).sort((a, b) => a.model.localeCompare(b.model));
+  const rowCols = [
+    {key: 'model', label: 'model', mono: 1, val: c => c.subject_name,
+     cell: c => link(c.subject_name)},
+    {key: 'text', label: 'claim', val: c => c.text},
+    {key: 'kind', label: 'kind', val: c => c.kind,
+     cell: c => el('span', {class: 'pill', text: c.kind || 'unclassified'})},
+    {key: 'from', label: 'written', mono: 1, val: c => c.source_ref},
+    {key: 'v', label: 'the code', val: c => c.contradicted == null ? -1 : c.contradicted,
+     cell: c => c.contradicted == null ? el('span', {class: 'tot', text: 'not contradicted'})
+       : el('span', {class: 'pill bad', text: 'contradicts @' + c.contradicted.toFixed(2)})},
+  ];
+  const contradicted = DATA.claims.filter(c => c.contradicted != null);
+  const d = drill({
+    noun: 'models', groups: groups, groupSort: 'bad',
+    blurb: 'Every sentence this project says about itself, extracted from descriptions and SQL '
+      + 'comments, grouped by the model it is about. A claim with no verdict was never asked, '
+      + 'which is not the same as supported.',
+    groupFilter: 'filter models...',
+    groupText: g => g.model,
+    label: g => g.model + ' · ' + g.rows.length + ' claim(s)',
+    groupCols: [
+      {key: 'model', label: 'model', mono: 1, val: g => g.model},
+      {key: 'n', label: 'claims', n: 1, val: g => g.rows.length},
+      {key: 'bad', label: 'contradicted', n: 1, val: g => g.bad,
+       cell: g => el('span', {class: g.bad ? 'bad' : 'tot', text: String(g.bad)})},
+    ],
+    rowsOf: g => g.rows, rowCols: rowCols, rowSort: 'v', rowDir: -1,
+    rowText: c => [c.text, c.source_ref, c.kind].join(' '),
+  });
+  const all = el('button', {class: 'back',
+    text: 'the ' + contradicted.length + ' contradicted, across every model →'});
+  all.onclick = () => d.showRows({rows: contradicted, model: 'every model'});
+  host.replaceChildren(all, d);
 }
 
-/* --------------------------------------------------------------------------------- Findings */
+/* ----------------------------------------------------------------------------- Findings */
 function findingsTab(host) {
   const detail = el('div', {class: 'detail'});
+  let only = null;
+  const byCheck = {};
+  for (const f of DATA.findings) {
+    const g = byCheck[f.check] = byCheck[f.check] ||
+      {check: f.check, n: 0, marts: 0, ruled: 0, rests_on: f.rests_on};
+    g.n++; g.marts = Math.max(g.marts, f.marts); g.ruled += f.ruled_finding ? 1 : 0;
+  }
+  const checks = Object.values(byCheck).sort((a, b) => b.n - a.n);
+
   const list = grid(DATA.findings, [
     {key: 'check', label: 'check', mono: 1, val: f => f.check},
-    {key: 'model', label: 'model', mono: 1, val: f => f.model},
+    {key: 'model', label: 'model', mono: 1, val: f => f.model, cell: f => link(f.model)},
     {key: 'w', label: 'weight', n: 1, val: f => f.weight,
      cell: f => el('span', {text: f.weight.toFixed(1)})},
     {key: 'marts', label: 'marts', n: 1, val: f => f.marts},
   ], {placeholder: 'filter findings...', scroll: 1, sort: 'w', dir: -1, pick: f => show(f),
+      where: f => !only || f.check === only,
       text: f => [f.check, f.model, f.summary].join(' ')});
+
+  /* The checks strip FILTERS the list rather than replacing the view. Findings are only 244, so
+     the list is still readable whole -- what was missing was seeing the shape before scrolling. */
+  const strip = el('div', {class: 'chips'});
+  function paint() {
+    strip.replaceChildren(...checks.map(c => {
+      const b = el('button', {class: 'chip' + (only === c.check ? ' on' : '')});
+      b.append(el('span', {class: 'mono', text: c.check}));
+      b.append(el('b', {text: String(c.n)}));
+      b.append(el('span', {class: c.ruled ? 'ok' : 'tot',
+                           text: c.ruled + ' read'}));
+      b.onclick = () => { only = only === c.check ? null : c.check; paint(); list.redraw(); };
+      return b;
+    }));
+  }
+  paint();
 
   function show(f) {
     detail.replaceChildren(
       el('h2', {text: f.check}),
-      el('div', {class: 'path mono', text: f.model + '  ·  ' + (f.file || '')}),
+      el('div', {class: 'path'}, [link(f.model), el('span', {class: 'mono tot',
+        text: '  ·  ' + (f.file || '')})]),
       el('p', {class: 'prose', text: f.summary}),
       section('what it means', el('p', {class: 'prose', text: f.detail || ''})),
       section('severity', kv([
         ['weight', String(f.weight)],
         ['marts downstream', String(f.marts)],
         ['descendants', String(f.descendants)],
-        ['rests on', f.rests_on ? el('span', {class: 'pill judged', text: f.rests_on})
+        ['rests on', f.rests_on
+          ? el('span', {class: 'pill judged', text: f.rests_on})
           : el('span', {class: 'pill declared', text: 'structural: a parser decided it'})],
         ['ruled', el('span', {class: 'pill ' + (f.ruled_finding ? 'on' : ''),
           text: f.ruled_finding ? 'a person read this finding'
-            : (f.ruled_model ? 'a person ruled on this model, but not on this finding' : 'nobody has read it')})],
+            : (f.ruled_model ? 'a person ruled on this model, but not on this finding'
+                             : 'nobody has read it')})],
       ])),
-      section('evidence', el('pre', {text: JSON.stringify(f.evidence, null, 2)})),
+      section('evidence', kvAny(f.evidence)),
       section('rule on it', el('p', {class: 'mono prose',
         text: "assay review -i\nrule(finding='" + f.id + "', verdict=..., why=...)"})));
   }
 
-  host.replaceChildren(el('div', {class: 'wrap2'}, [list, detail]));
-  detail.append(el('p', {class: 'empty', text: 'Pick a finding. Ranked by weight, which is the base severity lifted by reach: the same defect on a leaf and on a model nine marts read are not the same finding.'}));
+  host.replaceChildren(
+    el('p', {class: 'note', text: 'Ranked by weight, which is the base severity lifted by reach: '
+      + 'the same defect on a leaf and on a model nine marts read are not the same finding. '
+      + 'Pick a check to narrow the list.'}),
+    strip, el('div', {class: 'wrap2'}, [list, detail]));
+  detail.append(el('p', {class: 'empty', text: 'Pick a finding.'}));
   const first = $('tbody tr', list); if (first) first.click();
 }
 
-/* ---------------------------------------------------------------------------------- Answers */
+/* ------------------------------------------------------------------------------ Answers */
 function answersTab(host) {
-  host.replaceChildren(
-    el('p', {class: 'note', text: 'The live answer to every question asked about this project: one row per subject and question, the latest. Every version is kept in the store because that is what makes effectiveness possible, and serving all of them at once is how traversal once reported twelve verdicts for four hops.'}),
-    grid(DATA.decisions, [
+  const fam = {};
+  for (const a of DATA.decisions) {
+    const p = a.question.split('__')[0];
+    const g = fam[p] = fam[p] || {prefix: p, rows: [], sum: 0, n: 0, low: 0, versions: {}};
+    g.rows.push(a);
+    if (a.confidence != null) { g.sum += a.confidence; g.n++; if (a.confidence < 0.6) g.low++; }
+    if (a.prompt_version) g.versions[a.prompt_version] = 1;
+  }
+  const qByPrefix = {};
+  for (const q of DATA.questions) if (q.id_prefix) qByPrefix[q.id_prefix] = q.name;
+  const groups = Object.values(fam).sort((a, b) => b.rows.length - a.rows.length);
+
+  host.replaceChildren(drill({
+    noun: 'question families', groups: groups, groupSort: 'n', groupFilter: 'filter families...',
+    blurb: 'The live answer to every question asked about this project: one row per subject and '
+      + 'question, the latest. Grouped by the question that asked it, because 8,449 answers '
+      + 'sorted by id is a filing cabinet. Below 0.60 nothing is reported as a finding, so the '
+      + 'low column is where the model is telling you it cannot tell.',
+    groupText: g => g.prefix + ' ' + (qByPrefix[g.prefix] || ''),
+    label: g => (qByPrefix[g.prefix] || g.prefix) + ' · ' + g.rows.length + ' answer(s)',
+    groupCols: [
+      {key: 'fam', label: 'family', mono: 1, val: g => qByPrefix[g.prefix] || g.prefix,
+       cell: g => { const s = el('span', {});
+         s.append(el('span', {class: 'mono', text: qByPrefix[g.prefix] || g.prefix}));
+         if (!qByPrefix[g.prefix]) s.append(el('span', {class: 'pill',
+           text: 'no bank claims ' + g.prefix}));
+         return s; }},
+      {key: 'n', label: 'answers', n: 1, val: g => g.rows.length},
+      {key: 'mean', label: 'mean conf', n: 1, val: g => g.n ? g.sum / g.n : null,
+       cell: g => conf(g.n ? g.sum / g.n : null)},
+      {key: 'low', label: 'under 0.60', n: 1, val: g => g.low,
+       cell: g => el('span', {class: g.low ? 'low' : 'tot', text: String(g.low)})},
+      {key: 'v', label: 'versions', mono: 1, val: g => Object.keys(g.versions).sort().join(', ')},
+    ],
+    rowsOf: g => g.rows,
+    rowCols: [
       {key: 'q', label: 'question', mono: 1, val: a => a.question},
-      {key: 'key', label: 'about', mono: 1, val: a => a.key},
-      {key: 'ctx', label: 'subject', val: a => a.context},
+      {key: 'ctx', label: 'subject', val: a => a.context || a.key,
+       cell: a => { const n = (a.key || '').split('.').pop().split('::')[0];
+         return BY_NAME[n] ? link(n) : el('span', {text: a.context || a.key}); }},
+      {key: 'about', label: 'about', val: a => a.context},
       {key: 'a', label: 'answered', val: a => a.answer},
-      {key: 'c', label: 'conf', n: 1, val: a => a.confidence,
-       cell: a => el('span', {text: a.confidence == null ? '' : a.confidence.toFixed(2)})},
+      {key: 'c', label: 'conf', n: 1, val: a => a.confidence, cell: a => conf(a.confidence)},
       {key: 'r', label: 'next best', val: a => a.runner_up && a.runner_up[0],
        cell: a => a.runner_up ? el('span', {class: 'tot',
          text: a.runner_up[0] + ' ' + a.runner_up[1].toFixed(2)}) : el('span')},
       {key: 'v', label: 'version', mono: 1, val: a => a.prompt_version},
-    ], {placeholder: 'filter answers...', sort: 'q', cap: 2000,
-        text: a => [a.question, a.key, a.context, a.answer, a.prompt_version].join(' ')}));
+    ],
+    rowSort: 'c', rowDir: 1,
+    rowText: a => [a.question, a.key, a.context, a.answer, a.prompt_version].join(' '),
+  }));
 }
 
-/* -------------------------------------------------------------------------------- Questions */
+/* *** THE THINGS YOU CONFIGURE BY HAND WERE THE ONES DUMPED AS RAW JSON. ***
+   The vocabulary, the question text and the per-check policy are hand-written and hand-
+   maintained, so they are exactly what a person opens this page to read, and they were the only
+   parts rendered as a `<pre>` blob. These render whatever shape the value happens to be. */
+function kvAny(v, depth) {
+  depth = depth || 0;
+  if (v == null || v === '') return el('span', {class: 'tot', text: '—'});
+  if (Array.isArray(v)) {
+    if (!v.length) return el('span', {class: 'tot', text: 'none'});
+    if (v.every(x => typeof x !== 'object'))
+      return el('div', {class: 'chips flat'}, v.map(x => el('span', {class: 'chip mono',
+        text: String(x)})));
+    return el('div', {}, v.map(x => el('div', {class: 'sub'}, [kvAny(x, depth + 1)])));
+  }
+  if (typeof v === 'object') {
+    const d = el('dl', {class: 'kv' + (depth ? ' sub' : '')});
+    for (const k of Object.keys(v).sort()) {
+      d.append(el('dt', {text: k}));
+      d.append(el('dd', {}, [kvAny(v[k], depth + 1)]));
+    }
+    return d;
+  }
+  if (typeof v === 'string' && v.length > 90)
+    return el('p', {class: 'prose', text: v});
+  return el('span', {text: String(v)});
+}
+
+/* ---------------------------------------------------------------------------- Questions */
 function questionsTab(host) {
   const detail = el('div', {class: 'detail'});
   const byFam = {};
@@ -477,70 +829,159 @@ function questionsTab(host) {
     {key: 'asked', label: 'asked', n: 1, val: q => asked[q.id_prefix] || 0},
     {key: 'human', label: 'human', n: 1, val: q => (byFam[q.name] || {}).human || 0,
      cell: q => { const n = (byFam[q.name] || {}).human || 0;
-       return el('span', {class: n ? '' : 'tot', text: String(n)}); }},
+       return el('span', {class: n ? 'ok' : 'tot', text: String(n)}); }},
   ], {placeholder: 'filter questions...', scroll: 1, sort: 'name', pick: q => show(q),
       text: q => [q.name, q.id_prefix, q.prompt_version, JSON.stringify(q.instructions)].join(' ')});
 
   function show(q) {
     const n = (byFam[q.name] || {}).human || 0;
-    detail.replaceChildren(
-      el('h2', {text: q.name}),
-      el('div', {class: 'path mono', text: q.id_prefix + '  ·  ' + q.prompt_version + '  ·  ' + q.kind}),
-      section('how many verdicts, and whose', kv([
-        ['asked on this project', num(asked[q.id_prefix] || 0) + ' subject(s)'],
-        ['human verdicts', el('span', {class: 'pill ' + (n ? 'on' : 'bad'), text: String(n)})],
-        ['all verdicts', String((byFam[q.name] || {}).all || 0)],
-      ])),
-      el('p', {class: 'note', text: 'Only a human verdict counts toward min_adjudications. An agent ruling is evidence and never authority: it cannot gate a build, satisfy the verdict floor, anchor the regression check, or move the ruled-on number.'}),
-      section('what it asks', el('pre', {text: JSON.stringify(q.instructions, null, 2)})),
-      section('the options, and how each is described', el('pre', {text: JSON.stringify(q.criteria, null, 2)})));
+    const d = detail; d.replaceChildren();
+    d.append(el('h2', {text: q.name}));
+    d.append(el('div', {class: 'path mono',
+      text: [q.id_prefix, q.prompt_version, q.kind, q.origin].filter(Boolean).join('  ·  ')}));
+
+    d.append(section('how many verdicts, and whose', kv([
+      ['asked on this project', num(asked[q.id_prefix] || 0) + ' subject(s)'],
+      ['human verdicts', el('span', {class: 'pill ' + (n ? 'on' : 'bad'), text: String(n)})],
+      ['all verdicts', String((byFam[q.name] || {}).all || 0)],
+    ])));
+    d.append(el('p', {class: 'note', text: 'Only a human verdict counts toward min_adjudications. '
+      + 'An agent ruling is evidence and never authority: it cannot gate a build, satisfy the '
+      + 'verdict floor, anchor the regression check, or move the ruled-on number.'}));
+
+    /* The question as it is SENT, as prose rather than as a JSON object. */
+    const ins = q.instructions || {};
+    const qs = el('div');
+    if (ins.question) qs.append(el('p', {class: 'quote', text: ins.question}));
+    for (const k of Object.keys(ins).sort()) {
+      if (k === 'question') continue;
+      qs.append(el('p', {class: 'note'}, [el('b', {text: k + ': '}),
+                                          el('span', {text: String(ins[k])})]));
+    }
+    d.append(section('what it asks', qs));
+
+    /* Every option it may return, each one a block: the name, what it means, what it is NOT for,
+       and the examples. This is the text `effectiveness` measures agreement against, so it is
+       the text a person needs when a version number moves. */
+    const crit = q.criteria || {};
+    const opts = el('div');
+    for (const name of Object.keys(crit).sort()) {
+      const c = crit[name], blk = el('div', {class: 'opt'});
+      blk.append(el('div', {class: 'optname mono', text: name}));
+      if (typeof c === 'string') { blk.append(el('p', {class: 'prose', text: c})); }
+      else {
+        if (c.what) blk.append(el('p', {class: 'prose', text: c.what}));
+        if (c.not_for) blk.append(el('p', {class: 'note'},
+          [el('b', {text: 'not for: '}), el('span', {text: String(c.not_for)})]));
+        for (const k of Object.keys(c).sort()) {
+          if (k === 'what' || k === 'not_for' || k === 'examples') continue;
+          blk.append(el('p', {class: 'note'},
+            [el('b', {text: k + ': '}), el('span', {text: String(c[k])})]));
+        }
+        if ((c.examples || []).length)
+          blk.append(el('div', {class: 'chips flat'},
+            c.examples.map(x => el('span', {class: 'chip mono', text: String(x)}))));
+      }
+      opts.append(blk);
+    }
+    d.append(section('the ' + Object.keys(crit).length + ' answers it may give', opts));
   }
 
   host.replaceChildren(
-    el('p', {class: 'note', text: 'Every question assay will ask, in full. The text is the thing being measured, so it sits next to the measurement: agreement is reported per prompt_version and a version number on its own tells a reader nothing about what changed.'}),
+    el('p', {class: 'note', text: 'Every question assay will ask, in full. The text is the thing '
+      + 'being measured, so it sits next to the measurement: agreement is reported per '
+      + 'prompt_version and a version number on its own tells a reader nothing about what '
+      + 'changed.'}),
     el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a question to read its instructions and every option, exactly as they are sent.'}));
   const first = $('tbody tr', list); if (first) first.click();
 }
 
-/* ----------------------------------------------------------------------------------- Config */
+/* ------------------------------------------------------------------------------- Config */
 function configTab(host) {
-  const c = DATA.config, bits = [];
-  bits.push(el('p', {class: 'note', text: 'What was actually resolved, which is not always what the file says.'}));
-  bits.push(section('resolved', kv(Object.entries(c)
-    .filter(([, v]) => typeof v !== 'object')
-    .map(([k, v]) => [k, String(v)]))));
-  for (const k of ['vocab', 'questions', 'practices', 'waivers', 'explanations']) {
-    if (c[k] && Object.keys(c[k]).length)
-      bits.push(section(k, el('pre', {text: JSON.stringify(c[k], null, 2)})));
+  const c = DATA.config || {}, bits = [];
+  bits.push(el('p', {class: 'note', text: 'What was actually resolved, which is not always what '
+    + 'the file says. Everything under here you wrote by hand.'}));
+
+  const scalars = Object.entries(c).filter(([, v]) => typeof v !== 'object' || v === null);
+  if (scalars.length) bits.push(section('resolved', kv(scalars.map(([k, v]) => [k, String(v)]))));
+
+  /* *** THE VOCABULARY IS THE POINT OF THE WHOLE CONFIG AND IT WAS A JSON BLOB. ***
+     Fifteen terms written once made `traverse` flag wdid joins without anyone writing a water
+     question. Knowledge written once reaching questions nobody wrote is the promise, so it gets
+     a table you can read rather than a pre block you skim past. */
+  if (c.vocab && Object.keys(c.vocab).length) {
+    const rows = Object.keys(c.vocab).sort().map(k => ({term: k, def: c.vocab[k]}));
+    bits.push(section('vocabulary (' + rows.length + ' term(s), sent with every question)',
+      grid(rows, [
+        {key: 'term', label: 'term', mono: 1, val: r => r.term},
+        {key: 'def', label: 'what it means here', val: r => JSON.stringify(r.def),
+         cell: r => kvAny(r.def)},
+      ], {placeholder: 'filter terms...', cap: 400})));
   }
-  if (DATA.runs.length) bits.push(section('runs recorded', grid(DATA.runs, [
-    {key: 'run', label: 'run', mono: 1, val: r => r.run_id},
-    {key: 'av', label: 'assay', mono: 1, val: r => r.assay_version},
-    {key: 'dv', label: 'dbt', mono: 1, val: r => r.dbt_version},
-    {key: 'm', label: 'models', n: 1, val: r => r.models},
-    {key: 'ok', label: 'readable', n: 1, val: r => r.readable},
-    {key: 'no', label: 'unreadable', n: 1, val: r => r.unreadable},
-  ], {placeholder: 'filter runs...'})));
+
+  if (c.questions && Object.keys(c.questions).length) {
+    const rows = Object.keys(c.questions).sort().map(k => ({q: k, v: c.questions[k]}));
+    bits.push(section('per-check policy (' + rows.length + ')', grid(rows, [
+      {key: 'q', label: 'check', mono: 1, val: r => r.q},
+      {key: 'v', label: 'configured', val: r => JSON.stringify(r.v), cell: r => kvAny(r.v)},
+    ], {placeholder: 'filter...', cap: 400})));
+  }
+
+  if (c.waivers && Object.keys(c.waivers).length) {
+    const rows = [];
+    for (const m of Object.keys(c.waivers).sort())
+      for (const w of [].concat(c.waivers[m])) rows.push({model: m, w: w});
+    bits.push(section('waivers (' + rows.length + ')', grid(rows, [
+      {key: 'model', label: 'model', mono: 1, val: r => r.model, cell: r => link(r.model)},
+      {key: 'w', label: 'waived, and why', val: r => JSON.stringify(r.w), cell: r => kvAny(r.w)},
+    ], {placeholder: 'filter waivers...', cap: 400})));
+    bits.push(el('p', {class: 'note', text: 'A waived finding never reaches the findings table, '
+      + 'so nothing above counts it. A waiver whose justification is "looks fine" is how a real '
+      + 'finding gets silenced, which is why the reason is required and is shown here.'}));
+  }
+
+  for (const k of ['practices', 'explanations']) {
+    if (c[k] && Object.keys(c[k]).length) bits.push(section(k, kvAny(c[k])));
+  }
+
+  if (DATA.runs.length) bits.push(section('runs recorded (' + DATA.runs.length + ')',
+    grid(DATA.runs, [
+      {key: 'run', label: 'run', mono: 1, val: r => r.run_id},
+      {key: 'when', label: 'started', mono: 1, val: r => r.started_at || ''},
+      {key: 'av', label: 'assay', mono: 1, val: r => r.assay_version},
+      {key: 'dv', label: 'dbt', mono: 1, val: r => r.dbt_version},
+      {key: 'm', label: 'models', n: 1, val: r => r.models},
+      {key: 'ok', label: 'readable', n: 1, val: r => r.readable},
+      {key: 'no', label: 'unreadable', n: 1, val: r => r.unreadable,
+       cell: r => el('span', {class: r.unreadable ? 'bad' : 'tot', text: String(r.unreadable)})},
+    ], {placeholder: 'filter runs...', sort: 'when', dir: -1})));
+
   if (DATA.unreadable.length) {
-    bits.push(section('what assay could NOT read (' + DATA.unreadable.length + ')', grid(DATA.unreadable, [
-      {key: 'name', label: 'model', mono: 1, val: u => u.name},
-      {key: 'path', label: 'path', mono: 1, val: u => u.path},
-      {key: 'why', label: 'why', val: u => u.why},
-    ], {placeholder: 'filter...', cap: 500})));
-    bits.push(el('p', {class: 'note', text: 'A model absent from every table in this file because its SQL would not parse looks identical, from outside, to a model with nothing wrong with it. That is why it is named here. An absent audit is never a pass.'}));
+    bits.push(section('what assay could NOT read (' + DATA.unreadable.length + ')',
+      grid(DATA.unreadable, [
+        {key: 'name', label: 'model', mono: 1, val: u => u.name},
+        {key: 'path', label: 'path', mono: 1, val: u => u.path},
+        {key: 'why', label: 'why', val: u => u.why},
+      ], {placeholder: 'filter...', cap: 500})));
+    bits.push(el('p', {class: 'note', text: 'A model absent from every table in this file because '
+      + 'its SQL would not parse looks identical, from outside, to a model with nothing wrong '
+      + 'with it. That is why it is named here. An absent audit is never a pass.'}));
   }
   host.replaceChildren(...bits);
 }
 
-/* -------------------------------------------------------------------------------- Understood */
+/* --------------------------------------------------------------------------- Understood */
 function understoodTab(host) {
   /* An iframe, because the record is a whole document with its own stylesheet and this page has
      one too. srcdoc is same-origin, so the height can follow its content instead of guessing. */
-  const f = el('iframe', {style: 'width:100%;border:1px solid var(--line);border-radius:8px;' +
-                                 'background:#fff;height:80vh', title: 'the record'});
+  const f = el('iframe', {style: 'width:100%;border:1px solid var(--line);border-radius:8px;'
+    + 'background:#fff;height:80vh', title: 'the record'});
   host.replaceChildren(
-    el('p', {class: 'note', text: 'The record, unchanged: the one surface here with an argument to make rather than a table to show. It is also what `assay page --plain` writes on its own, small enough to commit and to hand to somebody.'}),
+    el('p', {class: 'note', text: 'The record: the one surface here with an argument to make '
+      + 'rather than a table to show. It is also what `assay page --plain` writes on its own, and '
+      + 'what `record.html` holds in the data artifact, small enough to commit and to read a diff '
+      + 'of.'}),
     f);
   f.srcdoc = DATA.record || '';
   f.onload = () => { try {
@@ -549,7 +990,7 @@ function understoodTab(host) {
   } catch (e) { /* height stays at the default; nothing here depends on it */ } };
 }
 
-/* ------------------------------------------------------------------------------------- tabs */
+/* ---------------------------------------------------------------------------------- tabs */
 const VIEWS = {models: modelsTab, chain: chainTab, claims: claimsTab, findings: findingsTab,
                answers: answersTab, questions: questionsTab, config: configTab,
                understood: understoodTab};

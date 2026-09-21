@@ -324,8 +324,10 @@ assay watch                                # rerun on save; print only what your
 **Wiring it in**
 
 ```bash
-assay page assay.html     # EVERYTHING assay knows: models, chain, claims, findings,
-                          # answers, questions, config. One file, eight tabs.
+assay page assay.html     # EVERYTHING assay knows: models, chain drawn as lineage,
+                          # claims, findings, answers, questions, config. One file, eight
+                          # tabs. ALSO writes assay-data/ -- commit that, not the page
+assay page x.html --from assay-data/   # re-render from a committed artifact, no warehouse
 assay page --plain        # ...just the record: is this warehouse understood, and by whom
 assay export <dir>        # the tables, as seeds your own models can join to
 assay mcp                 # the MCP server
@@ -633,7 +635,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.25.1
+- uses: ryan-sunny/dbt-assay@v0.26.0
   with:
     target: target-head
     baseline: base/target

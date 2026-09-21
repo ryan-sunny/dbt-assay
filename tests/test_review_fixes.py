@@ -959,14 +959,25 @@ def _page(**over):
     return page_html({**base, **over})
 
 
-def test_the_page_renders_both_a_plain_and_a_whimsical_variant():
-    """Same content, same classes, two stylesheets. A report somebody has to explain before a
-    colleague reads it is a report that does not get forwarded."""
-    fancy, plain = _page(), _page(plain=True)
+def test_the_record_has_one_style_and_nothing_to_explain():
+    """*** THERE USED TO BE TWO STYLESHEETS, AND THE LOUD ONE BECAME AN ACCIDENT. ***
+
+    A report somebody has to explain before a colleague reads it does not get forwarded, which is
+    why the sober variant existed. Once the record moved inside the explorer as a tab, the loud
+    one was the only styled surface on a page of plain tables and read as a mistake rather than
+    as emphasis. Reported from the field in exactly those words. So there is one style now, the
+    `plain` flag no longer selects between them, and this asserts the loud one is gone rather
+    than merely unused.
+    """
     import re
-    assert re.findall(r"<h2>([^<]+)</h2>", fancy) == re.findall(r"<h2>([^<]+)</h2>", plain)
-    assert "repeating-radial-gradient" in fancy and "repeating-radial-gradient" not in plain
-    for doc in (fancy, plain):
+
+    from dbt_assay import render
+
+    assert not hasattr(render, "PAGE_CSS"), "the loud stylesheet is still shipping"
+    a, b = _page(), _page(plain=True)
+    assert re.findall(r"<h2>([^<]+)</h2>", a) == re.findall(r"<h2>([^<]+)</h2>", b)
+    assert "repeating-radial-gradient" not in a and "repeating-radial-gradient" not in b
+    for doc in (a, b):
         assert "{" not in re.sub(r"(?s)<style>.*?</style>", "", doc), "a template field leaked"
 
 

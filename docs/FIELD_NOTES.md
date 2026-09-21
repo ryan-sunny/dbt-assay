@@ -1815,3 +1815,115 @@ The record travels inside the JSON blob and renders into an iframe rather than b
 a div. It is a whole document with its own stylesheet and so is the page around it. The `</`
 sequence is escaped in the blob for the same class of reason: a dbt model with `</script>` in a
 comment is not exotic, and it would truncate the page describing it.
+
+---
+
+## Round twelve: a long list is data, not navigation
+
+Field reaction to 0.25.0, and it separated two things that had been running together: the page
+held the right content and gave you no way to move around it.
+
+> *"very high vol of shit too like claims and answers and that's fine and to be expected but just
+> a list to scroll of all this is overwhelming and useless... the chain has better ways to display
+> that information, same with the checks."*
+
+The diagnosis: Models, Findings and Questions had an index and a detail. Chain, Claims and Answers
+opened on a flat list of everything. **5,794 claims in one scroll is not more information than 358
+models in one scroll, it is less** -- the first screen tells you nothing about the shape of what is
+there and gives you nowhere obvious to click.
+
+So: no tab opens on a flat list. Claims group by model and lead with the 113 contradicted, answers
+group by the 19 question families with mean confidence and how many fall under the 0.60 gate,
+findings get a check strip that filters the list in place. And every model name in every table is
+a link to that model, which is the cheapest change here and the one that turns eight islands into
+somewhere you can move around.
+
+### You never draw 573 hops
+
+That is the whole graph. Measured before drawing anything:
+
+```
+parents per model    median 0   p95 7    max 36   (water_section_fingerprint)
+children per model   median 1   p95 4    max 20   (stg_adwr_sections)
+boxes in a drawing   median 3   p95 12   max 37
+```
+
+A drawing is always one model's neighbourhood, so 95% of them are twelve boxes or fewer and need
+no graph algorithm: three bands, straight lines, driving parents first because the driving edge is
+the spine.
+
+**The edge label goes on the parent box, never on the line.** With eight parents converging on one
+focus, labels on the lines overlap into mush; on the boxes they cannot. Each parent box carries
+its own join kind, keys, dropped count and rows kept.
+
+Past nine in a band it degrades to a list with the same facts, because 36 boxes with 36 converging
+lines is the hairball the drawing exists to avoid. That is 14 models of 358 on the parent side and
+6 on the child side, and you can see it coming.
+
+### The page is not the thing worth committing
+
+```
+             minified     jsonl     pretty     lines in a diff
+models          1.81M     1.81M      2.80M     358  vs  110,111
+decisions       3.20M     3.20M      3.87M   8,449  vs  118,287
+TOTAL           8.12M     8.12M     10.35M
+```
+
+JSON Lines costs **nothing** over minified and diffs as one line per entity. Pretty-printing costs
+2 MB and produces a 110,000-line models file that git will happily diff and no human will read.
+
+So every run writes `assay-data/`: one `.jsonl` per table, `meta.json` and `config.json` whole
+because a person reads those and wants a field-level diff, and `record.html`, which is the 15 KB
+report. Commit the directory, gitignore the page. Demonstrated by adding one human ruling and
+regenerating:
+
+```
+adjudications.jsonl   1 line added
+record.html           changed, because the ruled-on number moved
+everything else       identical
+```
+
+`assay page out.html --from assay-data/` re-renders with no dbt target, no store and no manifest,
+which is most of why the artifact exists: a committed artifact readable only from the machine that
+produced it is not a record. Verified byte-identical to a render straight from the warehouse.
+
+It is written every run rather than behind a flag. A page and an artifact that can disagree is the
+one-fact-two-spellings defect, in the two files that are supposed to be the same thing.
+
+### The half you write by hand was the half dumped as JSON
+
+> *"ideally you're seeing the user configured shit in a nicely formatted way too like vocab and
+> questions and other config."*
+
+Fair, and worse than it sounds. The vocabulary, the question text and the per-check policy are
+hand-written and hand-maintained -- they are exactly what a person opens this page to read -- and
+they were the only parts rendered as `JSON.stringify(..., null, 2)` inside a `<pre>`. Fifteen
+vocabulary terms written once made `traverse` flag `wdid` joins without anyone writing a water
+question. That is the promise of the whole config, and it was being skimmed past as a blob.
+
+Each question now shows its prompt as prose and every option as a block: the name, what it means,
+what it is explicitly not for, and its examples as chips. That is the text `effectiveness` measures
+agreement against, so it is the text a person needs when a version number moves. The config tab
+renders the vocabulary, the per-check policy, the waivers with their required reasons, and the
+runs, as tables. Zero `<pre>` blobs on either tab, asserted.
+
+### And the theme went
+
+> *"the understood tab being the only one to follow the theme at all is funny... if it's not done
+> properly across the entire page and it's a bit cluttered to allow such distractions then let's
+> not."*
+
+There were two record stylesheets, a loud one and a sober one, and the loud one was the default.
+Once the record moved inside the explorer as a tab it was the only styled surface on a dense page
+of plain tables, which reads as an accident rather than as emphasis. One style now, the sober one,
+and `PAGE_CSS` is deleted rather than left unused. Colour stays where it carries meaning: a pill
+for provenance, red for a contradiction, amber for a confidence under the gate.
+
+### Two defects, both found by driving it again
+
+`Node.append()` returns undefined, so `g.append(svg('title'))..textContent = ...` was setting a
+property on nothing and every hover title on the lineage threw. And the `--from` path originally
+rendered an Understood tab that was silently empty, because the record was added inside
+`explorer_html` and so was never in the data that got written. Both are the same shape as round
+eleven's: invisible to anything that reads the source or the generated markup, obvious the moment
+the page is opened and clicked.

@@ -146,64 +146,10 @@ fact, and nothing here pretends otherwise.</footer>
 # one file, no network, no build step, and DETERMINISTIC: it carries the manifest's own
 # `generated_at` and never a wall clock, because a page that churns on every run cannot be
 # committed and a page that cannot be committed cannot show you what moved.
-PAGE_CSS = """
-:root{
-  --deep:#0d3d73; --blue:#1a5fa8; --sky:#b8d8e8;
-  --gold:#f2c14e; --amber:#e8a020; --ink:#12333a;
-  --barn:#9e2b20; --maroon:#7d2016; --cream:#f7f2e4; --sage:#8a9a5b;
-}
-*{box-sizing:border-box}
-body{margin:0;color:var(--cream);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",
-Helvetica,Arial,sans-serif;
-background:var(--deep);
-background-image:repeating-radial-gradient(circle at 50% 38%,
-  var(--blue) 0 58px, #17559a 58px 72px, var(--blue) 72px 130px);
-background-attachment:fixed}
-.wrap{max-width:1080px;margin:0 auto;padding:30px 22px 70px}
-h1{margin:0;font-size:52px;line-height:1.02;letter-spacing:-1.4px;font-weight:900;
-  color:var(--gold); -webkit-text-stroke:3px var(--ink); paint-order:stroke fill;
-  text-shadow:0 5px 0 var(--ink), 0 9px 20px rgba(0,0,0,.4); max-width:16ch}
-h1 .small{display:block;font-size:22px;letter-spacing:-.3px;color:var(--sky);
-  -webkit-text-stroke:0;text-shadow:none;font-weight:700;margin-top:10px}
-h2{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--sky);
-  margin:34px 0 12px;font-weight:700}
-.sub{color:var(--sky);margin-top:8px;font-size:14px}
-.hero{display:flex;gap:18px;flex-wrap:wrap;align-items:stretch;margin:22px 0 4px}
-.big{flex:1 1 300px;background:var(--cream);color:var(--ink);border-radius:16px;
-  padding:22px 26px;border:3px solid var(--ink);box-shadow:0 6px 0 rgba(0,0,0,.22)}
-.big .n{font-size:66px;line-height:1;font-weight:800;color:var(--barn);letter-spacing:-2px}
-.big .of{font-size:17px;color:#5a6a2f;font-weight:700}
-.big .lab{font-size:12px;letter-spacing:1.4px;text-transform:uppercase;color:#4a5b63;
-  font-weight:700;margin-bottom:8px}
-.big p{margin:12px 0 0;font-size:13px;color:#3d4d55;line-height:1.5}
-.card{background:rgba(247,242,228,.96);color:var(--ink);border-radius:14px;padding:16px 18px;
-  border:3px solid var(--ink);box-shadow:0 5px 0 rgba(0,0,0,.2)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:14px}
-.stat{background:var(--cream);color:var(--ink);border-radius:12px;padding:13px 15px;
-  border:3px solid var(--ink);box-shadow:0 4px 0 rgba(0,0,0,.2)}
-.stat b{display:block;font-size:27px;line-height:1.15;color:var(--maroon)}
-.stat span{font-size:12px;color:#4a5b63;font-weight:600}
-.stat em{display:block;font-style:normal;font-size:11.5px;color:#6b7a80;margin-top:5px}
-table{border-collapse:collapse;width:100%;font-size:13.5px}
-th{text-align:left;font-size:11px;letter-spacing:1.1px;text-transform:uppercase;color:#5d6d74;
-  padding:0 10px 7px 0;border-bottom:2px solid var(--ink)}
-td{padding:7px 10px 7px 0;border-bottom:1px solid rgba(18,51,58,.16);vertical-align:top}
-td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
-.bar{display:inline-block;height:9px;border-radius:5px;background:var(--barn);vertical-align:middle}
-.bar.ok{background:var(--sage)} .bar.mid{background:var(--amber)}
-.tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;
-  border:2px solid var(--ink);white-space:nowrap}
-.t-bad{background:var(--barn);color:var(--cream)}
-.t-mid{background:var(--gold);color:var(--ink)}
-.t-ok{background:var(--sage);color:#17281a}
-.note{color:var(--sky);font-size:12.5px;margin:9px 0 0;max-width:78ch}
-footer{color:var(--sky);font-size:12px;margin-top:40px;max-width:82ch;line-height:1.65}
-footer b{color:var(--gold)}
-a{color:var(--gold)}
-"""
-
-
+# *** ONE RECORD STYLE, AND IT IS THE SOBER ONE. ***
+# There used to be a second, colourful stylesheet for the default page. Once the record moved
+# inside the explorer as a tab it became the only styled surface on a dense page of plain tables,
+# which reads as an accident rather than as emphasis. A half-applied theme is worse than none.
 PLAIN_CSS = """
 :root{--deep:#ffffff; --blue:#ffffff; --sky:#5c6670;
   --gold:#1a1a1a; --amber:#8a6d1f; --ink:#1a1a1a;
@@ -343,7 +289,7 @@ def page_html(data: dict) -> str:
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{e(data['project'])} &middot; assay</title>
-<style>{PLAIN_CSS if data.get('plain') else PAGE_CSS}</style></head><body>
+<style>{PLAIN_CSS}</style></head><body>
 <div class="wrap">
 <h1>Is this warehouse understood?<span class="small">and by whom</span></h1>
 <div class="sub">{e(data['project'])} &middot; {data['models']} models &middot;
@@ -434,4 +380,5 @@ This file is self-contained and deterministic: it carries the manifest's own
 file. Commit it. A file that diffs accrues; a server shows you today and forgets.<br><br>
 Written by <b>assay {e(data['version'])}</b>.
 </footer>
-</div></body></html>"""
+</div></body></html>
+"""

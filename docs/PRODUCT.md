@@ -232,11 +232,36 @@ costing both. The record is small, committed, diffed across commits, and handed 
 its whole argument is that it accrues, which needs it to stay small. The explorer is for the
 person who owns the warehouse.
 
+**No tab opens on a flat list.** 5,794 claims in one scroll is not more information than 358
+models in one scroll, it is less: the first screen tells you nothing about the shape of what is
+there and gives you nowhere obvious to click. So the high-volume tabs open on a grouped summary
+you can read in one screen, and the rows are one click in, already filtered. Claims group by
+model, answers by the question family that asked them, findings by check. And a model name in any
+table is a link to that model, so the tabs are one thing rather than eight islands.
+
+**The chain is drawn, not listed.** You never draw 573 hops; that is the whole graph. A drawing is
+always one model's neighbourhood, and those are small: on a 358-model warehouse the median is 3
+boxes, p95 is 12, the worst is 37. So it is three bands and straight lines, with each edge's join
+kind, keys and dropped count written on the parent box rather than on the line, because eight
+lines converging on one focus turn line labels into mush. Past nine in a band it degrades to a
+list, since 36 boxes with 36 converging lines is the hairball the drawing exists to avoid.
+
 **One file, and that is not a style preference.** Browsers block `fetch` on `file://`, so a
 directory of HTML plus JSON that loads a model when you click it cannot be opened from disk. That
 option does not exist locally: an artifact you double-click has to carry its data inside it, and
 the moment lazy loading is wanted a server is required. There is no middle rung. It costs roughly
 24 KB per model, so a 358-model warehouse is about 8 MB and opens instantly.
+
+**But the page is not the thing you commit.** 8 MB of markup diffs as one unreadable blob. The
+same content as JSON Lines is the same size, measured at 8.12 MB either way, and it diffs as **one
+line per entity**, so a commit reads as *"these 3 models changed, these 12 findings appeared"*.
+Every run writes `assay-data/` beside the page: one `.jsonl` per table, `meta.json` and
+`config.json` whole, and `record.html`, which is the 15 KB report. Commit that directory and
+gitignore the page. `assay page out.html --from assay-data/` re-renders it with no dbt target, no
+store and no manifest, so any past commit's artifact renders as the page it was.
+
+It is written every run rather than behind a flag, because a page and an artifact that can
+disagree is the same one-fact-two-spellings defect this tool exists to find.
 
 Everything renders from one object called `DATA`, embedded here and one `fetch` on a server, so
 this already builds most of `assay serve` if a warehouse ever outgrows a file.
