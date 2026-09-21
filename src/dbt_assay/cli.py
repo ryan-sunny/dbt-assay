@@ -1303,6 +1303,8 @@ def effectiveness(
     source: str = typer.Option("human", "--source",
                                help="human | agent | label | all. Only human verdicts gate."),
     config_path: str = typer.Option(".", "--config"),
+    target: str = typer.Option("", "--target", "-t",
+                               help="a dbt target/, to also report reasons that STOPPED firing"),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
     """Did the questions get BETTER? Agreement per family, per version of the question.
@@ -1387,6 +1389,47 @@ def effectiveness(
     if unver:
         console.print(f"[dim]{unver} row(s) are (unversioned): recorded before the version was "
                       f"kept, or traceable to more than one. assay does not guess which.[/]")
+
+    # *** THE ONE IMPROVEMENT MEASURE THAT DOES NOT NEED ANYBODY TO RE-RULE. ***
+    # Everything above moves when a person reads again. A reason that was given on several models
+    # and now fires on none of them moved because the CHECK stopped being wrong, and nothing was
+    # reporting it -- `assay suggest` was putting these at the top of its decision queue instead,
+    # where a cluster grew more prominent the more successfully it had been fixed.
+    if target:
+        from . import suggest as sug
+        tdir = _find_target(target)
+        project, digests, _f2, schema, _s2 = _load(tdir, None)
+        cfg2 = Config.load(config_path)
+        # The store above was opened for one query and closed in a `finally`. Reusing that handle
+        # raises `Connection already closed` -- so this opens its own and closes it too, rather
+        # than widening the lifetime of a connection somebody deliberately scoped.
+        st2 = Store(store_path)
+        try:
+            entries = inv_mod.build(project, digests, schema, st2, probe_mod.read(st2))
+            live = sug.live_pairs(live_mod.all_findings(project, digests, schema, entries, st2,
+                                                        cfg2.row_loss_threshold))
+            gone = sug.resolved_clusters(st2, cfg2, live)
+        finally:
+            st2.close()
+        if gone:
+            console.print(f"\n[bold green]{len(gone)} reason(s) stopped recurring.[/] "
+                          f"[dim]Each was given on several models and fires on none of them "
+                          f"today. This is the only line here a release CAN move, and the only "
+                          f"one that moves without anybody re-reading.[/]")
+            for g in gone:
+                names = ", ".join(x.split(".")[-1] for x in g["subjects"][:4])
+                more = f" +{len(g['subjects']) - 4}" if len(g["subjects"]) > 4 else ""
+                console.print(f"\n  [green]{g['n']} subject(s), now 0[/] "
+                              f"[dim]({', '.join(g['questions']) or 'unrecorded'})[/]")
+                console.print(f"    [dim]{names}{more}[/]")
+                console.print(f"    [dim]{g['reason'][:200]}[/]")
+        else:
+            console.print("\n[dim]No reason has stopped recurring: every clustered reason still "
+                          "fires on at least one model, or none clustered. Not the same as no "
+                          "progress -- it is one measure among the ones above.[/]")
+    else:
+        console.print("\n[dim]Pass `-t target/` to also see reasons that STOPPED firing -- the "
+                      "one improvement measure here that does not need anybody to re-rule.[/]")
 
 
 @app.command()
@@ -2516,7 +2559,7 @@ def suggest(
     # Which checks are firing, so `questions` can name the ones config has not heard of. A target
     # is optional: without one the store still carries every other signal, and the section that
     # needs a fresh run says so rather than reporting an empty list as "nothing to configure".
-    firing, ran = set(), False
+    firing, ran, live_now = set(), False, None
     if target:
         tdir = _find_target(target)
         project, digests, _f, schema, _s = _load(tdir, None)
@@ -2527,8 +2570,14 @@ def suggest(
         # defect this tool checks other people's warehouses for.
         entries = inv_mod.build(project, digests, schema, store,
                                 probe_mod.read(store) if store else {})
-        firing = {f.check for f in live_mod.all_findings(project, digests, schema, entries, store,
-                                                     cfg.row_loss_threshold)}
+        _fs = live_mod.all_findings(project, digests, schema, entries, store,
+                                    cfg.row_loss_threshold)
+        firing = {f.check for f in _fs}
+        # *** AND WHICH SUBJECT, NOT ONLY WHICH CHECK. ***
+        # A rule that asks "is this still true" needs the subject. With only the check name, a
+        # cluster of eight already-repaired models reads as live because SOME model still fires
+        # that check.
+        live_now = sug.live_pairs(_fs)
         ran = True
 
     run_id = None
@@ -2537,7 +2586,7 @@ def suggest(
             "select run_id from runs order by started_at desc, run_id desc limit 1").fetchone()
         run_id = row[0] if row else None
 
-    items = sug.build(store, cfg, firing, run_id)
+    items = sug.build(store, cfg, firing, run_id, live_now)
     if section:
         items = [i for i in items if i.section == section]
     shown = items[:limit]
@@ -2551,8 +2600,11 @@ def suggest(
         console.print(f"[yellow]no store at {store_path}.[/] [dim]Almost every signal here is a "
                       f"measurement taken during `assay check`, so run one first.[/]")
     if not ran:
-        console.print("[dim]No --target, so the `questions` section cannot say which checks are "
-                      "firing but unconfigured. Everything else comes from the store.[/]\n")
+        console.print("[yellow]No --target.[/] [dim]Two rules are degraded, not absent: the "
+                      "`questions` section cannot say which checks are firing but unconfigured, "
+                      "and a repeated reason cannot be checked against what STILL fires -- so "
+                      "some of what follows may already be fixed. Pass `-t target/` for the "
+                      "real list.[/]\n")
     if not shown:
         console.print("[green]Nothing to suggest.[/] [dim]That means the rules found no "
                       "candidate, which is not the same as the config being complete -- each "

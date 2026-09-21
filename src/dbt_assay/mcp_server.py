@@ -582,13 +582,15 @@ class Backend:
         store, why = self._store_or_why()
         cfg = Config.load(Path(self.target).parent if Path(self.target).name == "target"
                           else self.target)
-        firing = {f.check for f in self.state().findings}
+        _fs = self.state().findings
+        firing = {f.check for f in _fs}
+        live = sug.live_pairs(_fs)
         run_id = None
         if store is not None:
             row = store.con.execute(
                 "select run_id from runs order by started_at desc, run_id desc limit 1").fetchone()
             run_id = row[0] if row else None
-        items = sug.build(store, cfg, firing, run_id)
+        items = sug.build(store, cfg, firing, run_id, live)
         if section:
             items = [i for i in items if i.section == section]
         out = {

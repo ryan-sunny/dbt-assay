@@ -55,6 +55,24 @@ def _shape(text: str) -> str:
     return " ".join(sorted(set(words))[:12])
 
 
+def live_pairs(findings) -> set:
+    """`{(check, subject)}` from findings, whether they are objects or artifact dicts.
+
+    Three callers hold findings in two shapes. Each normalizing its own would be three spellings
+    of one fact, which is the defect this tool reports in other people's warehouses -- and it
+    would drift the first time a finding grew a field.
+    """
+    out = set()
+    for f in findings or []:
+        if isinstance(f, dict):
+            c, subj = f.get("check"), f.get("subject")
+        else:
+            c, subj = getattr(f, "check", None), getattr(f, "subject", None)
+        if c and subj:
+            out.add((str(c), str(subj)))
+    return out
+
+
 @dataclass
 class Suggestion:
     """One proposal, with what was measured about it and nothing that was not."""
@@ -79,6 +97,18 @@ class Suggestion:
 
 def _vocab_from_joins(store, cfg, run_id: str | None) -> list[Suggestion]:
     """Columns the warehouse joins on constantly that the vocab has never heard of.
+
+    *** SORTED BY THE NUMBER THE HEADLINE READS FIRST. ***
+    It ranked on `hops x models` and led with hops, so the list ran 65, 32, 40 -- a correct
+    ordering that reads as a broken one, and a reader who cannot see the sort key has to take the
+    order on trust. Reported from the field alongside the same shape in the probe line.
+
+    Fixing the legibility fixed the ranking too, because the product was answering the wrong
+    question. A vocabulary term is worth writing when it is SHARED: the payoff is every judged
+    question that carries it, and those follow the models, not the joins. `city` is joined 40
+    times across 4 models -- ten joins inside a handful of models is one team's local habit.
+    `geom` is 32 joins across 19 models, and that is nineteen places that need the same word to
+    mean the same thing. Models first, hops as the tiebreak, and `city` correctly leaves the top.
 
     *** THE SET DIFFERENCE HAPPENS BEFORE THE RANKING, NOT AFTER. ***
     Ranking 400 columns and then dropping the configured ones off the top produces a list whose
@@ -108,16 +138,19 @@ def _vocab_from_joins(store, cfg, run_id: str | None) -> list[Suggestion]:
     known = {str(k).lower() for k in (cfg.vocab or {})}
     covered = sorted(c for c in hops if c in known)
     out = []
-    for col in sorted(hops, key=lambda c: (-hops[c] * len(models[c]), c)):
+    for col in sorted(hops, key=lambda c: (-len(models[c]), -hops[c], c)):
         if col in known:
             continue
         n_hops, n_models = hops[col], len(models[col])
         if n_hops < 3 or n_models < 2:
             continue                       # joined once or twice is not a shared term yet
         out.append(Suggestion(
-            section="vocab", key=col, rank=float(n_hops * n_models),
-            basis="joined in many hops, absent from vocab",
-            headline=f"`{col}` is joined on in {n_hops} hops across {n_models} models "
+            section="vocab", key=col,
+            # Models dominate and hops break the tie, in one number, so the rank is the order a
+            # reader sees rather than a second opinion about it.
+            rank=float(n_models * 10_000 + n_hops),
+            basis="shared across the most models, absent from vocab",
+            headline=f"{n_models} models join on `{col}` ({n_hops} hops) "
                      f"and the vocab does not define it",
             # *** ONLY WHAT VARIES BETWEEN ROWS BELONGS ON A ROW. ***
             # The coverage line and the "assay will not fill this in" paragraph are the same on
@@ -136,7 +169,7 @@ def _vocab_from_joins(store, cfg, run_id: str | None) -> list[Suggestion]:
                     f"  knowledge and then rides along with every judged question from that "
                     f"point on."),
             draft=f"vocab:\n  {col}:\n    means: \"\"\n    implies: \"\"\n"
-                  f"    # measured: {n_hops} hops, {n_models} models"))
+                  f"    # measured: {n_models} models, {n_hops} hops"))
     return out
 
 
@@ -205,21 +238,13 @@ def _vocab_from_contradicted_names(store) -> list:
 
 # --------------------------------------------------------------------------- the refusal
 
-def _repeated_reasons(store, cfg) -> list[Suggestion]:
-    """One reason given on two or more subjects.
+def _clusters(store, cfg) -> dict:
+    """`shape -> [(subject, question, reason)]`, from written rulings and from waiver reasons.
 
-    *** AND THIS RULE REFUSES TO SAY WHICH FILE IT BELONGS IN. ***
-    The spec files this under vocab, and the same evidence reads the other way just as well. On
-    this warehouse "A UNION MEMBER EDGE CANNOT MULTIPLY" was given on two models, and the right
-    response was NOT two waivers and NOT a vocab term -- it was a structural fix to the check,
-    which landed in 0.15.0 and 0.21.1. A reason repeating means something upstream of the config
-    is missing; whether that something is a word the checker lacks or a case the checker gets
-    wrong is a question about the reason, and only a person reading it can answer it.
-
-    Guessing here would be the expensive kind of wrong: a waiver silences the check on two models
-    and leaves the third to be found in production, which is exactly what happened before the
-    structural fix. So both readings are printed with what separates them, and neither is ranked
-    above the other.
+    ONE implementation, because two readers want the same clustering and opposite halves of it:
+    the queue wants clusters that still fire, `effectiveness` wants the ones that stopped. Two
+    copies of this query would drift the first time either half moved, which is the defect this
+    module reports in other people's SQL.
     """
     seen: dict = defaultdict(list)
     for subj, q, note in store.con.execute(
@@ -235,20 +260,71 @@ def _repeated_reasons(store, cfg) -> list[Suggestion]:
             sh = _shape(getattr(w, "reason", "") or "")
             if sh:
                 seen[sh].append((model, getattr(w, "question", ""), getattr(w, "reason", "")))
+    return {sh: items for sh, items in seen.items()
+            if len({s for s, _q, _n in items}) >= 2}
 
+
+def _repeated_reasons(store, cfg, live: set | None) -> list[Suggestion]:
+    """One reason given on two or more subjects.
+
+    *** AND THIS RULE REFUSES TO SAY WHICH FILE IT BELONGS IN. ***
+    The spec files this under vocab, and the same evidence reads the other way just as well. On
+    this warehouse "A UNION MEMBER EDGE CANNOT MULTIPLY" was given on two models, and the right
+    response was NOT two waivers and NOT a vocab term -- it was a structural fix to the check,
+    which landed in 0.15.0 and 0.21.1. A reason repeating means something upstream of the config
+    is missing; whether that something is a word the checker lacks or a case the checker gets
+    wrong is a question about the reason, and only a person reading it can answer it.
+
+    Guessing here would be the expensive kind of wrong: a waiver silences the check on two models
+    and leaves the third to be found in production, which is exactly what happened before the
+    structural fix. So both readings are printed with what separates them, and neither is ranked
+    above the other.
+
+    *** AND A CLUSTER WHOSE FINDINGS ARE ALL GONE IS NOT A DECISION. ***
+    The first version left the live check out, and the result inverted the ranking of the whole
+    queue: a cluster grew MORE prominent the more successfully it had been fixed, because the
+    number it ranked on was how many subjects had once been ruled on. On this warehouse the top
+    two items under DECIDE FIRST were 8 subjects and 2 subjects with **zero** live findings
+    between them -- both already repaired, one of them by the structural fix the item's own text
+    cites. Six models were actually firing `hop_multiplies_rows` that day and none of them was
+    in the queue.
+
+    It is the mirror of the 0.24.0 defect. That one hid live evidence; this one promoted dead
+    evidence to the top of the list a person reads first.
+
+    So a cluster needs at least one subject that still produces a finding for that question. The
+    resolved ones are not worthless -- "this fired on 8 models and no longer does" is evidence a
+    question got better -- and that is what `assay effectiveness` is for, so they go there
+    instead of being deleted.
+    """
     out = []
-    for sh, items in sorted(seen.items()):
+    for sh, items in sorted(_clusters(store, cfg).items()):
         subjects = sorted({s for s, _q, _n in items})
-        if len(subjects) < 2:
-            continue
         questions = sorted({q for _s, q, _n in items if q})
         sample = max((n for _s, _q, n in items), key=len)
+
+        # *** WHICH OF THESE SUBJECTS STILL FIRES. ***
+        still = sorted({sub for sub, q, _n in items if (q, sub) in (live or set())})
+        if live is None:
+            # An absent measurement is not a pass and it is not a failure either. Say which.
+            note = ("no --target was given, so assay cannot tell which of these still fire. "
+                    "Some may already be fixed.")
+        elif not still:
+            continue        # entirely resolved: it belongs in `effectiveness`, not in a queue
+        else:
+            note = (f"{len(still)} of {len(subjects)} still produce a finding today"
+                    + (f" ({', '.join(s.split('.')[-1] for s in still[:3])}"
+                       f"{'...' if len(still) > 3 else ''})" if still else ""))
+
         out.append(Suggestion(
-            section="open", key=sh[:60], rank=float(len(subjects)),
+            section="open", key=sh[:60],
+            # *** RANKED ON WHAT IS STILL TRUE, NOT ON HOW MANY WERE EVER RULED ON. ***
+            rank=float(len(still)) if live is not None else float(len(subjects)),
             basis="one reason, given on several subjects",
             headline=f"the same reason is given on {len(subjects)} subjects "
                      f"({', '.join(subjects[:3])}{'...' if len(subjects) > 3 else ''})",
-            measured=[f"{len(items)} occurrences across {len(subjects)} subjects",
+            measured=[note,
+                      f"{len(items)} occurrences across {len(subjects)} subjects",
                       f"question(s): {', '.join(questions) or 'unrecorded'}",
                       f"reason as written: {sample[:300]}"],
             decide=(
@@ -428,7 +504,30 @@ def _explanations(store) -> list[Suggestion]:
 
 # --------------------------------------------------------------------------- entry point
 
-def build(store, cfg, firing: set, run_id: str | None = None) -> list:
+def resolved_clusters(store, cfg, live: set) -> list:
+    """Reasons that clustered across subjects and no longer produce a finding on any of them.
+
+    *** NOT A DECISION, AND NOT NOTHING. ***
+    The queue drops these on purpose: a cluster of eight already-fixed subjects outranking two
+    live ones is a ranking that rewards resolution, and it filled the top of DECIDE FIRST with
+    history. But "this reason was given on 8 models and none of them still fires" is the one
+    direct measurement of a question getting BETTER that does not need anybody to re-rule.
+    `effectiveness` reports agreement per version, which only moves when a person reads again.
+    This moves when the check stops being wrong.
+    """
+    out = []
+    for _sh, items in sorted(_clusters(store, cfg).items()):
+        if any((q, sub) in live for sub, q, _n in items):
+            continue
+        out.append({
+            "reason": max((n for _s, _q, n in items), key=len)[:300],
+            "subjects": sorted({s for s, _q, _n in items}),
+            "questions": sorted({q for _s, q, _n in items if q}),
+            "n": len({s for s, _q, _n in items})})
+    return sorted(out, key=lambda r: (-r["n"], r["reason"]))
+
+
+def build(store, cfg, firing: set, run_id: str | None = None, live: set | None = None) -> list:
     """Every suggestion the store supports, ordered so the best-evidenced is first.
 
     Ordering is (section, -rank, key) with a fixed section order, so two runs over one store
@@ -464,7 +563,7 @@ def build(store, cfg, firing: set, run_id: str | None = None) -> list:
                 draft=""))
         out += _vocab_from_joins(store, cfg, run_id)
         out += _vocab_from_contradicted_names(store)
-        out += _repeated_reasons(store, cfg)
+        out += _repeated_reasons(store, cfg, live)
         out += _waivers_from_disagreements(store, cfg)
         out += _questions_from_agreement(store, cfg)
         out += _explanations(store)

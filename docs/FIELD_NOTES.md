@@ -2883,3 +2883,56 @@ Each of these passed while the thing it guards was broken.
   defaults made `--from` render a different byte stream than the run it came from, because
   `read_data` fills every declared section and a direct call simply has no key. That guard
   compares bytes, which is the only reason it caught it.
+
+### 0.33.1: the decision queue filled with problems that were already fixed
+
+Reported the same day 0.33.0 shipped, against a different branch of the same warehouse.
+
+`suggest` opens with DECIDE FIRST. The top two items were clusters of **8 subjects and 2 subjects
+with zero live findings between them**. Both had already been repaired -- one of them by the
+structural fix in 0.15.0 and 0.21.1, which the item's own text *cites*. It quoted the fix and then
+asked you to decide about the findings that fix had removed.
+
+Meanwhile six models were actually firing `hop_multiplies_rows` -- `business_leads`,
+`int_lead_contact`, `int_water_land_grant_parcels`, `int_water_parcel_irrigation`, `sales_leads`,
+`water_isf_call_record` -- and not one of them was in the queue.
+
+The work order said "a reason repeating is the signal that something upstream of the config is
+missing," and the qualifier that matters was missing: **at least one subject in the cluster must
+still have a live finding.** Without it the rank is how many subjects were ever ruled on, so a
+cluster grows more prominent the more successfully it was fixed. Eight resolved subjects outrank
+two live ones. It is the mirror of the 0.24.0 defect: that one hid live evidence, this one promoted
+dead evidence to the top of the list a person reads first.
+
+Checking "is this still true" needs the SUBJECT, not the check name. With check names alone a
+cluster of eight repaired models reads as live because some other model still fires that check.
+
+Resolved clusters are not worthless, they were in the wrong place. "This reason was given on 8
+models and fires on none of them today" is the one improvement measure in `effectiveness` that does
+not need anybody to re-rule -- everything else there moves when a person reads again; this moves
+when the check stops being wrong. `assay effectiveness -t target/` reports them now.
+
+And with no target, `suggest` can tell neither way. Dropping the clusters would read as nothing to
+decide; keeping them would read as all of it being live. It says which.
+
+### ...and a correct ordering that reads as a broken one
+
+`section_id` 65 hops / 24 models, then `geom` 32 / 19, then `city` 40 / 4. Sorted by the product
+while the headline leads with hops, so the column a reader scans runs 65, 32, 40. Same shape as the
+probe line printing direct readers while sorting by reach. Both are right and both look wrong.
+
+Fixing the legibility fixed the ranking, because the product was answering the wrong question. A
+vocabulary term is worth writing when it is **shared**: the payoff is every judged question that
+carries it, and those follow the models, not the joins. `city` joined 40 times across 4 models is
+ten joins inside a handful of models -- one team's local habit. `geom` at 32 joins across 19 models
+is nineteen places that need the same word to mean the same thing.
+
+Models first, hops as the tiebreak, headline leading with models. `city` correctly leaves the top
+ten. The gaps in the new list are the set difference working: 15, 13 and 12 models are
+`building_key`, `wdid` and `geography`, all already defined.
+
+**What held.** The vocab rule reproduced the hand-derived numbers under its first real load, every
+`means:`/`implies:` came out empty with `# measured:` underneath, and the refusal printed in full.
+`test_outruns_its_source` found 7 of 646 `not_null` tests including `int_water_well_parcel.parcel_id`
+-- on a branch that does not carry the fix, which is assay correctly reporting the tree it was
+pointed at.

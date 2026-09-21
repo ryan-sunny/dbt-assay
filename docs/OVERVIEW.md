@@ -301,6 +301,8 @@ assay calibrate           # the grain judgment against the keys the project ALRE
 assay calibration         # agreement BANDED by confidence, per family, per source.
                           # A choice bands by `confidence`; a noul by its ANSWER
 assay effectiveness       # did the questions get BETTER? agreement per family, per version
+assay effectiveness -t target/   # ...and reasons that STOPPED firing, which is the only
+                          # measure here that moves without anybody re-reading
 assay effectiveness --json
 ```
 
@@ -314,16 +316,41 @@ assay suggest --out drafts.yml    # ...and a worksheet to edit in place
 
 This is the step onboarding was missing. `guide` explains what a vocab term is for, `init` writes
 defaults, and nothing went from 257 findings to the four lines of YAML that would settle sixty of
-them. Seven rules, each reporting what it measured: columns joined in many hops and absent from the
-vocab (`section_id`, 65 hops across 24 models on the field warehouse), columns named like a key that
-are *nearly* unique and so pass every spot check (`incident_id`, 19,566 distinct in 19,628 rows), one
-reason given on several subjects, `disagree` rulings that nothing waives, per-family agreement from
-the rulings you already gave, and checks firing that `audit.yml` does not name.
+them. Seven rules, each reporting what it measured: columns **shared across the most models** and absent
+from the vocab (`section_id`, 24 models, 65 hops on the field warehouse), columns named like a key
+that are *nearly* unique and so pass every spot check (`incident_id`, 19,566 distinct in 19,628
+rows), one reason given on several subjects **that still fire**, `disagree` rulings that nothing
+waives, per-family agreement from the rulings you already gave, and checks firing that `audit.yml`
+does not name.
+
+Vocabulary candidates rank on models first and hops as the tiebreak, and the headline leads with the
+number it sorts on. Ranked on `hops x models` the list ran 65, 32, 40 -- a correct ordering that
+reads as a broken one. Fixing the legibility fixed the ranking, because the product was answering
+the wrong question: a term is worth writing when it is SHARED, and the payoff is every judged
+question that carries it. `city` at 40 hops across 4 models is one team's local habit; `geom` at 32
+hops across 19 is nineteen places that need the same word to mean the same thing.
 
 **It proposes the candidate and the measurement. It never proposes the meaning.** `means:` and
 `implies:` arrive empty, with the evidence underneath them. A plausible vocab block written from
 model names looks exactly like knowledge, is not, and then rides along with every judged question
 from that point on.
+
+**A repeated reason has to still be true.** A cluster needs at least one subject that produces a
+finding *today*, and the first version left that check out. The result inverted the whole queue: a
+cluster grew more prominent the more successfully it had been fixed, because it ranked on how many
+subjects had once been ruled on. On the field warehouse the top two items were clusters of 8 and 2
+subjects with zero live findings between them -- both already repaired, one by the structural fix
+the item's own text cites -- while six models were firing that check and none was in the queue. It
+is the mirror of the 0.24.0 defect: that one hid live evidence, this one promoted dead evidence.
+
+Resolved clusters are not deleted, they are moved. `assay effectiveness -t target/` reports them:
+"this reason was given on 8 models and fires on none of them today" is the only improvement measure
+there that does not need anybody to re-rule. Everything else on that screen moves when a person
+reads again; this moves when the check stops being wrong.
+
+Without `--target`, `suggest` cannot tell a live cluster from a repaired one and says so, rather
+than dropping them (which reads as nothing to decide) or keeping them (which reads as all of it
+being live).
 
 Two rules deliberately refuse to finish the job. A reason repeating across subjects points at a
 missing vocabulary term *or* at a case the check gets wrong, and those go in different files; on
@@ -708,7 +735,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.33.0
+- uses: ryan-sunny/dbt-assay@v0.33.1
   with:
     target: target-head
     baseline: base/target

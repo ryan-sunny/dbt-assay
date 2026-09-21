@@ -94,15 +94,19 @@ measurement that would justify a waiver rather than asserting one.
 lines of YAML", and every row carries the measurement that produced it, so you can show them the
 evidence instead of an opinion:
 
-- columns the warehouse joins on constantly and the vocab has never heard of, with the counts
-  (`section_id`: 65 hops across 24 models, on the warehouse this was built against);
+- columns shared across the most models and absent from the vocab, with the counts (`section_id`:
+  24 models, 65 hops, on the warehouse this was built against). Ranked on models rather than on
+  joins: a term is worth writing when it is SHARED, and the payoff is every judged question that
+  carries it;
 - columns named like a key that are **nearly** unique -- `incident_id` at 19,566 distinct in
   19,628 rows. A spot check passes. That is the point;
-- a reason given on several subjects, which means something upstream of the config is missing.
+- a reason given on several subjects **that still fire**, which means something upstream of the
+  config is missing.
   **It refuses to say whether that is a vocab term or a broken check, and so should you.** Ask
   them: would a reader who knew this term still call the finding correct? Yes means vocab, no
   means the check is wrong. On the project this was built against the answer was the second one,
-  and the fix was structural rather than a third waiver;
+  and the fix was structural rather than a third waiver. **Call it with a target.** Without one
+  it cannot tell a live cluster from one that was already repaired, and it will say so;
 - `disagree` rulings that nothing waives, with the reason already written by whoever ruled;
 - per-check actions backed by measured agreement, and an explicit "no measurement here" where
   there is none. **Do not propose an action from the shipped default alone** -- it reads as

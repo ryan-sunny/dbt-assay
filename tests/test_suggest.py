@@ -233,3 +233,138 @@ def test_a_vocab_term_already_defined_is_not_proposed(tmp_path):
     keys = {i.key for i in suggest.build(s, cfg, set(), "r1") if i.section == "vocab"}
     assert "section_id" not in keys
     assert "other_col" in keys
+
+
+# --------------------------------------------- a decision queue holds decisions, not history
+
+def _live(*pairs):
+    """`{(question, subject)}` as `live_pairs` produces it."""
+    return {(q, s) for q, s in pairs}
+
+
+def test_a_cluster_nothing_still_fires_on_is_not_a_decision(tmp_path):
+    """*** A CLUSTER GREW MORE PROMINENT THE MORE SUCCESSFULLY IT WAS FIXED. ***
+
+    Reported from the field. The top two items under DECIDE FIRST were clusters of 8 subjects and
+    2 subjects with ZERO live findings between them -- both already repaired, one of them by the
+    structural fix the item's own text cites. Six models were firing `hop_multiplies_rows` that
+    day and none of them was in the queue.
+
+    It is the mirror of the 0.24.0 defect: that one hid live evidence, this one promoted dead
+    evidence to the top of the list a person reads first.
+    """
+    s = _store(tmp_path)
+    r = "a union member edge cannot multiply because the parents arrive through union all"
+    for m in ("one", "two", "three"):
+        _rule(s, f"model.p.{m}", "hop_multiplies_rows", "disagree", r)
+    out = suggest.build(s, Config(), set(), "r1", live=set())
+    assert not [i for i in out if i.basis.startswith("one reason")], \
+        "a cluster with nothing still firing is in the decision queue"
+
+
+def test_a_cluster_that_still_fires_stays_and_says_how_much_of_it_does(tmp_path):
+    """Partly fixed is its own answer: 1 of 3 still firing says the repair was incomplete."""
+    s = _store(tmp_path)
+    r = "a union member edge cannot multiply because the parents arrive through union all"
+    for m in ("one", "two", "three"):
+        _rule(s, f"model.p.{m}", "hop_multiplies_rows", "disagree", r)
+    live = _live(("hop_multiplies_rows", "model.p.two"))
+    got = [i for i in suggest.build(s, Config(), set(), "r1", live=live)
+           if i.basis.startswith("one reason")]
+    assert got, "a cluster with a live subject was dropped"
+    assert "1 of 3" in " ".join(got[0].measured), got[0].measured
+
+
+def test_the_rank_counts_what_still_fires_not_what_was_ever_ruled_on(tmp_path):
+    """Otherwise the ordering rewards resolution, which is how the queue filled with history."""
+    s = _store(tmp_path)
+    big = "the first reason, given on many models and almost entirely repaired since"
+    small = "a different second reason about lookups unique on their join key, still live"
+    for m in ("a", "b", "c", "d", "e"):
+        _rule(s, f"model.p.{m}", "hop_multiplies_rows", "disagree", big)
+    for m in ("x", "y", "z"):
+        _rule(s, f"model.p.{m}", "hop_multiplies_rows", "disagree", small)
+    live = _live(("hop_multiplies_rows", "model.p.a"),
+                 ("hop_multiplies_rows", "model.p.x"),
+                 ("hop_multiplies_rows", "model.p.y"))
+    got = [i for i in suggest.build(s, Config(), set(), "r1", live=live)
+           if i.basis.startswith("one reason")]
+    assert len(got) == 2
+    # 3 live beats 5 ruled-on-but-1-live, even though the 5 cluster is bigger
+    assert "2 of 3" in " ".join(got[0].measured), [g.measured for g in got]
+
+
+def test_with_no_live_findings_it_says_it_cannot_tell(tmp_path):
+    """*** AN ABSENT MEASUREMENT IS NOT A PASS AND IT IS NOT A FAILURE. ***
+
+    Called without a target there is no way to know which of these still fire. Dropping them all
+    would read as "nothing to decide"; keeping them silently would read as "all of this is live".
+    Both are claims the data does not support.
+    """
+    s = _store(tmp_path)
+    r = "a union member edge cannot multiply because the parents arrive through union all"
+    for m in ("one", "two"):
+        _rule(s, f"model.p.{m}", "hop_multiplies_rows", "disagree", r)
+    got = [i for i in suggest.build(s, Config(), set(), "r1", live=None)
+           if i.basis.startswith("one reason")]
+    assert got, "everything was dropped, which claims they are all resolved"
+    assert "cannot tell" in " ".join(got[0].measured).lower()
+
+
+def test_a_resolved_cluster_is_reported_as_improvement_not_deleted(tmp_path):
+    """"Given on 8 models, fires on none" is the one improvement measure that needs no re-ruling.
+
+    `effectiveness` otherwise moves only when a person reads again. This moves when the CHECK
+    stops being wrong, so dropping it from the queue must not drop it from the record.
+    """
+    s = _store(tmp_path)
+    r = "a union member edge cannot multiply because the parents arrive through union all"
+    for m in ("one", "two", "three"):
+        _rule(s, f"model.p.{m}", "hop_multiplies_rows", "disagree", r)
+    gone = suggest.resolved_clusters(s, Config(), set())
+    assert len(gone) == 1 and gone[0]["n"] == 3
+    assert gone[0]["questions"] == ["hop_multiplies_rows"]
+    # ...and it is exactly what the queue dropped: the two halves partition the clusters
+    live = set()
+    queued = {i.key for i in suggest.build(s, Config(), set(), "r1", live=live)
+              if i.basis.startswith("one reason")}
+    assert not queued
+
+
+def test_live_pairs_reads_findings_and_artifact_rows_the_same_way():
+    """Three callers hold findings in two shapes. Two normalizers would drift."""
+    from types import SimpleNamespace
+    objs = [SimpleNamespace(check="c", subject="model.p.a")]
+    rows = [{"check": "c", "subject": "model.p.a"}]
+    assert suggest.live_pairs(objs) == suggest.live_pairs(rows) == {("c", "model.p.a")}
+    assert suggest.live_pairs([{"check": "c"}]) == set(), "a row with no subject invented one"
+    assert suggest.live_pairs(None) == set()
+
+
+# --------------------------------------------- the list is sorted by the number it reads first
+
+def test_the_vocab_list_is_sorted_by_the_number_the_headline_leads_with(tmp_path):
+    """*** A CORRECT ORDERING THAT READS AS A BROKEN ONE. ***
+
+    Ranked on `hops x models` and led with hops, the list ran 65, 32, 40. A reader who cannot see
+    the sort key has to take the order on trust, and this one looks wrong every time.
+
+    Fixing the legibility fixed the ranking: a vocabulary term is worth writing when it is
+    SHARED, and the payoff is every judged question that carries it -- which follows the models,
+    not the joins. `city` at 40 hops across 4 models is one team's local habit.
+    """
+    import re
+    s = _store(tmp_path)
+    # Chosen so the two orderings DISAGREE, or the test proves nothing:
+    #   wide   = 8 models x  8 hops = 64 by the old product rank
+    #   narrow = 2 models x 40 hops = 80 by the old product rank, and it would come FIRST
+    for i in range(8):
+        _edge(s, f"p{i}", f"wide{i}", ["wide_col"])
+    for i in range(40):
+        _edge(s, f"q{i}", f"narrow_{i % 2}", ["narrow_col"])
+    rows = [i for i in suggest.build(s, Config(), set(), "r1")
+            if i.section == "vocab" and "models join on" in i.headline]
+    assert len(rows) == 2, [r.headline for r in rows]
+    leading = [int(re.match(r"(\d+) models", r.headline).group(1)) for r in rows]
+    assert leading == sorted(leading, reverse=True), rows[0].headline + " | " + rows[1].headline
+    assert "wide_col" in rows[0].headline, "a term joined inside ONE model outranked a shared one"
