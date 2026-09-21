@@ -1,0 +1,294 @@
+# assay, in plain words
+
+A lead data engineer in your warehouse, working next to your coding agent.
+
+---
+
+## ELI5
+
+Your dbt project knows what your models **do**. Nothing knows what they **mean**.
+
+dbt can tell you a model built and its tests passed. It cannot tell you that the test was
+incapable of failing, that a join quietly tripled your row count six models upstream, or that a
+column's description stopped being true two pull requests ago. Those are the failures that do not
+break anything. They just make every number downstream wrong, silently, for months.
+
+assay reads your compiled SQL and recovers the meaning. It does it with two things:
+
+- **sqlglot** parses the SQL into a tree. Anything a parser can settle exactly, a parser settles.
+  Is this test comparing a column to a constant? Does this window function order by a column that
+  was already filtered away? Is this hop a union or a join? Those are facts, and facts are free.
+- **Jev** answers the rest. Jev is a TypeSafe System One model: you give it a small piece of state
+  and a question with named options, and it returns a typed answer with a probability. No prose,
+  no reasoning trace, no essay to parse. A judgement you can put in an `if`.
+
+And then the part that makes it a tool instead of a demo: every answer is **stored**, a person can
+**rule on it**, and those rulings are what decide whether a check is allowed to fail your build.
+
+> **The one idea.** The structural tier is what makes the judged tier safe. If code can answer it,
+> Jev is never asked. Jev only sees the questions that genuinely need meaning, on the smallest
+> state that can answer them, and a person's verdict is the only thing that turns an answer into
+> authority.
+
+---
+
+## How it works next to an agent
+
+You already have a coding agent. It is good at writing SQL and bad at knowing what your warehouse
+means, because that knowledge is not in the files it reads. It is in your head, in a Slack thread
+from March, and in the shape of the data.
+
+assay ships an **MCP server with 12 tools**. Point your agent at it and the agent stops guessing.
+
+Here is the actual loop, end to end:
+
+**1. Before it edits anything, the agent asks what the model IS.**
+
+`contract(model)` returns fifteen lines instead of two hundred: the grain, the columns, each
+column's role, and where each value came from. `claims(model)` returns what your project
+*asserts* about that model, extracted from your own descriptions and comments, with whether the
+code currently supports each claim.
+
+That second one matters more than it sounds. The agent now knows what the edit must keep **true**,
+not just what it must keep **compiling**.
+
+**2. It checks what it is about to break.**
+
+`blast_radius(model)` says how many marts read this. `lineage(model, column)` follows one column
+back through the DAG to the hop that produced its value. `traversal(model)` says how the parents
+reach it and whether any hop multiplies rows without declaring it.
+
+**3. It makes the change.**
+
+**4. It checks whether it changed what anything MEANS.**
+
+`changed_contracts()` compares against a baseline and reports only what moved. A reformat, a
+renamed CTE, a join rewritten as a subquery: nothing. A grain that changed: reported.
+
+**5. It checks whether it would fail your build.**
+
+`violations()` applies your own `audit.yml` and splits findings into what would fail, what is
+queued for a person, and what is only annotated. Same policy your CI applies, so a clean answer
+here means a green pipeline rather than an opinion that it should be.
+
+**6. It rules on what it read.**
+
+`rule(subject, question, verdict, why)` records what the agent concluded, **including when it
+concludes the finding is wrong** — which is the most useful answer it can give, because a false
+positive nobody reports stays in the list forever. `review_queue()` shows what is still waiting
+for a person, agent-read items first.
+
+An agent ruling is **evidence and never authority**. It cannot gate a build, cannot satisfy the
+verdict floor, cannot anchor the regression check, and cannot move the ruled-on number. That
+separation is the whole design: an agent is the only thing in the loop that could write a hundred
+rulings, so the number that says whether your warehouse is *understood* has to be one it cannot
+touch.
+
+That is the lead data engineer. Not because it writes better SQL than your agent. Because it holds
+the context, states what must stay true, and refuses to let a machine sign off on its own work.
+
+---
+
+## What it actually checks
+
+### Tier 1: what the parser settles, for free
+
+No API key, no network, no spend. `assay check`.
+
+| check | what it catches |
+|---|---|
+| `test_cannot_fail` | a `not_null` on `COALESCE(x, 0)`, an `accepted_values` on a hardcoded literal. The test passes on every row and asserts nothing |
+| `arbitrary_pick` | one value taken from a multi-valued field, non-deterministically |
+| `first_match_pick` | the same class, different spelling |
+| `window_after_where` | a window function ranking over rows a `WHERE` already removed |
+| `ranks_by_degrees` | ordering by latitude/longitude as if degrees were distance |
+| `bbox_as_radius` | a bounding box standing in for a radius |
+| `duckdb_full_match` | `~` is a full-string match in DuckDB, not a partial one |
+| `variant_column` | dlt's `__v_double` split, where one column silently became two |
+
+Alongside those, `assay check` reports **unevaluable tests** separately: tests dbt counts as
+passing that could never have run at all. They are not a finding about a model, so they are not in
+the table above; they are their own section, and in `--json` their own key.
+
+`assay tests --count-defaults` goes one further. A test that cannot fail is the dead bug; the
+**live** one is the column behind it. On one warehouse, 170,730 of 172,695 rows of a status column
+were the string `'not looked up'`. The test passed on every row and said nothing about whether the
+lookup ever ran.
+
+### Tier 2: what the graph settles
+
+`assay traverse`, `assay inventory`. Every hop in the DAG, what each one carries and drops, and
+whether a parent row stays one child row. This is the defect class no single-model check can see:
+a fan-out introduced at one hop and consumed three models downstream inflates every count past it
+while nothing fails, because each individual row is valid.
+
+### Tier 3: what counting settles
+
+Anything that needs the warehouse goes **through your own dbt**, so assay never holds a credential.
+
+- `assay practices --verify` proposes the uniqueness test each model is missing, then **counts the
+  proposed grain before recommending it**. A proposal with 1,045 rows and 7 distinct values does
+  not become a recommendation.
+- `assay patch tests/assay` writes the ones that will pass, as singular tests that collide with
+  nothing and can be deleted by deleting them. It refuses to write a test on an empty table,
+  because that passes for the wrong reason.
+- `assay check --verify` counts each flagged hop's join key. A join onto a key that is unique **in
+  the data** cannot fan out, and dbt only knows which keys are *declared* unique.
+
+### Tier 4: what only meaning settles
+
+**17 question families**, asked through Jev. A few of them:
+
+| family | question |
+|---|---|
+| `description_contradicts_the_code` | does the prose assert something the SQL does not do? |
+| `claim_alignment` | does the code support this specific claim, one claim at a time? |
+| `edge_preserves_the_grain` | does one row of the child still mean one of the same thing as one row of the parent? |
+| `column_role` | is this an identifier, a measure, a qualifier, a timestamp? |
+| `same_concept` | do two columns in different models mean the same thing? |
+| `severity_fit` | does this test's severity match what it protects? |
+| `practice_exception` | is this standard-practice violation actually fine here, and why? |
+
+---
+
+## The part that stops it rotting
+
+Every judged tool decays the same way. It ships, it produces some wrong answers, people stop
+reading the output, and it becomes a linter everybody has muted. assay has four mechanisms against
+that, and they are the reason to care.
+
+**1. Rulings are stored with provenance.** `assay review -i` is a / d / u / s, least certain
+first. Every verdict records who gave it and whether they were a person, an agent, a label derived
+from your own tests, or a replay. Only `source='human'` counts anywhere that matters.
+
+**2. A question cannot fail your build until it has been measured.** `min_adjudications` refuses
+`fail` for a judged question with too few human verdicts and downgrades it to `queue`.
+`min_agreement` is the other half: a count of wrong answers is still a count, so a question people
+read twenty-five times and disagreed with twelve times has earned nothing.
+
+**3. `assay regress` catches an upgrade that moves a verified answer.** Measured in the field: a
+change to the subject state moved two of eight verified answers while the answer *distribution*
+barely moved, 79 of the same answer either side. Invisible in any summary. Visible because eight
+rulings were on record.
+
+**4. `assay effectiveness` measures whether the questions got better.** Agreement per family, per
+version of the question — because a verdict about v1 says nothing about v4. It carries a second
+axis too, `model_version`, which is the only way you would ever see *"our agreement fell and we
+changed nothing"* when Jev ships a new model.
+
+And `assay disagreements` groups the findings people rejected. Twelve rejections on one warehouse
+turned out to be three separate bugs. Code groups the identically-worded ones for free; `--judge`
+asks whether differently-worded reasons are one defect, for about six hundredths of a cent.
+
+Neither one can close a disagreement. That only happens when the check changed and a person re-read
+it.
+
+> **The number that cannot be gamed.** "Ruled on" is the only figure in the system a release cannot
+> move. A better check finds more, a fuller state raises a confidence, the DAG moves the blast
+> radius. None of that moves this, because it moves when somebody reads SQL and at no other time.
+> A good release makes it look **worse**, since finding more raises the denominator. Treat that as
+> the design working.
+
+---
+
+## Every command
+
+```bash
+# Start here
+assay onboard             # look at the project and say what to run, in order
+assay onboard --compile   # ...and run `dbt compile` first where models lack compiled SQL
+assay config              # what was resolved: provider, spend cap, where your key came from
+assay init                # write an audit.yml and nothing else
+
+# Reading what you have. No key, no network, no spend.
+assay scan                # parse coverage, and what could NOT be read
+assay check               # every finding, structural and judged, ranked by blast radius
+assay check --verify      # ...and count each flagged hop's join key through your own dbt
+assay check --json        # an object, not a list: {coverage, parse_failures, findings, ...}
+assay inventory           # what every model IS; --html writes a page you can commit
+assay trace <column>      # where one column's value actually came from
+assay tests               # tests that cannot fail, and what nothing asserts at all
+assay tests --count-defaults   # ...and how often each COALESCE default actually wins
+assay practices           # standard-practice violations, with judged exceptions
+assay patch tests/assay   # WRITE the uniqueness tests it can prove will pass
+
+# The judged tier. Needs a key.
+assay claims --extract    # turn your prose into atomic claims
+assay verify              # check each claim against the code
+assay traverse            # judge every hop in the graph
+assay columns             # what each column MEANS
+assay semantics           # why each filter is there; whether descriptions still hold
+assay infer               # grain, where code could not settle it
+assay align               # two columns in different models that mean the same thing
+assay feeds               # has a source column changed its meaning?
+assay adjudicate          # triage the rows a dbt test already failed
+assay ask                 # run any question that declares a `subject:`, including your own
+
+# Ruling, and measuring whether it is working
+assay review -i           # a / d / u / s, least certain first
+assay effectiveness       # did the questions get better? per family, per version
+assay disagreements       # N rejected findings, how many separate bugs?
+assay regress             # did an upgrade move an answer a person verified?
+assay banks               # every question, where it came from, whether its shape is sound
+assay banks --judge       # ...and whether any two options could both be right
+
+# On a branch, and over time
+assay diff --baseline <main target>     # what changed about what models MEAN
+assay backtest --repo .                 # would this have caught YOUR past bugs?
+assay version-check --baseline <target> # does anything owe a version bump?
+assay watch                             # rerun on save; print only what your edit changed
+
+# Wiring it in
+assay mcp --target target # the MCP server: 12 tools for your agent
+assay skill               # write the skill file that tells the agent how to use them
+assay export <dir>        # the tables, as seeds your own models can join to
+```
+
+---
+
+## What it costs
+
+Jev is **$0.042 per million input tokens, output free**. In practice:
+
+- Tiers 1, 2 and 3 cost **nothing**. No key required.
+- A full judged sweep of a 300-model project runs in cents, and `assay ask --dry-run` prints the
+  subject count and the estimate **before** spending anything.
+- `jev.max_spend_usd` in `audit.yml` is a hard cap, checked before the call rather than after.
+- Every answer is cached on a state hash, so a rerun where nothing changed asks nothing. A cached
+  answer whose state moved is a **miss**, not a hit, because serving the old one is how a cache
+  starts lying about the present.
+
+The grouping run above: 17 questions, 13,930 input tokens, **$0.00059**.
+
+---
+
+## What it does not do
+
+It reads code and rows, never intent. It cannot tell you whether a business rule is correct, only
+whether your code does what your documentation says it does.
+
+It does not edit your models. `assay patch` writes test files and nothing else, never overwrites a
+file it did not write, and refuses to write a test it cannot prove will pass.
+
+It does not decide anything a person should. Every judged gate is refused until enough humans have
+ruled, and an agent can never be one of them.
+
+And `docs/VERIFICATION.md` says, per family, whether a person has actually read its findings
+against real data — including the ones where the answer is no, and the ones measurement proved
+weak. Ten of seventeen so far.
+
+---
+
+## Where it goes next
+
+The half of assay that knows about dbt is `parse`, `manifest`, `infer`, `relate` and `practices`.
+The other half — claims, question linting, the ruling store, policy, regression, the MCP shape —
+does not know what dbt is. That is the portable half, and it is most of the value.
+
+Point the same machine at a **codebase** instead of a warehouse and the tiers line up exactly:
+tree-sitter where sqlglot was, a call graph where the DAG was, docstrings where descriptions were.
+[Graphify](https://github.com/Graphify-Labs/graphify) already ships the structural tier for thirty
+languages and labels edges it cannot resolve as `AMBIGUOUS`, flagged for human review, with nothing
+servicing that queue.
+
+Same bet, one layer over: the structural tier is what makes the judged tier safe.

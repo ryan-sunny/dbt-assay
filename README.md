@@ -20,6 +20,8 @@ Jev](https://docs.typesafe.ai) reads the meaning. SQL does the rest.
 > Built while auditing a Colorado water rights warehouse, where a case number is only unique inside
 > a water division and nothing in the stack could tell me that.
 
+**New here? [docs/PRODUCT.md](docs/PRODUCT.md) is the whole thing in plain words** — what it checks, how it works next to a coding agent, what it costs, and what it deliberately will not do.
+
 ## What it finds
 
 A staging model in that warehouse described itself like this:

@@ -218,3 +218,34 @@ def test_the_version_the_action_example_pins_is_the_current_one():
     pinned = set(re.findall(r"dbt-assay@v(\d+\.\d+\.\d+)", docs))
     assert pinned, "the action example is gone"
     assert pinned == {dbt_assay.__version__}, (pinned, dbt_assay.__version__)
+
+
+def test_the_product_doc_names_only_checks_and_families_that_exist():
+    """*** PROSE THAT NAMES SOMETHING WHICH DOES NOT EXIST IS THE DEFECT THIS TOOL FINDS. ***
+
+    The first draft of PRODUCT.md invented five check names by describing them instead of reading
+    them: `bbox_used_as_distance` for `bbox_as_radius`, `variant_columns` for `variant_column`,
+    and three more. A doc is a claim about the code, and assay's whole argument is that those go
+    stale silently.
+    """
+    import re
+
+    from dbt_assay.config import known_checks
+    from dbt_assay.contracts import SHIPPED
+    from dbt_assay.mcp_server import TOOLS
+
+    p = ROOT / "docs" / "PRODUCT.md"
+    if not p.exists():
+        pytest.skip("no docs in a wheel install")
+    known = set(known_checks()) | set(SHIPPED) | {n for n, _d in TOOLS}
+    assert len(known) > 20, "the reader is broken; a scanner that knows nothing passes everything"
+    # Only the two reference tables, so ordinary prose in backticks is not swept up.
+    body = p.read_text()
+    rows = [ln for ln in body.splitlines() if ln.startswith("| `")]
+    assert len(rows) >= 12, f"only found {len(rows)} table rows; the reader is broken"
+    bad = []
+    for ln in rows:
+        name = re.match(r"\| `([a-z_]+)`", ln)
+        if name and name.group(1) not in known:
+            bad.append(name.group(1))
+    assert not bad, f"PRODUCT.md names checks or families that do not exist: {bad}"
