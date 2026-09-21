@@ -197,6 +197,16 @@ class Store:
         self._reshape_adjudications()
         self._add_missing_columns()
         self._rename_moved_question_ids()
+        # *** THE ONE TABLE RECORDING A MEASUREMENT OF THE DATA WAS THE ONE THAT FORGOT. ***
+        # `observed_keys` keyed on (relation, column) with `insert or replace`, so each probe
+        # overwrote the last and assay could never say a key that held last week has stopped.
+        try:
+            from . import probe as _probe
+            self.observations_kept = _probe.migrate(self)
+        except Exception:                                        # noqa: BLE001
+            # A store that cannot be migrated still opens; the probe will report it on use rather
+            # than every command failing to start.
+            self.observations_kept = 0
 
     def _add_missing_columns(self) -> None:
         for table, columns in self.ADDED_COLUMNS.items():

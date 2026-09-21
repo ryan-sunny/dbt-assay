@@ -547,3 +547,84 @@ def hop_drops_most_rows(project, entries, threshold: float = 0.8) -> list:
                           "kept": round(kept, 4),
                           "joined_on": list((e.join_keys or {}).get(pname) or [])}))
     return out
+
+
+# ------------------------------------------------------------------- minimality, counted not judged
+
+def verify_minimality(candidates: dict, probe_mod, project_dir: str, profiles_dir: str | None,
+                      dbt_bin: str, batch: int = 20) -> dict:
+    """Which columns of each candidate key actually ADD identifying power.
+
+    *** THIS WAS A JUDGED QUESTION AND IT IS ARITHMETIC. ***
+    `column_is_part_of_the_key` asks a model whether a column is part of the MINIMAL set or is
+    carried along because the others determine it. Drop the column, recount the distinct
+    combination, and if the number does not move it was carried. Two counts. Exact.
+
+    The tool's own rule says so in as many words -- "if code can answer it, Jev is never asked" --
+    and this one slipped through: asked 109 times on a real warehouse, its answer load-bearing for
+    six models, listed in VERIFICATION.md as weak, and its confidence measured worst exactly where
+    it was most sure.
+
+    `candidates` is {relation: [columns]}. Returns {relation: {column: "adds" | "carried"}}.
+    A relation that could not be counted is ABSENT, never guessed: an uncounted key is not a
+    minimal one.
+    """
+    work = [(rel, cols) for rel, cols in sorted(candidates.items()) if len(cols or []) > 1]
+    out: dict = {}
+    if not work:
+        return out
+
+    def ask(chunk: list) -> bool:
+        parts, labels = [], []
+        for rel, cols in chunk:
+            full = ", ".join(f'"{c}"' for c in cols)
+            # The full set, then the set without each column in turn. One scan per relation per
+            # statement, which is the same shape `verify_grains` already pays for.
+            parts.append(f"select '{rel}' as r, '' as c, count(distinct ({full})) as d from {rel}")
+            labels.append((rel, ""))
+            for col in cols:
+                rest = ", ".join(f'"{x}"' for x in cols if x != col)
+                parts.append(f"select '{rel}' as r, '{col}' as c, "
+                             f"count(distinct ({rest})) as d from {rel}")
+                labels.append((rel, col))
+        got = probe_mod.run_sql(" union all ".join(parts), project_dir, profiles_dir, dbt_bin,
+                                limit=len(parts) + 1)
+        if not got:
+            return False
+        seen: dict = {}
+        for row in got:
+            vals = list(row.values())
+            try:
+                r = str(row.get("r", vals[0]))
+                c = str(row.get("c", vals[1]) or "")
+                seen[(r, c)] = int(row.get("d", vals[2]))
+            except (TypeError, ValueError, IndexError):
+                continue
+        for rel, cols in chunk:
+            full = seen.get((rel, ""))
+            if full is None:
+                continue
+            for col in cols:
+                without = seen.get((rel, col))
+                if without is None:
+                    continue
+                # *** EQUALITY IS THE WHOLE TEST. ***
+                # Removing the column left the distinct count unchanged, so the remaining columns
+                # already determined it. Anything else means it carries identifying power.
+                out.setdefault(rel, {})[col] = "carried" if without == full else "adds"
+        return True
+
+    def walk(chunk: list) -> None:
+        # Halve on failure, exactly as the other counted checks do: one relation that cannot be
+        # read must not take the rest of the batch down with it.
+        if not chunk or ask(chunk):
+            return
+        if len(chunk) == 1:
+            return
+        mid = len(chunk) // 2
+        walk(chunk[:mid])
+        walk(chunk[mid:])
+
+    for i in range(0, len(work), batch):
+        walk(work[i:i + batch])
+    return out

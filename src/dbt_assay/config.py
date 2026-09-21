@@ -103,19 +103,25 @@ def known_checks() -> set:
     what drifts. A reader that matches nothing would pass this wrongly, so it asserts a floor.
     """
     import ast
-    import inspect
+    from pathlib import Path as _Path
 
-    # *** EVERY MODULE THAT CONSTRUCTS A `Finding`, OR THE SCANNER LIES BY OMISSION. ***
-    # `practices` and `checks.sources` started building findings in 0.18.0 and this still read
-    # three modules, so five real checks came back as UNKNOWN: `assay config` would have told
-    # somebody their `hop_drops_most_rows: {action: annotate}` configured nothing. The floor
-    # below catches a reader that finds nothing; it cannot catch one that finds most things.
-    from . import judged, practices, relate
-    from .checks import sources as source_checks
-    from .checks import structural
+    # *** IT WALKS THE PACKAGE. A LIST OF MODULES IS A SECOND COPY OF A FACT. ***
+    # This named five modules by hand, with a comment explaining that `practices` and
+    # `checks.sources` had been missing from an earlier hand list and five checks had come back
+    # UNKNOWN because of it. Then `probe` started constructing findings and four more went
+    # unknown for exactly the same reason, one layer on.
+    #
+    # The TEST for this already walked the package to catch it. Now the reader does too, so
+    # adding a check to any module IS registering it, and the list cannot drift because there
+    # is no list.
     out = set()
-    for mod in (judged, structural, relate, practices, source_checks):
-        for node in ast.walk(ast.parse(inspect.getsource(mod))):
+    root = _Path(__file__).parent
+    for f in sorted(root.rglob("*.py")):
+        try:
+            tree = ast.parse(f.read_text())
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
             if not (isinstance(node, ast.Call) and getattr(node.func, "id", "") == "Finding"):
                 continue
             c = {k.arg: k.value for k in node.keywords}.get("check")
@@ -344,6 +350,14 @@ questions:
   # said which ones matter here.
   source_reaches_nothing:      {action: annotate}
   seed_reaches_nothing:        {action: annotate}
+  # *** WHAT CHANGED, WHICH NEEDS TWO `assay probe` RUNS TO EXIST AT ALL. ***
+  # A key that held last week and does not now is the failure that corrupts a warehouse: every
+  # count past the join inflates, nothing errors, and the tests pass because they were written
+  # while it was true. Counted, not judged, so it may gate immediately.
+  key_stopped_holding:         {action: fail}
+  key_column_started_mattering: {action: queue}
+  key_started_holding:         {action: annotate}
+  key_column_stopped_mattering: {action: annotate}
   source_only_a_test_reads:    {action: annotate}
   source_freshness_undeclared: {action: annotate}
   source_freshness_stale:      {action: annotate}

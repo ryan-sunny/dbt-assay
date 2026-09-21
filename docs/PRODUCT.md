@@ -146,9 +146,16 @@ Anything that needs the warehouse goes **through your own dbt**, so assay never 
 | `source_freshness_undeclared` | nothing says how current it should be. Silent when `dbt_project_evaluator` is installed, because it already answers this |
 | `source_freshness_stale` | the project states how current it should be and the last load does not meet it |
 | `hop_drops_most_rows` | a child with no filter, no group by and no collapse that still emits a fraction of the parent. A join that is not matching |
+| `seed_reaches_nothing` | a file you maintain, loaded on every build, that no model and no test reads |
+| `key_stopped_holding` | a column that WAS unique in an earlier observation and is not now. The failure that corrupts a warehouse, and it needs two probes to exist |
+| `key_column_started_mattering` | a column that used to be determined by the others and now adds identifying power, so the minimal key has grown |
 
 The last one needs `--verify` and it ships with its refusals, because most edges drop rows on
 purpose. On a 357-model warehouse that is 45 candidate hops out of 358 models, and two findings.
+
+**And `observed_keys` keeps its series.** Every other table in the store that records a
+measurement keeps one; this was the only one that overwrote, so assay could say a key holds today
+and could never say a key that held last week has stopped. Probe twice and the comparison exists.
 
 **The line that keeps this in scope:** assay can say a column is 99% its default. It cannot say
 whether that is bad. The first is a fact about code and rows; the second is intent, and the ruling

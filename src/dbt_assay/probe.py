@@ -57,7 +57,22 @@ create table if not exists observed_keys (
     detail       varchar,
     observed_at  timestamp,
     via          varchar,     -- dbt-show | loaded
-    primary key (relation, column_name)
+    -- *** DOES THIS COLUMN ADD IDENTIFYING POWER, OR IS IT CARRIED ALONG. ***
+    -- `adds` | `carried` | null when the question was not asked. Counted, not judged: drop the
+    -- column from the candidate set, recount the distinct combination, and if the number does not
+    -- move the column was determined by the others. That is the whole of minimality and it is two
+    -- counts, so a model was being asked a question arithmetic settles exactly.
+    minimality   varchar,
+    -- *** EVERY OTHER TABLE THAT RECORDS A MEASUREMENT KEEPS ITS SERIES. THIS ONE OVERWROTE. ***
+    -- `model_decisions` keys on the version so `effectiveness` and `regress` are possible;
+    -- `findings` and `edge_facts` key on `run_id`. `observed_keys` keyed on (relation, column)
+    -- with `insert or replace`, so there was exactly one observation per column, ever.
+    --
+    -- Which means assay could say a key holds TODAY and could never say a key that held last week
+    -- has stopped holding -- and that second sentence is the one that matters. A key silently
+    -- ceasing to be a key is how a warehouse goes wrong: every count downstream inflates, nothing
+    -- errors, and the tests still pass because they were written while it was true.
+    primary key (relation, column_name, observed_at)
 );
 """
 
@@ -79,6 +94,9 @@ class Observation:
     distinct_ct: int | None = None
     status: str = "unknown"
     detail: str = ""
+    # "adds" | "carried" | "" when minimality was not counted for this column.
+    minimality: str = ""
+    observed_at: object = None
 
     @property
     def is_unique_key(self) -> bool:
@@ -213,24 +231,116 @@ def run_via_dbt(target: Target, project_dir: str, profiles_dir: str | None = Non
     return interpret(target, rows[0]), sql
 
 
+def migrate(store) -> int:
+    """Give an existing `observed_keys` its history back. Returns rows carried over.
+
+    *** duckdb CANNOT ALTER A PRIMARY KEY, SO THIS REBUILDS THE TABLE. ***
+    Same shape as `_reshape_adjudications`, and the same rule: every existing row is CARRIED, not
+    dropped. A store written before history existed holds one observation per column, and that one
+    is real -- it is the first point of the series, and throwing it away would mean the first
+    comparison could not happen until two more probes had run.
+
+    Idempotent. It looks at the actual key and does nothing when history is already there.
+    """
+    store.con.execute(DDL)
+    try:
+        cols = store.con.execute(
+            "select column_name from information_schema.columns "
+            "where table_name = 'observed_keys'").fetchall()
+    except Exception:                                            # noqa: BLE001
+        return 0
+    have = {c[0] for c in cols}
+    if not have:
+        return 0
+    # `minimality` may be missing on an old store; add it before anything reads it.
+    if "minimality" not in have:
+        store.con.execute("alter table observed_keys add column minimality varchar")
+    # Is `observed_at` already part of the key? duckdb exposes it through the constraint list.
+    try:
+        keyed = store.con.execute(
+            "select constraint_column_names from duckdb_constraints() "
+            "where table_name = 'observed_keys' and constraint_type = 'PRIMARY KEY'").fetchone()
+    except Exception:                                            # noqa: BLE001
+        keyed = None
+    if keyed and "observed_at" in list(keyed[0] or []):
+        return 0
+    n = store.con.execute("select count(*) from observed_keys").fetchone()[0]
+    store.con.execute("""
+        create table _ok_hist (
+            relation varchar, column_name varchar, row_count bigint, non_null bigint,
+            distinct_ct bigint, status varchar, detail varchar, observed_at timestamp,
+            via varchar, minimality varchar,
+            primary key (relation, column_name, observed_at))""")
+    store.con.execute("""
+        insert into _ok_hist
+        select relation, column_name, row_count, non_null, distinct_ct, status, detail,
+               -- A row written before history has a timestamp; one written before `observed_at`
+               -- existed at all would be NULL, and NULL cannot sit in a primary key. Such a row
+               -- is the oldest thing here by definition, so it is dated as such rather than lost.
+               coalesce(observed_at, timestamp '1970-01-01 00:00:00'),
+               via, coalesce(minimality, '')
+        from observed_keys""")
+    store.con.execute("drop table observed_keys")
+    store.con.execute("alter table _ok_hist rename to observed_keys")
+    return n
+
+
 def write(store, observations: list[Observation], via: str = "dbt-show") -> None:
+    """Append an observation. *** APPEND, NOT REPLACE. ***
+
+    One timestamp for the whole batch, so everything counted in one pass shares an observation and
+    the comparison between passes is a comparison between two known moments rather than between
+    two rows that happen to sit next to each other.
+    """
     store.con.execute(DDL)
     now = datetime.now(timezone.utc)
+    # Named columns: a migration appends at the END and a positional insert then writes `via`
+    # into whichever column happens to sit there.
     store.con.executemany(
-        "insert or replace into observed_keys values (?,?,?,?,?,?,?,?,?)",
+        """insert or replace into observed_keys
+           (relation, column_name, row_count, non_null, distinct_ct, status, detail,
+            observed_at, via, minimality)
+           values (?,?,?,?,?,?,?,?,?,?)""",
         [[o.relation, o.column, o.row_count, o.non_null, o.distinct_ct,
-          o.status, o.detail, now, via] for o in observations])
+          o.status, o.detail, now, via, o.minimality or ""] for o in observations])
 
 
 def read(store) -> dict[str, dict[str, Observation]]:
-    """{relation: {column: Observation}}, for grain propagation to use as a base case."""
+    """{relation: {column: Observation}}, the LATEST observation of each, for grain propagation.
+
+    *** THE LATEST, NOW THAT THERE IS MORE THAN ONE. ***
+    Before history existed this was every row, because there was only ever one per column. Reading
+    all of them now would hand a caller several observations of one column and no way to tell
+    which is live -- the defect `traversal` had when it returned twelve verdicts for four hops.
+    """
     store.con.execute(DDL)
     out: dict[str, dict[str, Observation]] = {}
-    for rel, col, n, nn, dc, status, detail, _at, _via in store.con.execute(
-            "select relation, column_name, row_count, non_null, distinct_ct, status, detail,"
-            " observed_at, via from observed_keys").fetchall():
-        out.setdefault(rel.lower(), {})[col] = Observation(rel, col, n, nn, dc, status, detail)
+    for rel, col, n, nn, dc, status, detail, at, _via, mini in store.con.execute(
+            """select relation, column_name, row_count, non_null, distinct_ct, status, detail,
+                      observed_at, via, minimality
+               from (select *, row_number() over (partition by relation, column_name
+                                                  order by observed_at desc) rn
+                     from observed_keys) where rn = 1""").fetchall():
+        out.setdefault(rel.lower(), {})[col] = Observation(
+            rel, col, n, nn, dc, status, detail, mini or "", at)
     return out
+
+
+def history(store, relation: str = "", column: str = "") -> list[Observation]:
+    """Every observation, oldest first. The series a change is visible in."""
+    store.con.execute(DDL)
+    where, args = "", []
+    if relation:
+        where, args = "where lower(relation) = ?", [relation.lower()]
+        if column:
+            where += " and column_name = ?"
+            args.append(column)
+    rows = store.con.execute(
+        f"""select relation, column_name, row_count, non_null, distinct_ct, status, detail,
+                   observed_at, minimality
+            from observed_keys {where} order by relation, column_name, observed_at""",
+        args).fetchall()
+    return [Observation(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[8] or "", r[7]) for r in rows]
 
 
 def sample_sql(relation: str, columns: list[str], n: int = 20, dialect: str = "duckdb") -> str:
@@ -306,3 +416,95 @@ def emit(targets_: list[Target], dialect: str = "duckdb") -> str:
         blocks.append(f"-- assay probe :: {t.relation}\n-- columns: {', '.join(t.columns)}\n"
                       f"{build_sql(t, dialect)};")
     return "\n\n".join(blocks)
+
+
+# --------------------------------------------------------------------- what CHANGED, not what is
+
+def changes(store, project=None) -> list:
+    """Columns whose observed behavior moved between the last two observations.
+
+    *** "IT HOLDS TODAY" IS THE LESS USEFUL HALF. ***
+    A key that silently stops being a key is how a warehouse goes wrong: every count downstream
+    inflates, nothing errors, and the tests still pass because they were written while it was
+    true. assay could say a key holds now and could not say one had stopped, because the store
+    kept exactly one observation per column and overwrote it.
+
+    Two observations is the minimum for a change to exist, so a column with one is absent from
+    this rather than reported as stable. An absent comparison is not a clean bill.
+    """
+    from .checks.structural import Finding
+    store.con.execute(DDL)
+    rows = store.con.execute("""
+        select relation, column_name, status, minimality, row_count, distinct_ct, non_null,
+               observed_at,
+               row_number() over (partition by relation, column_name
+                                  order by observed_at desc) as rn
+        from observed_keys
+    """).fetchall()
+    latest, prior = {}, {}
+    for rel, col, status, mini, n, dc, nn, at, rn in rows:
+        (latest if rn == 1 else prior if rn == 2 else {}).setdefault(
+            (rel, col), (status, mini, n, dc, nn, at))
+
+    out = []
+    for key, now in sorted(latest.items()):
+        was = prior.get(key)
+        if was is None:
+            continue                      # one observation. Nothing to compare, and not a pass.
+        rel, col = key
+        (st_now, mini_now, n_now, dc_now, nn_now, at_now) = now
+        (st_was, mini_was, _n, _d, _nn, at_was) = was
+        when = f"held at {at_was}, not at {at_now}"
+
+        # *** THE ONE THAT MATTERS. *** A key that was unique and is not.
+        if st_was == "unique" and st_now in ("has_duplicates", "has_nulls"):
+            out.append(Finding(
+                check="key_stopped_holding", subject=f"{rel}.{col}", subject_name=rel,
+                file="", base=3,
+                summary=f"`{col}` was unique in {rel} and is not any more "
+                        f"({dc_now:,} distinct over {n_now:,} rows)",
+                detail=("This column was counted unique in an earlier observation and is not in "
+                        "the latest. If anything declares it a key, or joins on it expecting one "
+                        "row, every count past that join is now inflated and nothing will "
+                        "error.\n\n" + when + ".\n\nCounted, not judged. What it cannot tell you "
+                        "is WHEN between the two observations it changed, only that it did."),
+                evidence={"was": st_was, "now": st_now, "rows": n_now, "distinct": dc_now,
+                          "non_null": nn_now, "observed_at": str(at_now),
+                          "previously_at": str(at_was)}))
+
+        # The other direction, which is a smaller but real fact: a key you could not declare
+        # before, you could now.
+        elif st_was in ("has_duplicates", "has_nulls") and st_now == "unique":
+            out.append(Finding(
+                check="key_started_holding", subject=f"{rel}.{col}", subject_name=rel,
+                file="", base=1,
+                summary=f"`{col}` is now unique in {rel} and was not before",
+                detail=("Not a defect. A uniqueness test on this column would pass today and "
+                        "would not have before, so a grain nothing could declare is now "
+                        "declarable.\n\n" + when + ".\n\nUnique in today's data is still not a "
+                        "constraint. It is a reason to look, not a reason to assert."),
+                evidence={"was": st_was, "now": st_now, "rows": n_now, "distinct": dc_now}))
+
+        # *** AND THE MINIMALITY DIRECTION: A COLUMN THAT STARTED CARRYING ITS WEIGHT. ***
+        if mini_was == "carried" and mini_now == "adds":
+            out.append(Finding(
+                check="key_column_started_mattering", subject=f"{rel}.{col}", subject_name=rel,
+                file="", base=2,
+                summary=f"`{col}` now adds identifying power in {rel} and did not before",
+                detail=("Dropping this column from the candidate set used to leave the distinct "
+                        "count unchanged, so it was carried along. It does not any more, which "
+                        "means the minimal key of this model has GROWN and a uniqueness test "
+                        "written without this column is now testing the wrong thing.\n\n"
+                        + when + "."),
+                evidence={"was": mini_was, "now": mini_now}))
+        elif mini_was == "adds" and mini_now == "carried":
+            out.append(Finding(
+                check="key_column_stopped_mattering", subject=f"{rel}.{col}", subject_name=rel,
+                file="", base=1,
+                summary=f"`{col}` no longer adds identifying power in {rel}",
+                detail=("The other candidates now determine it, so the minimal key has shrunk. "
+                        "A test including this column still passes -- a superset of a key is "
+                        "unique -- so nothing will fail; the key is simply wider than it needs "
+                        "to be.\n\n" + when + "."),
+                evidence={"was": mini_was, "now": mini_now}))
+    return out

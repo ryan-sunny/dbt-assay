@@ -274,8 +274,11 @@ def check(
     # *** ONE PATH. *** `check` used to add the judged stream itself while `findings_for` did not,
     # so the CLI saw seven families and MCP saw two. Both call this.
     _cfg_pre = Config.load(config_path)
+    _st_pre = Store(store_path) if Path(store_path).exists() else None
     findings = live.all_findings(project, digests, schema, _entries,
-                                 _cfg_pre.row_loss_threshold)
+                                 _cfg_pre.row_loss_threshold, store=_st_pre)
+    if _st_pre is not None:
+        _st_pre.close()
     # *** 7,656 DROPPED DECISIONS PRINTED AS "246 resolved". ***
     # The count existed and was read in exactly one place, inside an MCP tool. `check` is where
     # somebody watches a number move, so it is where a number moving for a reason that is not
@@ -1584,7 +1587,8 @@ def completeness(
                                       dbt_bin, schema=schema)
         counted["empty_models"] = sorted(n for n, c in held.items() if c[0] == 0)
 
-    fs = live.all_findings(project, digests, schema, entries, cfg.row_loss_threshold)
+    fs = live.all_findings(project, digests, schema, entries, cfg.row_loss_threshold,
+                            store=store)
     if store:
         store.close()
     from .checks.sources import completeness_checks
@@ -1721,7 +1725,8 @@ def page(
     facts, _ = relate.run_all(project, digests, schema)
     entries = inv_mod.build(project, digests, schema, store,
                             probe_mod.read(store) if store else {}, facts=facts)
-    fs = live.all_findings(project, digests, schema, entries, cfg.row_loss_threshold)
+    fs = live.all_findings(project, digests, schema, entries, cfg.row_loss_threshold,
+                            store=store)
 
     ruled_keys: set = set()
     agent_n, eff, moved = 0, [], {}

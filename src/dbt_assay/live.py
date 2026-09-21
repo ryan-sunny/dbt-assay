@@ -74,7 +74,7 @@ def changes_since(baseline: Snapshot, state: LiveState) -> list:
 
 
 def all_findings(project, digests, schema, entries=None,
-                 threshold: float = 0.8) -> list:
+                 threshold: float = 0.8, store=None) -> list:
     """Every finding, structural and judged, from ONE place.
 
     *** THE CLI SAW SEVEN FAMILIES AND MCP SAW TWO. ***
@@ -102,11 +102,23 @@ def all_findings(project, digests, schema, entries=None,
         # uncounted hop produces nothing here, which is correct: an absent measurement is not a
         # pass and the caller says the count did not run.
         fs += prac_mod.hop_drops_most_rows(project, entries, threshold)
+    # *** WHAT CHANGED, WHICH NEEDS TWO OBSERVATIONS AND SO NEEDS THE STORE. ***
+    # A key that held last week and does not now is the failure that corrupts a warehouse, and it
+    # is invisible to every other check here: they all describe the present. A column with one
+    # observation produces nothing, which is correct -- an absent comparison is not a clean bill.
+    if store is not None:
+        from . import probe as probe_mod
+        try:
+            fs += probe_mod.changes(store, project)
+        except Exception:                                        # noqa: BLE001
+            # A store too old to hold a series still produces every other finding. The comparison
+            # is absent, which is honest: `assay probe` twice is what makes it possible.
+            return sorted(fs, key=lambda f: -f.weight)
     return sorted(fs, key=lambda f: -f.weight)
 
 
-def findings_for(state: LiveState, model: str | None = None) -> list:
-    fs = all_findings(state.project, state.digests, state.schema, state.entries)
+def findings_for(state: LiveState, model: str | None = None, store=None) -> list:
+    fs = all_findings(state.project, state.digests, state.schema, state.entries, store=store)
     if model:
         fs = [f for f in fs if f.subject_name == model]
     return fs

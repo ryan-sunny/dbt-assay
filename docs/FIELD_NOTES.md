@@ -2446,3 +2446,91 @@ band sits), and it states the conclusion rather than leaving it to be inferred:
 
 And the closing line stopped implying a verdict. Bands that do not separate have told you nothing
 yet, which is a different statement from telling you the confidence is worthless.
+
+---
+
+## Round eighteen: the one table that forgot
+
+Three things, from one question that turned out to be better than the answer it was asking about:
+
+> *"uniqueness in a row, why is that even something it needs to answer? Can't the data answer that
+> already? ... will it recognize when this column DOES add something? That's like a big deal."*
+
+Both halves were right, and the second half is the one that mattered.
+
+### A judged question that is arithmetic
+
+`column_is_part_of_the_key` asks whether a column is part of the MINIMAL set or is carried along
+because the others determine it. That is not "is it unique", and it is still countable: drop the
+column, recount the distinct combination, and if the number does not move it was carried.
+
+```
+rows 5, distinct over all three 5
+  without section_id      4   IDENTIFYING
+  without party_ordinal   3   IDENTIFYING
+  without county          5   CARRIED ALONG
+```
+
+Two counts. The tool's own rule says it in as many words -- *"if code can answer it, Jev is never
+asked"* -- and this one slipped through. Four independent signals had already been pointing at it:
+
+```
+asked                            109 times
+its answer load-bearing for        6 models   (declared 236, derived 17, none 99)
+VERIFICATION.md                   "Known weak" -- proposed a grain not in the output
+calibration                        worst exactly where it is most confident
+```
+
+`verify_minimality` counts it now, batched the way `verify_grains` already batches, halving on
+failure so one unreadable relation cannot take a batch down with it. A relation that could not be
+counted is **absent**, never guessed.
+
+### An audit of the other sixteen, because "a lot must have slipped through"
+
+Fair question and the answer is no, one. Six genuinely need language or rows and are the verified
+ones. `units_are_what_the_column_claims` was already split, which is the pattern this follows. Two
+are already documented weak. And the ones that LOOK like duplicates are the two-tier design
+working rather than a leak: `hop_multiplies_rows` rests on `edge_preserves_the_grain`, so the
+parser narrows 573 hops to a handful and the judgment decides only what the parser cannot.
+
+### And the real gap: the store had no history
+
+The check above tells you a key holds *today*. The question *"will it recognise when a column
+starts adding something"* has a different answer, and it was **no** -- not because counting cannot
+see it, but because:
+
+```
+primary key (relation, column_name)      no run, no timestamp in the key
+insert or replace                        each probe OVERWROTE the last
+read()  ... _at, _via  →  discarded      observed_at selected and thrown away
+```
+
+**Every other table in the store that records a measurement keeps its series.** `model_decisions`
+keys on the version, which is what makes `effectiveness` and `regress` possible. `findings` and
+`edge_facts` key on `run_id`. `observed_keys` was the one table measuring the actual data, and it
+was the one that forgot.
+
+So assay could say a key holds now and could never say a key that held last week has stopped --
+**and that second sentence is the one that matters.** A key silently ceasing to be a key is how a
+warehouse goes wrong: every count past the join inflates, nothing errors, and the tests still pass
+because they were written while it was true. assay exists to catch that shape and had a blind spot
+in the middle of it.
+
+`observed_at` is in the key now, `write` appends, `read` returns the latest, and a migration
+rebuilds the table carrying every existing row as the first point of the series -- a row predating
+`observed_at` entirely has a NULL there, which cannot sit in a primary key, so it is dated as the
+oldest thing present rather than dropped. Four checks come off the series, and a column with one
+observation produces **nothing**, because an absent comparison is not a clean bill.
+
+```
+[key_stopped_holding]          section_id was unique in main.sections and is not any more
+[key_column_started_mattering] county now adds identifying power and did not before
+```
+
+### And a hand-written list, one more time
+
+Adding a check to `probe.py` made four checks come back UNKNOWN from `known_checks()`, which reads
+the source that constructs findings -- from a hand-written list of five modules, carrying a
+comment explaining that an earlier hand list had missed two modules and five checks for exactly
+this reason. The test for it already walked the package. The reader does now too, so adding a
+check to any module IS registering it, and there is no list left to drift.
