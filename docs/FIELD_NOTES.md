@@ -2699,17 +2699,32 @@ dict is `undefined` rather than an error, so the page would have shown nothing a
 Second appearance of `[] -> {}` in this file. Each section declares its own empty type now, and a
 guard asserts the reader and the writer agree about which sections exist at all.
 
-### And the lead data engineer got a face
+### The record sat at the bottom of the Overview, unintegrated
 
-Foghorn Leghorn, 128x80, top left of the header beside the project name.
+And it was the same numbers twice in one scroll. The Overview's hero IS the record's hero; the
+ranking above it IS the record's findings-by-check; the stacked bar IS its grain section. Putting
+it in a frame underneath meant reading `0 of 253` twice on one page, the second time in a
+different typeface.
 
-Inlined as base64 rather than shipped as a file, for the same reason everything else here is
-inlined: **the page is one artifact you open from disk**, and a logo that arrives as a second file
-is a logo that is missing the first time somebody moves the page, mails it, or opens it from a
-different directory. 9.6 KB, which is 0.1% of the file it rides in, and it costs no request
-because there is no request to make. A constant in the source rather than a packaged asset, so a
-wheel cannot ship without it.
+Two sections were the reason it was still bolted on, and both are native now:
 
-Rendered at half its pixel size so it stays sharp on a retina display, and `alt=""` on purpose: he
-is decoration, and a screen reader announcing "Foghorn Leghorn" before the project name would be
-noise rather than information.
+- **Did the questions get better** -- agreement per family per VERSION, because a verdict about v1
+  says nothing about v4, split by source and never summed. Unclear is not in the denominator:
+  disagreement means the criteria are wrong, unclear means the state does not carry what the
+  question asks, and those are fixed by different edits.
+- **What moved** -- what appeared, what went away, what stayed. One run recorded reports "nothing
+  can have moved yet", which is a different statement from nothing having moved.
+
+Neither was in the artifact, so both are now. The record itself is unchanged and still shipping:
+`assay page --plain` writes it and `record.html` carries it in the data artifact. It is simply not
+duplicated inside the page that replaced it.
+
+### The lead data engineer had a face for one release
+
+Foghorn Leghorn, inlined as base64, top left of the header. Reverted at the next look -- too small
+to read at logo size and not worth the room. Removed entirely rather than left in behind a flag,
+because a decoration nobody wants is not a setting.
+
+The one assertion worth keeping from it survived: **the page shell reaches out to nothing.** No
+`http://`, no `https://`, no CDN, no `<img>`. Self-contained is the delivery model, and on
+`file://` a blocked request fails silently rather than loudly.

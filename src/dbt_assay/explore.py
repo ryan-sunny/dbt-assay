@@ -170,6 +170,12 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         "unconfigured": [{"check": c, "shipped": a}
                          for c, a in cfg.unconfigured({f["check"] for f in find_rows})],
         "runs": _runs(store),
+        # *** THE TWO THINGS THE RECORD SAID THAT NOTHING ELSE DID. ***
+        # Everything else on the record duplicates a section the Overview now renders natively, so
+        # keeping it as an iframe was the same numbers twice in one scroll. These two were the
+        # reason it was still there, and they belong in the data rather than behind a frame.
+        "effectiveness": _effectiveness(store),
+        "moved": _moved(store, project),
         "unreadable": _unreadable(store, project),
     }
 
@@ -377,6 +383,53 @@ def _config(cfg) -> dict:
     return out
 
 
+def _effectiveness(store) -> list:
+    """Per family, per version: how often people agreed, and what is still open.
+
+    A verdict is about a VERSION of a question, so agreement is reported per version -- an answer
+    about v1 says nothing about v4. Unclear is never in the denominator: disagreement means the
+    criteria are wrong, unclear means the state does not carry what the question asks, and they
+    are fixed by different edits.
+    """
+    if store is None:
+        return []
+    out = []
+    for src in ("human", "label", "agent"):
+        try:
+            for r in store.effectiveness(src):
+                out.append({**r, "source": src})
+        except Exception:                                        # noqa: BLE001, S112
+            # A source with no verdicts yields nothing; the other sources still report.
+            continue
+    return sorted(out, key=lambda r: (r["source"], str(r.get("family", "")),
+                                      str(r.get("prompt_version", ""))))
+
+
+def _moved(store, project) -> dict:
+    """What appeared and what went away since the previous recorded run.
+
+    One run recorded means nothing can have moved yet, which is different from nothing having
+    moved -- so the caller gets an empty dict and says which.
+    """
+    if store is None:
+        return {}
+    try:
+        run = store.con.execute(
+            "select run_id from runs order by started_at desc limit 1").fetchone()
+        if not run:
+            return {}
+        prev = store.previous_run(project.project_name, run[0])
+        if not prev:
+            return {}
+        d = store.diff(prev, run[0])
+    except Exception:                                            # noqa: BLE001
+        return {}
+    return {"new": [list(x) for x in d.get("new", [])][:40],
+            "gone": [list(x) for x in d.get("gone", [])][:40],
+            "same": d.get("same", 0),
+            "n_new": len(d.get("new", [])), "n_gone": len(d.get("gone", []))}
+
+
 def _runs(store) -> list:
     if store is None:
         return []
@@ -432,12 +485,13 @@ def _unreadable(store, project) -> list:
 # The page still EMBEDS this rather than fetching it, because browsers block `fetch` on `file://`.
 # Reading the artifact is a build step, not a runtime load.
 _LINES = ("models", "edges", "claims", "findings", "decisions", "questions",
-          "adjudications", "unreadable", "runs")
+          "adjudications", "unreadable", "runs", "effectiveness")
 # *** AND ITS EMPTY VALUE, BECAUSE A LIST DEFAULTING TO `{}` IS THE SAME BUG AS `[]` -> `{}`. ***
 # Caught by the round-trip guard: an artifact with no `unconfigured.json` handed back a dict where
 # a list belongs, and `.length` on a dict is `undefined` rather than an error -- so the page would
 # have shown nothing and looked fine. Second time this class has appeared in this file.
-_WHOLE = (("meta", dict), ("config", dict), ("unconfigured", list))
+_WHOLE = (("meta", dict), ("config", dict), ("unconfigured", list),
+          ("moved", dict))
 
 
 def write_data(data: dict, directory, record: str = "") -> list:

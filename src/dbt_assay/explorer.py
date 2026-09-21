@@ -24,165 +24,16 @@ from __future__ import annotations
 import html
 import json
 
-# *** THE LEAD DATA ENGINEER. ***
-# A 128x80 PNG, inlined as base64 rather than shipped as a file, for the same reason everything
-# else here is inlined: the page is ONE artifact you open from disk, and a logo that arrives as a
-# second file is a logo that is missing the first time somebody moves the page. 9.6 KB, which is
-# 0.1% of the file it rides in, and it costs no request because there is no request to make.
-#
-# A constant rather than a packaged asset, so a wheel cannot ship without it.
-FOGHORN = (
-    "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"
-    "gzY1ttLbLz336isbdx7btPllc/lH9xuIutYveeH2/Z9+EmatIoQfb8hhURJSzBnZeWdE2zHTDzB+9FLw6CvP/vz1p/7we4On"
-    "963oxVgeY+oEftUHmza29MzcsvFnBgeyOZzBDyD27u3ugSSbkGGLOHXsfHGRWTsAdAkJHq+7hw4dOohjJ2Vn5+LbOMlY+m2l"
-    "5qP1pJhkD3b2rN9Xd6Tjq86N29XUtxzOt2hydunY8812zh9A34NLTWYzdbW12d5YtvxJVGMF8YWytZ8CqzdsWbX+052NX7gZ"
-    "gwtDonZO9bka9u3e4unpIAU/s8JBGDtx/LMtbe3NVHt4H356xUxG/EiL2WKH1Iew2II8cm8zNTRi11V8Lk2cOJa8/hD5ffgi"
-    "R08zvjLWh734XkoxGSqKU3QfTpiV9GFesq6xvk2r7Q7pGtPNhn7+pZAjPVLPHz86uv5k5vvLJ1++X29PzJt53Y3fZfPECShT"
-    "spHSskeNu6g8e+bKXfXLTqafWNdhk3WalVTrpDRdcmNQCTZ29Pgr8xPzb/zR9+8tP2v6TI7ZAT9SqB7xFTAzQjGjhailrZu2"
-    "L19IV6R+Cm2A/XqSlxwGP3V59bSjr5wC6VPI7FpO7WoRuRGmJcbFU+3BvVSo7IBOxpc43XoqzQoTwnGYC6KcFKLMlBB1eDRa"
-    "vtWyfNWmvB8srd18bKn6XxDM8KsfX//gOZde8VMfvrNQUlpG3VgHqPloo9vb2/rU0t/d95+ru0hsD/8XfcT01mmjAb4/IX3i"
-    "zLG+OzLj+s9gnwgCG/qsKRg4bK5Iik8vkN5/5W9Ueem1tPXj1dTv05Pn4Gqs3Y+mpPEX0JplK3vNlLB8w2cee4pdjudgTyLE"
-    "5nrNmWjeaTQ2bU/PTpNtRv0BMmMdiTOA7SVYy3fKVNcm0eR4PzmtrFsQ/OMXKQ42K7S30UCV5R66SPVf/N6Oxpm49cxJIBP4"
-    "z4VP33Jnd9u65LxxD6SmpeZy1g9Ma5s07dJbu9tafav/8Bhv/xKFs37zFi+O2K3oxRgfTwsNkEzJtqdu0j69tKK/ACs6kSCf"
-    "/Wm4+M1dFmpoU8mnS6NWZwXpG1ZhQ4WephR0ibRsW3887WoKuDfupgWPbm7/8+fp9yMw+Cr5isKujOJUGp8/gqaPStXOz0rU"
-    "SnIy2GkcWJ6FeY6mhzm3QPjJrzXbTDQuR6W9dXpavlt+59fvuC6JOPGfH+GffTrXTBV3PfvSh1nlY/R1+/aL7y5+smr5nx74"
-    "6zM//WdthuL6aaEBKovV0S09akFzi0SpDiy+IIzjnD5jkeH0UEacTH29dVTnOqy1Gpy6aSWI2uD56xSN0pxtNCZLssWZzI82"
-    "9ZdsfWPnZ1hIPFY4qxZ8bT9WIPlF9BrRSPMNY7xnTypS54/NkeeWZeH3/GzYmIFogYsPGxY+q1PoSKdMCTbq2FJPW7AZeNGp"
-    "gM/9NHlpn7u7swNr3WmcmygdM47WL1/czPdOpzLoDMCxL2T5H3rAUUJMzqULzxilo8YOmTLi4cWLFRwssvRLtL9B6jrcKq9p"
-    "aNW/tWSPrvW/q/T4aUC3LYDfV9rZgO/fIT9QkhmgouSwzqK506J9/vNjo/fJHfQevybFpd0/u1KdMzoncFlGAk1IcQRNdW0G"
-    "E5YeuO/NSzemzn197154kqdewG193S1HGswmU9o7i5/dM/OKq7Iy80rnoadfn3pvg9di0BngZKbe5ZE/eOoD+sOEXG2WTlPi"
-    "+gOSu6UX0VsLvb34Y+Wtbd3ddZF+pii1rXuazimUi5rb8OOLHis5+TdaEBvU1CpdfV4n0rWNJzOkqLOpu6Vu00p6GPz5yDmZ"
-    "xelj4jvsqlnJyIwPxtt9vm1fFfyBCYR72lr3NBzaX+Gq23/zm3/6jeJIGzXypCcXo4qnhQ9w/FlzTHbqsPaR3UvUfGxV8Ph9"
-    "omvPGDlrSr73njR7cNS6Q+QZmWhBOB9qW3/AWP1MTdNpFWrdecnkUVJCcsWvn3vjFTwDOx3/noXNwDf75NXSRHth0sSMDMus"
-    "yllYsK82fLP9D/f2jVGAV8Eev3Ei/xiI+C2mb6zj4Y7+/6JAdTWCuupqduy/VYUZ/Fv1QMMPM0yBb5QCUQmJagCNNcE37hN8"
-    "+ZR5HtG5fHnt4RqDQgFOfUY7ZobgV/TzYB6Z4ZbfMsu45fEb+QsFw2UoKSAkcSg0ADuhA+MKh3QI5jCUdB+ysZnY0SgAkxAO"
-    "UxSIIZvU8MDHKDCoKphV/H3V1bpMY4q0uKpKDxMg1D64ADwwNIUjkQEG/Jfeu9BUsY9a/uWchoZiX2NUtvlRx+sEez+kD8ng"
-    "85xO9Ef+2SPynHdXVxmiz/DP6n1T109mTt/UWDHphx/olaoywwkmICbjfskgggEFc36JH8DAs/N4AvN+Sdcnd1t75bgzfHIt"
-    "hmsNU2CYAsMUGKbAMAWGKTBMgWEKDFPgG6TA/wNg8MW+ottoFQAAAABJRU5ErkJggg=="
-)
-
 CSS = """
 :root{--ink:#16232a;--dim:#6b7a80;--faint:#94a3aa;--line:#dfe6e8;--bg:#fbfcfc;
 --card:#fff;--red:#9e2b20;--green:#5a6a2f;--blue:#2b5c7a;--amber:#8a6412}
 *{box-sizing:border-box}
 body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 color:var(--ink);background:var(--bg)}
-header{padding:14px 24px 0;border-bottom:1px solid var(--line);background:var(--card)}
-.brand{display:flex;align-items:center;gap:13px;margin-bottom:12px}
-/* Rendered at half its pixel size, so it stays sharp on a retina display. `alt` is empty on
-   purpose: he is decoration, and a screen reader announcing "Foghorn Leghorn" before the project
-   name would be noise rather than information. */
-.fog{width:64px;height:40px;flex:0 0 64px;image-rendering:auto}
+header{padding:18px 24px 0;border-bottom:1px solid var(--line);background:var(--card)}
 h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.01em}
 h1 span{font-weight:400;color:var(--dim);font-size:14px;margin-left:8px}
-.sub{color:var(--dim);font-size:12.5px;margin:3px 0 0}
+.sub{color:var(--dim);font-size:12.5px;margin:3px 0 14px}
 nav{display:flex;gap:2px;flex-wrap:wrap}
 nav button{appearance:none;border:1px solid transparent;border-bottom:none;background:none;
 font:inherit;font-size:13px;color:var(--dim);padding:7px 13px;cursor:pointer;
@@ -268,6 +119,8 @@ align-items:center}
 .rfill{display:block;height:13px;border-radius:3px}
 .rrow.clk:hover .rfill{opacity:.82}
 .rval{font-size:11.5px;color:var(--dim);white-space:nowrap}
+.srclab{font-size:12px;color:var(--dim);margin:12px 0 5px;font-weight:600}
+.srclab:first-child{margin-top:0}
 .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--dim)}
 .lgi{display:inline-flex;gap:6px;align-items:center}
 .sw{width:11px;height:11px;border-radius:2px;display:inline-block}
@@ -479,14 +332,9 @@ def explorer_html(data: dict, record_html: str) -> str:
 <title>{e(meta['project'])} &middot; assay</title>
 <style>{CSS}</style></head><body>
 <header>
-<div class="brand">
-<img class="fog" alt="" src="data:image/png;base64,{FOGHORN}">
-<div>
 <h1>{e(meta['project'])}<span>everything assay knows</span></h1>
 <div class="sub">{meta['models']} models &middot; {meta['sources']} sources &middot;
 manifest generated {e(str(meta['generated_at']))} &middot; assay {e(meta['version'])}</div>
-</div>
-</div>
 <nav role="tablist">{nav}</nav>
 </header>
 <main>{panels}</main>
@@ -1623,20 +1471,60 @@ function understoodTab(host) {
       + 'outside.', rankedBars(grows)));
   }
 
-  // ---- how much has been counted, and how far from being able to detect drift
-  const obs = DATA.runs.length;
-  bits.push(block('The record', null, null));
-  const f = el('iframe', {style: 'width:100%;border:1px solid var(--line);border-radius:8px;'
-    + 'background:#fff;height:70vh', title: 'the record'});
-  bits[bits.length - 1].append(
-    el('p', {class: 'note', text: 'The same page `assay page --plain` writes on its own, and what '
-      + '`record.html` holds in the data artifact: small enough to commit and to read a diff of. '
-      + obs + ' run(s) recorded.'}), f);
-  f.srcdoc = DATA.record || '';
-  f.onload = () => { try {
-    const h = f.contentDocument.body.scrollHeight;
-    if (h > 100) f.style.height = (h + 24) + 'px';
-  } catch (e) { /* the default height stands */ } };
+  /* ---- did the questions get better?
+     *** THE RECORD USED TO SIT HERE IN AN IFRAME, AND IT WAS THE SAME NUMBERS TWICE. ***
+     Its hero IS this page's hero; its findings-by-check IS the ranking above. Two sections were
+     the reason it was still bolted on, so they are native now and the frame is gone. The record
+     still exists -- `assay page --plain` writes it, `record.html` carries it in the artifact --
+     it is just not duplicated inside the page that replaced it. */
+  const eff = (DATA.effectiveness || []).filter(r => r.n);
+  if (eff.length) {
+    const bySrc = {};
+    for (const r of eff) (bySrc[r.source] = bySrc[r.source] || []).push(r);
+    const wrap = el('div');
+    for (const src of ['human', 'label', 'agent'].filter(s_ => bySrc[s_])) {
+      wrap.append(el('p', {class: 'srclab', text: src === 'human'
+        ? 'human \u00b7 the only kind that gates anything'
+        : src === 'label' ? 'label \u00b7 derived from your own tests, evidence not truth'
+        : 'agent \u00b7 triage, counted toward nothing'}));
+      wrap.append(rankedBars(bySrc[src].map(r => ({
+        label: r.family + '  ' + (r.prompt_version || ''),
+        n: r.n,
+        color: r.agreement == null ? '#b8c2c6'
+             : r.agreement >= 0.8 ? RAMP.declared
+             : r.agreement >= 0.5 ? RAMP.derived : RAMP.judged,
+        note: (r.agreement == null ? '' : Math.round(r.agreement * 100) + '% agreed')
+              + (r.unclear ? '  \u00b7 ' + r.unclear + ' unclear' : '')
+              + (r.open_disagreements ? '  \u00b7 ' + r.open_disagreements + ' open' : ''),
+        tip: `${r.family} ${r.prompt_version}: ${r.n} ruled, `
+             + `${r.agreement == null ? 'no rate' : Math.round(r.agreement * 100) + '% agreed'}, `
+             + `${r.unclear} unclear, ${r.open_disagreements} open disagreement(s)`,
+      }))));
+    }
+    bits.push(block('Did the questions get better?',
+      'Agreement per family, per VERSION -- a verdict about v1 says nothing about v4. Unclear is '
+      + 'never in the denominator: disagreement means the criteria are wrong, unclear means the '
+      + 'state does not carry what the question asks, and those are fixed by different edits. '
+      + 'Sources are never summed.', wrap));
+  }
+
+  // ---- what moved
+  const mv = DATA.moved || {};
+  if (mv.same != null) {
+    bits.push(block('What moved since the previous run',
+      'Findings that appeared, went away, or stayed. A finding that went away was fixed, or the '
+      + 'check stopped seeing it, and those are not the same thing.',
+      el('div', {class: 'tiles'}, [
+        tile(num(mv.n_new || 0), 'appeared', 'since the previous recorded run',
+             (mv.n_new || 0) ? 'bad' : ''),
+        tile(num(mv.n_gone || 0), 'went away', 'fixed, or no longer seen'),
+        tile(num(mv.same || 0), 'unchanged', 'still true, and still unread unless ruled'),
+      ])));
+  } else {
+    bits.push(block('What moved since the previous run',
+      'Only one run is recorded, so nothing can have moved yet -- which is different from '
+      + 'nothing having moved. Run `assay check` again after your next change.', null));
+  }
 
   host.replaceChildren(...bits);
 }

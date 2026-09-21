@@ -144,6 +144,7 @@ def test_the_data_blob_is_valid_json_and_cannot_close_its_own_script_tag():
                     "decisions": []}],
         "edges": [], "claims": [], "findings": [], "decisions": [], "questions": [],
         "adjudications": [], "config": {}, "runs": [], "unreadable": [],
+        "unconfigured": [], "effectiveness": [], "moved": {},
     }
     doc = explorer.explorer_html(data, "<html><body>the record</body></html>")
 
@@ -205,7 +206,12 @@ def test_the_record_is_carried_as_data_and_never_as_markup():
     assert "body{background:red}" not in outside, "the record's CSS is live markup in the page"
     assert "<\\/style>" in blob, "the record's closing tags are not escaped"
     assert outside.count("<style>") == 1, "two stylesheets are in play"
-    assert "srcdoc" in explorer._VIEWS, "the record is not rendered into an iframe"
+    # *** IT IS CARRIED, AND NO LONGER RENDERED IN THE PAGE. ***
+    # The Overview renders every section the record had, natively, so showing it too was the same
+    # numbers twice in one scroll -- its hero IS this page's hero. `record.html` still rides in
+    # the artifact and `assay page --plain` still writes it; it is simply not duplicated inside
+    # the page that replaced it.
+    assert "srcdoc" not in explorer._VIEWS, "the record is back in an iframe"
 
 
 # ------------------------------------------------------------------- determinism, end to end
@@ -295,7 +301,7 @@ def _tiny():
             "models": [{"uid": "m", "name": "a"}], "edges": [], "claims": [],
             "findings": [{"id": "f1", "check": "c"}], "decisions": [], "questions": [],
             "adjudications": [], "config": {"provider": "auto"}, "runs": [],
-            "unreadable": [], "unconfigured": []}
+            "unreadable": [], "unconfigured": [], "effectiveness": [], "moved": {}}
 
 
 def test_the_artifact_is_one_line_per_entity(tmp_path):
@@ -884,32 +890,21 @@ def test_every_mark_carries_its_own_numbers():
     assert "title: r.tip" in rb, "a ranked row has no hover"
 
 
-def test_the_logo_rides_inside_the_file_like_everything_else():
-    """*** A LOGO THAT ARRIVES AS A SECOND FILE IS A LOGO THAT IS MISSING. ***
+def test_the_page_reaches_out_to_nothing(tmp_path):
+    """*** SELF-CONTAINED IS THE WHOLE DELIVERY MODEL. ***
 
-    The page is one artifact you open from disk. Anything referenced rather than embedded breaks
-    the first time somebody moves it, mails it, or opens it from a different directory -- which is
-    the same argument that made the data embedded and the same reason there are no CDN links here.
-
-    A constant rather than a packaged asset, so a wheel cannot ship without it.
+    It is opened from disk, mailed, moved between directories and committed. Anything fetched at
+    render time is a thing that is missing the first time one of those happens, and on `file://`
+    a blocked request fails silently rather than loudly. Asserted on the SHELL rather than the
+    whole file, because a warehouse's own content may legitimately contain a URL.
     """
-    import base64
-
     data = {"meta": {"project": "p", "models": 0, "sources": 0, "version": "0",
                      "generated_at": "x", "coverage": {}},
             "models": [], "edges": [], "claims": [], "findings": [], "decisions": [],
             "questions": [], "adjudications": [], "config": {}, "runs": [], "unreadable": [],
-            "unconfigured": []}
+            "unconfigured": [], "effectiveness": [], "moved": {}}
     doc = explorer.explorer_html(data, "<html></html>")
-
-    raw = base64.b64decode(explorer.FOGHORN)
-    assert raw[:8] == b"\x89PNG\r\n\x1a\n", "the logo is not a PNG"
-    assert len(raw) < 40_000, "the logo has grown past a rounding error on the page it rides in"
-    assert 'src="data:image/png;base64,' in doc
-    assert explorer.FOGHORN in doc, "the logo is declared and not used"
-    # nothing in the shell fetches anything
     shell = doc.split('<script id="assay-data"')[0]
-    for scheme in ("http://", "https://", "//cdn"):
-        assert scheme not in shell, f"the page reaches out to {scheme}"
-    # decoration, so it is not announced before the project name
-    assert 'class="fog" alt=""' in doc, "the logo is not marked as decorative"
+    for scheme in ("http://", "https://", "//cdn", "<img"):
+        assert scheme not in shell, f"the page shell reaches out to {scheme}"
+
