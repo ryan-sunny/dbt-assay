@@ -325,6 +325,15 @@ class Backend:
                 subject = f"{f.subject}::finding::{f.id}"
                 question = question or f.check
                 resolved_as = f"finding {f.id} -- {f.check} on {f.subject_name}"
+                # *** A VERDICT ON A JUDGED FINDING IS EVIDENCE ABOUT A PROBABILITY. ***
+                # The finding is keyed on itself; the confidence lives on the decision that
+                # produced it, keyed by the SUBJECT the question was asked about. Without this
+                # the verdict never reaches the number it ruled on -- measured: of 105 agent
+                # rulings on the field store, zero joined to a decision.
+                #
+                # `rests_on` is empty for a structural finding, and then so is this. A parser
+                # decided it, no question was asked, and there is no probability to calibrate.
+                dkey = f.subject if f.rests_on else ""
             else:
                 subject, resolved_as, err = self._resolve_subject(subject, question, st)
                 if err:
@@ -351,7 +360,8 @@ class Backend:
             st.adjudicate(subject, question, family_of(question) or question.split("__")[0],
                           answered, verdict, correction=correction, note=why.strip(),
                           who=f"agent, relaying {who}" if who else "agent", source="agent",
-                          prompt_version=pv, model_version=mv)
+                          prompt_version=pv, model_version=mv,
+                          decision_key=locals().get("dkey", ""))
             human = len(st.ruled_subjects())
             mine = len(st.agent_rulings())
         finally:

@@ -293,6 +293,8 @@ assay probe               # run it, via `dbt show --inline`. assay never holds a
 assay review -i           # a / d / u / s, least certain first
 assay disagreements       # N rejected findings, how many separate bugs? free
 assay disagreements --judge  # ...also asks whether differently-worded reasons are one defect
+assay calibration         # agreement BANDED by confidence, per family, per source.
+                          # A choice bands by `confidence`; a noul by its ANSWER
 assay effectiveness       # did the questions get BETTER? agreement per family, per version
 assay effectiveness --json
 ```
@@ -637,7 +639,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.28.1
+- uses: ryan-sunny/dbt-assay@v0.29.0
   with:
     target: target-head
     baseline: base/target

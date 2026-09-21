@@ -57,6 +57,43 @@ def _declared_reader(project, uid: str) -> str:
     return ", ".join(map(str, v)) if isinstance(v, (list, tuple)) else (str(v) if v else "")
 
 
+def seed_reaches_nothing(project, _digests=None) -> list[Finding]:
+    """A seed loaded on every build that no model and no test reads.
+
+    *** ASSAY'S OWN CHECK, POINTED AT ASSAY'S OWN OUTPUT, AND IT COULD NOT FIRE. ***
+    `source_reaches_nothing` iterates `project.sources`. A seed is a node, not a source, so 80% of
+    the payload `assay export` writes -- `model_decisions`, `edge_facts`, `observed_keys` on a real
+    warehouse -- was loaded on every build, read by nothing, and invisible to the check built to
+    find exactly that. Reported from the field, about this tool.
+
+    A seed is costlier to leave unread than a source, not cheaper: it is a file in the repository
+    that somebody maintains and `dbt seed` rebuilds, so an unread one is work being done twice.
+    """
+    out = []
+    for uid, n in sorted((project.raw.get("nodes", {}) or {}).items()):
+        if n.get("resource_type") != "seed":
+            continue
+        # A seed from an installed package is not the user's to delete, and saying so about
+        # somebody else's file is noise. Same rule the model list uses.
+        if n.get("package_name") and n.get("package_name") != project.project_name:
+            continue
+        if _child_uids(project, uid) or _declared_reader(project, uid):
+            continue
+        name = n.get("name", uid)
+        out.append(Finding(
+            check="seed_reaches_nothing", subject=uid, subject_name=name,
+            file=n.get("original_file_path", ""),
+            summary=f"nothing in this dbt project reads the seed `{name}`",
+            detail=("A seed is a file somebody maintains and `dbt seed` loads on every build. No "
+                    "model and no test refers to this one, so the load and the maintenance are "
+                    "both being paid for and neither is being used.\n\n"
+                    "The same limit applies as for a source: a reader OUTSIDE dbt is invisible "
+                    "here. If something out of band reads it, say so with "
+                    "`meta: {read_by: path/to/it.py}` and this stops reporting it."),
+            base=1, evidence={"path": n.get("original_file_path", "")}))
+    return out
+
+
 def source_reaches_nothing(project, _digests=None) -> list[Finding]:
     """Declared, loaded on every run, and read by no model and no test IN THIS PROJECT."""
     out = []
@@ -168,4 +205,16 @@ def source_freshness_stale(project, target_dir=None) -> list[Finding]:
     return out
 
 
-SOURCE_CHECKS = (source_reaches_nothing, source_only_a_test_reads, source_freshness_undeclared)
+SOURCE_CHECKS = (source_reaches_nothing, source_only_a_test_reads, source_freshness_undeclared,
+                 seed_reaches_nothing)
+
+# *** THE COMPLETENESS REPORT SELECTED ITS MEMBERS BY NAME PREFIX. ***
+# `f.check.startswith("source_")`, which is a hand-written membership rule standing in for the
+# real list -- the same shape as the debt model's hand-written class list that put 121 of 236 rows
+# in `other`. `seed_reaches_nothing` was registered, fired seven times on the field warehouse, and
+# reached the report as a zero, because its name does not begin with `source`.
+#
+# Derived from the functions themselves, so registering a check IS wiring it in.
+def completeness_checks() -> set[str]:
+    """Every check name the completeness tier owns."""
+    return {f.__name__ for f in SOURCE_CHECKS} | {"source_freshness_stale", "hop_drops_most_rows"}

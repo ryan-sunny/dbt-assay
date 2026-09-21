@@ -106,6 +106,17 @@ create table if not exists adjudications (
     -- `(unversioned)` rather than failing the insert or inventing one.
     prompt_version varchar default '',
     model_version  varchar default '',
+    -- *** THE DECISION THIS VERDICT IS ABOUT, WHEN THERE IS ONE. ***
+    -- A verdict on a JUDGED finding is evidence about a probability, and until this column
+    -- existed there was no path from the verdict back to the number it ruled on: `rule(finding=)`
+    -- files under `<uid>::finding::<id>` and the confidence lives on a `model_decisions` row
+    -- keyed by the SUBJECT the question was asked about. Measured on the field store: of 105
+    -- agent rulings, zero reached a decision by any join.
+    --
+    -- Empty for a STRUCTURAL finding, and that is correct rather than missing. 97 of those 105
+    -- were structural -- a parser decided them, no question was asked, there is no probability to
+    -- calibrate. A calibration report must exclude them by construction, not treat them as a gap.
+    decision_key varchar default '',
     decided_at   timestamp,
     primary key (subject, question, prompt_version)
 );
@@ -176,12 +187,18 @@ class Store:
     # a column-count error on somebody's machine rather than on mine. Columns added since are
     # applied on open; adding a column is cheap, safe and keeps every row that was already there.
     ADDED_COLUMNS: ClassVar[dict] = {
-        "adjudications": [("source", "varchar")],
+        "adjudications": [("source", "varchar"), ("decision_key", "varchar")],
         "findings": [("finding_id", "varchar")],
         "model_decisions": [("input_tokens", "integer"), ("context", "varchar")],
     }
 
     def _migrate(self) -> None:
+        self._add_missing_columns()
+        self._reshape_adjudications()
+        self._add_missing_columns()
+        self._rename_moved_question_ids()
+
+    def _add_missing_columns(self) -> None:
         for table, columns in self.ADDED_COLUMNS.items():
             try:
                 have = {r[0] for r in self.con.execute(
@@ -201,8 +218,7 @@ class Store:
                         self.con.execute(
                             "update adjudications set source = 'human' where source is null")
 
-        self._reshape_adjudications()
-        self._rename_moved_question_ids()
+
 
     # *** A QUESTION THAT MOVES TO ITS OWN PREFIX TAKES ITS STORED ANSWERS WITH IT. ***
     # `sentence_is_a_claim` filed under `claim__N` and `claim_alignment` filed under `align`, each
@@ -407,7 +423,8 @@ class Store:
     def adjudicate(self, subject: str, question: str, family: str, answered: str,
                    verdict: str, correction: str = "", note: str = "",
                    who: str = "", source: str = "human",
-                   prompt_version: str = "", model_version: str = "") -> None:
+                   prompt_version: str = "", model_version: str = "",
+                   decision_key: str = "") -> None:
         if verdict not in ("agree", "disagree", "unclear"):
             raise ValueError("verdict must be agree, disagree or unclear")
         if source not in ("human", "label", "replay", "agent"):
@@ -418,11 +435,11 @@ class Store:
         self.con.execute(
             """insert or replace into adjudications
                (subject, question, family, answered, verdict, correction, note,
-                decided_by, source, prompt_version, model_version, decided_at)
-               values (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                decided_by, source, prompt_version, model_version, decision_key, decided_at)
+               values (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [subject, question, family, answered, verdict, correction, note,
              who or "unknown", source, prompt_version or "", model_version or "",
-             datetime.now(timezone.utc)])
+             decision_key or "", datetime.now(timezone.utc)])
 
     def save_claims(self, rows: list) -> None:
         """Named columns, never positional. Positional inserts broke twice after a migration."""

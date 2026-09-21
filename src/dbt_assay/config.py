@@ -343,6 +343,7 @@ questions:
   # are true and cheap, and none is worth failing a build over until somebody has read a few and
   # said which ones matter here.
   source_reaches_nothing:      {action: annotate}
+  seed_reaches_nothing:        {action: annotate}
   source_only_a_test_reads:    {action: annotate}
   source_freshness_undeclared: {action: annotate}
   source_freshness_stale:      {action: annotate}

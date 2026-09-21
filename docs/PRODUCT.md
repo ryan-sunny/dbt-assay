@@ -316,6 +316,7 @@ assay ask                 # run any question that declares a `subject:`, includi
 # Ruling, and measuring whether it is working
 assay review -i           # a / d / u / s, least certain first
 assay effectiveness       # did the questions get better? per family, per version
+assay calibration         # when it is confident, is it right more often than when it is not?
 assay disagreements       # N rejected findings, how many separate bugs?
 assay regress             # did an upgrade move an answer a person verified?
 assay banks               # every question, where it came from, whether its shape is sound

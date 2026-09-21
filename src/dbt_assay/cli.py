@@ -1587,9 +1587,11 @@ def completeness(
     fs = live.all_findings(project, digests, schema, entries, cfg.row_loss_threshold)
     if store:
         store.close()
+    from .checks.sources import completeness_checks
+    owned = completeness_checks()
     buckets: dict = {}
     for f in fs:
-        if f.check.startswith("source_") or f.check == "hop_drops_most_rows":
+        if f.check in owned:
             buckets.setdefault(f.check, []).append(f)
 
     cov = project.coverage()
@@ -1611,6 +1613,7 @@ def completeness(
               "[dim]not audited, and not a pass[/]")
     for check, label in (
             ("source_reaches_nothing", "sources nothing reads"),
+            ("seed_reaches_nothing", "seeds nothing reads"),
             ("source_only_a_test_reads", "sources only a test reads"),
             ("source_freshness_undeclared", "sources declaring no freshness"),
             ("source_freshness_stale", "sources behind their own freshness"),
@@ -1643,6 +1646,7 @@ def completeness(
 
 _COMPLETENESS_MEANING = {
     "source_reaches_nothing": "declared, loaded every run, and no model or test refers to it",
+    "seed_reaches_nothing": "a file you maintain, loaded every run, and nothing reads it",
     "source_only_a_test_reads": "you are paying to test data nothing consumes",
     "source_freshness_undeclared": "nothing says how current it should be "
                                    "(silent when dbt_project_evaluator is installed)",
@@ -1744,7 +1748,8 @@ def page(
     by_check = sorted(((c, n, m, r) for c, (n, m, r) in per.items()), key=lambda x: -x[1])
 
     counts = {c: sum(1 for f in fs if f.check == c) for c in (
-        "source_reaches_nothing", "source_only_a_test_reads", "source_freshness_undeclared",
+        "source_reaches_nothing", "seed_reaches_nothing", "source_only_a_test_reads",
+        "source_freshness_undeclared",
         "source_freshness_stale", "hop_drops_most_rows")}
     cov = project.coverage()
     completeness = [
@@ -2328,6 +2333,64 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+@app.command()
+def calibration(
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    source: str = typer.Option("", "--source", help="label | human | agent. Default: all, apart."),
+) -> None:
+    """When this thing is confident, is it right more often than when it is not?
+
+    *** `effectiveness` MEASURES AGREEMENT AND NEVER MEASURED IT AGAINST CONFIDENCE. ***
+    "Mean confidence 0.50" is a bad answer to the question a person actually asks of a
+    probability: a family averaging 0.50 over 1,629 answers is equally consistent with a
+    well-calibrated judge and with a coin. Only the bands tell them apart.
+
+    A `choice` is banded by `confidence`. A `noul` has no separate confidence on purpose -- its
+    ANSWER is the probability -- so it is banded by that. A report reading only `confidence` finds
+    nulls and concludes the question is unanswerable, which is how the richest calibration
+    material on the field store stayed invisible.
+
+    Sources are never summed. `label` is the project's own declarations, measured wrong three
+    times in four when read by hand. `human` is somebody who looked. `agent` is triage and gates
+    nothing.
+    """
+    from .subjects import calibration as _cal
+    if not Path(store_path).exists():
+        console.print(f"[yellow]no store at {store_path}.[/] Nothing has been asked yet.")
+        raise typer.Exit(0)
+    st = Store(store_path)
+    try:
+        rows = _cal(st)
+    finally:
+        st.close()
+    if source:
+        rows = [r for r in rows if r["source"] == source]
+    if not rows:
+        console.print("[yellow]no verdict reaches a decision yet.[/] "
+                      "[dim]A calibration curve needs somebody to have ruled on an answer that "
+                      "carried a probability. `assay review -i` is where those come from, and a "
+                      "verdict on a STRUCTURAL finding will never appear here: a parser decided "
+                      "it, so there is no probability to calibrate.[/]")
+        raise typer.Exit(0)
+    for src in sorted({r["source"] for r in rows}):
+        mine = [r for r in rows if r["source"] == src]
+        note = {"human": "somebody looked. The only kind that gates anything.",
+                "label": "the project's own declarations. Evidence, never truth: reading four "
+                         "role disagreements once showed THREE were the label being wrong.",
+                "agent": "triage. Shown so it is visible, counted toward nothing."}.get(src, "")
+        console.print(f"\n[bold]source = {src}[/]  [dim]{note}[/]")
+        t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        t.add_column("family"); t.add_column("band")
+        t.add_column("ruled", justify="right"); t.add_column("agree", justify="right")
+        for r in sorted(mine, key=lambda r: (r["family"], r["band"])):
+            a = f"{r['agreement']:.0%}" if r["agreement"] is not None else "[dim]-[/]"
+            t.add_row(r["family"], r["band"], str(r["ruled"]), a)
+        console.print(t)
+    console.print("\n[dim]Read DOWN a source's bands, never across sources. If the bands do not "
+                  "separate, the confidence is not measuring what you would gate on, and "
+                  "`min_agreement` is watching the wrong axis.[/]")
 
 
 @app.command(name="guide")
@@ -2950,8 +3013,18 @@ def export(
         p.write_text(export_mod.schema_yml(store, out))
         ex = Path(directory) / "example_assay_defect_classes.sql"
         ex.write_text(export_mod.EXAMPLE_SQL)
-        console.print(f"wrote [bold]{p.name}[/] documenting every column, "
-                      f"and an example query in {ex.name}")
+        # *** QUERIES, NOT MODELS. ***
+        # 80% of this payload had no reader on the field warehouse, and the tempting fix is to
+        # ship models so the relations have readers by construction. On that same warehouse an
+        # installed package's 30 models are every one of the unreadable models and carry 541
+        # columns of unknown provenance. Shipping models means shipping that to somebody else, so
+        # these are examples you copy if they earn their place, and nothing enters your DAG.
+        for name, sql in sorted(export_mod.EXTRA_SQL.items()):
+            (Path(directory) / f"example_{name}.sql").write_text(sql)
+        console.print(f"wrote [bold]{p.name}[/] documenting every column, and "
+                      f"{1 + len(export_mod.EXTRA_SQL)} example queries "
+                      f"[dim](queries, not models: nothing enters your DAG because assay put it "
+                      f"there)[/]")
     # *** `--select assay_*` MATCHES NOTHING, AND IT WAS THE LAST THING THE COMMAND SAID. ***
     # Reported from the field: `dbt list` shows all five nodes and the glob selects none of them.
     # A path selector does work, and the closing line of a command is the one instruction a
@@ -3760,6 +3833,12 @@ def tests_cmd(
     dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
     gaps_only: bool = typer.Option(False, "--gaps-only",
                                    help="coverage only. Pure code, no API key, no spend."),
+    run_results: str = typer.Option(None, "--run-results",
+                                    help="path to a run_results.json. What the build actually "
+                                         "DID: which failure counts are really the configured "
+                                         "cap, what was skipped, and how many models had an "
+                                         "assertion execute at all. dbt writes it wherever dbt "
+                                         "ran, which need not be here."),
     dialect: str = typer.Option(None, "--dialect",
                                 help="override; read from the manifest by default"),
     limit: int = typer.Option(80, "--limit", "-n", help="how many tests to judge"),
@@ -3781,6 +3860,42 @@ def tests_cmd(
         if store:
             store.close()
         raise typer.Exit(0 if _c else 1)
+
+    # *** WHAT THE BUILD ACTUALLY DID, WHEN SOMEBODY HANDS US THE FILE. ***
+    if run_results:
+        from . import outcomes as out_mod
+        build = out_mod.read(run_results)
+        console.print(f"[dim]run_results: {build.n:,} result(s), dbt {build.dbt_version}, "
+                      f"generated {build.generated_at}[/]")
+        cap = out_mod.capped(project, build)
+        if cap:
+            console.print(f"\n[red]{len(cap)}[/] test(s) reported a failure count that IS the "
+                          f"configured cap [dim]-- the real number is at least that and could be "
+                          f"any multiple of it[/]")
+            t = Table(header_style="bold", box=None, padding=(0, 2))
+            t.add_column("test"); t.add_column("reported", justify="right")
+            t.add_column("limit", justify="right"); t.add_column("what it means")
+            for c in cap[:12]:
+                t.add_row(c["test"][:46], str(c["reported"]), str(c["limit"]),
+                          f"[dim]{c['reported']} OR MORE[/]")
+            console.print(t)
+            console.print("[dim]dbt applies `limit` to the test query, so the number it prints is "
+                          "min(real, limit). Equal means it carries no information about the real "
+                          "size. Raise the limit on these, or read the audit table.[/]")
+        sk = out_mod.skipped(project, build)
+        if sk:
+            console.print(f"\n[yellow]{len(sk)}[/] node(s) were SKIPPED [dim]-- they did not run, "
+                          f"so they asserted nothing. A skipped test is not a pass.[/]")
+        cov = out_mod.coverage(project, build)
+        console.print(f"[dim]assertions that executed: "
+                      f"{cov['tests_that_ran']:,} of {cov['tests_declared']:,} test(s), "
+                      f"covering {cov['models_an_assertion_ran_on']:,} of "
+                      f"{cov['models_with_a_test_declared']:,} model(s) that declare one.[/]")
+        if cov["tests_that_did_not_run"]:
+            console.print(f"[dim]{cov['tests_that_did_not_run']:,} declared test(s) are absent "
+                          f"from this file. Either the build did not reach them or it was a "
+                          f"partial run -- `dbt compile` overwrites run_results with a "
+                          f"compile-only result, which is the usual cause.[/]\n")
 
     gaps = testing_mod.coverage_gaps(project, digests, entries)
     console.print(f"[bold]{len(gaps)}[/] coverage gap(s) [dim]found by code alone[/]")

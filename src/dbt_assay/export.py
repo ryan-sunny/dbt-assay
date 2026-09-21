@@ -176,3 +176,76 @@ from {{ ref('assay_findings') }}
 group by 1
 order by findings desc
 '''
+
+# *** QUERIES, NOT MODELS, AND THE REASON IS IN YOUR OWN WAREHOUSE. ***
+# Reported from the field: 80% of what `export` writes had no reader -- `model_decisions`,
+# `edge_facts` and `observed_keys` loaded on every build and consumed by nothing. The obvious fix
+# is to ship models so the relations have readers by construction, and it is the wrong one: on
+# that same warehouse an installed package's 30 models are every one of the unreadable models and
+# carry 541 columns of unknown provenance. Shipping models means shipping that to somebody else.
+#
+# So these are queries. Copy one into your project if it earns its place there; nothing enters
+# your DAG because assay put it there. Each answers a question the relations can already answer
+# and nothing else in the tool surfaces.
+EXTRA_SQL = {
+    "assay_uncertainty": '''\
+-- Which high-reach models rest on answers nobody is sure of?
+--
+-- `effectiveness` reports agreement per family. It cannot tell you that a model fourteen marts
+-- read is carrying six answers that all came back under the gate. Confidence times reach is the
+-- ranking, and both numbers are already in the seeds.
+--
+-- NOTE ON `confidence`: a `choice` stores distribution concentration there. A `noul` stores NULL
+-- on purpose, because its ANSWER is the probability. Reading only this column on a noul family
+-- finds nothing and concludes the question was never asked.
+with live as (
+    select decision_key, question, answer, confidence, kind,
+           row_number() over (partition by decision_key, question
+                              order by decided_at desc) as rn
+    from {{ ref('assay_model_decisions') }}
+)
+-- A decision key is `<model uid>` for a per-model question and `<model uid>::<family>::<id>`
+-- for the families that ask per claim or per hop. Matching the bare uid finds only the first
+-- kind, which on a real store is a small minority -- this returned ZERO rows before the split.
+--
+-- LIMIT: `marts` lives only on findings in this export, so a model with no finding has no reach
+-- here and is absent. That is a gap in what is exported, not a statement that the model is fine.
+, keyed as (
+    select split_part(decision_key, '::', 1) as model_uid, confidence
+    from live where rn = 1 and confidence is not null
+),
+reach as (
+    select subject, subject_name, max(marts) as marts
+    from {{ ref('assay_findings') }} group by 1, 2
+)
+select
+    r.subject_name                                        as model,
+    r.marts                                               as marts,
+    count(*)                                              as answers,
+    round(avg(k.confidence), 2)                           as mean_confidence,
+    sum(case when k.confidence < 0.6 then 1 else 0 end)   as under_the_gate
+from keyed k
+join reach r on r.subject = k.model_uid
+group by 1, 2
+order by under_the_gate desc, marts desc
+''',
+
+    "assay_join_surface": '''\
+-- Which models join on the most DIFFERENT keysets, and what do they drop?
+--
+-- `traverse` shows one model's hops. Nothing sums them. A model reached on eleven distinct
+-- keysets over thirty-six hops is carrying a grain risk that no single-hop check can see, and
+-- this is exact, off the DAG, free.
+select
+    child_name                                     as model,
+    count(*)                                       as hops,
+    count(distinct joined_on)                      as distinct_keysets,
+    sum(dropped)                                   as columns_dropped
+from {{ ref('assay_edge_facts') }}
+where run_id = (select run_id from {{ ref('assay_runs') }}
+                where run_id in (select run_id from {{ ref('assay_edge_facts') }})
+                order by started_at desc, run_id desc limit 1)
+group by 1
+order by distinct_keysets desc, hops desc
+''',
+}

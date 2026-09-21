@@ -2287,3 +2287,103 @@ person looks for it.
 
 The view switch stays in the bar in both views, because it is a control and because a switch you
 cannot reach from where it put you was the previous round's defect.
+
+---
+
+## Round seventeen: the work order, and the premise that was wrong
+
+A second session wrote `docs/WORK_ORDER.md` from a day of using 0.28.1 on the field warehouse.
+Most of it checked out exactly: `ops_assay_debt` really does put **121 of 236** rows in `other`,
+the retention row counts match to the row, the credential facts are right. Three things did not.
+
+### Calibration was not unanswerable. It was banded by the wrong column.
+
+The work order's first and largest section says the question *"when this thing is confident, is it
+right more often than when it is not"* cannot be answered on this store, for structural reasons,
+and puts a table of four confidence bands in which 82 of 90 verdicts fall into `null`.
+
+`column_is_part_of_the_key` is a **noul**. A noul has no separate confidence **on purpose** --
+its ANSWER is the probability -- and the store's own schema comment says so. Banding by the
+answer instead, on data that already existed:
+
+```
+< 0.30      ruled 20   agree 17   85%
+0.30-0.50   ruled 19   agree 14   74%
+0.50-0.70   ruled 18   agree  9   50%
+0.70+       ruled 25   agree 16   64%
+```
+
+Answerable, and **inverted**: most reliable when it says *probably not in the key*, a coin flip in
+the middle. That is the thing the section wanted and it needed no plumbing at all.
+
+So `assay calibration` bands a choice by `confidence` and a noul by its answer, and a verdict with
+neither is counted under `no probability` rather than dropped -- a shrinking table reads as a
+confident judge. Sources are never summed: `label` is the project's own declarations, measured
+wrong three times in four when read by hand; `human` is somebody who looked; `agent` is shown so
+it is visible and counted toward nothing.
+
+### "105 agent rulings carry no probability" is true and 97 of them should
+
+The work order treats it as one defect. Split by family:
+
+```
+judged      8    description_contradicts_the_code
+structural 97    test_cannot_fail 38, arbitrary_pick 24, hop_multiplies_rows 24, ...
+```
+
+A parser decided those 97. No question was asked, no probability exists, and there is nothing to
+calibrate. They are not missing data and a report must exclude them **by construction**. So the
+fix is narrow rather than large: `adjudications.decision_key`, recorded by `rule()` only when the
+finding `rests_on` a question.
+
+### The cap detector needs no `run_results.json`, and then it did anyway
+
+The work order files it under "read outcomes", which is blocked on a box that has no assay
+installed. But assay already counts audit rows and the manifest already carries `limit`, so the
+cap is detectable without outcomes at all.
+
+It is built on outcomes regardless, because the same file answers three more questions for free
+and arrives by a path flag rather than by installing anything anywhere. Verified on a planted
+build: two tests at exactly the cap reported, one below it left alone, one skip named.
+
+```
+2 test(s) reported a failure count that IS the configured cap
+  assert_cre_freshness_nonnegative      500   500   500 OR MORE
+assertions that executed: 3 of 1,291 test(s), covering 0 of 327 model(s)
+```
+
+**All 1,291 tests on the field warehouse carry `+limit: 500`.** Every failure count that project
+has ever printed may be an understatement, and one was: 500 against a real 6,251.
+
+### The completeness report selected its members by name prefix
+
+`seed_reaches_nothing` was written, registered, and fired seven times -- including on assay's own
+three unread exports -- and printed as **0**. The report bucketed with
+`f.check.startswith("source_")`, which is a hand-written membership rule standing in for the real
+list: the same shape as the debt model's hand-written class list that put 121 of 236 rows in
+`other`, in the code that reports on it. Derived from `SOURCE_CHECKS` now, so registering a check
+is wiring it in.
+
+### Two more caught by guards rather than by noticing
+
+**A migration that undid itself.** `_reshape_adjudications` rebuilds the table with a fixed column
+list, which silently drops every column `ADDED_COLUMNS` had just added. The guard that opens a
+store written by an older assay failed with a BinderException naming a column the migration had
+already applied. The column pass runs again afterwards rather than the list being duplicated
+inside the reshape, because a second copy of that list is the copy that drifts.
+
+**An added column is NULL, not `''`.** The calibration join tested `decision_key <> ''` and
+`= ''`, and on an upgraded store both are false for NULL, so every row fell out and the report
+showed nothing -- which reads exactly like a project where nobody has ruled on anything.
+
+### And queries, not models
+
+The work order proposes shipping `assay_debt`, `assay_uncertainty` and `assay_join_surface` into
+the user's project so the relations have readers by construction. On that same warehouse, an
+installed package's 30 models are every one of the unreadable models and carry 541 columns of
+unknown provenance. Shipping models means shipping that to somebody else.
+
+They ship as example queries beside the seeds instead. All three were run against a real export
+before shipping: `assay_uncertainty` returned **zero rows** on the first attempt, because a
+decision key is `<uid>::<family>::<id>` and it matched the bare uid. A shipped query that silently
+returns nothing is the defect this whole tool is about.

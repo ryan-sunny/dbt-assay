@@ -1718,3 +1718,146 @@ def test_hop_drops_most_rows_fires_on_a_join_that_really_fails_to_match(tmp_path
         assert "int_parcel_where" not in {f.subject_name for f in got}
     finally:
         db.close()
+
+
+# ------------------------------------------------- 0.29.0: calibration, seeds, and the decision key
+
+def test_a_noul_is_banded_by_its_ANSWER_because_it_has_no_confidence(tmp_path):
+    """*** READING ONLY `confidence` CONCLUDED THE QUESTION WAS UNANSWERABLE. ***
+
+    A `choice` stores distribution concentration in `confidence`. A `noul` stores NULL there ON
+    PURPOSE, because its ANSWER is the probability -- the schema comment says so. A calibration
+    report that bands by `confidence` therefore finds nulls on every noul and reports nothing,
+    while the richest material in the store sits in the answer column: on the field store, 82
+    verdicts with 26 disagreements in them.
+    """
+    from dbt_assay.store import Store
+    from dbt_assay.subjects import calibration
+
+    s = Store(str(tmp_path / "assay.duckdb"))
+    try:
+        rows = [("m::a", "key__x", "noul", "0.9", None, "agree"),
+                ("m::b", "key__y", "noul", "0.1", None, "disagree"),
+                ("m::c", "role__z", "choice", "identifier", 0.8, "agree")]
+        for key, q, kind, ans, conf, _v in rows:
+            s.con.execute(
+                """insert into model_decisions (decision_key, question, kind, answer, confidence,
+                       probabilities, state_hash, prompt_version, model_version, call_id, caller,
+                       context, input_tokens, decided_at)
+                   values (?,?,?,?,?,'{}','h','v1','m','c','t','x',1, current_timestamp)""",
+                [key, q, kind, ans, conf])
+        for key, q, _k, _a, _c, v in rows:
+            s.adjudicate(key, q, "fam", "", v, source="human")
+        got = {(r["band"], r["ruled"]) for r in calibration(s)}
+        assert ("0.70+", 2) in got, f"the noul at 0.9 and the choice at 0.8 did not band: {got}"
+        assert ("< 0.30", 1) in got, f"the noul at 0.1 was not banded by its answer: {got}"
+    finally:
+        s.close()
+
+
+def test_calibration_never_sums_two_kinds_of_verdict(tmp_path):
+    """`label` is the project's own declarations, measured wrong three times in four when read by
+    hand. `human` is somebody who looked. Adding them produces a number that means neither."""
+    from dbt_assay.store import Store
+    from dbt_assay.subjects import calibration
+
+    s = Store(str(tmp_path / "assay.duckdb"))
+    try:
+        for i, src in enumerate(("label", "human", "agent")):
+            s.con.execute(
+                """insert into model_decisions (decision_key, question, kind, answer, confidence,
+                       probabilities, state_hash, prompt_version, model_version, call_id, caller,
+                       context, input_tokens, decided_at)
+                   values (?,'q','choice','a',0.9,'{}','h','v1','m','c','t','x',1,
+                           current_timestamp)""", [f"m{i}"])
+            s.adjudicate(f"m{i}", "q", "fam", "a", "agree", source=src)
+        got = calibration(s)
+        assert {r["source"] for r in got} == {"label", "human", "agent"}
+        assert all(r["ruled"] == 1 for r in got), "sources were summed"
+    finally:
+        s.close()
+
+
+def test_a_verdict_with_no_probability_is_counted_apart_not_as_a_zero(tmp_path):
+    """*** A STRUCTURAL FINDING HAS NO PROBABILITY, AND THAT IS CORRECT RATHER THAN MISSING. ***
+
+    97 of 105 agent rulings on the field store were on structural findings: a parser decided them,
+    no question was asked, there is nothing to calibrate. They must not land in a band, and they
+    must not vanish either -- a shrinking table reads as a confident judge.
+    """
+    from dbt_assay.store import Store
+    from dbt_assay.subjects import calibration
+
+    s = Store(str(tmp_path / "assay.duckdb"))
+    try:
+        s.con.execute(
+            """insert into model_decisions (decision_key, question, kind, answer, confidence,
+                   probabilities, state_hash, prompt_version, model_version, call_id, caller,
+                   context, input_tokens, decided_at)
+               values ('m','q','noul','not a number',NULL,'{}','h','v1','m','c','t','x',1,
+                       current_timestamp)""")
+        s.adjudicate("m", "q", "fam", "", "agree", source="human")
+        got = calibration(s)
+        assert [r["band"] for r in got] == ["no probability"], got
+    finally:
+        s.close()
+
+
+def test_a_ruling_on_a_judged_finding_records_the_decision_it_ruled_on(tmp_path):
+    """*** OF 105 AGENT RULINGS ON THE FIELD STORE, ZERO REACHED A DECISION BY ANY JOIN. ***
+
+    `rule(finding=)` files under `<uid>::finding::<id>`; the confidence lives on a decision keyed
+    by the subject the question was asked about. Without the link the verdict never reaches the
+    number it ruled on. Empty for a structural finding, which is the honest answer, not a gap.
+    """
+    from dbt_assay.store import Store
+
+    s = Store(str(tmp_path / "assay.duckdb"))
+    try:
+        s.adjudicate("m::finding::abc", "edge", "fam", "x", "agree",
+                     source="agent", decision_key="model.p.m")
+        s.adjudicate("m::finding::def", "arbitrary_pick", "fam", "", "agree", source="agent")
+        got = dict(s.con.execute(
+            "select subject, decision_key from adjudications").fetchall())
+        assert got["m::finding::abc"] == "model.p.m", "a judged ruling lost its decision"
+        assert (got["m::finding::def"] or "") == "", "a structural ruling invented one"
+    finally:
+        s.close()
+
+
+def test_a_seed_nothing_reads_is_found_by_the_check_built_to_find_that(project_dir):
+    """*** ASSAY'S OWN CHECK, POINTED AT ASSAY'S OWN OUTPUT, COULD NOT FIRE. ***
+
+    `source_reaches_nothing` iterates `project.sources`. A seed is a node, so 80% of what
+    `assay export` writes was loaded on every build, read by nothing, and invisible to it.
+    """
+    import json
+
+    from dbt_assay.checks.sources import completeness_checks, seed_reaches_nothing
+    from dbt_assay.manifest import Project
+
+    man = json.loads((project_dir / "manifest.json").read_text())
+    man["nodes"]["seed.p.unread"] = {
+        "resource_type": "seed", "name": "unread", "package_name": "p",
+        "original_file_path": "seeds/unread.csv", "config": {}, "meta": {}}
+    man["nodes"]["seed.p.read"] = {
+        "resource_type": "seed", "name": "read", "package_name": "p",
+        "original_file_path": "seeds/read.csv", "config": {}, "meta": {}}
+    man["nodes"]["seed.other.theirs"] = {
+        "resource_type": "seed", "name": "theirs", "package_name": "somepackage",
+        "original_file_path": "seeds/theirs.csv", "config": {}, "meta": {}}
+    man["child_map"]["seed.p.read"] = ["model.p.stg_bad_notnull"]
+    (project_dir / "manifest.json").write_text(json.dumps(man))
+
+    got = {f.subject_name for f in seed_reaches_nothing(Project.load(project_dir))}
+    assert "unread" in got, "a seed with no reader is not reported"
+    assert "read" not in got, "a seed WITH a reader is reported"
+    assert "theirs" not in got, "somebody else's package seed is reported as your problem"
+
+    # *** AND IT MUST REACH THE REPORT, WHICH IT DID NOT. ***
+    # `completeness` selected its members with `f.check.startswith("source_")`, a hand-written
+    # membership rule standing in for the real list. The check fired seven times on the field
+    # warehouse and printed as a zero.
+    owned = completeness_checks()
+    assert "seed_reaches_nothing" in owned
+    assert "hop_drops_most_rows" in owned

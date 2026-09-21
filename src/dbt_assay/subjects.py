@@ -372,3 +372,78 @@ def _short(r: dict) -> str:
 def _pair_id(a: dict, b: dict) -> str:
     raw = "|".join(sorted([f"{a['subject']}#{a['question']}", f"{b['subject']}#{b['question']}"]))
     return hashlib.sha1(raw.encode()).hexdigest()[:16]
+
+
+# ------------------------------------------------------------------------------ calibration
+
+def calibration(store, bands: tuple = (0.3, 0.5, 0.7)) -> list[dict]:
+    """When this thing is confident, is it right more often than when it is not?
+
+    *** `effectiveness` MEASURES AGREEMENT. IT NEVER MEASURED AGREEMENT AGAINST CONFIDENCE. ***
+    That is the question a person actually asks of a probability, and "mean confidence 0.50" is a
+    bad answer to it: a family averaging 0.50 over 1,629 answers is equally consistent with a
+    well-calibrated judge and with a coin. Only the bands tell them apart.
+
+    *** AND THE NUMBER TO BAND BY DEPENDS ON THE QUESTION'S SHAPE. ***
+    A `choice` stores distribution concentration in `confidence`. A `noul` has no separate
+    confidence ON PURPOSE -- its ANSWER is the probability -- so `confidence` is null for every
+    one of them. A report reading only `confidence` finds nulls, concludes the question is
+    unanswerable, and is wrong: the field store's richest calibration material is 82 verdicts on a
+    noul, with 26 disagreements in them, sitting in the answer column the whole time.
+
+    Sources are never summed. `label` is the project's own declarations, which have been measured
+    wrong three times in four when read by hand; `human` is somebody who looked; `agent` is
+    triage. They are reported apart because they are different evidence, which is the same rule
+    `min_adjudications` already enforces at the gate.
+    """
+    if store is None:
+        return []
+    rows = store.con.execute("""
+        with live as (
+            select decision_key, question, answer, confidence, kind, prompt_version,
+                   row_number() over (partition by decision_key, question
+                                      order by decided_at desc) rn
+            from model_decisions)
+        select a.source, a.family, l.kind, l.confidence, l.answer, a.verdict
+        from adjudications a
+        join live l
+          -- Two ways a verdict reaches its decision. `decision_key` is the direct one, recorded
+          -- since 0.29.0 when a judged finding is ruled on. The subject match is how every
+          -- verdict written before that still counts.
+          -- *** coalesce, BECAUSE AN ADDED COLUMN IS NULL AND NOT ''. ***
+          -- A store upgraded by `alter table add column` fills the new column with NULL, so
+          -- `<> ''` and `= ''` are BOTH false and every row falls out of the join. The report
+          -- then shows nothing, which reads exactly like a project with no verdicts.
+          on ((coalesce(a.decision_key, '') <> '' and l.decision_key = a.decision_key)
+              or (coalesce(a.decision_key, '') =  '' and l.decision_key = a.subject))
+         and l.question = a.question and l.rn = 1
+        where a.verdict in ('agree', 'disagree')
+    """).fetchall()
+
+    out: dict = {}
+    for source, family, kind, conf, answer, verdict in rows:
+        # *** THE BAND COMES FROM WHICHEVER NUMBER THIS QUESTION SHAPE ACTUALLY CARRIES. ***
+        p = conf
+        if p is None and (kind or "") == "noul":
+            try:
+                p = float(answer)
+            except (TypeError, ValueError):
+                p = None
+        if p is None:
+            # No probability of any kind. Not a band, and NOT a zero: counted separately so a
+            # shrinking table cannot read as a confident judge.
+            key = (source, family, "no probability")
+        else:
+            lo = [b for b in bands if p >= b]
+            label = (f"{lo[-1]:.2f}+" if len(lo) == len(bands)
+                     else f"{lo[-1]:.2f}-{bands[len(lo)]:.2f}" if lo
+                     else f"< {bands[0]:.2f}")
+            key = (source, family, label)
+        d = out.setdefault(key, {"source": key[0], "family": key[1], "band": key[2],
+                                 "ruled": 0, "agree": 0, "disagree": 0})
+        d["ruled"] += 1
+        d["agree" if verdict == "agree" else "disagree"] += 1
+    for d in out.values():
+        d["agreement"] = d["agree"] / d["ruled"] if d["ruled"] else None
+    # A stable order, so two runs of the report produce the same rows in the same places.
+    return sorted(out.values(), key=lambda d: (d["source"], d["family"], d["band"]))
