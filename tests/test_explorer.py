@@ -462,7 +462,7 @@ def test_a_toggle_is_a_checkbox_and_not_a_button_with_two_labels():
     cb = cb[:cb.index("\n/* ---")]
     assert "type: 'checkbox'" in cb, "the notable filter is still a button"
     assert "cb.onchange" in cb and "cb.checked" in cb
-    assert "controls: [toggle]" in cb, "it is not in the filter bar"
+    assert "controls: [toggle," in cb, "it is not in the filter bar"
 
 
 def test_the_overview_is_the_first_tab():
@@ -558,3 +558,127 @@ def test_no_view_switch_floats_above_the_table_it_switches():
     fb = v[v.index("function findingsTab"):]
     fb = fb[:fb.index("function answersTab")]
     assert "controls: [pickCheck]" in fb and "class: 'chips'" not in fb
+
+
+# --------------------------------------------------- 0.27.0: whose model, and where a value came from
+
+def test_a_package_model_is_separated_by_owner_and_never_by_whether_it_parsed():
+    """*** A FILTER ON `unreadable` WOULD HIDE THE ONE THING YOU WANT TO SEE. ***
+
+    30 of 358 models on the field warehouse belong to an installed package. Every one is
+    unreadable and they carry 541 columns of unknown provenance, all diluting numbers about the
+    project somebody actually wrote. The tempting filter is "hide what did not parse", and it is
+    wrong: a package's model failing to parse is not your problem, and one of YOURS failing to
+    parse is the "you did not compile" signal.
+
+    So the split is by owner, which dbt records exactly, and a model of your own can never be
+    filtered away by it.
+    """
+    from dbt_assay.manifest import Model
+
+    mine = Model(unique_id="m", name="a", path="p", layer="staging", schema="main",
+                 materialized="view", description="", columns={}, meta={},
+                 package="sunny_data", project="sunny_data")
+    theirs = Model(unique_id="m2", name="b", path="p", layer="other", schema="main",
+                   materialized="view", description="", columns={}, meta={},
+                   package="elementary", project="sunny_data")
+    assert not mine.is_installed_package
+    assert theirs.is_installed_package
+    # unreadable is orthogonal: yours stays yours
+    assert not mine.readable and not mine.is_installed_package
+
+    # a manifest with no package_name must not start calling everything a package
+    silent = Model(unique_id="m3", name="c", path="p", layer="staging", schema="main",
+                   materialized="view", description="", columns={}, meta={})
+    assert not silent.is_installed_package, "an unknown owner is not a package"
+
+    v = explorer._VIEWS
+    assert "const mine = m => showPackaged || m.yours;" in v
+    assert "where: m => mine(m)" in v, "the models list does not default to your own"
+
+
+def test_every_root_the_parser_resolved_gets_a_class():
+    """*** A ROOT IS AN ANSWER, SO A COLUMN CARRYING ONE IS NEVER "UNKNOWN". ***
+
+    Measured on 358 models: 233 columns read `unknown` while holding a perfectly good root --
+    `filter` 91, `null` 34, `ignorenulls` 20, `paren` 19, then `gt`, `not`, `dpipe`, `div`,
+    `like`, `subquery`. The parser had answered and the classifier had no case for the answer, so
+    it said "could not resolve where this came from" about an expression it was holding.
+
+    `unknown` now means one thing: the value passes through and nothing says from where.
+    """
+    from dbt_assay.provenance import _root_class
+
+    assert _root_class("literal") == "constant"
+    assert _root_class("null") == "null_placeholder"          # union padding, not a constant
+    assert _root_class("cast:null") == "null_placeholder"
+    assert _root_class("coalesce:literal") == "defaulted"
+    assert _root_class("window:row_number") == "ranked"
+    assert _root_class("ignorenulls") == "ranked"
+    assert _root_class("agg:sum") == "aggregated"
+    assert _root_class("filter") == "aggregated"              # an aggregate's own clause
+    assert _root_class("func:round") == "computed"
+    # the long tail: anything the parser named is computed, never unknown
+    for root in ("paren", "gt", "not", "dpipe", "bracket", "div", "like", "eq", "subquery"):
+        assert _root_class(root) == "computed", root
+    # and only a passthrough is left for the origin logic to settle
+    assert _root_class("column") is None
+    assert _root_class("star") is None
+    assert _root_class("") is None
+
+
+def test_a_star_is_attributed_only_when_one_parent_offers_the_name(tmp_path):
+    """*** `select *` GIVES THE NAMES AND LOSES WHERE EACH CAME FROM. ***
+
+    236 columns on the field warehouse, 71 of the 73 on one mart, read `unknown` purely because
+    the projection was a star over several relations. The parents' column lists are already
+    assembled for sqlglot, so the parent offering the name is a lookup.
+
+    AND IT ANSWERS ONLY WHEN EXACTLY ONE DOES. Two parents publishing `wdid` is genuinely
+    ambiguous, and picking the first is `first_match_pick`, which is a check this tool runs
+    against other people's SQL.
+    """
+    from dbt_assay.provenance import _parents_offering
+
+    class _Schema:
+        def __init__(self):
+            self.cols = {"p1": ["a", "shared"], "p2": ["b", "shared"]}
+
+        def columns(self, uid):
+            return type("C", (), {"names": self.cols.get(uid, [])})()
+
+    class _Project:
+        def __init__(self):
+            self.models = {"child": type("M", (), {"parents": ["p1", "p2"]})()}
+
+    proj, sch = _Project(), _Schema()
+    assert _parents_offering("child", "a", proj, sch) == ["p1"]
+    assert _parents_offering("child", "b", proj, sch) == ["p2"]
+    assert _parents_offering("child", "shared", proj, sch) == ["p1", "p2"], "ambiguity is a LIST"
+    assert _parents_offering("child", "nowhere", proj, sch) == []
+
+
+def test_a_column_list_containing_a_star_is_not_a_column_list():
+    """When qualify cannot expand a star, the fallback was the raw output columns -- which still
+    hold the literal `*`. Downstream that is a column NAMED `*` while every real column of the
+    model is absent, so its descendants report unknown provenance and no test on it can be
+    evaluated. Three models on the field warehouse, 131 unknown columns among their children."""
+    import inspect
+
+    from dbt_assay import infer
+
+    src = inspect.getsource(infer.derive_columns)
+    assert 'if cols and "*" in cols:' in src, "the unexpanded star is published as a column"
+    assert "star_unexpanded" in src, "the fallback is silent"
+    assert '_catalog_columns' in src.split('if cols and "*" in cols:')[1][:400], \
+        "it does not fall back to the catalog, which knows the real names"
+
+
+def test_an_empty_column_on_every_row_says_why_rather_than_printing_nothing():
+    """Every one of 5,656 columns had no role, because `assay columns` has never run there.
+    Printing "not settled" 5,656 times says the same thing as a check that found nothing."""
+    v = explorer._VIEWS
+    assert "const HAS_ROLES =" in v
+    assert "if (HAS_ROLES) colCols.push(" in v, "the role column is shown even when empty"
+    assert "nothing has asked" in v, "it does not name the reason"
+    assert "assay columns" in v, "it does not name the command that would fill it"

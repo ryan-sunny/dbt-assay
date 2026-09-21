@@ -192,6 +192,29 @@ def derive_columns(project, digests: dict[str, Digest], schema: Schema,
             if not cols:
                 cols = list(d.output_columns)
 
+        # *** A LIST CONTAINING `*` IS NOT A COLUMN LIST, IT IS AN UNEXPANDED STAR. ***
+        # When qualify cannot expand, the fallback was the raw output columns -- which still hold
+        # the literal `*`. Downstream that is a column named `*`, and every REAL column of the
+        # model is simply absent, so everything reading it reports `unknown` provenance and no
+        # test on it can be evaluated. Measured: three models on a 358-model warehouse, and 131
+        # unknown columns in their descendants.
+        #
+        # The catalog knows the real names here, and names from the catalog with the roots we did
+        # manage to resolve is strictly more than a star nobody expanded. The SOURCE says catalog,
+        # because that is where the names came from.
+        if cols and "*" in cols:
+            cat = schema._catalog_columns(uid)
+            if cat:
+                schema.by_uid[uid] = Columns(cat, "catalog",
+                                             _resolve_roots(d, schema, uid, project))
+                stats["from_catalog"] += 1
+                stats["star_unexpanded"] = stats.get("star_unexpanded", 0) + 1
+                continue
+            # No catalog either. Drop the `*` rather than publishing it as a column name: an
+            # incomplete list is true, and a column called `*` is not.
+            cols = [c for c in cols if c != "*"]
+            stats["star_unexpanded"] = stats.get("star_unexpanded", 0) + 1
+
         if cols:
             schema.by_uid[uid] = Columns(cols, "derived", _resolve_roots(d, schema, uid, project))
             stats["from_sql"] += 1

@@ -75,10 +75,28 @@ class Model:
     # Other target dirs held a DIFFERENT compiled body for this model. Which one you audit changes
     # the answer, so the disagreement is recorded rather than resolved by luck.
     compiled_conflicts: list = field(default_factory=list)
+    # *** WHOSE MODEL IS THIS. ***
+    # An installed package's models are in the manifest and are not yours. On a real warehouse
+    # that is 30 of 358 models, every one unreadable, carrying 541 columns of unknown provenance,
+    # all diluting numbers about the project somebody actually wrote. dbt records the owner, so
+    # this is exact rather than a name heuristic.
+    package: str = ""
+    project: str = ""
 
     @property
     def readable(self) -> bool:
         return bool(self.compiled)
+
+    @property
+    def is_installed_package(self) -> bool:
+        """True when this model came from a package rather than from this project.
+
+        *** AND AN UNREADABLE MODEL OF YOUR OWN MUST NEVER BE HIDDEN BY THIS. ***
+        A package's model being unreadable is not your problem. One of YOURS being unreadable is
+        the "you did not compile" signal, which is exactly what a filter on `unreadable` would
+        have hidden. That is why the split is by owner and never by whether it parsed.
+        """
+        return bool(self.package and self.project and self.package != self.project)
 
 
 @dataclass
@@ -139,6 +157,8 @@ class Project:
                     description=n.get("description", "") or "",
                     columns=n.get("columns", {}) or {},
                     meta=(n.get("config") or {}).get("meta", {}) or {},
+                    package=n.get("package_name", "") or "",
+                    project=self.project_name,
                 )
             elif n.get("resource_type") == "test":
                 meta = n.get("test_metadata") or {}

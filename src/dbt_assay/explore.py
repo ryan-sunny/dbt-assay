@@ -97,6 +97,11 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
     for e in sorted(entries, key=lambda x: x.uid):
         models.append({
             "uid": e.uid, "name": e.name, "path": e.path, "layer": e.layer,
+            # Whose model this is. An installed package's models are in the manifest and are not
+            # yours; a filter on `unreadable` would hide exactly the signal you want.
+            "package": getattr(project.models.get(e.uid), "package", "") or "",
+            "yours": not getattr(project.models.get(e.uid),
+                                 "is_installed_package", False),
             "materialized": e.materialized, "description": e.description or "",
             "unreadable": bool(e.unreadable),
             "grain": _fact(e.grain), "derived_grain": list(e.derived_grain or []),
@@ -131,6 +136,8 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
             # *** NEVER A WALL CLOCK. *** A page that churns cannot be committed.
             "generated_at": generated_at,
             "coverage": project.coverage(),
+            "yours": sum(1 for m in models if m["yours"]),
+            "packaged": sum(1 for m in models if not m["yours"]),
         },
         "models": models,
         "edges": _edges(store, by_uid),
@@ -368,6 +375,8 @@ def _unreadable(store, project) -> list:
     for uid, m in sorted(project.models.items()):
         if not m.readable:
             out.append({"uid": uid, "name": m.name, "path": m.path,
+                        "package": getattr(m, "package", "") or "",
+                        "yours": not getattr(m, "is_installed_package", False),
                         "why": "no compiled SQL assay could reach"})
     if store is None:
         return out

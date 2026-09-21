@@ -320,6 +320,33 @@ for (const e of DATA.edges) {
 /* *** THE TABS WERE EIGHT ISLANDS. *** A model name is the one thing every table has in common,
    so every one of them is a way back to that model. This is the cheapest thing on the page and
    the one that turns separate lists into somewhere you can actually move around. */
+/* *** A MODEL FROM AN INSTALLED PACKAGE IS IN THE MANIFEST AND IS NOT YOURS. ***
+   30 of 358 here, every one unreadable, carrying 541 columns of unknown provenance, all diluting
+   numbers about the project somebody actually wrote. The split is by OWNER and never by whether
+   the model parsed: a package's model failing to parse is not your problem, and one of YOURS
+   failing to parse is the "you did not compile" signal -- which a filter on `unreadable` would
+   have hidden, and which is the whole reason not to write that filter. */
+/* *** AN EMPTY COLUMN ON EVERY ROW IS NOT A RESULT, IT IS A QUESTION NOBODY ASKED. ***
+   Every one of 5,656 columns on the field warehouse had no role, because `assay columns` has
+   never been run there. Printing "not settled" 5,656 times says the same thing as a check that
+   found nothing, which is the failure this whole tool is built to name. So the column is dropped
+   and the reason is said once, with the command that would fill it. */
+const HAS_ROLES = M.some(m => (m.columns || []).some(c => c.role));
+const PACKAGED = M.filter(m => !m.yours).length;
+let showPackaged = false;
+const PKG_BOXES = [];
+function packageFilter(redraw) {
+  if (!PACKAGED) return null;
+  const cb = el('input', {type: 'checkbox'});
+  cb.checked = showPackaged;
+  cb.onchange = () => { showPackaged = cb.checked;
+    for (const b of PKG_BOXES) { b.box.checked = showPackaged; b.redraw(); } };
+  PKG_BOXES.push({box: cb, redraw: redraw});
+  return el('label', {class: 'chk'}, [cb, el('span',
+    {text: 'include ' + PACKAGED + ' model(s) from installed packages'})]);
+}
+const mine = m => showPackaged || m.yours;
+
 const GO = {};
 function link(name, where) {
   if (!BY_NAME[name]) return el('span', {class: 'mono', text: name || ''});
@@ -513,6 +540,7 @@ function modelsTab(host) {
      cell: m => el('span', {class: m.findings.length ? 'bad' : 'tot',
                             text: String(m.findings.length || 0)})},
   ], {placeholder: 'filter models, paths, descriptions...', scroll: 1, pick: m => show(m),
+      where: m => mine(m), controls: [packageFilter(() => list.redraw())].filter(Boolean),
       text: m => [m.name, m.path, m.layer, m.description].join(' ')});
 
   function show(m) {
@@ -532,14 +560,25 @@ function modelsTab(host) {
       ['reach', el('span', {text: m.marts + ' mart(s), ' + m.descendants + ' descendant(s)'})],
     ])));
 
-    d.append(section('columns (' + m.columns.length + ')', grid(m.columns, [
+    const colCols = [
       {key: 'name', label: 'column', mono: 1, val: c => c.name,
        cell: c => { const s = el('span', {}); s.append(el('span', {text: c.name + ' '}));
          if (c.in_key) s.append(el('span', {class: 'pill on', text: 'key'})); return s; }},
-      {key: 'role', label: 'role', val: c => c.role && c.role.value, cell: c => fact(c.role)},
+    ];
+    if (HAS_ROLES) colCols.push(
+      {key: 'role', label: 'role', val: c => c.role && c.role.value, cell: c => fact(c.role)});
+    colCols.push(
       {key: 'prov', label: 'came from', val: c => c.provenance && c.provenance.value,
        cell: c => fact(c.provenance)},
-    ], {placeholder: 'filter columns...', cap: 400, emptyText: 'no columns known'})));
+      {key: 'why', label: 'how assay knows', val: c => (c.provenance || {}).note || '',
+       cell: c => el('span', {class: 'tot', text: (c.provenance || {}).note || ''})});
+    const colsBox = el('div', {}, [grid(m.columns, colCols,
+      {placeholder: 'filter columns...', cap: 400, emptyText: 'no columns known'})]);
+    if (!HAS_ROLES) colsBox.append(el('p', {class: 'note',
+      text: 'No column has a role yet, on any model: nothing has asked. `assay columns` answers '
+        + 'what job each column does -- identifier, measure, qualifier, timestamp -- and it is '
+        + 'what several grain findings need before they can fire at all.'}));
+    d.append(section('columns (' + m.columns.length + ')', colsBox));
 
     const ins = EDGES_IN[m.uid] || [], outs = EDGES_OUT[m.uid] || [];
     const lin = el('button', {class: 'back', text: 'see it drawn →'});
@@ -656,7 +695,8 @@ function chainTab(host) {
     {key: 'note', label: 'notable', n: 1, val: m => nOf(m),
      cell: m => el('span', {class: nOf(m) ? 'low' : 'tot', text: nOf(m) ? String(nOf(m)) : ''})},
   ], {placeholder: 'filter models...', scroll: 1, pick: m => show(m), sort: 'name',
-      where: m => !onlyNotable || nOf(m), controls: [toggle],
+      where: m => mine(m) && (!onlyNotable || nOf(m)),
+      controls: [toggle, packageFilter(() => list.redraw())].filter(Boolean),
       text: m => m.name + ' ' + m.path});
 
   function show(m) {

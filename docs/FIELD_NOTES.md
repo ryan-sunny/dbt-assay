@@ -2024,3 +2024,88 @@ and a tab that renders nothing. It cannot find a control that is technically cor
 a wall, a box whose text paints outside it, or a threshold that is a bad idea rather than a bug.
 **65 of 573 and 209 of 573 are both "working".** The only thing that separated them was somebody
 looking at the page and saying the number was absurd.
+
+---
+
+## Round fourteen: "came from unknown" was mostly the classifier, not the SQL
+
+Three questions from the field, all about the Models tab, and two of them turned out to be
+defects rather than design.
+
+### The unreadable 30 are one package, and the tempting filter is the wrong one
+
+```
+models by package        sunny_data 328   elementary 30
+unreadable by package    elementary 30
+readable by package      sunny_data 328
+```
+
+Exact, from the manifest's `package_name`, not a name heuristic. Which matters because the obvious
+filter is "hide what did not parse", and the report that asked for it named the reason not to:
+*"filtering the absent ones could be bad if you didn't compile first."*
+
+Right. A package's model failing to parse is not your problem; **one of yours failing to parse is
+the "you did not compile" signal**, and a filter on `unreadable` hides exactly that. So the split
+is by OWNER and never by whether it parsed. The explorer opens on your 328 with a checkbox for the
+other 30, and a model of your own can never be filtered away by it.
+
+### `unknown` was 1,010 columns and only 541 of them were honest
+
+> *"lots of came from unknown and shit, ideally if that value came from another model or view or
+> table then it's aware of that? I assume sqlglot has that lineage? don't we have that anyway?"*
+
+We did. The classifier was not consulting it, in four separate places.
+
+```
+541  Elementary models with no SQL to read      correctly unknown, and now SAYS so
+236  `select *` over several relations          the star lost the attribution
+233  a root the classifier had no case for      the parser had already answered
+131  descendants of a star that never expanded  a column literally named `*`
+```
+
+**A root is an answer, so a column carrying one is never unknown.** 233 columns read *"assay could
+not resolve where this came from"* while holding a perfectly good root: `filter` 91, `null` 34,
+`ignorenulls` 20, `paren` 19, then a tail of `gt`, `not`, `dpipe`, `div`, `like`, `subquery`. The
+parser had resolved the expression and the classifier had no case for the shape, so it shrugged
+about something it was holding in its hand. `filter` is an aggregate's own clause. `ignorenulls` is
+a window. `null` is a union arm padding a column it has no value for, which is now
+`null_placeholder` rather than lumped in with a constant somebody chose. The rest are `computed`,
+and **the catch-all names what it caught** -- `computed (paren)` -- so a new node type gets its own
+case instead of disappearing into the pile.
+
+**A star gives you the names and loses where each came from.** `water_reach_screen` ends in
+`select *` over six relations: 73 column names, one root, `{'*': 'star'}`, and 71 of 73 unknown.
+The parents' column lists are already assembled for sqlglot, so the parent offering the name is a
+lookup. It answers only when **exactly one** parent offers it -- two parents publishing `isf_key`
+is genuinely ambiguous, and picking the first is `first_match_pick`, which is a check this tool
+runs against other people's SQL. The ambiguity is reported as itself, naming the candidates.
+
+**And a column list containing `*` is not a column list.** When qualify could not expand, the
+fallback was the raw output columns, which still hold the literal `*`. Downstream that is a column
+NAMED `*` while every real column of the model is simply absent. Three models, and 131 unknown
+columns among their descendants. The catalog knows the real names, so it is used, and the count is
+reported rather than buried.
+
+```
+                      before    after
+unknown                1,010      732     of which 541 are "no SQL to read", and say so
+carried                1,197    1,317
+columns known          5,656    5,793     137 that did not exist before
+water_reach_screen    71 of 73  41 of 73  the rest genuinely ambiguous, and they name why
+```
+
+The unknown count did not fall as far as the fixes did, because 137 columns that were invisible
+now exist. Invisible is worse than unknown.
+
+### An empty column on every row is a question nobody asked
+
+Every one of 5,656 columns had no role. Not a bug: `assay columns` has never run on that
+warehouse. But the page printed "not settled" 5,656 times, which says the same thing as a check
+that found nothing -- the failure this whole tool is built to name, in its own UI. The column is
+dropped when nothing has been asked, and the reason is said once with the command that fills it.
+
+For the record, since the same report asked how the three are settled: **grain** is a precedence,
+declared (a uniqueness test a person wrote) over derived (a `GROUP BY` or dedup the parser found)
+over judged over none, never added together -- 236/17/6/99 here. **Roles** come from the
+`column_role` question plus free labels off the project's own tests. **Provenance** is pure code
+and asks nothing.
