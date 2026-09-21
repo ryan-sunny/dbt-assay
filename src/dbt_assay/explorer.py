@@ -128,6 +128,10 @@ svg.lin .bs{font:11px -apple-system,BlinkMacSystemFont,sans-serif;fill:var(--dim
 svg.lin .ln{fill:none;stroke:#c4d0d5;stroke-width:1.3}
 svg.lin .ln.drv{stroke:var(--blue);stroke-width:2}
 svg.lin .ln.nb{stroke:#c9a227;stroke-width:2;stroke-dasharray:5 3}
+label.chk{display:inline-flex;gap:6px;align-items:center;font-size:12.5px;color:var(--dim);
+cursor:pointer;user-select:none;white-space:nowrap}
+label.chk:hover{color:var(--ink)}
+label.chk input{margin:0;cursor:pointer}
 svg.lin .par.nb rect{stroke:#c9a227}
 button.back.on{border-color:var(--blue);background:#eef5f8;color:var(--ink)}
 svg.lin marker path{fill:#c4d0d5}
@@ -331,26 +335,36 @@ function link(name, where) {
    obvious to click. So the summary is the view, and the rows are one click in, already filtered. */
 function drill(opts) {
   const host = el('div');
-  const back = el('button', {class: 'back', text: '← all ' + opts.noun});
-  const head = el('div', {class: 'bar'});
+  const head = el('div');
   const body = el('div');
+  const back = el('button', {class: 'back', text: '\u2190 all ' + opts.noun});
   back.onclick = () => showGroups();
 
+  /* *** ONE BAR, IN THE SAME PLACE, WHICHEVER VIEW YOU ARE IN. ***
+     The first version put the view switch in the group bar and a breadcrumb above the rows, so
+     flipping between two views changed the furniture as well as the table and you could not flip
+     back from where you had landed. Reported from the field: "I'd greatly prefer that dropdown to
+     remain so it's flipping between the two, rather than different UI." The switch lives in the
+     bar in every state; only DRILLING into one group adds a way back, because that is the one
+     move the switch cannot undo. */
   function showGroups() {
-    /* A control that says "contradicted" over a table of every model is two spellings of one
-       fact, which is the defect this whole tool is about. The view owns the control's state. */
     if (opts.onGroups) opts.onGroups();
     head.replaceChildren(el('p', {class: 'note', text: opts.blurb}));
     body.replaceChildren(grid(opts.groups, opts.groupCols, {
-      placeholder: opts.groupFilter || 'filter...', pick: g => showRows(g),
+      placeholder: opts.groupFilter || 'filter...', pick: g => showRows(g, true),
       sort: opts.groupSort, dir: opts.groupDir || -1, cap: 800,
-      controls: opts.groupControls || [], text: opts.groupText}));
+      controls: opts.controls || [], text: opts.groupText}));
   }
-  function showRows(g) {
-    head.replaceChildren(back, el('span', {class: 'crumb', text: opts.label(g)}));
+  function showRows(g, drilled) {
+    head.replaceChildren(el('p', {class: 'note', text: opts.blurb}));
+    const extra = (opts.controls || []).slice();
+    if (drilled) {
+      extra.push(back);
+      extra.push(el('span', {class: 'crumb', text: opts.label(g)}));
+    }
     body.replaceChildren(grid(opts.rowsOf(g), opts.rowCols, {
       placeholder: 'filter...', cap: 2000, sort: opts.rowSort, dir: opts.rowDir || 1,
-      text: opts.rowText, emptyText: 'nothing here'}));
+      controls: extra, text: opts.rowText, emptyText: 'nothing here'}));
   }
   host.append(head, body);
   showGroups();
@@ -625,14 +639,14 @@ function chainTab(host) {
      absence-reads-as-nothing defect in this codebase: a closed summary and a check that found
      nothing look identical. So the count sits in the model list as a column you can sort on, the
      edges are drawn differently, and each model's own notable hops are named under its drawing. */
-  const toggle = el('button', {class: 'back'});
-  function paintToggle() {
-    toggle.textContent = onlyNotable
-      ? '\u2190 every model with an edge'
-      : 'only the ' + Object.keys(NOTABLE_BY_CHILD).length + ' models with something notable';
-    toggle.classList.toggle('on', onlyNotable);
-  }
-  toggle.onclick = () => { onlyNotable = !onlyNotable; paintToggle(); list.redraw(); };
+  /* A checkbox, because it is a toggle. A button whose label flips between two sentences makes
+     you read it to find out which state you are in; a checkbox shows you. */
+  const cb = el('input', {type: 'checkbox'});
+  const toggle = el('label', {class: 'chk'}, [cb, el('span',
+    {text: 'only the ' + Object.keys(NOTABLE_BY_CHILD).length
+           + ' models with something notable'})]);
+  function paintToggle() { cb.checked = onlyNotable; }
+  cb.onchange = () => { onlyNotable = cb.checked; list.redraw(); };
   paintToggle();
 
   const list = grid(withEdges, [
@@ -726,10 +740,10 @@ function claimsTab(host) {
   view.append(opt('by_model', 'all ' + num(DATA.claims.length) + ' claims, by model'));
   view.append(opt('contradicted', 'the ' + contradicted.length + ' contradicted, every model'));
   view.onchange = () => { if (view.value === 'contradicted')
-    d.showRows({rows: contradicted, model: 'every model'}); else d.showGroups(); };
+    d.showRows({rows: contradicted, model: 'every model'}, false); else d.showGroups(); };
 
   const d = drill({
-    groupControls: [view], onGroups: () => { view.value = 'by_model'; },
+    controls: [view], onGroups: () => { view.value = 'by_model'; },
     noun: 'models', groups: groups, groupSort: 'bad',
     blurb: 'Every sentence this project says about itself, extracted from descriptions and SQL '
       + 'comments, grouped by the model it is about. A claim with no verdict was never asked, '

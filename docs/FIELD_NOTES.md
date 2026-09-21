@@ -1993,6 +1993,23 @@ can disagree with: returning to the groups resets it, because a select reading "
 a table of every model is one fact with two spellings, which is the defect this whole tool is
 about, in its own furniture.
 
+### A switch that vanishes when you use it
+
+The select fixed the floating button and introduced a smaller version of the same problem: it sat
+in the group bar only, so choosing *the 113 contradicted* left you in a view with a breadcrumb, a
+back button, and no way to choose again.
+
+> *"I'd greatly prefer that dropdown to remain so it's flipping between the two, rather than
+> different UI."*
+
+Right, and the rule it implies is worth keeping: **a control that switches between two views
+belongs in both of them.** It is in the bar in every state now. The only thing that adds a way
+back is DRILLING into one group, because that is the one move the switch cannot undo.
+
+And the notable filter on the chain was a button whose label flipped between two sentences, which
+makes you read it to find out which state you are in. A checkbox shows you. Same argument as
+everything else here: the control must not be able to disagree with the view.
+
 ### The overview was the last tab
 
 A person opening this file has not picked a model yet, and landing on 358 rows asks them to

@@ -453,6 +453,18 @@ def test_every_table_can_reach_the_model_it_is_about():
 
 # ---------------------------------------------------- 0.26.1: what a screenshot of it showed
 
+def test_a_toggle_is_a_checkbox_and_not_a_button_with_two_labels():
+    """A button whose label flips between two sentences makes you read it to find out which state
+    you are in. A checkbox shows you. Reported from the field, and it is the same argument as
+    every other one in this file: the control must not be able to disagree with the view."""
+    v = explorer._VIEWS
+    cb = v[v.index("function chainTab"):]
+    cb = cb[:cb.index("\n/* ---")]
+    assert "type: 'checkbox'" in cb, "the notable filter is still a button"
+    assert "cb.onchange" in cb and "cb.checked" in cb
+    assert "controls: [toggle]" in cb, "it is not in the filter bar"
+
+
 def test_the_overview_is_the_first_tab():
     """*** A PERSON OPENING THIS FILE HAS NOT YET PICKED A MODEL. ***
 
@@ -529,9 +541,19 @@ def test_no_view_switch_floats_above_the_table_it_switches():
     cb = v[v.index("function claimsTab"):]
     cb = cb[:cb.index("\n/* ---")]
     assert "el('select')" in cb, "the claims view switch is not a select"
-    assert "groupControls: [view]" in cb, "it is not in the filter bar"
+    assert "controls: [view]" in cb, "it is not in the filter bar"
     assert "onGroups: () =>" in cb, "the control keeps a state the view can contradict"
     assert "class: 'back'" not in cb, "a floating button is back on Claims"
+
+    # *** AND THE SWITCH STAYS PUT, SO IT IS A FLIP RATHER THAN A DIFFERENT PAGE. ***
+    # The first version showed it only over the groups, so choosing the other view left you
+    # somewhere with no way to choose again. Reported from the field: "I'd greatly prefer that
+    # dropdown to remain so it's flipping between the two, rather than different UI."
+    db = v[v.index("function drill(opts)"):]
+    db = db[:db.index("\nfunction conf(")]
+    assert db.count("controls: opts.controls") == 1 and "extra" in db, \
+        "the switch is not carried into the rows view"
+    assert "if (drilled)" in db, "the way back shows in a view the switch can already undo"
     # the same shape on findings
     fb = v[v.index("function findingsTab"):]
     fb = fb[:fb.index("function answersTab")]
