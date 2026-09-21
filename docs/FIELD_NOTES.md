@@ -1005,3 +1005,62 @@ to be one, so the caller measures the finding delta instead.
 `Expecting value: line 1 column 1`. Exactly the class of rich eating `[mcp]` out of the instruction
 telling somebody to install it. The count now rides INSIDE the document as `verified`, where a
 machine can read it, and the guard parses the output rather than grepping the source.
+
+---
+
+## `assay disagreements`: twelve rejected findings, how many separate bugs?
+
+Nine releases of this project came out of a person relaying "these ten findings are wrong, and
+here is why" out of a terminal. The verdicts and the reasons were in the store the whole time and
+nothing read them together.
+
+**Three shapes were specced and only one had a corpus**, which measurement settled before a line
+was written:
+
+| shape | eligible cases on the real store |
+|---|---|
+| two rulings CONTRADICT each other | **zero**. No family had both an agree and a disagree |
+| a reason does not MATCH its finding | no negative control available |
+| two reasons are the SAME DEFECT | **12 of 12** disagreements carried a reason |
+
+The first was the one recommended before measuring. It would have been a check that matches
+nothing, which is the class this project has found eight times in other people's code.
+
+**Code clusters first and for free.** Identical first sentences are the same defect and no
+judgement is needed to say so. On the field store that alone took 12 disagreements to 4 groups,
+and those pairs are never sent to be judged.
+
+**Then the delta, which is the measurement of whether asking was worth anything:**
+
+```
+12 open disagreement(s) -> 3 distinct defect(s)
+  8 ruling(s)  hop_multiplies_rows   a union member cannot multiply        (fixed 0.12.0)
+  2 ruling(s)  hop_multiplies_rows   the join key is unique in the data    (fixed 0.15.0)
+  2 ruling(s)  bbox_as_radius        the envelope is a grid cell           (fixed 0.12.0)
+
+code alone found 4 group(s); judgement merged 1 more pair(s) that were worded differently.
+17 questions, 13,930 input tokens, $0.00059.
+```
+
+The merge it made is the right one: two `bbox_as_radius` rulings, one saying *"the envelope is a
+grid cell from stored bounds, not a radius approximation"* and the other *"this envelope is not a
+distance proxy, it is a GRID CELL"*. No shared opening sentence, one defect.
+
+And the merge it REFUSED is the better result. Sixteen of the seventeen pairs put a union reason
+next to a unique-key-join reason, both about a join, both about `hop_multiplies_rows`, and it said
+no to every one. They are two separate repairs and the tool shipped them as two separate releases.
+
+**It never closes anything.** A disagreement closes when the check or the question changed and a
+person re-read it, which is what `assay effectiveness` counts. A release that could resolve its own
+disagreements would make every number downstream of them decoration.
+
+**And a cluster of agent rulings says so.** All twelve here are an agent's. That is a hypothesis
+about a check, not a verdict on it.
+
+### The architecture change under it
+
+`subjects.build(kind, project, digests, schema, ...)` assumed every subject is a dbt object, and a
+ruling comes from the store. The choice was a seventh parameter five kinds ignore, or a bundle.
+The bundle, `SubjectSource`, because the case that needs it is the one being written: an optional
+argument added for a caller that already exists is a decision deferred rather than avoided. Two
+call sites, both internal, and a custom family declares `subject:` in YAML and never touches it.

@@ -540,3 +540,96 @@ def test_json_output_survives_the_verify_message(project_dir, tmp_path, monkeypa
     assert got.exit_code == 0, got.output
     doc = _j.loads(got.stdout)
     assert "findings" in doc and "verified" in doc
+
+
+# --- item 3: grouping assay's own rejected findings -------------------------------------------
+
+def _dis_store(rows):
+    from dbt_assay.store import Store
+    s = Store(":memory:")
+    for i, (fam, note) in enumerate(rows):
+        s.adjudicate(f"m{i}", f"q{i}", fam, "x", "disagree", note=note,
+                     source="agent", prompt_version="assay.0.15.0")
+    return s
+
+
+def test_code_groups_identical_reasons_before_anything_is_asked():
+    """*** THE STRUCTURAL TIER FIRST, HERE TOO. ***
+
+    Eight of ten reasons on a real store opened with the same sentence. Code grouped those for
+    nothing, and the pairs it settled are never sent: if a parser can answer it, Jev is not asked.
+    """
+    from dbt_assay.subjects import candidate_pairs, normalise_reason
+
+    assert normalise_reason("A UNION MEMBER cannot multiply. Several of these aggregate.") == \
+           normalise_reason("a union member cannot multiply! and then something else entirely")
+
+    s = _dis_store([("hop", "Union member. Detail one."),
+                    ("hop", "Union member! Detail two, quite different."),
+                    ("hop", "The join key is unique in the data.")])
+    try:
+        pairs = candidate_pairs(s)
+    finally:
+        s.close()
+    asked = {(a["family"], normalise_reason(a["note"]), normalise_reason(b["note"]))
+             for _k, a, b in pairs}
+    assert len(pairs) == 2, "the two identical-first-sentence rulings were sent to be judged"
+    assert all(x[1] != x[2] for x in asked)
+
+
+def test_a_ruling_pair_subject_carries_the_two_reasons_and_nothing_else():
+    """A claim alone read 0.96 and the same claim plus one CORRECT extra sentence read 0.47.
+    This subject is not a dbt object and has no blast radius to rank by."""
+    from dbt_assay.subjects import SubjectSource, build
+
+    s = _dis_store([("hop", "First reason here."), ("hop", "A different second reason.")])
+    try:
+        subs = build("ruling_pair", SubjectSource(store=s))
+    finally:
+        s.close()
+    assert len(subs) == 1
+    assert set(subs[0].state) == {"check_or_question_both_rulings_are_about",
+                                  "first_reason", "second_reason"}
+
+
+def test_a_disagreement_somebody_has_since_agreed_with_is_not_open():
+    """It closes when the check or the question CHANGED and a person re-read it. Nothing else."""
+    from dbt_assay.subjects import open_disagreements
+
+    s = _dis_store([("hop", "Union member.")])
+    try:
+        assert len(open_disagreements(s)) == 1
+        s.adjudicate("m0", "q0", "hop", "x", "agree", note="fixed in 0.16",
+                     source="human", prompt_version="assay.0.16.0")
+        assert open_disagreements(s) == []
+    finally:
+        s.close()
+
+
+def test_grouping_writes_no_verdict_of_its_own(tmp_path):
+    """*** IT NEVER CLOSES ANYTHING. *** A release that can resolve its own disagreements makes
+    every number downstream of them decoration."""
+    from typer.testing import CliRunner
+
+    from dbt_assay.cli import app
+    from dbt_assay.store import Store
+
+    path = tmp_path / "s.duckdb"
+    s = Store(path)
+    s.adjudicate("m0", "q0", "hop", "x", "disagree", note="Union member.", source="agent")
+    s.adjudicate("m1", "q1", "hop", "x", "disagree", note="Union member!", source="agent")
+    before = s.con.execute("select count(*) from adjudications").fetchone()[0]
+    s.close()
+
+    got = CliRunner().invoke(app, ["disagreements", "--store", str(path), "--json"])
+    assert got.exit_code == 0, got.output
+    import json as _j
+    groups = _j.loads(got.stdout)
+    assert len(groups) == 1 and groups[0]["size"] == 2
+    assert groups[0]["every_ruling_is_an_agent_ruling"] is True
+
+    s = Store(path)
+    try:
+        assert s.con.execute("select count(*) from adjudications").fetchone()[0] == before
+    finally:
+        s.close()

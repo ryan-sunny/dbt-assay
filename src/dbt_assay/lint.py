@@ -366,6 +366,9 @@ CALLERS: dict[str, tuple[str, str, str]] = {
     # assay's linter, asking about assay's own questions.
     "options_overlap":                  ("lint",       "assay banks --judge",
                                          "one question's own option set"),
+    # assay's own disagreements, asking whether two of them are one bug.
+    "same_defect":                      ("cli",        "assay disagreements --judge",
+                                         "two rejected findings' reasons"),
 }
 
 

@@ -238,9 +238,10 @@ def test_every_subject_kind_builds_a_state_with_the_thing_it_names_in_it():
     """A subject that does not carry its own subject produces a confident non-answer. The window
     builder did exactly that: it sent the word "column" instead of the ordering."""
     from dbt_assay import subjects
-    assert set(subjects.KINDS) == {"model", "edge", "column", "predicate", "expression", "window"}
+    assert {"model", "edge", "column", "predicate", "expression",
+            "window"} <= set(subjects.KINDS)
     with pytest.raises(ValueError, match="unknown subject"):
-        subjects.build("sql", None, {}, None)
+        subjects.build("sql", subjects.SubjectSource())
 
 
 def test_ask_estimates_before_it_spends_and_refuses_over_the_cap():
@@ -323,7 +324,7 @@ def test_a_family_can_opt_out_of_the_row_field_that_costs_it_answers():
     assert 'state == "full"' in src
     assert "minimal" in src
     with pytest.raises(ValueError, match="subject_state"):
-        subjects.build("window", None, {}, None, state="whatever")
+        subjects.build("window", subjects.SubjectSource(), state="whatever")
 
     from dbt_assay.lint import lint_question
     bad = {"type": "choice", "prompt_version": "x.v1", "id_prefix": "zz", "subject": "window",

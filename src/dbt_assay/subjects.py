@@ -16,9 +16,30 @@ Every builder here sends the subject and the few facts that bear on it, never th
 """
 from __future__ import annotations
 
+import hashlib
+import re
 from dataclasses import dataclass, field
 
-KINDS = ("model", "edge", "column", "predicate", "expression", "window")
+KINDS = ("model", "edge", "column", "predicate", "expression", "window", "ruling_pair")
+
+
+@dataclass
+class SubjectSource:
+    """Everything a subject builder may read.
+
+    *** THE SIGNATURE ASSUMED EVERY SUBJECT COMES FROM THE PROJECT, AND ONE DOES NOT. ***
+    `build(kind, project, digests, schema, ...)` was fine while every kind was a dbt object.
+    `ruling_pair` comes from the STORE, and the choice was between a seventh parameter five kinds
+    ignore or a bundle. The bundle, because the case that needs it is the one being written: an
+    optional argument added for a caller that already exists is a decision deferred, not avoided.
+
+    Two call sites, both internal. A custom family declares `subject:` in YAML and never touches
+    this.
+    """
+    project: object = None
+    digests: dict = field(default_factory=dict)
+    schema: object = None
+    store: object = None
 
 
 @dataclass
@@ -35,7 +56,7 @@ def _model_of(project, uid):
     return project.models.get(uid)
 
 
-def build(kind: str, project, digests: dict, schema, limit: int = 0,
+def build(kind: str, src: SubjectSource, limit: int = 0,
           state: str = "full") -> list[Subject]:
     """Every subject of one kind in this project. Ordered so a --limit takes the reachable ones.
 
@@ -53,6 +74,12 @@ def build(kind: str, project, digests: dict, schema, limit: int = 0,
         raise ValueError(f"unknown subject {kind!r}. Use one of {KINDS}.")
     if state not in ("full", "minimal"):
         raise ValueError(f"unknown subject_state {state!r}. Use 'full' or 'minimal'.")
+    project, digests, schema = src.project, src.digests, src.schema
+    if kind == "ruling_pair":
+        # *** NOT A dbt OBJECT, SO NO BLAST RADIUS AND NOTHING TO SAY A ROW IS. ***
+        # It is two verdicts somebody gave, and its ordering is its own.
+        out = _ruling_pairs(src.store)
+        return out[:limit] if limit else out
     fn = {"model": _models, "edge": _edges, "column": _columns,
           "predicate": _predicates, "expression": _expressions, "window": _windows}[kind]
     out = fn(project, digests, schema)
@@ -258,3 +285,90 @@ class _Blank:
 
 def _prune(d: dict) -> dict:
     return {k: v for k, v in d.items() if v not in (None, [], {}, "")}
+
+
+# *** THE FORM THAT HAD A CORPUS, AND THE TWO THAT DID NOT. ***
+# Three shapes were specced for judging rulings. Measured on a 357-model warehouse's store first:
+#
+#   two rulings CONTRADICT each other   -- ZERO eligible pairs. No family had both an agree and a
+#                                          disagree, so there was nothing to validate it against
+#                                          and nothing for it to find.
+#   a reason does not MATCH its finding -- no negative control available.
+#   two reasons are the SAME DEFECT     -- 12 of 12 disagreements carried a reason.
+#
+# Only the third was buildable, and clustering those twelve yields two groups: eight that are the
+# union case 0.12.0 fixed, and two that named a blind spot still open at the time. It would have
+# produced both fixes. Measuring before building reversed the recommendation.
+_PUNCT = re.compile(r"[^a-z0-9 ]+")
+_WS = re.compile(r"\s+")
+
+
+def normalise_reason(text: str) -> str:
+    """The first sentence, lowercased and stripped, which is the free half of the clustering."""
+    first = re.split(r"(?<=[.!?])\s", (text or "").strip(), maxsplit=1)[0]
+    return _WS.sub(" ", _PUNCT.sub(" ", first.lower())).strip()
+
+
+def open_disagreements(store, source: str = "all", limit: int = 200) -> list[dict]:
+    """Every disagreement nobody has since agreed with at another version, newest first."""
+    if store is None:
+        return []
+    q = """select subject, question, family, note, source, prompt_version, decided_at
+           from adjudications a
+           where a.verdict = 'disagree' and coalesce(a.note, '') <> ''
+             and not exists (select 1 from adjudications b
+                             where b.subject = a.subject and b.question = a.question
+                               and b.verdict = 'agree'
+                               and b.prompt_version <> a.prompt_version
+                               and b.decided_at > a.decided_at)"""
+    args: list = []
+    if source != "all":
+        q += " and a.source = ?"
+        args.append(source)
+    cols = ("subject", "question", "family", "note", "source", "prompt_version", "decided_at")
+    rows = store.con.execute(q + " order by decided_at desc limit ?", [*args, limit]).fetchall()
+    return [dict(zip(cols, r, strict=True)) for r in rows]
+
+
+def candidate_pairs(store, cap: int = 300) -> list[tuple]:
+    """(key, first, second) for every same-family pair of open disagreements worth ASKING about.
+
+    *** THE STRUCTURAL TIER FIRST, AS EVERYWHERE ELSE. ***
+    Pairing is O(n^2), so only same-family pairs are built and the whole thing is capped. Two
+    reasons whose first sentence is already identical are NOT asked about: code settled it, so Jev
+    is never asked, and the delta between what code clusters and what judgement clusters is the
+    measurement of whether asking was worth anything at all. On the warehouse this was built
+    against, eight of ten reasons opened with the same sentence and code grouped them for free.
+    """
+    rows = open_disagreements(store)
+    by_family: dict = {}
+    for r in rows:
+        by_family.setdefault(r["family"], []).append(r)
+    out: list[tuple] = []
+    for fam, items in sorted(by_family.items()):
+        for i in range(len(items)):
+            for j in range(i + 1, len(items)):
+                a, b = items[i], items[j]
+                if normalise_reason(a["note"]) == normalise_reason(b["note"]):
+                    continue                  # code already grouped these; asking adds nothing
+                out.append((f"pair::{fam}::{_pair_id(a, b)}", a, b))
+                if len(out) >= cap:
+                    return out
+    return out
+
+
+def _ruling_pairs(store, cap: int = 300) -> list[Subject]:
+    return [Subject("ruling_pair", key, a["subject"], f"{_short(a)} ~ {_short(b)}",
+                    state={"check_or_question_both_rulings_are_about": a["family"],
+                           "first_reason": (a["note"] or "")[:700],
+                           "second_reason": (b["note"] or "")[:700]})
+            for key, a, b in candidate_pairs(store, cap)]
+
+
+def _short(r: dict) -> str:
+    return str(r["subject"]).split("::")[0].split(".")[-1]
+
+
+def _pair_id(a: dict, b: dict) -> str:
+    raw = "|".join(sorted([f"{a['subject']}#{a['question']}", f"{b['subject']}#{b['question']}"]))
+    return hashlib.sha1(raw.encode()).hexdigest()[:16]

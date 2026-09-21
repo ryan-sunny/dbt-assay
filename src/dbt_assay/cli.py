@@ -1306,6 +1306,156 @@ def effectiveness(
 
 
 @app.command()
+def disagreements(
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    source: str = typer.Option("all", "--source", help="human | agent | all"),
+    judge: bool = typer.Option(False, "--judge",
+                               help="also ask whether two differently-worded reasons are the "
+                                    "same defect. Costs a fraction of a cent; code groups the "
+                                    "identical ones for free either way."),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Group the open disagreements. N rejected findings, how many separate bugs?
+
+    *** NINE RELEASES CAME OUT OF A PERSON RELAYING THIS OUT OF A TERMINAL. ***
+    The verdicts and the reasons were in the store the whole time and nothing read them together.
+    Ten of twelve disagreements on one warehouse were one sentence said ten ways, and collapsing
+    them by hand is what produced 0.12.0's two fixes -- one of which was still open when the
+    clustering was written, and this found it.
+
+    It never closes anything. A disagreement closes when a question or a check CHANGED and a
+    person re-read it, which is what `assay effectiveness` measures. This says which ones are
+    probably one piece of work.
+    """
+    import json
+
+    from .contracts import QUESTIONS
+    from .subjects import candidate_pairs, normalise_reason, open_disagreements
+
+    if not Path(store_path).exists():
+        console.print(f"[yellow]no store at {store_path}.[/]")
+        raise typer.Exit(1)
+    store = Store(store_path)
+    try:
+        rows = open_disagreements(store, source)
+        if not rows:
+            console.print(f"[green]no open disagreement with a reason recorded[/] "
+                          f"[dim](source={source}). A disagreement with no reason is not "
+                          f"evidence, and `rule` refuses one.[/]")
+            raise typer.Exit(0)
+
+        # *** CODE CLUSTERS FIRST AND FOR FREE. ***
+        # Identical first sentences are the same defect and no judgement is needed to say so.
+        ids = [f"{r['subject']}#{r['question']}" for r in rows]
+        pos = {k: i for i, k in enumerate(ids)}
+        parent = list(range(len(rows)))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> bool:
+            ra, rb = find(a), find(b)
+            if ra == rb:
+                return False
+            parent[rb] = ra
+            return True
+
+        seen: dict = {}
+        for i, r in enumerate(rows):
+            k = (r["family"], normalise_reason(r["note"]))
+            if k in seen:
+                union(seen[k], i)
+            else:
+                seen[k] = i
+        free_clusters = len({find(i) for i in range(len(rows))})
+
+        joined = 0
+        if judge:
+            cfg = Config.load(config_path)
+            pairs = candidate_pairs(store)
+            if not pairs:
+                console.print("[dim]every differently-worded pair was already grouped by code; "
+                              "nothing to ask.[/]")
+            else:
+                client = Client(provider=cfg.provider, model=cfg.model,
+                                max_spend_usd=cfg.max_spend_usd)
+                if not client.available:
+                    console.print("[yellow]no API key.[/] [dim]`assay config` shows what was "
+                                  "resolved. The free clustering above still ran.[/]")
+                else:
+                    q = QUESTIONS["same_defect"]
+                    console.print(f"[dim]asking about {len(pairs)} differently-worded pair(s)...[/]")
+                    for key, a, b in pairs:
+                        ans = decide(
+                            store, client,
+                            {"check_or_question_both_rulings_are_about": a["family"],
+                             "first_reason": (a["note"] or "")[:700],
+                             "second_reason": (b["note"] or "")[:700]},
+                            {q["id_prefix"]: noul_q("same_defect")},
+                            contexts={q["id_prefix"]: f"{a['subject']} ~ {b['subject']}"},
+                            decision_key=key, prompt_version=q["prompt_version"],
+                            caller="assay.disagreements")
+                        got = (ans or {}).get(q["id_prefix"]) or {}
+                        try:
+                            p_same = float(got.get("answer") or 0)
+                        except (TypeError, ValueError):
+                            continue
+                        if p_same >= 0.6:
+                            ka = pos.get(f"{a['subject']}#{a['question']}")
+                            kb = pos.get(f"{b['subject']}#{b['question']}")
+                            if ka is not None and kb is not None and union(ka, kb):
+                                joined += 1
+    finally:
+        store.close()
+
+    groups: dict = {}
+    for i, r in enumerate(rows):
+        groups.setdefault(find(i), []).append(r)
+    ordered = sorted(groups.values(), key=lambda g: -len(g))
+
+    if as_json:
+        print(json.dumps([{
+            "size": len(g), "family": g[0]["family"],
+            "reason": min((x["note"] or "" for x in g), key=len),
+            "members": [x["subject"] for x in g],
+            "every_ruling_is_an_agent_ruling": all(x["source"] == "agent" for x in g),
+        } for g in ordered], indent=2, default=str))
+        raise typer.Exit(0)
+
+    console.print(f"\n[bold]{len(rows)}[/] open disagreement(s) -> "
+                  f"[bold]{len(ordered)}[/] distinct defect(s)")
+    for g in ordered:
+        r = min(g, key=lambda x: len(x["note"] or ""))
+        mark = "[red]" if len(g) >= 3 else ""
+        console.print(f"\n{mark}{len(g)} ruling(s)[/]  [dim]{g[0]['family']}[/]"
+                      if mark else f"\n{len(g)} ruling(s)  [dim]{g[0]['family']}[/]")
+        console.print(f"  {(r['note'] or '')[:300]}")
+        console.print(f"  [dim]{', '.join(sorted({str(x['subject']).split('::')[0].split('.')[-1] for x in g}))[:150]}[/]")
+        if all(x["source"] == "agent" for x in g):
+            # *** A CLUSTER OF AGENT RULINGS IS A HYPOTHESIS ABOUT A CHECK, NOT A VERDICT ON IT. ***
+            console.print("  [dim]every ruling here is an agent's. That is a hypothesis about the "
+                          "check, not a verdict on it: a person's keypress is still the only one "
+                          "that counts.[/]")
+
+    if judge:
+        # *** THE DELTA IS THE MEASUREMENT OF WHETHER ASKING WAS WORTH ANYTHING. ***
+        # Code grouped the identical first sentences for nothing. If judgement adds no groups on a
+        # real corpus, that is a finding about this family and it belongs in VERIFICATION.md.
+        console.print(f"\n[dim]code alone found {free_clusters} group(s); judgement merged "
+                      f"{joined} more pair(s) that were worded differently.[/]")
+    else:
+        console.print("\n[dim]grouped by identical first sentence only, which costs nothing. "
+                      "--judge also asks whether differently-worded reasons are one defect.[/]")
+    console.print("[dim]Nothing here is closed. A disagreement closes when the check or the "
+                  "question CHANGED and a person re-read it -- `assay effectiveness` counts "
+                  "those.[/]")
+
+
+@app.command()
 def banks(
     lint: bool = typer.Option(True, "--lint/--no-lint",
                               help="check every question against the rules Jev's shape imposes"),
@@ -1487,8 +1637,10 @@ def ask(
     total = Counter()
 
     for name, q in runnable.items():
-        subs = subjects_mod.build(q["subject"], project, digests, schema,
-                                  state=q.get("subject_state", "full"))
+        subs = subjects_mod.build(
+            q["subject"],
+            subjects_mod.SubjectSource(project, digests, schema, store),
+            state=q.get("subject_state", "full"))
         if scope is not None:
             subs = [x for x in subs if x.uid in scope]
         if limit:
@@ -1612,7 +1764,8 @@ def regress(
                 skipped += [(r, "declares no subject; its own command replays it") for r in rows]
                 continue
             subs = {x.key: x for x in subjects_mod.build(
-                q["subject"], project, digests, schema, state=q.get("subject_state", "full"))}
+                q["subject"], subjects_mod.SubjectSource(project, digests, schema, store),
+                state=q.get("subject_state", "full"))}
             for r in rows:
                 sub = subs.get(r["subject"])
                 if sub is None:
@@ -3561,6 +3714,19 @@ def choice_q(name: str) -> dict:
     from .jev import choice as _c
     q = QUESTIONS[name]
     return _c(q["instructions"], q["criteria"])
+
+
+def noul_q(name: str) -> dict:
+    """A noul bank entry as a live question. Same single place as `choice_q`, same reason."""
+    from .contracts import QUESTIONS
+    from .jev import noul as _n
+    q = QUESTIONS[name]
+    crit = q.get("criteria") or {}
+    return _n(q["instructions"],
+              (crit.get("true") or {}).get("what") if isinstance(crit.get("true"), dict)
+              else crit.get("true"),
+              (crit.get("false") or {}).get("what") if isinstance(crit.get("false"), dict)
+              else crit.get("false"))
 
 
 def _pkg_version() -> str:

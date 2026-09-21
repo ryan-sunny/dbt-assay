@@ -140,6 +140,7 @@ surface it.
 |---|---|
 | `practice_exception` | needs `dbt-project-evaluator` built. It IS installed on the field warehouse, so this one is closeable there and has not been |
 | `row_is_internally_coherent` | needs `store_failures` rows; the audit schema exists on the field warehouse and no finding has been read |
+| `same_defect` | built AFTER measuring, which reversed the plan. Two other shapes were specced and neither had a corpus: no family had both an agree and a disagree, so "these two rulings contradict" had **zero** eligible pairs, and "this reason does not match its finding" had no negative control. This one had 12 of 12 disagreements carrying a reason. Not yet read against a pair a person disagrees with |
 | `options_overlap` | verified against the pair that prompted it, and it independently flagged `predicate_intent` — the family already proven weak by hand. Not yet read against a question it should PASS but does not |
 | `sentence_is_a_claim` | extraction was read by hand on one model (16 sentences, every high-confidence answer correct, every low-confidence one a genuinely ambiguous header) — but only one model |
 
@@ -162,7 +163,7 @@ start.
 
 ## The measure that matters most, and that this page cannot improve
 
-Ten of sixteen families have had findings read by a person. That number, and the `ruled on` column
+Ten of seventeen families have had findings read by a person. That number, and the `ruled on` column
 in any warehouse this is exported to, are the only figures in the system a release cannot move.
 Every other one responds to better code: a sharper check finds more, a fuller state raises a
 confidence, the DAG moves the blast radius.

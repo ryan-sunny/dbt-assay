@@ -123,7 +123,7 @@ Every one of those shapes this tool: arithmetic and dates are settled by sqlglot
 never asked, states are the smallest thing that can answer the question, and there is one noul per
 rule rather than one over a list of them. The [README](../README.md) carries the measurements.
 
-Sixteen question families ship. The one worth seeing first:
+Seventeen question families ship. The one worth seeing first:
 
 ### Does the description still describe the code?
 
@@ -207,7 +207,7 @@ fires after the spend is not a cap.
 
 ## Every question, and what rests on it
 
-Sixteen families ship. `assay config` shows how many verdicts each has and which can gate;
+Seventeen families ship. `assay config` shows how many verdicts each has and which can gate;
 `rests_on` on a finding names the family it derives from, and these are those names.
 
 | family | type | finding it feeds |
@@ -228,6 +228,7 @@ Sixteen families ship. `assay config` shows how many verdicts each has and which
 | `row_explanation` | choice | — *needs warehouse rows* |
 | `row_is_internally_coherent` | noul | — *needs warehouse rows* |
 | `options_overlap` | choice | — *lints a question, not a project: `assay banks --judge`* |
+| `same_defect` | noul | — *groups assay's own rejected findings: `assay disagreements --judge`* |
 
 **A dash means no finding rests on it yet.** Those answers still fill the inventory, the page and
 `trace`, and ruling on them records evidence — but it moves no gate, and `assay review -i` says so
@@ -285,6 +286,8 @@ assay probe               # run it, via `dbt show --inline`. assay never holds a
 
 ```bash
 assay review -i           # a / d / u / s, least certain first
+assay disagreements       # N rejected findings, how many separate bugs? free
+assay disagreements --judge  # ...also asks whether differently-worded reasons are one defect
 assay effectiveness       # did the questions get BETTER? agreement per family, per version
 assay effectiveness --json
 ```
@@ -620,7 +623,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.15.0
+- uses: ryan-sunny/dbt-assay@v0.16.0
   with:
     target: target-head
     baseline: base/target

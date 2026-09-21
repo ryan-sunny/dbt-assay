@@ -1,0 +1,48 @@
+# The only question in this bank that is not about a warehouse. It is about the tool.
+#
+# *** A DISAGREEMENT NOBODY READS IN AGGREGATE IS A FIELD REPORT THAT DIES IN A CHAT LOG. ***
+# Nine releases of this project were driven by a person relaying "these ten findings are wrong,
+# and here is why" out of a terminal. The verdicts and the reasons were in the store the whole
+# time and nothing ever read them together. Ten of twelve disagreements on one warehouse were one
+# sentence said ten ways, and collapsing them by hand is what produced 0.12.0.
+#
+# Measured before this was written. Two other shapes were specced and neither had a corpus: no
+# family had both an agree and a disagree, so "these two rulings contradict" had ZERO eligible
+# pairs, and "this reason does not match its finding" had no negative control. This one had 12 of
+# 12 disagreements carrying a reason.
+version: 1
+
+same_defect:
+  id_prefix: "rule"
+  # It answers ABOUT THE TOOL, so there is no model for a finding to point at. The pairwise answers
+  # are the input to a clustering that `assay disagreements` prints; nothing here gates anything,
+  # and it can never close a disagreement -- only a question changing and a person re-ruling does.
+  acknowledge:
+    finding_when: >-
+      deliberate. The answer is one edge of a graph, not a verdict about a model. `assay
+      disagreements` takes the connected components and prints them; a single pair is not a
+      finding and there is nothing in a project to attach one to.
+  type: noul
+  subject: ruling_pair
+  prompt_version: "rule.same.v1"
+  instructions:
+    question: >-
+      `first_reason` and `second_reason` were each written by somebody rejecting a finding from
+      `check_or_question_both_rulings_are_about`. Do they describe the SAME underlying defect in
+      the check -- one repair that would retire both?
+    note: >-
+      Judge the DEFECT, not the wording and not the models. Two reasons about different models are
+      the same defect when one change to the check would answer both: "the parent is one arm of a
+      union" and "these parents are unioned, not joined" are one. Two reasons that happen to share
+      vocabulary are NOT the same defect when fixing one would leave the other standing: "the join
+      key is unique in the data" and "the parent is a union member" are both about a join and are
+      two separate repairs.
+      Identical first sentences are never sent here -- code already grouped those -- so a pair
+      that LOOKS similar is exactly the case worth deciding.
+  criteria:
+    "true":
+      what: "One repair to the check would retire both findings."
+    "false":
+      what: >-
+        They are different defects. Fixing the one described first would leave the second finding
+        standing exactly as it is.

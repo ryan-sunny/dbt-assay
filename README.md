@@ -90,7 +90,7 @@ genuinely useful — it found 50 tests that cannot fail in a 357-model warehouse
 good linter, and a linter is not the point. The point is a warehouse that knows what it means, and
 meaning is the half a parser cannot reach.
 
-Ten of sixteen question families have had their findings read against real data by a person; two
+Ten of seventeen question families have had their findings read against real data by a person; two
 failed that and were rewritten; [docs/VERIFICATION.md](docs/VERIFICATION.md) says which, and which
 five have not been checked at all. Nothing gates a build in either tier until a question has recorded your
 verdicts, and `assay` refuses rather than warns.
@@ -125,7 +125,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.15.0
+- uses: ryan-sunny/dbt-assay@v0.16.0
   with:
     target: target-head
     baseline: base/target
