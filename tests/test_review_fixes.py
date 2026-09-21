@@ -720,3 +720,63 @@ def test_repair_resolves_a_bare_name_and_refuses_an_ambiguous_one(tmp_path, monk
     assert "model.p.thing" in got, "the unambiguous name was not repaired"
     assert "twice" in got, "an ambiguous name must be left exactly as it is"
     assert "ghost" in got, "a name matching no model must be left exactly as it is"
+
+
+def test_the_cli_and_mcp_see_the_same_findings(project_dir, tmp_path):
+    """*** THE CLI SAW SEVEN FAMILIES AND MCP SAW TWO. ***
+
+    A run held 162 findings across 7 families and `findings()` returned 20 across 2.
+    `hop_multiplies_rows` (58) and `description_contradicts_the_code` (18) were absent entirely,
+    reachable only by querying the store by hand -- and those are the two worth an agent's time.
+
+    `check` added the judged stream itself and `findings_for` never did: two paths computing one
+    fact, which is the shape this codebase has now found ten times. This runs BOTH surfaces and
+    compares them, because a guard that reads the source would not have caught the original.
+    """
+    import json as _j
+
+    from typer.testing import CliRunner
+
+    from dbt_assay import live
+    from dbt_assay.cli import app
+    from dbt_assay.mcp_server import Backend
+    from dbt_assay.store import Store
+
+    store = tmp_path / "s.duckdb"
+    Store(store).close()
+
+    got = CliRunner().invoke(app, ["check", "--target", str(project_dir),
+                                   "--store", str(store), "--json"])
+    assert got.exit_code == 0, got.output
+    from_cli = {(f["check"], f["model"], f["summary"]) for f in _j.loads(got.stdout)["findings"]}
+
+    b = Backend(str(project_dir), str(store))
+    every = live.findings_for(b.state(), None)
+    from_mcp = {(f.check, f.subject_name, f.summary) for f in every}
+
+    assert from_cli, "the fixture produced no findings; the comparison proves nothing"
+    assert from_cli == from_mcp, (
+        f"only the CLI sees {sorted(x[0] for x in from_cli - from_mcp)}; "
+        f"only MCP sees {sorted(x[0] for x in from_mcp - from_cli)}")
+
+
+def test_findings_says_what_it_is_not_showing(project_dir, tmp_path):
+    """A surface that returns a subset and does not say so is the same bug as a scanner that
+    matches nothing and reports a pass."""
+    from dbt_assay.mcp_server import Backend
+    from dbt_assay.store import Store
+
+    store = tmp_path / "s.duckdb"
+    Store(store).close()
+    b = Backend(str(project_dir), str(store))
+
+    got = b.findings(limit=1)
+    assert got["every_check_in_this_project"], "the breakdown is empty; the reader is broken"
+    total = sum(got["every_check_in_this_project"].values())
+    assert got["showing"] == f"1 of {total}"
+    if total > 1:
+        assert "what_you_are_not_seeing" in got
+
+    one = next(iter(got["every_check_in_this_project"]))
+    only = b.findings(check=one, limit=99)
+    assert {f["check"] for f in only["findings"]} == {one}

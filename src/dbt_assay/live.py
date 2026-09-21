@@ -73,12 +73,37 @@ def changes_since(baseline: Snapshot, state: LiveState) -> list:
     return diff.compare(baseline.entries, state.entries, state.project, state.digests)
 
 
+def all_findings(project, digests, schema, entries=None) -> list:
+    """Every finding, structural and judged, from ONE place.
+
+    *** THE CLI SAW SEVEN FAMILIES AND MCP SAW TWO. ***
+    Reported from the field: a run held 162 findings across 7 families and `findings()` returned
+    20 across 2. `hop_multiplies_rows` (58) and `description_contradicts_the_code` (18) were
+    absent entirely, reachable only by querying the store by hand -- and those are exactly the
+    ones worth an agent's time, because a description contradicting its code needs prose read
+    against SQL, which is what an agent is for and a parser is not.
+
+    The cause is the one this codebase keeps finding: two paths computing the same fact. `check`
+    added the judged stream itself and `findings_for` never did, so "what is wrong with this
+    project" had two answers depending on which surface you asked. There is one path now and both
+    callers use it.
+
+    `entries` carries the judged stream. Without a store there are no judged answers, so the
+    structural half stands alone -- which is correct, not a truncation.
+    """
+    fs = structural_checks(project, digests)
+    fs += relate.run_all(project, digests, schema)[1]
+    if entries:
+        from . import judged as judged_mod
+        fs += judged_mod.run_all(project, entries, relate.declared_keys(project), digests)
+    return sorted(fs, key=lambda f: -f.weight)
+
+
 def findings_for(state: LiveState, model: str | None = None) -> list:
-    fs = structural_checks(state.project, state.digests)
-    fs += relate.run_all(state.project, state.digests, state.schema)[1]
+    fs = all_findings(state.project, state.digests, state.schema, state.entries)
     if model:
         fs = [f for f in fs if f.subject_name == model]
-    return sorted(fs, key=lambda f: -f.weight)
+    return fs
 
 
 def contract_of(state: LiveState, model: str) -> dict | None:

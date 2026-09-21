@@ -1109,3 +1109,48 @@ model or the state moves, so every ruling would orphan itself on the next run. M
 excluded from the handle — a float is a probability or a share, and reach is a property of the DAG
 rather than of the defect. 94 findings, 90 distinct ids, and the four collapses are the same defect
 reported once per window function.
+
+---
+
+## Round four: the agent could reach 20 of 162
+
+`0.17.0`'s repair landed as intended on the field store:
+
+```
+99 subjects re-pointed
+rulings joining to a finding    0  ->  249
+review_queue() with a reading   0 of 20  ->  20 of 20
+```
+
+And the author corrected their own last report, which is the more interesting half. The summary
+format is `parent -> child`, so the three findings under `dim_business` ARE its union arms and the
+original disagree was right. The 1.48x fan-out belongs to `crime_leads` -- which had been marked
+**unclear**, with the reason *"the model contains a collapse somewhere."* It does. The collapse is
+in the parent, not on this hop. The hedge named exactly the thing that had not been checked and was
+still wrong.
+
+So of twelve disagrees one was fine, and of seventeen unclears one was a real finding ducked. That
+is a better argument for `unclear` being its own bucket than anything the docs say about it.
+
+### The gap, and it is the tenth instance of one shape
+
+The latest run held **162 findings across 7 families**. MCP `findings()` returned **20 across 2**.
+`hop_multiplies_rows` (58) and `description_contradicts_the_code` (18) were absent entirely,
+reachable only by querying the store by hand.
+
+`check` added the judged stream itself and `findings_for` never did. Two paths computing one fact,
+so "what is wrong with this project" had two answers depending on which surface you asked -- and
+the surface an agent uses had the smaller one. The two families it could not see are precisely the
+ones worth an agent's time: a description contradicting its code needs prose read against SQL,
+which is what an agent is for and a parser is not.
+
+`live.all_findings` is the one path now and both callers use it. The guard RUNS both surfaces and
+compares them, because a guard that read the source would not have caught the original.
+
+### And the limit was hiding families silently
+
+The second cause, underneath the first. A default limit of 20 truncating by blast radius buries
+whole families, and nothing said so. `findings()` now returns `showing: "20 of 142"` and a
+per-check breakdown beside the results, and takes `check=` to read one family end to end. A surface
+that returns a subset without saying so is the same defect as a scanner that matches nothing and
+reports a pass.

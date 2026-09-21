@@ -107,7 +107,7 @@ class Backend:
         return {"model": model, "descendants": b["descendants"], "marts": b["marts"],
                 "consumers": [st.project.name_of(x) for x in st.project.models[uid].children]}
 
-    def findings(self, model: str | None = None, limit: int = 20) -> dict:
+    def findings(self, model: str | None = None, limit: int = 20, check: str = "") -> dict:
         """Everything an agent needs to act, not a summary it has to re-derive.
 
         *** THIS RETURNED FIVE FIELDS WHILE `--json` RETURNED NINE. ***
@@ -122,7 +122,10 @@ class Backend:
         An agent that cannot see those will satisfy the check and break the meaning.
         """
         st = self.state()
-        fs = live.findings_for(st, model)[:limit]
+        every = live.findings_for(st, model)
+        if check:
+            every = [f for f in every if f.check == check]
+        fs = every[:limit]
         out = {"findings": [{"finding": f.id,
                              "check": f.check, "model": f.subject_name,
                              "file": f.file,
@@ -130,6 +133,23 @@ class Backend:
                              "evidence": f.evidence or {},
                              "downstream": f.descendants, "marts": f.marts,
                              "weight": round(f.weight, 2)} for f in fs]}
+        # *** A SURFACE THAT SHOWS A SUBSET AND DOES NOT SAY SO IS THE SAME BUG AS A SCANNER
+        # THAT MATCHES NOTHING AND REPORTS A PASS. ***
+        # Reported from the field: `findings()` returned 20 of 162 across 2 of 7 families. Two
+        # causes -- one was the judged stream missing entirely, now fixed in `live.all_findings`,
+        # and the other is this: a default limit truncating by WEIGHT silently buries whole
+        # families, and the buried ones were where a reading was worth most.
+        counts: dict = {}
+        for f in every:
+            counts[f.check] = counts.get(f.check, 0) + 1
+        out["showing"] = f"{len(fs)} of {len(every)}"
+        out["every_check_in_this_project"] = dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+        if len(fs) < len(every):
+            out["what_you_are_not_seeing"] = (
+                "ranked by blast radius, so the tail is not junk -- it is lower-reach. Pass "
+                "`check=` to read one family end to end, or raise `limit`. "
+                "`description_contradicts_the_code` and `hop_multiplies_rows` need prose or a "
+                "join path read against the SQL, which is what you are for and a parser is not.")
         if model:
             out["must_stay_true"] = self._constraints(model)
         return out
@@ -531,7 +551,9 @@ TOOLS = [
                   "Fifteen lines instead of reading the SQL.")),
     ("lineage", "Follow a column back through the DAG to the hop that produced its value."),
     ("blast_radius", "Who consumes this model, and how many marts are downstream."),
-    ("findings", "Contradictions assay currently sees, optionally for one model."),
+    ("findings", ("Contradictions assay currently sees, optionally for one model or one `check`. "
+                  "It reports the TOTAL and a per-check breakdown beside what it returns, so a "
+                  "limit never hides a whole family from you.")),
     ("changed_contracts", ("Did recent edits change what anything MEANS? The self-check to run "
                            "after editing and before moving on.")),
     ("practices", ("Models with no uniqueness test, and the grain a test should cover. "
@@ -607,8 +629,8 @@ def serve(target: str, store_path: str | None = None) -> None:
         return json.dumps(be.blast_radius(model), default=str)
 
     @app.tool(description=TOOLS[3][1])
-    def findings(model: str = "", limit: int = 20) -> str:
-        return json.dumps(be.findings(model or None, limit), default=str)
+    def findings(model: str = "", limit: int = 20, check: str = "") -> str:
+        return json.dumps(be.findings(model or None, limit, check), default=str)
 
     @app.tool(description=TOOLS[4][1])
     def changed_contracts() -> str:

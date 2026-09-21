@@ -11,7 +11,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import __version__, contracts, mcp_server, provenance, relate
+from . import __version__, contracts, live, mcp_server, provenance, relate
 from . import align as align_mod
 from . import backtest as backtest_mod
 from . import claims as claims_mod
@@ -228,13 +228,17 @@ def check(
     """Run the structural checks. No network, no API key, no spend."""
     tdir = _find_target(target)
     project, digests, failures, schema, sstats = _load(tdir, dialect)
-    facts, edge_findings = relate.run_all(project, digests, schema)
-    findings = run_all(project, digests, schema) + edge_findings
+    facts, _edge_findings = relate.run_all(project, digests, schema)
+    findings: list = []
     # *** ONE STREAM. ***
     # Structural and judged findings were in separate worlds: `check` saw only the parser's, and
     # nothing from `infer` or `columns` ever reached the store. "What is wrong with this model"
     # needs a single answer.
     n_retired = 0
+    # `_entries` shadows the module-level helper of the same name inside this function, and a
+    # project with no store never enters the branch below. None means "no judged stream", which
+    # is correct rather than a truncation.
+    _entries = None
     if Path(store_path or "").exists():
         _s = Store(store_path)
         _obs = probe_mod.read(_s)
@@ -260,10 +264,10 @@ def check(
                 console.print(f"[dim]--verify: {n_retired} hop(s) retired -- the join key is "
                               f"unique in the data, so the hop cannot fan out. Nothing in the "
                               f"project declared it.[/]")
-        findings += judged_mod.run_all(project, _entries, relate.declared_keys(project),
-                                      digests)
         _s.close()
-    findings.sort(key=lambda f: -f.weight)
+    # *** ONE PATH. *** `check` used to add the judged stream itself while `findings_for` did not,
+    # so the CLI saw seven families and MCP saw two. Both call this.
+    findings = live.all_findings(project, digests, schema, _entries)
     _verified = {"hops_retired_by_counting": n_retired} if verify else {}
     if check_name:
         findings = [f for f in findings if f.check == check_name]
