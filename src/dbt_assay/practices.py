@@ -209,6 +209,25 @@ def primary_key_patches(project, entries) -> list[tuple]:
 #
 # AND A PROPOSAL THAT DOES NOT HOLD IS THE STRONGER FINDING. The model has no uniqueness test AND
 # nobody knows what one row of it is, which is worse than a missing test and was invisible.
+def share(kept: int, total: int) -> str:
+    """A share written so a non-zero one never prints as `0%`.
+
+    *** `keeps 0% of dim_owner: 13,694 rows` -- THE SAME ROUNDING BUG, POINTED THE OTHER WAY. ***
+    `1.56x` printing as `2x` overstated; this understates, and reading `0%` as "it keeps nothing"
+    sends somebody looking for an empty table that has thirteen thousand rows in it.
+    """
+    if total <= 0:
+        return "?"
+    r = kept / total
+    if r == 0:
+        return "0%"
+    for places in (0, 1, 2, 3):
+        s = f"{r:.{places}%}"
+        if float(s.rstrip("%")) > 0:
+            return s
+    return "<0.001%"
+
+
 def fanout(n: int, d: int) -> str:
     """`n / d`, written so it cannot read as a smaller problem -- or a bigger one -- than it is.
 
@@ -385,4 +404,118 @@ def verify_grains(patches: list, project, probe_mod, project_dir: str,
 
     for i in range(0, len(todo), batch):
         walk(todo[i:i + batch])
+    return out
+
+
+# *** THE MIRROR IMAGE OF `hop_multiplies_rows`, AND assay HAD NOTHING FOR IT. ***
+# `relate` tracks the COLUMNS dropped at a boundary and has no notion of rows at all. So a hop that
+# turns 2,606 documents into 463 was invisible, and that is exactly where an enrichment gap lives:
+# 18% of well scans read, 18% of decree cases, 6% of resume filings, and nothing in the project
+# reports any of it.
+#
+# *** BUT IT IS NOT "FREE FROM THE DAG PLUS TWO COUNTS". ***
+# Most edges drop rows ON PURPOSE. A staging model filtered to one county, a mart filtered to
+# active records, an aggregate. Shipped as a raw ratio this fires on half a DAG on day one, which
+# is how a check becomes one nobody reads -- the same failure `hop_multiplies_rows` took three
+# releases to climb out of. So the refusals ship in the same commit, not after:
+#
+#   the child FILTERS           -> it declared that it drops rows
+#   the child AGGREGATES        -> fewer rows is the entire point
+#   the child UNIONS            -> its count is the sum of arms, not a function of one parent
+#   it PRE-AGGREGATED this parent -> it collapsed the parent in a subquery before joining it
+#
+# *** THAT LAST ONE WAS ALREADY COMPUTED AND THE FIRST VERSION DID NOT ASK FOR IT. ***
+# Seven of eight findings on the first real run were it. `az_section_summary` turning 3,483,870
+# parcel-sections into 114,305 sections is `pre_aggregated`, sitting right there on the entry,
+# naming that exact parent. Same shape as the union fix: the judgment -- here, the count -- was
+# allowed to be wrong about something the parser settles exactly. 8 findings became 1.
+#
+# What survives is a child that reads a parent, joins it, declares no filter, no group by and no
+# collapse, and still emits a fraction of the rows. That is an inner join dropping silently.
+def row_loss_candidates(entries) -> list[tuple]:
+    """(entry, parent_name) for hops where losing rows would NOT be declared behaviour."""
+    out = []
+    for e in entries:
+        if e.filters_rows or e.aggregates or e.unreadable:
+            continue
+        for pname in sorted(e.join_keys or {}):
+            if pname in (e.pre_aggregated_parents or {}):
+                continue
+            out.append((e, pname))
+    return out
+
+
+def verify_row_loss(entries, project, probe_mod, project_dir: str, profiles_dir: str | None,
+                    dbt_bin: str, schema=None, batch: int = 40) -> int:
+    """Count parent and child rows for every candidate hop. Returns how many it counted.
+
+    A hop it could not count stays absent from `row_loss`, and an absent count is never a pass:
+    `hop_drops_most_rows` reports only what it actually measured.
+    """
+    cands = row_loss_candidates(entries)
+    if not cands:
+        return 0
+    rel_of = dict(getattr(schema, "relation", None) or {})
+    by_name = {m.name: (rel_of.get(uid) or m.name).replace('"', "")
+               for uid, m in project.models.items()}
+    wanted = {e.name for e, _p in cands} | {p for _e, p in cands}
+    todo = sorted(n for n in wanted if n in by_name)
+    counts: dict = {}
+
+    def ask(chunk: list) -> bool:
+        parts = [f"select '{n}' as m, count(*) as n from {by_name[n]}" for n in chunk]
+        got = probe_mod.run_sql(" union all ".join(parts), project_dir, profiles_dir, dbt_bin,
+                                limit=len(chunk) + 1)
+        if not got:
+            return False
+        for row in got:
+            vals = list(row.values())
+            try:
+                counts[str(row.get("m", vals[0]))] = int(row.get("n", vals[1]))
+            except (TypeError, ValueError, IndexError):
+                continue
+        return True
+
+    def walk(chunk: list) -> None:
+        if not chunk or ask(chunk):
+            return
+        if len(chunk) == 1:
+            return
+        mid = len(chunk) // 2
+        walk(chunk[:mid])
+        walk(chunk[mid:])
+
+    for i in range(0, len(todo), batch):
+        walk(todo[i:i + batch])
+
+    n = 0
+    for e, pname in cands:
+        if e.name in counts and pname in counts:
+            e.row_loss[pname] = (counts[pname], counts[e.name])
+            n += 1
+    return n
+
+
+def hop_drops_most_rows(project, entries, threshold: float = 0.8) -> list:
+    """A hop that loses more of the parent than `threshold`, where nothing declared it would."""
+    from .checks.structural import Finding
+    out = []
+    for e in entries:
+        for pname, (pn, cn) in sorted((e.row_loss or {}).items()):
+            if pn <= 0 or cn >= pn * (1 - threshold):
+                continue
+            kept = cn / pn
+            out.append(Finding(
+                check="hop_drops_most_rows", subject=e.uid, subject_name=e.name, file=e.path,
+                summary=(f"this hop keeps {share(cn, pn)} of `{pname}`: "
+                         f"{cn:,} rows from {pn:,}"),
+                detail=("The child declares no filter and no group by, so nothing in the SQL "
+                        "says these rows were meant to be dropped -- which makes this a join "
+                        "that is not matching, and every count downstream is of a subset "
+                        "nobody chose. If the drop IS intended, say so with a filter or a "
+                        "description and this stops firing."),
+                base=2,
+                evidence={"parent": pname, "parent_rows": pn, "child_rows": cn,
+                          "kept": round(kept, 4),
+                          "joined_on": list((e.join_keys or {}).get(pname) or [])}))
     return out

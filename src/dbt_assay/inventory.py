@@ -108,6 +108,14 @@ class ModelEntry:
     unique_key_parents: set = field(default_factory=set)
     # {parent_name: [join columns]}, so a hop can be counted without rebuilding the edge facts.
     join_keys: dict = field(default_factory=dict)
+    # *** WHY A HOP LOSING ROWS MIGHT BE ENTIRELY THE POINT. ***
+    # Most edges drop rows on purpose: a staging model filtered to one county, a mart filtered to
+    # active records. A raw ratio would fire on half a DAG on day one, which is how a check
+    # becomes one nobody reads. These two refuse the declared cases before anything is counted.
+    filters_rows: bool = False
+    aggregates: bool = False
+    # {parent_name: (parent_rows, child_rows)} once `--verify` has counted them.
+    row_loss: dict = field(default_factory=dict)
     # {parent: [keys]} for parents collapsed inside a subquery before being joined.
     pre_aggregated_parents: dict = field(default_factory=dict)
     description: str = ""
@@ -171,6 +179,10 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
             entry.union_parents = set(_d.union_members)
         if _d is not None and getattr(_d, "pre_aggregated", None):
             entry.pre_aggregated_parents = dict(_d.pre_aggregated)
+        if _d is not None:
+            entry.filters_rows = bool([x for x in (_d.predicates_atomic or [])
+                                       if x.strip() not in ("1 = 1", "TRUE", "true")])
+            entry.aggregates = bool(_d.group_by) or bool(getattr(_d, "union_members", None))
         for pname, cols in (by_child.get(uid) or {}).items():
             entry.join_keys[pname] = cols
             # *** A JOIN ONTO A UNIQUE KEY CANNOT FAN OUT, AND dbt ALREADY SAYS WHICH KEYS ARE. ***

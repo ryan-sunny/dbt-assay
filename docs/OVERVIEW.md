@@ -258,6 +258,9 @@ assay trace <column>      # where one column's value actually came from
 assay tests               # tests that cannot fail, and what nothing asserts at all
 assay tests --count-defaults  # ...and how often each COALESCE default actually wins
 assay practices           # dbt-project-evaluator violations, with judged exceptions
+assay completeness        # do we have all of it? sources nothing reads, feeds behind their
+                          #   own declared freshness, hops that lose most of the parent
+assay completeness --verify   # ...and count empty models and row loss through your own dbt
 assay patch tests/assay   # WRITE the uniqueness tests it can prove will pass
 ```
 
@@ -623,7 +626,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.17.1
+- uses: ryan-sunny/dbt-assay@v0.18.0
   with:
     target: target-head
     baseline: base/target

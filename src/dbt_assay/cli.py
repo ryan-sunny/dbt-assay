@@ -256,6 +256,12 @@ def check(
             prac_mod.verify_join_keys(_entries, project, probe_mod, project_dir,
                                       profiles_dir, dbt_bin, schema=schema)
             n_retired = _before - len(judged_mod.hop_multiplies_rows(project, _entries))
+            n_counted = prac_mod.verify_row_loss(_entries, project, probe_mod, project_dir,
+                                                 profiles_dir, dbt_bin, schema=schema)
+            if n_counted and not json_out:
+                console.print(f"[dim]--verify: counted {n_counted} hop(s) for row loss. A hop "
+                              f"that declares a filter, a group by or a union is not counted, "
+                              f"because dropping rows there is the point.[/]")
             if n_retired and not json_out:
                 # *** `--json` IS MACHINE-READABLE AND ONE LINE OF PROSE ENDS THAT. ***
                 # This printed before the document and every parser downstream got
@@ -267,7 +273,9 @@ def check(
         _s.close()
     # *** ONE PATH. *** `check` used to add the judged stream itself while `findings_for` did not,
     # so the CLI saw seven families and MCP saw two. Both call this.
-    findings = live.all_findings(project, digests, schema, _entries)
+    _cfg_pre = Config.load(config_path)
+    findings = live.all_findings(project, digests, schema, _entries,
+                                 _cfg_pre.row_loss_threshold)
     _verified = {"hops_retired_by_counting": n_retired} if verify else {}
     if check_name:
         findings = [f for f in findings if f.check == check_name]
@@ -1457,6 +1465,122 @@ def disagreements(
     console.print("[dim]Nothing here is closed. A disagreement closes when the check or the "
                   "question CHANGED and a person re-read it -- `assay effectiveness` counts "
                   "those.[/]")
+
+
+@app.command()
+def completeness(
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    project_dir: str = typer.Option(".", "--project-dir"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
+    verify: bool = typer.Option(False, "--verify",
+                                help="count through your own dbt: default shares, empty models, "
+                                     "and row loss at a hop"),
+    dialect: str = typer.Option(None, "--dialect"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Do we have all of it? Coverage of what this project itself declares.
+
+    *** assay FOUND COMPLETENESS DEFECTS BY ACCIDENT BEFORE IT LOOKED FOR THEM. ***
+    `test_cannot_fail` flagged a `not_null` on `coalesce(x, 'not looked up')` as unable to fire,
+    which is a semantics finding. Reading it produced a completeness fact: 170,730 of 172,695 rows
+    ARE that default, so the lookup has effectively never run. The numbers existed across three
+    commands and nothing collected them.
+
+    *** WHAT THIS DELIBERATELY IS NOT. ***
+    No funnels, no conversion rates, no "row count fell 12% week over week". Every one of those
+    needs somebody to say what the funnel IS and what a normal week looks like. That is intent,
+    assay refuses to guess at intent, and the refusal is why its findings are worth reading.
+
+    The line: assay can say a column is 99% its default. It cannot say whether that is bad. The
+    first is a fact about code and rows; the second is a ruling, and that loop already exists.
+    """
+    import json
+
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    project, digests, _failures, schema, _s = _load(tdir, dialect)
+    store = Store(store_path) if Path(store_path).exists() else None
+    facts, _ = relate.run_all(project, digests, schema)
+    entries = inv_mod.build(project, digests, schema, store,
+                            probe_mod.read(store) if store else {}, facts=facts)
+
+    counted: dict = {}
+    if verify:
+        counted["hops"] = prac_mod.verify_row_loss(entries, project, probe_mod, project_dir,
+                                                   profiles_dir, dbt_bin, schema=schema)
+        patches = prac_mod.primary_key_patches(project, entries)
+        held = prac_mod.verify_grains(patches, project, probe_mod, project_dir, profiles_dir,
+                                      dbt_bin, schema=schema)
+        counted["empty_models"] = sorted(n for n, c in held.items() if c[0] == 0)
+
+    fs = live.all_findings(project, digests, schema, entries, cfg.row_loss_threshold)
+    if store:
+        store.close()
+    buckets: dict = {}
+    for f in fs:
+        if f.check.startswith("source_") or f.check == "hop_drops_most_rows":
+            buckets.setdefault(f.check, []).append(f)
+
+    cov = project.coverage()
+    doc = {
+        "assay_can_read": {"models": cov["models"], "readable": cov["readable"],
+                           "not_audited": cov["models"] - cov["readable"]},
+        **{k: [{"subject": f.subject_name, "summary": f.summary, "evidence": f.evidence}
+               for f in v] for k, v in sorted(buckets.items())},
+        **({"empty_models": counted.get("empty_models", []),
+            "hops_counted_for_row_loss": counted.get("hops", 0)} if verify else {}),
+    }
+    if as_json:
+        print(json.dumps(doc, indent=2, default=str))
+        raise typer.Exit(0)
+
+    t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    t.add_column("what"); t.add_column("n", justify="right"); t.add_column("meaning")
+    t.add_row("models assay could not read", str(cov["models"] - cov["readable"]),
+              "[dim]not audited, and not a pass[/]")
+    for check, label in (
+            ("source_reaches_nothing", "sources nothing reads"),
+            ("source_only_a_test_reads", "sources only a test reads"),
+            ("source_freshness_undeclared", "sources declaring no freshness"),
+            ("source_freshness_stale", "sources behind their own freshness"),
+            ("hop_drops_most_rows", "hops that lose most of the parent")):
+        n = len(buckets.get(check, []))
+        t.add_row(label, f"[red]{n}[/]" if n else "[dim]0[/]",
+                  f"[dim]{_COMPLETENESS_MEANING[check]}[/]")
+    if verify:
+        t.add_row("models that are EMPTY", str(len(counted.get("empty_models", []))),
+                  "[dim]a uniqueness test on one passes for the wrong reason[/]")
+    console.print(t)
+
+    for check in ("hop_drops_most_rows", "source_freshness_stale", "source_reaches_nothing"):
+        got = buckets.get(check) or []
+        if not got:
+            continue
+        console.print(f"\n[bold]{check}[/]")
+        for f in got[:10]:
+            console.print(f"  {f.summary}")
+
+    if not verify:
+        # *** AN ABSENT MEASUREMENT MUST NEVER READ AS A CLEAN ONE. ***
+        console.print("\n[yellow]row loss, empty models and default shares were NOT counted.[/] "
+                      "[dim]Re-run with --verify to count them through your own dbt. Their "
+                      "absence here is not a pass.[/]")
+    console.print("\n[dim]Every line above is coverage of what this project itself declares. "
+                  "assay can say a column is 99% its default; it cannot say whether that is bad. "
+                  "That second question is a ruling: `assay review -i`.[/]")
+
+
+_COMPLETENESS_MEANING = {
+    "source_reaches_nothing": "declared, loaded every run, and no model or test refers to it",
+    "source_only_a_test_reads": "you are paying to test data nothing consumes",
+    "source_freshness_undeclared": "nothing says how current it should be "
+                                   "(silent when dbt_project_evaluator is installed)",
+    "source_freshness_stale": "the project states how current it should be and it is not",
+    "hop_drops_most_rows": "no filter, no group by, no collapse -- a join that is not matching",
+}
 
 
 @app.command()

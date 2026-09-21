@@ -780,3 +780,90 @@ def test_findings_says_what_it_is_not_showing(project_dir, tmp_path):
     one = next(iter(got["every_check_in_this_project"]))
     only = b.findings(check=one, limit=99)
     assert {f["check"] for f in only["findings"]} == {one}
+
+
+# --- completeness: coverage of what the project itself declares -----------------------------
+
+def test_a_source_nothing_reads_and_one_only_a_test_reads_are_different_findings():
+    """5 and 2 on a real warehouse. One says nothing consumes it; the other says you are paying
+    to TEST data nothing consumes, which is weaker and real."""
+    from types import SimpleNamespace as NS
+
+    from dbt_assay.checks import sources as sc
+
+    src = NS(source_name="raw", name="t", schema="s", columns={})
+    project = NS(sources={"source.p.raw.t": src},
+                 raw={"child_map": {}, "nodes": {}})
+    assert len(sc.source_reaches_nothing(project)) == 1
+    assert sc.source_only_a_test_reads(project) == []
+
+    project.raw["child_map"] = {"source.p.raw.t": ["test.p.x"]}
+    assert sc.source_reaches_nothing(project) == []
+    assert len(sc.source_only_a_test_reads(project)) == 1
+
+    project.raw["child_map"] = {"source.p.raw.t": ["model.p.y"]}
+    assert sc.source_reaches_nothing(project) == []
+    assert sc.source_only_a_test_reads(project) == []
+
+
+def test_freshness_defers_to_the_evaluator_when_it_is_installed():
+    """Printing the same finding twice is worse than not printing it: a reader cannot tell
+    whether two tools agree or whether one is echoing the other."""
+    from types import SimpleNamespace as NS
+
+    from dbt_assay.checks import sources as sc
+
+    src = NS(source_name="raw", name="t", schema="s", columns={})
+    project = NS(sources={"source.p.raw.t": src},
+                 raw={"child_map": {}, "sources": {"source.p.raw.t": {}},
+                      "nodes": {"model.p.a": {"package_name": "mine"}}})
+    assert len(sc.source_freshness_undeclared(project)) == 1
+
+    project.raw["nodes"]["model.e.x"] = {"package_name": sc.EVALUATOR}
+    assert sc.source_freshness_undeclared(project) == [], "it echoed the evaluator"
+
+
+def test_a_hop_that_declares_why_it_drops_rows_is_not_a_candidate():
+    """*** MOST EDGES DROP ROWS ON PURPOSE. ***
+
+    A raw ratio fires on half a DAG on day one. Seven of the first eight findings on a real
+    warehouse were a parent the child had already COLLAPSED in a subquery -- `pre_aggregated`,
+    sitting on the entry, naming that exact parent. The refusals ship with the check, not after.
+    """
+    from dbt_assay.inventory import ModelEntry
+    from dbt_assay.practices import row_loss_candidates
+
+    def e(**kw):
+        x = ModelEntry(uid="model.p.c", name="c", path="c.sql", layer="marts",
+                       materialized="table")
+        x.join_keys = {"p": ["k"]}
+        for k, v in kw.items():
+            setattr(x, k, v)
+        return x
+
+    assert len(row_loss_candidates([e()])) == 1
+    assert row_loss_candidates([e(filters_rows=True)]) == []
+    assert row_loss_candidates([e(aggregates=True)]) == []
+    assert row_loss_candidates([e(unreadable=True)]) == []
+    assert row_loss_candidates([e(pre_aggregated_parents={"p": ["k"]})]) == [], \
+        "the child already collapsed that parent; the drop is declared"
+
+
+def test_an_uncounted_hop_produces_no_finding_and_a_share_never_reads_as_zero():
+    """An absent measurement is not a pass, and `keeps 0%` for 13,694 rows sends somebody looking
+    for an empty table."""
+    from dbt_assay.inventory import ModelEntry
+    from dbt_assay.practices import hop_drops_most_rows, share
+
+    x = ModelEntry(uid="model.p.c", name="c", path="c.sql", layer="marts", materialized="table")
+    x.join_keys = {"p": ["k"]}
+    assert hop_drops_most_rows(None, [x]) == [], "an uncounted hop must produce nothing"
+
+    x.row_loss = {"p": (3_156_986, 13_694)}
+    got = hop_drops_most_rows(None, [x], 0.8)
+    assert len(got) == 1 and "0%" not in got[0].summary.split("of")[0]
+
+    assert share(13_694, 3_156_986) == "0.4%"
+    assert share(0, 100) == "0%"
+    assert share(1, 10_000_000) not in ("0%", "0.0%")
+    assert share(5, 0) == "?"

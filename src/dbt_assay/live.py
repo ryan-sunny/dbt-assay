@@ -73,7 +73,8 @@ def changes_since(baseline: Snapshot, state: LiveState) -> list:
     return diff.compare(baseline.entries, state.entries, state.project, state.digests)
 
 
-def all_findings(project, digests, schema, entries=None) -> list:
+def all_findings(project, digests, schema, entries=None,
+                 threshold: float = 0.8) -> list:
     """Every finding, structural and judged, from ONE place.
 
     *** THE CLI SAW SEVEN FAMILIES AND MCP SAW TWO. ***
@@ -95,7 +96,12 @@ def all_findings(project, digests, schema, entries=None) -> list:
     fs += relate.run_all(project, digests, schema)[1]
     if entries:
         from . import judged as judged_mod
+        from . import practices as prac_mod
         fs += judged_mod.run_all(project, entries, relate.declared_keys(project), digests)
+        # Counted rather than judged, and absent unless `--verify` filled `row_loss`. An
+        # uncounted hop produces nothing here, which is correct: an absent measurement is not a
+        # pass and the caller says the count did not run.
+        fs += prac_mod.hop_drops_most_rows(project, entries, threshold)
     return sorted(fs, key=lambda f: -f.weight)
 
 

@@ -479,10 +479,16 @@ CHECKS = (
 
 
 def run_all(project, digests: dict[str, Digest], schema=None) -> list[Finding]:
+    from .sources import SOURCE_CHECKS, source_freshness_stale
     out: list[Finding] = []
     for fn in CHECKS:
         out.extend(fn(project, digests))
     out.extend(variant_columns(project, digests, schema))
+    # Completeness at the edge of the warehouse. Pure manifest, free, and in the SAME stream as
+    # everything else so it reaches `check`, MCP, the store and the ruling loop by one path.
+    for fn in SOURCE_CHECKS:
+        out.extend(fn(project))
+    out.extend(source_freshness_stale(project))
     for f in out:
         b = project.blast_radius(f.subject)
         f.descendants, f.marts = b["descendants"], b["marts"]

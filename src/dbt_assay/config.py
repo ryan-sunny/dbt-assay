@@ -192,6 +192,10 @@ class Config:
     # *** DEFAULT OFF, BECAUSE A FLOOR SET BEFORE ANYTHING WAS MEASURED IS A GUESS. ***
     # `assay effectiveness` prints the real rates. Pick a number from those, not from this file.
     min_agreement: float = 0.0
+    # How much of a parent a hop may LOSE before it is reported, when `--verify` counted it.
+    # 0.8 catches all three enrichment gaps on the warehouse this was built against (82%, 82%,
+    # 94% lost); 0.9 catches one of three. It is a number somebody acts on, so it is theirs.
+    row_loss_threshold: float = 0.8
     path: Path | None = None
 
     @classmethod
@@ -213,6 +217,12 @@ class Config:
         gating = data.get("gating") or {}
         cfg.min_adjudications = int(gating.get("min_adjudications", 20))
         cfg.min_agreement = float(gating.get("min_agreement", 0.0))
+        comp = data.get("completeness") or {}
+        cfg.row_loss_threshold = float(comp.get("row_loss_threshold", 0.8))
+        if not 0.0 < cfg.row_loss_threshold < 1.0:
+            raise ValueError(f"completeness.row_loss_threshold must be between 0 and 1 "
+                             f"(exclusive), got {cfg.row_loss_threshold}. It is the share of the "
+                             f"parent LOST, so 0.8 means 'kept less than a fifth'.")
         if not 0.0 <= cfg.min_agreement <= 1.0:
             raise ValueError(f"gating.min_agreement must be between 0 and 1, "
                              f"got {cfg.min_agreement}. It is a rate, not a percentage.")
@@ -309,6 +319,12 @@ gating:
   #
   # 0 is off. Run `assay effectiveness` and pick a number from the rates you actually have.
   min_agreement: 0.0
+
+completeness:
+  # The share of a parent a hop may LOSE before it is reported. Counted only under `--verify`,
+  # and only for a child that declares no filter, no group by and no union -- a hop that drops
+  # rows on purpose is not a finding. 0.8 means "kept less than a fifth".
+  row_loss_threshold: 0.8
 
 questions:
   # An EXACT check has no probability to threshold, so it takes a plain action and may gate

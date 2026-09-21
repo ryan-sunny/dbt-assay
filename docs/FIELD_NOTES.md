@@ -1154,3 +1154,69 @@ whole families, and nothing said so. `findings()` now returns `showing: "20 of 1
 per-check breakdown beside the results, and takes `check=` to read one family end to end. A surface
 that returns a subset without saying so is the same defect as a scanner that matches nothing and
 reports a pass.
+
+---
+
+## The completeness tier: coverage of what the project itself declares
+
+From `docs/RESPONSIBILITIES.md`, written after a night of using assay as the engineer on a
+357-model warehouse. Five of the nine responsibilities were covered, one partial, two deliberate
+exclusions, and completeness was called the gap.
+
+**The table overstated it.** Three of the five things listed as in-scope already shipped:
+`assay tests --count-defaults` (0.12.0), the empty-model refusal in `practices` (0.13.1), and
+`assay scan`. The accurate statement is that assay computed completeness facts across three
+commands and nothing collected them.
+
+**Two checks were genuinely missing, and both are free.** Verified on the field warehouse:
+
+```
+source_reaches_nothing      5   declared, loaded every run, no model and no test refers to it
+source_only_a_test_reads    2   you are paying to test data nothing consumes
+```
+
+Reported apart on purpose. Different populations, different facts.
+
+**Freshness is tiered.** `source_freshness_undeclared` is SILENT when `dbt_project_evaluator` is
+in the project, because it ships `fct_sources_without_freshness` and printing the same finding
+twice is worse than not printing it: a reader cannot tell whether two tools agree or whether one
+is echoing the other. `source_freshness_stale` reads `sources.json`, which nothing else here did,
+and the file's absence is reported rather than read as every source being current.
+
+### The row-loss check, and why "free from the DAG plus two counts" was wrong
+
+`relate` tracks the COLUMNS dropped at a boundary and has no notion of rows. So `hop_multiplies_rows`
+had no mirror image, and a hop turning 2,606 documents into 463 was invisible.
+
+Most edges drop rows on purpose, so a raw ratio fires on half a DAG on day one. The refusals
+shipped in the same commit: the child filters, the child aggregates, the child unions. That took
+358 models down to 45 candidate hops.
+
+**And the fourth refusal was already computed and the first version did not ask for it.** Seven of
+the first eight findings were a parent the child had already COLLAPSED in a subquery.
+`az_section_summary` turning 3,483,870 parcel-sections into 114,305 sections is `pre_aggregated`,
+sitting on the entry, naming that exact parent. Same shape as the union fix: the count was allowed
+to be wrong about something the parser settles exactly.
+
+```
+candidates   358 models -> 45 hops -> 35 after the pre-aggregation refusal
+findings     8 -> 2
+```
+
+Both survivors are a join that is not matching: `stg_adwr_sections -> int_az_pending_sections`
+keeps 0.5% on `section_id`, and `dim_owner -> mart_acquisition_targets` keeps 0.4% on `owner_key`.
+
+**And the summary printed `keeps 0% of dim_owner: 13,694 rows`** -- the same rounding bug as
+`1.56x` printing as `2x`, pointed the other way. That one overstated; this understates, and `0%`
+sends somebody looking for an empty table that has thirteen thousand rows in it. A non-zero share
+never prints as zero now.
+
+### What this tier refuses to become
+
+No funnels, no conversion rates, no anomaly on a trend. Every one needs somebody to say what the
+funnel IS and what a normal week looks like. That is intent, and the refusal to guess at intent is
+why the findings are worth reading. The line, from the review that prompted this:
+
+> assay can say a column is 99% its default. It cannot say whether that is bad.
+
+The first is a fact about code and rows. The second is a ruling, and that loop already exists.
