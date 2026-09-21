@@ -2269,3 +2269,21 @@ Adding one tool failed three tests immediately: every CLI command must be named 
 MCP tool must be in the skill, and the skill must work WITHOUT the server, which means every tool
 needs a command that answers the same question. None of those is something anyone would have
 remembered.
+
+### The crumb was a widget in a bar of widgets
+
+Reported on two tabs in one sitting: the line saying what you are looking at --
+`stg_lakewood_residential_permits · 12 claim(s)` -- sat in the filter bar next to the row count
+and the view switch. So the one piece of text that names the table read as another control.
+
+The rule is small and it applies everywhere: **the bar holds only things you operate.** What you
+are looking at is a heading, on its own line, with the way back immediately to its left where a
+person looks for it.
+
+```
+[← all models]  stg_lakewood_residential_permits · 12 claim(s)
+[filter...]  12 row(s)  [all 5,794 claims, by model ▾]
+```
+
+The view switch stays in the bar in both views, because it is a control and because a switch you
+cannot reach from where it put you was the previous round's defect.

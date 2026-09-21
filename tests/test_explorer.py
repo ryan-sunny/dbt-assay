@@ -551,8 +551,8 @@ def test_no_view_switch_floats_above_the_table_it_switches():
     # dropdown to remain so it's flipping between the two, rather than different UI."
     db = v[v.index("function drill(opts)"):]
     db = db[:db.index("\nfunction conf(")]
-    assert db.count("controls: opts.controls") == 1 and "extra" in db, \
-        "the switch is not carried into the rows view"
+    assert db.count("controls: opts.controls") == 2, \
+        "the switch is not carried into BOTH views"
     assert "if (drilled)" in db, "the way back shows in a view the switch can already undo"
     # the same shape on findings
     fb = v[v.index("function findingsTab"):]
@@ -791,3 +791,26 @@ def test_a_card_on_the_body_does_not_outlive_what_it_points_at():
         assert path in v, f"no dismiss on {path}"
     # and a click inside the card must NOT dismiss it, or its own buttons could never be used
     assert "closest('.pop')" in v, "a click on the card's own buttons would dismiss it first"
+
+
+def test_what_you_are_looking_at_is_a_heading_not_a_control():
+    """*** THE CRUMB WAS SQUEEZED INTO THE FILTER BAR. ***
+
+    Beside the row count and the view switch, so the one piece of text that says what this table
+    IS read as another widget. Reported from the field twice, on two tabs: "this can be treated
+    more as a title or something on a new line... and the back button in a better spot, to the
+    left of the new title row".
+
+    So the bar holds only things you OPERATE, and the title row holds what you are looking at
+    with the way back immediately to its left.
+    """
+    v = explorer._VIEWS
+    db = v[v.index("function drill(opts)"):]
+    db = db[:db.index("\nfunction conf(")]
+    assert "class: 'titlerow'" in db, "there is no title row"
+    assert "[back, el('h3', {class: 'crumb'" in db, "the way back is not left of the title"
+    # and neither of them may go back into the bar
+    rows = db[db.index("function showRows("):]
+    assert "extra.push(back)" not in rows, "the way back is in the filter bar again"
+    assert "controls: opts.controls || []" in rows, "the bar no longer holds the view switch"
+    assert "h3.crumb{" in explorer.CSS, "the title has no style of its own"

@@ -97,6 +97,10 @@ button.back{appearance:none;border:1px solid var(--line);background:var(--card);
 font-size:12.5px;color:var(--blue);padding:4px 10px;border-radius:6px;cursor:pointer;
 margin:0 8px 10px 0}
 button.back:hover{background:#f2f7f9}
+.titlerow{display:flex;align-items:center;gap:11px;margin:12px 0 10px}
+.titlerow .back{margin:0}
+h3.crumb{margin:0;font-size:14px;font-weight:600;color:var(--ink);letter-spacing:-.01em;
+text-transform:none}
 .crumb{color:var(--dim);font-size:13px}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}
 .chips.flat{margin:6px 0 0}
@@ -410,15 +414,20 @@ function drill(opts) {
       controls: opts.controls || [], text: opts.groupText}));
   }
   function showRows(g, drilled) {
-    head.replaceChildren(el('p', {class: 'note', text: opts.blurb}));
-    const extra = (opts.controls || []).slice();
+    /* *** WHAT YOU ARE LOOKING AT IS A HEADING, NOT A CONTROL. ***
+       The crumb was squeezed into the filter bar beside the row count and the view switch, so
+       the one piece of text that says what this table IS read as another widget. It gets its own
+       line as a small title, with the way back immediately to its left where a person looks for
+       it. The filter bar below it goes back to holding only things you operate. */
+    const bits = [el('p', {class: 'note', text: opts.blurb})];
     if (drilled) {
-      extra.push(back);
-      extra.push(el('span', {class: 'crumb', text: opts.label(g)}));
+      bits.push(el('div', {class: 'titlerow'},
+                   [back, el('h3', {class: 'crumb', text: opts.label(g)})]));
     }
+    head.replaceChildren(...bits);
     body.replaceChildren(grid(opts.rowsOf(g), opts.rowCols, {
       placeholder: 'filter...', cap: 2000, sort: opts.rowSort, dir: opts.rowDir || 1,
-      controls: extra, text: opts.rowText, emptyText: 'nothing here'}));
+      controls: opts.controls || [], text: opts.rowText, emptyText: 'nothing here'}));
   }
   host.append(head, body);
   showGroups();
