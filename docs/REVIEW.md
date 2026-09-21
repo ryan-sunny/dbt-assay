@@ -530,3 +530,46 @@ before anyone reads it.
 `assay page` on a locked store prints the full DuckDB error naming the conflicting PID, then
 advises *"Pass --store with a writable path, or run from a writable directory."* The store is
 writable; it is locked. Same shape as the `rule()` message fixed in 0.13.0, one surface over.
+
+---
+
+# Round eight, 0.22.0: repair verified, and a replacement is a fork
+
+## Verified
+
+```
+review --repair    water.prio -> seniority_ordered_by_the_wrong_date
+config             seniority: human 8, "12 more"      was human 0, "20 more"
+                   column_is_part_of_the_key: labels 82, still "20 more"
+```
+
+Both behaviours right: the eight verdicts count toward a gate floor, and the 82 labels correctly do
+not. `meta.read_by` on `well_documents` suppresses its completeness finding and the wording is now
+*"nothing in this dbt project reads"*, which is the true statement.
+
+## A replacement inherits nothing after the day it is made
+
+`assay_questions/water_edges.yml` replaces `edge_preserves_the_grain` and still carries
+`case_number`, `permit` and `contractor` in its examples — the exact strings 0.22.0 removed from the
+shipped bank. On a water warehouse those examples are apt and I am keeping them, so this is not a
+bug here. The general shape is the problem:
+
+**I copied the four shipped options word-for-word on purpose**, so that the hand verification
+recorded for that family would still largely apply. That same copying is what stops every later
+improvement. A fork made to preserve one property silently forfeits another, and nothing says so at
+any point — `banks` reports `yours, replacing` and that is all.
+
+> **Suggestion, and assay already holds both halves:** when a replacement's copied options differ
+> from the shipped family it replaces, say so. Not an error — a fork is legitimate and usually
+> deliberate — but "this replaces `column_role`, and 3 of its 5 options are byte-identical to a
+> version two releases old" is the kind of thing a person wants told once. It is the same argument
+> as the stale-skill check: a copy nobody knows is stale reads as current.
+
+## The bank audit was the right question to ask
+
+Worth recording what prompted it: I noticed the shipped `edge_preserves_the_grain` example matched
+this warehouse's exact bug class (`case_number` unique only within a division) and could not tell
+whether that was a coincidence, a generality problem, or evidence the check was built from a real
+case. It was the middle one, and only a second project could have surfaced it. Every other finding
+in this file came from running assay on one warehouse; this is the only one that came from asking
+what it would look like on somebody else's.
