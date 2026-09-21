@@ -2698,3 +2698,18 @@ artifact missing `unconfigured.json` handed back a dict where a list belongs -- 
 dict is `undefined` rather than an error, so the page would have shown nothing and looked fine.
 Second appearance of `[] -> {}` in this file. Each section declares its own empty type now, and a
 guard asserts the reader and the writer agree about which sections exist at all.
+
+### And the lead data engineer got a face
+
+Foghorn Leghorn, 128x80, top left of the header beside the project name.
+
+Inlined as base64 rather than shipped as a file, for the same reason everything else here is
+inlined: **the page is one artifact you open from disk**, and a logo that arrives as a second file
+is a logo that is missing the first time somebody moves the page, mails it, or opens it from a
+different directory. 9.6 KB, which is 0.1% of the file it rides in, and it costs no request
+because there is no request to make. A constant in the source rather than a packaged asset, so a
+wheel cannot ship without it.
+
+Rendered at half its pixel size so it stays sharp on a retina display, and `alt=""` on purpose: he
+is decoration, and a screen reader announcing "Foghorn Leghorn" before the project name would be
+noise rather than information.

@@ -882,3 +882,34 @@ def test_every_mark_carries_its_own_numbers():
     assert "title:" in sb, "a stacked segment has no hover"
     rb = v[v.index("function rankedBars"):v.index("function tile")]
     assert "title: r.tip" in rb, "a ranked row has no hover"
+
+
+def test_the_logo_rides_inside_the_file_like_everything_else():
+    """*** A LOGO THAT ARRIVES AS A SECOND FILE IS A LOGO THAT IS MISSING. ***
+
+    The page is one artifact you open from disk. Anything referenced rather than embedded breaks
+    the first time somebody moves it, mails it, or opens it from a different directory -- which is
+    the same argument that made the data embedded and the same reason there are no CDN links here.
+
+    A constant rather than a packaged asset, so a wheel cannot ship without it.
+    """
+    import base64
+
+    data = {"meta": {"project": "p", "models": 0, "sources": 0, "version": "0",
+                     "generated_at": "x", "coverage": {}},
+            "models": [], "edges": [], "claims": [], "findings": [], "decisions": [],
+            "questions": [], "adjudications": [], "config": {}, "runs": [], "unreadable": [],
+            "unconfigured": []}
+    doc = explorer.explorer_html(data, "<html></html>")
+
+    raw = base64.b64decode(explorer.FOGHORN)
+    assert raw[:8] == b"\x89PNG\r\n\x1a\n", "the logo is not a PNG"
+    assert len(raw) < 40_000, "the logo has grown past a rounding error on the page it rides in"
+    assert 'src="data:image/png;base64,' in doc
+    assert explorer.FOGHORN in doc, "the logo is declared and not used"
+    # nothing in the shell fetches anything
+    shell = doc.split('<script id="assay-data"')[0]
+    for scheme in ("http://", "https://", "//cdn"):
+        assert scheme not in shell, f"the page reaches out to {scheme}"
+    # decoration, so it is not announced before the project name
+    assert 'class="fog" alt=""' in doc, "the logo is not marked as decorative"
