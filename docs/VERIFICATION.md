@@ -144,19 +144,39 @@ surface it.
 | `options_overlap` | verified against the pair that prompted it, and it independently flagged `predicate_intent` — the family already proven weak by hand. Not yet read against a question it should PASS but does not |
 | `sentence_is_a_claim` | extraction was read by hand on one model (16 sentences, every high-confidence answer correct, every low-confidence one a genuinely ambiguous header) — but only one model |
 
-### `hop_drops_most_rows` currently finds nothing, and that is worth stating plainly
+### `hop_drops_most_rows` finds nothing, and the NULL RESULT is the evidence
 
-It was built with three structural refusals, then a fourth (the parent was pre-aggregated) took it
-from 8 findings to 2, then a fifth (a sibling edge explains the narrowing) took it to **0**. Both
-field hits were genuine false positives and both refusals are right.
+Three refusals, then a fourth (the parent was pre-aggregated) took it from 8 findings to 2, then
+the candidate set was narrowed to what can actually be judged: **an INNER join on the driving
+edge**. A LEFT join cannot lose the rows it drives on, and a lookup's size says nothing about the
+child's. That took 35 candidate hops to **9**.
 
-But a check that has never said *no* has not been verified, which is this page's own rule. It is
-verified against a **planted control** only: a child joined to one large parent with no sibling
-its own size, which fires. Nobody has yet seen it catch a real join that was failing to match.
+What those nine measured is the verification, and it is stronger than a finding would have been:
 
-Two readings and no way to choose between them yet: the refusals are correct and this warehouse
-genuinely has no silently-failing joins, or `completeness.row_loss_threshold` at 0.8 is too high.
-Run it on a second project before trusting either.
+```
+100%   int_acquisition_targets   -> mart_acquisition_targets     13,694 of    13,694
+100%   int_eco_basin             -> water_eco_basin                 172 of       172
+100%   int_water_sections        -> water_section_hazards       108,917 of   108,917
+100%   prospects                 -> prospects_enriched              993 of       993
+100%   stg_adwr_sections         -> az_section_summary          114,305 of   114,305
+100%   stg_cdss_groundwater_wells-> water_monitoring_wells       23,000 of    23,000
+100%   stg_cdss_surfacewater_st. -> water_stream_gauges            2,387 of     2,387
+100%   stg_cdss_well_permits     -> water_wells                  591,548 of   591,548
+3048%  stg_adwr_sections         -> int_az_parcel_sections    3,483,870 of   114,305
+```
+
+Eight of nine keep **exactly** 100%: every driving row survived its join. That is what a correct
+warehouse looks like on this dimension, and scattered ratios are what a wrong candidate set would
+have produced. The ninth is a fan-out, which is `hop_multiplies_rows`'s job.
+
+Still not verified in the field, because it has not caught a real defect. It is verified against a
+**planted control**: a driving INNER edge that does lose its rows, which fires. And this warehouse
+is a poor place to find the real thing — the models that would trip it legitimately narrow in
+sibling CTEs, so their driving edge is already the narrow one.
+
+*The first version of this refusal was a sibling-size heuristic: refuse when the child is the size
+of SOME parent. It gave the right answer on both field cases and would have masked the real defect
+for exactly the reason above. The parser already knew the join kind and the FROM clause.*
 
 ### `options_overlap` has a known false negative
 

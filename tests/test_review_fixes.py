@@ -1034,38 +1034,49 @@ def test_a_source_can_declare_a_reader_that_lives_outside_dbt():
     assert sc.source_reaches_nothing(project) == []
 
 
-def test_row_loss_is_refused_when_a_sibling_edge_explains_it():
-    """*** THE NARROWING CAN BE ON A DIFFERENT EDGE, AND THE COUNTS ALREADY SAY SO. ***
+def test_row_loss_is_judged_only_on_the_driving_edge_of_an_inner_join():
+    """*** A LEFT JOIN CANNOT LOSE ROWS, AND A LOOKUP'S SIZE SAYS NOTHING ABOUT THE CHILD'S. ***
 
-    `multifamily_leads` keeps 0.4% of `dim_owner` because it joins a roster of apartment
-    buildings only. The hop is not failing to match; the child is the SIZE of its other parent.
-    Same family as the union blind spot.
+    `mart_acquisition_targets` drives on `int_acquisition_targets` (13,694 rows) and LEFT JOINs
+    `dim_owner` (3.1M). The child was never going to be 3.1M rows and nothing is wrong.
 
-    *** AND THIS IS THE NEGATIVE CONTROL THE FIELD CANNOT SUPPLY. ***
-    After the refusal this check finds NOTHING on the only warehouse it has been run against, so
-    a planted case is the only thing standing between it and a check that has never said no.
+    The first fix was a sibling-size heuristic: refuse when the child is the size of SOME parent.
+    It gave the right answer on both field cases and it masked the real defect, because the models
+    that would trip this legitimately narrow in a sibling CTE and look exactly the same. The
+    parser already knew the join kind and the FROM clause, which settle it without a coincidence
+    of sizes.
+
+    *** THIS IS ALSO THE NEGATIVE CONTROL THE FIELD CANNOT SUPPLY. ***
+    Both field hits are now refused, so a planted case is the only thing standing between this
+    check and one that has never said no.
     """
     from dbt_assay.inventory import ModelEntry
-    from dbt_assay.practices import hop_drops_most_rows
+    from dbt_assay.practices import hop_drops_most_rows, row_loss_candidates
 
     def child(**kw):
         x = ModelEntry(uid="model.p.c", name="c", path="c.sql", layer="marts",
                        materialized="table")
-        x.row_loss = {"big": (3_156_986, 13_694)}
+        x.join_keys = {"driver": ["k"], "lookup": ["k"]}
+        x.row_loss = {"driver": (3_156_986, 13_694), "lookup": (3_156_986, 13_694)}
+        x.join_kind = {"driver": "INNER", "lookup": "LEFT"}
+        x.driving_parents = {"driver"}
         for k, v in kw.items():
             setattr(x, k, v)
         return x
 
-    # A sibling the child is the size of: the roster explains it.
-    e = child(parent_rows={"big": 3_156_986, "roster": 13_694})
-    assert hop_drops_most_rows(None, [e], 0.8) == []
+    assert [p for _e, p in row_loss_candidates([child()])] == ["driver"], \
+        "a LEFT join or a non-driving edge was still a candidate"
 
-    # No sibling explains it -- every other parent is far larger than the child. THE CONTROL.
-    e2 = child(parent_rows={"big": 3_156_986, "other": 2_000_000})
-    got = hop_drops_most_rows(None, [e2], 0.8)
-    assert len(got) == 1, "the check no longer fires on anything at all"
+    # THE CONTROL: the driving edge really does lose the rows, so it fires.
+    got = hop_drops_most_rows(None, [child()], 0.8)
+    names = {f.evidence["parent"] for f in got}
+    assert "driver" in names, "the check no longer fires on anything at all"
     assert "13,694 rows from 3,156,986" in got[0].summary
 
-    # A single-parent child has no sibling to be explained by, so it still fires.
-    e3 = child(parent_rows={"big": 3_156_986})
-    assert len(hop_drops_most_rows(None, [e3], 0.8)) == 1
+    # A child whose driving edge keeps everything is silent, however small a lookup made it look.
+    ok = child(row_loss={"driver": (13_694, 13_694)})
+    assert hop_drops_most_rows(None, [ok], 0.8) == []
+
+    # No FROM information at all: fall back to judging every INNER edge rather than nothing.
+    blind = child(driving_parents=set())
+    assert [p for _e, p in row_loss_candidates([blind])] == ["driver"]

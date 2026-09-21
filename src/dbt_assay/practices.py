@@ -441,6 +441,25 @@ def row_loss_candidates(entries) -> list[tuple]:
         for pname in sorted(e.join_keys or {}):
             if pname in (e.pre_aggregated_parents or {}):
                 continue
+            # *** A LEFT, RIGHT, FULL OR CROSS JOIN CANNOT LOSE THE ROWS IT DRIVES ON. ***
+            # Only an INNER join drops. Half the candidates on a real warehouse were LEFT joins,
+            # where row loss against the target is meaningless BY CONSTRUCTION.
+            kind = (e.join_kind or {}).get(pname, "")
+            if kind and kind != "INNER":
+                continue
+            # *** AND ONLY THE DRIVING EDGE CAN BE JUDGED AT ALL. ***
+            # The parser's own comment on `from_relations` says it: "a model's driving table is
+            # NOT something it joins to, and a check that conflates the two reports a fan-out
+            # against the table the model is simply reading." The same is true pointed the other
+            # way. `mart_acquisition_targets` drives on `int_acquisition_targets` (13,694 rows)
+            # and LEFT JOINs `dim_owner` (3.1M); the child was never going to be 3.1M rows and
+            # nothing is wrong.
+            #
+            # This replaces a sibling-size heuristic that refused whenever the child happened to
+            # be the size of SOME parent -- which masked the real defect, because the models that
+            # would trip this legitimately narrow in a sibling CTE and look exactly like that.
+            if e.driving_parents and pname not in e.driving_parents:
+                continue
             out.append((e, pname))
     return out
 
@@ -512,15 +531,7 @@ def hop_drops_most_rows(project, entries, threshold: float = 0.8) -> list:
         for pname, (pn, cn) in sorted((e.row_loss or {}).items()):
             if pn <= 0 or cn >= pn * (1 - threshold):
                 continue
-            # *** THE NARROWING CAN BE ON A DIFFERENT EDGE, AND THE COUNTS ALREADY SAY SO. ***
-            # Reported from the field: `multifamily_leads` keeps 0.4% of `dim_owner` because it
-            # joins a roster of apartment buildings only. The hop is not failing to match -- the
-            # child is the SIZE of its other parent. Same family as the union blind spot, and
-            # settled the same way: by code, from numbers already in hand.
-            explained = next((sib for sib, sn in sorted((e.parent_rows or {}).items())
-                              if sib != pname and sn and cn >= sn * (1 - threshold)), None)
-            if explained:
-                continue
+
             kept = cn / pn
             out.append(Finding(
                 check="hop_drops_most_rows", subject=e.uid, subject_name=e.name, file=e.path,

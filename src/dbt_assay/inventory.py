@@ -120,6 +120,11 @@ class ModelEntry:
     # judged against its SIBLINGS: a child joined to a small roster is that roster's size, and the
     # narrowing happened on the other edge.
     parent_rows: dict = field(default_factory=dict)
+    # *** A LEFT JOIN CANNOT LOSE ROWS, AND A LOOKUP'S SIZE SAYS NOTHING ABOUT THE CHILD'S. ***
+    # {parent_name: "INNER" | "LEFT" | ...} and the parents in the FROM clause. Both are free from
+    # the AST and together they replace a heuristic that was masking the real defect.
+    join_kind: dict = field(default_factory=dict)
+    driving_parents: set = field(default_factory=set)
     # {parent: [keys]} for parents collapsed inside a subquery before being joined.
     pre_aggregated_parents: dict = field(default_factory=dict)
     description: str = ""
@@ -187,6 +192,25 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
             entry.filters_rows = bool([x for x in (_d.predicates_atomic or [])
                                        if x.strip() not in ("1 = 1", "TRUE", "true")])
             entry.aggregates = bool(_d.group_by) or bool(getattr(_d, "union_members", None))
+        if _d is not None:
+            rel_to_name = {}
+            for puid, pm in project.models.items():
+                r = (schema.relation.get(puid) or "").replace('"', "").lower()
+                if r:
+                    rel_to_name[r] = pm.name
+            for suid, sm in project.sources.items():
+                r = (schema.relation.get(suid) or "").replace('"', "").lower()
+                if r:
+                    rel_to_name[r] = sm.name
+            for r in (_d.from_relations or []):
+                nm = rel_to_name.get(str(r).replace('"', "").lower())
+                if nm:
+                    entry.driving_parents.add(nm)
+            for j in (_d.joins or []):
+                tr = (getattr(j, "target_relation", None) or "").replace('"', "").lower()
+                nm = rel_to_name.get(tr)
+                if nm:
+                    entry.join_kind[nm] = (j.kind or "").upper()
         for pname, cols in (by_child.get(uid) or {}).items():
             entry.join_keys[pname] = cols
             # *** A JOIN ONTO A UNIQUE KEY CANNOT FAN OUT, AND dbt ALREADY SAYS WHICH KEYS ARE. ***

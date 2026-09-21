@@ -1333,12 +1333,36 @@ int_az_pending_sections       620 rows   stg_adwr_sections 114,305   stg_adwr_aa
 
 Both explained, both refused.
 
-### And that leaves the check finding nothing, which is worth saying plainly
+### The sibling heuristic was wrong, and the report that landed it said why
 
-Three refusals, then a fourth took it 8 to 2, then this one took it to **0**. Both field hits were
-genuine false positives and both refusals are right. But a check that has never said *no* has not
-been verified, and it is now verified against a **planted control** only.
+*"This warehouse is a poor control for it: the models that would trip it legitimately -- the leads
+marts -- all narrow in sibling CTEs, which is precisely what you just taught it to refuse."*
 
-Two readings, no way to choose yet: either the refusals are correct and this warehouse has no
-silently-failing joins, or `row_loss_threshold` at 0.8 is too high. It needs a second project.
-Recorded in `VERIFICATION.md` rather than counted as a clean result.
+That is the refusal masking the defect it was built to find. The parser already held the two facts
+that settle it without any coincidence of sizes:
+
+- **A LEFT, RIGHT, FULL or CROSS join cannot lose the rows it drives on.** Only INNER drops. Half
+  the candidates were LEFT joins, where row loss against the target is meaningless by construction.
+- **Only the driving edge can be judged.** `from_relations` carries it, and the comment on that
+  field already said the same thing pointed the other way: *"a model's driving table is NOT
+  something it joins to, and a check that conflates the two reports a fan-out against the table
+  the model is simply reading."*
+
+`mart_acquisition_targets` drives on `int_acquisition_targets` (13,694 rows) and LEFT JOINs
+`dim_owner` (3.1M). The child was never going to be 3.1M rows.
+
+35 candidates became **9**, and what those nine measured is a better result than a finding:
+
+```
+100%  x8   every driving row survived its join
+3048% x1   a fan-out, which is hop_multiplies_rows's job
+```
+
+Eight of nine at *exactly* 100% is what a correct warehouse looks like on this dimension.
+Scattered ratios are what a wrong candidate set would have produced.
+
+### And it still has not caught a real defect, which is worth saying plainly
+
+It is verified against a **planted control** only: a driving INNER edge that really does lose its
+rows, which fires. Nobody has yet watched it catch a real join that was failing to match, and this
+warehouse cannot supply one. Recorded in `VERIFICATION.md` rather than counted as a clean result.
