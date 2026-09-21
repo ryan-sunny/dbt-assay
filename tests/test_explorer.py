@@ -512,3 +512,27 @@ def test_box_text_can_neither_overflow_its_box_nor_be_cut_without_saying_so():
     # and the drawing fills its panel rather than huddling in a corner
     assert "MINW = 860" in v
     assert "Math.max(cols * (BW + GAPX) + GAPX, MINW)" in v
+
+
+def test_no_view_switch_floats_above_the_table_it_switches():
+    """*** A BUTTON ABOVE THE TABLE IS A ROW OF FURNITURE, NOT A CONTROL. ***
+
+    Reported from the field twice, one tab apart: eleven check chips on Findings, then
+    `the 113 contradicted, across every model ->` on Claims. Both spent a row of the page on
+    something the filter bar already had room for. Both are a select in that bar now.
+
+    And the control owns no state the view disagrees with: coming back to the groups resets it,
+    because a select reading "contradicted" over a table of every model is one fact with two
+    spellings, which is the defect this whole tool is about.
+    """
+    v = explorer._VIEWS
+    cb = v[v.index("function claimsTab"):]
+    cb = cb[:cb.index("\n/* ---")]
+    assert "el('select')" in cb, "the claims view switch is not a select"
+    assert "groupControls: [view]" in cb, "it is not in the filter bar"
+    assert "onGroups: () =>" in cb, "the control keeps a state the view can contradict"
+    assert "class: 'back'" not in cb, "a floating button is back on Claims"
+    # the same shape on findings
+    fb = v[v.index("function findingsTab"):]
+    fb = fb[:fb.index("function answersTab")]
+    assert "controls: [pickCheck]" in fb and "class: 'chips'" not in fb

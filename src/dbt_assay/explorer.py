@@ -337,11 +337,14 @@ function drill(opts) {
   back.onclick = () => showGroups();
 
   function showGroups() {
+    /* A control that says "contradicted" over a table of every model is two spellings of one
+       fact, which is the defect this whole tool is about. The view owns the control's state. */
+    if (opts.onGroups) opts.onGroups();
     head.replaceChildren(el('p', {class: 'note', text: opts.blurb}));
     body.replaceChildren(grid(opts.groups, opts.groupCols, {
       placeholder: opts.groupFilter || 'filter...', pick: g => showRows(g),
       sort: opts.groupSort, dir: opts.groupDir || -1, cap: 800,
-      text: opts.groupText}));
+      controls: opts.groupControls || [], text: opts.groupText}));
   }
   function showRows(g) {
     head.replaceChildren(back, el('span', {class: 'crumb', text: opts.label(g)}));
@@ -712,7 +715,21 @@ function claimsTab(host) {
        : el('span', {class: 'pill bad', text: 'contradicts @' + c.contradicted.toFixed(2)})},
   ];
   const contradicted = DATA.claims.filter(c => c.contradicted != null);
+
+  /* *** A BUTTON FLOATING ABOVE THE TABLE IS A ROW OF FURNITURE, NOT A CONTROL. ***
+     The same note from the field as the eleven check chips, one tab over: it spends a row of the
+     page on something the filter bar already has room for. The select says which of the two
+     things you are looking at, and adds nothing above the table. */
+  const view = el('select');
+  const opt = (v, t) => { const o = document.createElement('option'); o.value = v;
+    o.textContent = t; return o; };
+  view.append(opt('by_model', 'all ' + num(DATA.claims.length) + ' claims, by model'));
+  view.append(opt('contradicted', 'the ' + contradicted.length + ' contradicted, every model'));
+  view.onchange = () => { if (view.value === 'contradicted')
+    d.showRows({rows: contradicted, model: 'every model'}); else d.showGroups(); };
+
   const d = drill({
+    groupControls: [view], onGroups: () => { view.value = 'by_model'; },
     noun: 'models', groups: groups, groupSort: 'bad',
     blurb: 'Every sentence this project says about itself, extracted from descriptions and SQL '
       + 'comments, grouped by the model it is about. A claim with no verdict was never asked, '
@@ -729,10 +746,7 @@ function claimsTab(host) {
     rowsOf: g => g.rows, rowCols: rowCols, rowSort: 'v', rowDir: -1,
     rowText: c => [c.text, c.source_ref, c.kind].join(' '),
   });
-  const all = el('button', {class: 'back',
-    text: 'the ' + contradicted.length + ' contradicted, across every model →'});
-  all.onclick = () => d.showRows({rows: contradicted, model: 'every model'});
-  host.replaceChildren(all, d);
+  host.replaceChildren(d);
 }
 
 /* ----------------------------------------------------------------------------- Findings */

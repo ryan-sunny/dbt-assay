@@ -1982,6 +1982,17 @@ Two rows of furniture above the table they filtered, spending more space than th
 It is a `select` in the filter bar that already exists, so it adds no row at all: *"every check ·
 244"*, then one line per check. Same function, one control, no new row.
 
+### And the same thing again on Claims, one tab over
+
+`the 113 contradicted, across every model ->` was a button floating above the table it switched,
+which is the chip wall with a different shape: a row of the page spent on something the filter bar
+already had room for. It is a select in that bar now, with two options and no row of its own.
+
+The half worth writing down is what it does when you come back. The control owns no state the view
+can disagree with: returning to the groups resets it, because a select reading "contradicted" over
+a table of every model is one fact with two spellings, which is the defect this whole tool is
+about, in its own furniture.
+
 ### The overview was the last tab
 
 A person opening this file has not picked a model yet, and landing on 358 rows asks them to
