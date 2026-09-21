@@ -231,6 +231,41 @@ def mentioned_identifiers(text: str) -> set[str]:
     return {(a or b).lower() for a, b in _IDENT.findall(text or "")}
 
 
+_NUMBER = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?(?![\w.])")
+
+
+def unanswerable_from_sql(claim_text: str, ev: dict) -> str:
+    """Why this claim cannot be judged from the code, or "" when it can.
+
+    *** ABSENCE OF EVIDENCE WAS BEING RETURNED AS CONTRADICTION, AGAIN. ***
+    Measured over 1,780 claims on a 358-model warehouse: 389 came back `contradicts` (22%), and
+    both read by hand were wrong at p=0.95. `stg_cdss_dams` claims something about the Python
+    findings layer -- `ponds_covered` appears nowhere in its SQL -- and the model cannot speak to
+    it at all. `int_water_diversion_history` claims "the FULL diversion record, 1886 to 2026", the
+    data is exactly 1886-2026, and the SQL derives those years without ever stating them.
+
+    Both are the shape claim_alignment v4 already addressed with "absence is not disagreement",
+    which holds for one claim at a time and stops holding at scale. So the two cases that cannot
+    be answered are now RECOGNISED BEFORE THE CALL rather than argued into the criteria, which
+    also means they cost nothing.
+    """
+    named = ev.get("columns_this_claim_names") or {}
+    missing = ev.get("identifiers_in_the_claim_found_nowhere_in_this_model_or_its_parents") or []
+    # NAMES SOMETHING, AND NONE OF IT IS HERE. A claim naming no identifier at all is ordinary
+    # prose about the model and stays answerable; this is only the case where the claim points at
+    # specific things and every one of them is absent.
+    if missing and not named:
+        return (f"every identifier this claim names is absent from the model and its parents "
+                f"({', '.join(missing[:4])}), so the code can neither support nor contradict it")
+    # A LITERAL VALUE IS A STATEMENT ABOUT ROWS. SQL structure cannot settle "1886 to 2026" or
+    # "more than 90% of rows"; counting can, which is what `completeness --verify` is for. Sending
+    # it to a text judge asks a question the evidence cannot answer in either direction.
+    if _NUMBER.search(claim_text or "") and not named:
+        return ("this claim asserts a literal value, which is a statement about ROWS rather than "
+                "about the SQL. Count it -- `assay completeness --verify` -- rather than reading it")
+    return ""
+
+
 def evidence_for(uid: str, project, digests, schema, observed: dict | None = None,
                  claim_text: str = "") -> dict:
     """What bears on THIS claim, and nothing else.

@@ -1071,12 +1071,23 @@ def verify(
         raise typer.Exit(1)
 
     console.print(f"[bold]{len(rows)}[/] claim(s) to check")
-    out, counts = [], Counter()
+    out, counts, unanswerable = [], Counter(), []
     with console.status(f"checking {len(rows)} claim(s)..."):
         for r in rows:
             ev = claims_mod.evidence_for(r["subject"], project, digests, schema, observed,
                                          claim_text=r["text"])
             if not ev:
+                continue
+            # *** REFUSED BEFORE THE CALL, NOT ARGUED INTO THE CRITERIA. ***
+            # A claim naming only identifiers this model has never heard of, or asserting a
+            # literal value that is a fact about ROWS, cannot be answered from SQL in either
+            # direction -- and a judge asked anyway returns a confident non-answer. Measured at
+            # 389 contradictions in 1,780 claims (22%) before this, two of two read by hand
+            # being wrong at p=0.95. These cost nothing now.
+            why_not = claims_mod.unanswerable_from_sql(r["text"], ev)
+            if why_not:
+                counts["not_answerable_from_sql"] += 1
+                unanswerable.append((r["subject_name"], r["text"], why_not))
                 continue
             c = claims_mod.Claim(r["claim_id"], r["subject"], r["subject_name"], r["text"],
                                  r["source_kind"], r["source_ref"], citation=r["citation"] or "")
@@ -1097,6 +1108,14 @@ def verify(
                 out.append((c, a["confidence"], (a["probabilities"] or {}).get("contradicts", 0)))
     store.close()
 
+    if unanswerable:
+        console.print(f"\n[bold]{len(unanswerable)}[/] claim(s) NOT ANSWERABLE from the SQL, "
+                      f"and not asked. [dim]Absent evidence is not disagreement.[/]")
+        for _n, _t, _w in unanswerable[:6]:
+            console.print(f"  [dim]{_n}[/]  {_t[:86]}")
+            console.print(f"    [dim]{_w}[/]")
+        if len(unanswerable) > 6:
+            console.print(f"  [dim]... {len(unanswerable) - 6} more[/]")
     console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
     t = Table(show_header=False, box=None, padding=(0, 2))
