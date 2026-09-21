@@ -474,3 +474,59 @@ relation in the join is a CTE carrying a WHERE or a narrow source, the drop is e
 - `practices` prints `holds: 0 rows, 0 distinct` where `patch` refuses the same table as `EMPTY`.
 - Lockfile detection looks beside `dbt_project.yml`; the lockfile is at the repo root one level up.
 - `--dbt-bin` versus `--dbt` across commands, and it flipped between 0.9.4 and 0.13.0.
+
+---
+
+# Round seven, 0.20.0: `verify` at scale, and absence is reading as disagreement again
+
+1,780 claims checked, 1,719 calls, **$0.1735**. Extraction was 2,988 checkable claims across 349
+models for $0.2049. Both cheap enough that the whole loop is a sub-dollar operation on a 358-model
+warehouse, which is the thing that makes it usable at all.
+
+**389 of 1,780 claims came back contradicted — 22%.** Two read by hand, both false positives at
+high confidence, both the same cause.
+
+```
+int_water_diversion_history   p=0.95
+  claim   "the FULL diversion record per structure, 1886 to 2026"
+  actual  record_first_year min 1886, record_last_year max 2026, 39,308 rows
+```
+
+The claim is exactly true. The years appear once in the file — in the comment making the claim. The
+SQL derives `record_first_year`/`record_last_year` from a source and never states them, so the
+judge sees specific numbers against code that does not mention them.
+
+```
+stg_cdss_dams   p=0.95
+  claim   "Findings already say whether an impoundment carries a decreed storage right
+           (ponds_covered, ponds_permitted, ponds_undecreed)"
+```
+
+`ponds_covered` appears **only** in that comment. The claim is about the findings layer, which is
+Python, not about this model's SQL. The evidence cannot speak to it at all.
+
+Both are *"the model could not see what it was asked about"* — the shape `VERIFICATION.md` records
+as fixed in `claim_alignment` v4 with *"criteria: absence is not disagreement"*. It is back, and at
+1,780 claims the rate is high enough to matter: a 22% contradiction rate that a reader cannot trust
+is worse than no verify pass, because the true contradictions are buried in it.
+
+**Two things would separate the cases, and assay can compute both:**
+
+- **A claim whose subject does not appear in the evidence is not a contradiction.** `ponds_covered`
+  occurring zero times in the model's SQL is checkable before the call, and the right answer is
+  `says_nothing` — or the claim should not be sent at all.
+- **A claim about values is not answerable from SQL alone.** "1886 to 2026" is a statement about
+  rows. `completeness --verify` already counts through dbt; a claim carrying a literal number could
+  be routed there instead of to a text judge, which is the same split that fixed
+  `units_are_what_the_column_claims`.
+
+**Duplicates are also inflating the count.** `int_water_diversion_history` appears at 0.95 and 0.93
+with near-identical sentences, `stg_cdss_dams` at 0.95 and 0.93 — the same claim extracted from a
+model header and from its schema description. Deduplicating on normalised text would cut the list
+before anyone reads it.
+
+## Smaller
+
+`assay page` on a locked store prints the full DuckDB error naming the conflicting PID, then
+advises *"Pass --store with a writable path, or run from a writable directory."* The store is
+writable; it is locked. Same shape as the `rule()` message fixed in 0.13.0, one surface over.
