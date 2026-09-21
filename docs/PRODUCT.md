@@ -216,6 +216,9 @@ it.
 and by whom*. The ruled-on number first and largest, then agreement per question version, then
 findings by defect class and reach, then coverage, then what moved since the last run.
 
+`--plain` writes the same page as a sober report: no colour, no background, nothing to explain
+before a colleague reads it.
+
 It is **deterministic**: it carries the manifest's own `generated_at` and never a wall clock, so a
 rerun that changes nothing writes an identical file. That is the whole argument for a file over a
 dashboard. A file that diffs accrues; a server shows you today and forgets.

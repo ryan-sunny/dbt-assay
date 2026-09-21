@@ -1594,6 +1594,9 @@ def page(
     store_path: str = typer.Option("assay.duckdb", "--store"),
     config_path: str = typer.Option(".", "--config"),
     dialect: str = typer.Option(None, "--dialect"),
+    plain: bool = typer.Option(False, "--plain",
+                               help="a sober report: no colour, no background, nothing to "
+                                    "explain before somebody reads it"),
 ) -> None:
     """One page answering "is this warehouse understood, and by whom".
 
@@ -1660,6 +1663,33 @@ def page(
          "needs --verify; no filter, no group by, no collapse"),
     ]
 
+    # *** WHAT IS ONE ROW OF THIS -- AND WHO SAID SO. ***
+    # A grain a person declared and one a judgement reached at 0.53 are not the same fact, so the
+    # page never adds them together.
+    grain = {"declared": 0, "derived": 0, "judged": 0, "none": 0}
+    for en in entries:
+        if not en.grain:
+            grain["none"] += 1
+        else:
+            grain[{"declared": "declared", "judged": "judged"}.get(
+                en.grain.source, "derived")] += 1
+    no_unique = len(prac_mod.primary_key_patches(project, entries))
+
+    claims_summary: dict = {}
+    if store is not None:
+        rows = store.claims()
+        if rows:
+            conflicted = {c for en in entries for c, _p in (en.claim_conflicts or [])}
+            claims_summary = {"total": len(rows),
+                              "supported": sum(1 for r in rows if r["claim_id"] not in conflicted),
+                              "contradicted": len(conflicted)}
+
+    counted_row_loss = any(en.row_loss for en in entries)
+    not_counted = "" if counted_row_loss else (
+        '<p class="note"><b>Row loss and empty models were not counted.</b> Run '
+        '<span class="mono">assay completeness --verify</span> to count them through this '
+        "project's own dbt. Their absence above is not a pass.</p>")
+
     doc = render.page_html({
         "project": project.project_name or "this project",
         "models": len(project.models),
@@ -1669,6 +1699,11 @@ def page(
         "ruled": sum(1 for f in fs if _is_ruled(f)), "findings_total": len(fs),
         "agent_rulings": agent_n, "effectiveness": eff,
         "by_check": by_check, "completeness": completeness, "moved": moved,
+        "plain": plain, "grain": grain, "no_unique_test": no_unique,
+        "claims": claims_summary, "not_counted_note": not_counted,
+        "top_findings": [{"check": f.check, "model": f.subject_name, "summary": f.summary,
+                          "marts": f.marts} for f in fs[:18]],
+        "shown": min(18, len(fs)),
     })
     if store is not None:
         store.close()

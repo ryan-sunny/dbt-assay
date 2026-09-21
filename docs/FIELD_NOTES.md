@@ -1268,3 +1268,24 @@ a dashboard, and a page that churned on every run could not be committed at all.
 On the field warehouse it opens with **0 of 149**. Nobody has ruled on a finding: all 99 rulings
 are an agent's, and the eight human verdicts are on window subjects rather than findings. That is
 the number doing its job on the first run.
+
+### The page, second pass
+
+**`--plain`.** The same page with a sober stylesheet: white, one accent, no background. Every class
+name is shared, so there is one template and two palettes rather than two pages that drift. A
+report somebody has to explain before a colleague reads it is a report that does not get forwarded.
+
+**And it was thin.** Five sections of counts, with no findings on it. Four more, all from facts
+assay already held:
+
+- **What is one row of this**, split by who said so: 236 declared by a test, 23 worked out from the
+  SQL, 0 judged, and **99 where nothing settles it**. Never summed, because a grain a person wrote
+  down and one a judgement reached at 0.53 are not the same fact. Plus the 21 models with no
+  uniqueness test at all.
+- **The findings themselves**, eighteen by reach. A page that says `test_cannot_fail 50` and shows
+  none of them is a page nobody acts on.
+- **What this project claims about itself**: extracted, supported, contradicted.
+- **Why a section is empty.** No claims prints `assay claims --extract` and *"nothing here is a
+  pass -- it has not been asked"*. No verdicts prints that until somebody presses a key no question
+  may fail a build. Row loss uncounted says so rather than showing a zero. The same discipline the
+  checks have, applied to the page.

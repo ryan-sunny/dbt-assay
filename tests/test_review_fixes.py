@@ -940,3 +940,65 @@ def test_the_skill_names_the_commands_that_ship_now():
         assert cmd in SKILL_MD, f"{cmd} is not in the agent procedure"
     assert "cannot say whether that is bad" in SKILL_MD, \
         "the skill does not tell the agent completeness findings are coverage, not defects"
+
+
+# --- the page ------------------------------------------------------------------------------
+
+def _page(**over):
+    from dbt_assay.render import page_html
+    base = {"project": "p", "models": 3, "generated_at": "2026-01-01", "version": "0.0.0",
+            "ruled": 0, "findings_total": 2, "agent_rulings": 0, "effectiveness": [],
+            "by_check": [("test_cannot_fail", 2, 5, 0)],
+            "completeness": [("models assay could not read", 1, "not audited")],
+            "moved": {}, "plain": False,
+            "grain": {"declared": 1, "derived": 1, "judged": 0, "none": 1},
+            "no_unique_test": 2, "claims": {}, "not_counted_note": "",
+            "top_findings": [{"check": "test_cannot_fail", "model": "m", "summary": "s",
+                              "marts": 5}], "shown": 1}
+    return page_html({**base, **over})
+
+
+def test_the_page_renders_both_a_plain_and_a_whimsical_variant():
+    """Same content, same classes, two stylesheets. A report somebody has to explain before a
+    colleague reads it is a report that does not get forwarded."""
+    fancy, plain = _page(), _page(plain=True)
+    import re
+    assert re.findall(r"<h2>([^<]+)</h2>", fancy) == re.findall(r"<h2>([^<]+)</h2>", plain)
+    assert "repeating-radial-gradient" in fancy and "repeating-radial-gradient" not in plain
+    for doc in (fancy, plain):
+        assert "{" not in re.sub(r"(?s)<style>.*?</style>", "", doc), "a template field leaked"
+
+
+def test_the_page_never_adds_a_declared_grain_to_a_judged_one():
+    """A grain a person wrote down and one a judgement reached at 0.53 are not the same fact."""
+    doc = _page(grain={"declared": 7, "derived": 11, "judged": 3, "none": 5})
+    for n in ("7", "11", "3", "5"):
+        assert f">{n}</b>" in doc or f">{n}<" in doc, n
+    assert ">26<" not in doc and ">21<" not in doc, "it printed a total"
+
+
+def test_an_empty_section_says_why_rather_than_showing_a_zero():
+    """*** AN ABSENT MEASUREMENT IS NOT A PASS, ON THE PAGE TOO. ***"""
+    doc = _page(claims={})
+    assert "assay claims --extract" in doc and "it has not been asked" in doc
+    doc2 = _page(claims={"total": 9, "supported": 7, "contradicted": 2})
+    assert "assay claims --extract" not in doc2 and ">9</b>" in doc2
+
+    doc3 = _page(effectiveness=[])
+    assert "No verdicts recorded yet" in doc3 and "no question may fail a build" in doc3
+
+
+def test_the_page_is_deterministic(project_dir, tmp_path):
+    """It carries the manifest's `generated_at` and never a wall clock. A page that churns on
+    every run cannot be committed, and one that cannot be committed cannot show what moved."""
+    from typer.testing import CliRunner
+
+    from dbt_assay.cli import app
+
+    a, b = tmp_path / "a.html", tmp_path / "b.html"
+    for out in (a, b):
+        r = CliRunner().invoke(app, ["page", str(out), "--target", str(project_dir),
+                                     "--store", str(tmp_path / "nope.duckdb")])
+        assert r.exit_code == 0, r.output
+    assert a.read_text() == b.read_text(), "the page churns between identical runs"
+    assert "20" in a.read_text()
