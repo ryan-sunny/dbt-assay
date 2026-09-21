@@ -420,3 +420,57 @@ have a reading recorded. It re-reads what it already read.
 - `practices` prints `holds: 0 rows, 0 distinct` where `patch` refuses the same table as `EMPTY`.
 - Lockfile detection looks beside `dbt_project.yml`; the lockfile is at the repo root one level up.
 - `--dbt-bin` versus `--dbt` across commands, and it flipped between 0.9.4 and 0.13.0.
+
+---
+
+# Round six, 0.19.0: the page, and completeness earning its keep on the first run
+
+## The page
+
+Deterministic, verified: two runs byte-identical at 9,282 bytes, and it carries the manifest's
+`generated_at` rather than a wall clock. It opens with the right number and the right sentence:
+
+> **0 of 149** — *"The only number here a release cannot improve… A good release makes it look
+> worse. That is the design working."*
+
+`100 agent rulings, kept apart` beside it, with the property stated in full. **0% of what assay
+currently sees has been read by a person** is the honest headline for this warehouse and it should
+stay uncomfortable.
+
+## `completeness` found real things immediately
+
+```
+source_reaches_nothing    5    69,946 rows loaded on a schedule that no model reads
+                               adwr_gwsi_sites 46,897 · adwr_monitoring_sites 9,962
+                               adwr_pumping_wells 9,702 · adwr_townships 3,385
+hop_drops_most_rows       2    keeps 1% of stg_adwr_sections, 0.4% of dim_owner
+models that are EMPTY     3
+```
+
+The AZ sources are a genuine finding — declared, loaded every run, consumed by nothing.
+
+**And it surfaced a limit worth stating in the tool.** `enriched.well_documents` (2,606 rows) is
+reported as read by nothing, which is true of the dbt graph and false of the warehouse:
+`enrichment/well_scans.py` reads it in Python and writes `enriched.well_scan_reads`, which models
+do read. A source consumed only by an out-of-band enrichment step is invisible to a manifest-based
+check, and this project has several. Not a defect — a limit the finding should name, because the
+obvious action on "nothing reads this" is to delete it.
+
+## `hop_drops_most_rows` has the sibling-CTE blind spot
+
+Both hits are intentional narrowing that the check cannot see, because the filter is not on the hop:
+
+`multifamily_leads` joins a roster of **apartment buildings only** → `dim_building` → `dim_owner`,
+so keeping 13,694 of 3,156,986 owners is the model being scoped to multifamily. The narrowing lives
+in a sibling CTE that the join runs against.
+
+Same family as the union blind spot fixed in 0.15.0: **the thing that makes the hop legitimate is
+upstream of the hop.** A join whose other side is itself a filtered CTE is not "a join that is not
+matching" — it is a join against a deliberately small set. That is checkable: if the opposite
+relation in the join is a CTE carrying a WHERE or a narrow source, the drop is explained.
+
+## Still open
+
+- `practices` prints `holds: 0 rows, 0 distinct` where `patch` refuses the same table as `EMPTY`.
+- Lockfile detection looks beside `dbt_project.yml`; the lockfile is at the repo root one level up.
+- `--dbt-bin` versus `--dbt` across commands, and it flipped between 0.9.4 and 0.13.0.
