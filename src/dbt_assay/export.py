@@ -36,6 +36,16 @@ TABLES = {
                      "day it was observed. Unique in that day's data is not a constraint.",
     "edge_facts": "One row per DAG edge: what the parent offered, what the child took, what it "
                   "dropped, and what it joined on.",
+    # *** WITHOUT THIS, NOTHING DOWNSTREAM CAN TELL WHICH RUN IS THE CURRENT ONE. ***
+    # Every other table here is keyed by `run_id` and carries no clock, so a model asking "what is
+    # our debt NOW" had to guess. The shipped example guessed with `order by count(*) desc`, and
+    # reported from the field: three runs tied at 349 findings, so the guess was an arbitrary pick.
+    # Adding `run_id` to that order makes it stable and makes it wrong FOREVER, because the release
+    # that made findings honest also made them fewer -- 349 became 234, and a smaller run can never
+    # win. A count is not a clock. This is the clock.
+    "runs": "One row per assay run: when it started, which assay and which dbt produced it, and "
+            "what it could and could not read. The only table here that says which run is CURRENT "
+            "-- order by `started_at`, never by how much a run happened to find.",
 }
 
 COLUMN_DOCS = {

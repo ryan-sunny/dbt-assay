@@ -53,3 +53,39 @@ def test_assays_own_tables_arrive_documented(tmp_path):
 def test_every_exported_table_has_a_description():
     assert set(export.TABLES) >= {"inventory", "findings", "model_decisions", "adjudications"}
     assert all(v and len(v) > 40 for v in export.TABLES.values())
+
+
+def test_the_runs_table_is_exported_because_a_count_is_not_a_clock(tmp_path):
+    """*** EVERY OTHER EXPORTED TABLE IS KEYED BY run_id AND CARRIES NO CLOCK. ***
+
+    So a model asking "what is our debt NOW" had to guess which run was current. The shipped
+    example guessed with `order by count(*) desc`, and on the field warehouse three runs tied at
+    349 findings, making it an arbitrary pick. Adding `run_id` to that order makes it stable and
+    makes it permanently WRONG, because the release that made findings honest also made them
+    fewer: 349 became 234, and a smaller run can never win a comparison by size.
+
+    Exercised through the real export, and it asserts the CLOCK is in the file -- a `runs` table
+    exported without `started_at` would fix nothing.
+    """
+    import csv
+
+    from dbt_assay import export
+    from dbt_assay.store import Store
+
+    s = Store(str(tmp_path / "assay.duckdb"))
+    try:
+        s.con.execute(
+            "insert into runs (run_id, started_at, project, assay_version, models) "
+            "values ('r1', timestamp '2026-01-01 10:00:00', 'p', '0.25.1', 3)")
+        out = export.to_seeds(s, tmp_path / "seeds")
+    finally:
+        s.close()
+
+    written = {e.table: e.path for e in out}
+    assert "runs" in written, f"runs is not exported: {sorted(written)}"
+    with written["runs"].open() as fh:
+        rows = list(csv.DictReader(fh))
+    assert rows and rows[0]["run_id"] == "r1"
+    assert rows[0]["started_at"].startswith("2026-01-01"), rows[0]["started_at"]
+    assert "started_at" in export._SEED_TYPE, "the clock must not arrive as text"
+    assert export._SEED_TYPE["started_at"] == "timestamp"
