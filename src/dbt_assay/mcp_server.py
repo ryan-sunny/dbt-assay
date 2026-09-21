@@ -565,6 +565,109 @@ class Backend:
         self.baseline = live.Snapshot.of(self.state().entries)
         return {"ok": True, "models": len(self.baseline.entries)}
 
+    def suggestions(self, section: str = "", limit: int = 15) -> dict:
+        """What this project should CONFIGURE, from what the checks found.
+
+        *** AN AGENT COULD READ EVERY FINDING AND STILL NOT KNOW WHAT TO WRITE DOWN. ***
+        `guide` teaches what a vocab term is for and `findings` says what is wrong, and nothing
+        joined the two. This is that join, and it is the tool an agent should reach for when
+        somebody asks "so what do I put in audit.yml".
+
+        The `means:` and `implies:` fields come back EMPTY on purpose. An agent filling them from
+        model names is the exact failure the skill already warns about, one step more convincing
+        because it now arrives inside a tool result.
+        """
+        from . import suggest as sug
+        from .config import Config
+        store, why = self._store_or_why()
+        cfg = Config.load(Path(self.target).parent if Path(self.target).name == "target"
+                          else self.target)
+        firing = {f.check for f in self.state().findings}
+        run_id = None
+        if store is not None:
+            row = store.con.execute(
+                "select run_id from runs order by started_at desc, run_id desc limit 1").fetchone()
+            run_id = row[0] if row else None
+        items = sug.build(store, cfg, firing, run_id)
+        if section:
+            items = [i for i in items if i.section == section]
+        out = {
+            "total": len(items),
+            "showing": min(limit, len(items)),
+            "sections": sorted({i.section for i in items}),
+            "suggestions": [i.as_dict() for i in items[:limit]],
+            "rule": ("Propose the candidate and the measurement. NEVER propose the meaning. "
+                     "Every `means:` and `implies:` above is empty and must stay empty until a "
+                     "PERSON says what the term means here. A definition you write from a model "
+                     "name looks exactly like one they decided on, and it is then sent with "
+                     "every judged question from that point on."),
+        }
+        # *** AN EMPTY LIST BECAUSE THERE IS NO STORE IS NOT AN EMPTY LIST BECAUSE THE CONFIG IS
+        # COMPLETE. *** Most of these signals are measurements taken during `check` and `probe`.
+        if why:
+            out["store"] = why
+            out["caveat"] = ("Almost every rule here reads the store, so this list is missing "
+                             "most of what it would otherwise say. It is not a clean bill.")
+        return out
+
+    def evidence(self, decision_key: str = "", question: str = "", subject: str = "",
+                 limit: int = 5) -> dict:
+        """The EXACT state a judged answer was produced from, as it was sent.
+
+        *** AN ANSWER WITHOUT ITS INPUT CANNOT BE CHECKED, ONLY BELIEVED. ***
+        Every judged answer is a function of a state that assay assembled and then threw away, so
+        a disagreement was unresolvable: nobody could tell whether the judge was wrong or whether
+        it had been handed the wrong facts. Those are opposite repairs -- one edits the question,
+        one edits what gets sent -- and picking between them was guesswork.
+
+        States are stored keyed by their hash, so a state reused across a thousand answers is
+        stored once. This is what a ruling should be read against, and it is the difference
+        between ruling on an answer and ruling on an answer's reasoning.
+        """
+        store, why = self._store_or_why()
+        if store is None:
+            return {"error": why}
+        where, args = [], []
+        if decision_key:
+            where.append("d.decision_key = ?"), args.append(decision_key)
+        if question:
+            where.append("d.question = ?"), args.append(question)
+        if subject:
+            # A decision key is `<subject>::<question>` shaped; match either spelling rather than
+            # requiring the caller to know which one this store used.
+            where.append("(d.decision_key like ? or d.context like ?)")
+            args += [f"%{subject}%", f"%{subject}%"]
+        clause = (" where " + " and ".join(where)) if where else ""
+        rows = store.con.execute(f"""
+            select d.decision_key, d.question, d.answer, d.confidence, d.state_hash,
+                   d.prompt_version, d.decided_at, s.state
+            from model_decisions d left join states s on s.state_hash = d.state_hash
+            {clause} order by d.decided_at desc, d.decision_key limit ?""",
+            [*args, int(limit)]).fetchall()
+        out = []
+        for key, q, ans, conf, sh, pv, when, state in rows:
+            item = {"decision_key": key, "question": q, "answer": ans, "state_hash": sh,
+                    "prompt_version": pv, "decided_at": str(when) if when else ""}
+            # *** A `noul` CARRIES NO SEPARATE CONFIDENCE BECAUSE THE ANSWER IS THE PROBABILITY.
+            # *** Reporting a null one as "confidence: none" invites reading it as unmeasured.
+            if conf is not None:
+                item["confidence"] = conf
+            try:
+                item["state"] = json.loads(state) if state else None
+            except (ValueError, TypeError):
+                item["state"] = None
+            if item["state"] is None:
+                item["state_missing"] = (
+                    "this answer predates state storage, or its state was never written. The "
+                    "answer stands; what it was computed FROM cannot be shown, so do not read "
+                    "its absence as an empty state.")
+            out.append(item)
+        return {"n": len(out), "decisions": out,
+                "how_to_read": ("The state is what the judge actually saw. If the answer is "
+                                "wrong AND the state is wrong, fix what gets sent. If the answer "
+                                "is wrong and the state is right, fix the question. Those are "
+                                "different files and guessing between them is why this exists.")}
+
 
 TOOLS = [
     ("contract", ("What a model IS: grain, columns, roles, where each value comes from. "
@@ -610,7 +713,35 @@ TOOLS = [
                "`waivers`, `policy` (what each check does on a build, and what may gate at all), "
                "`explanations`, `ruling`. Call with no topic for the index. READ THIS BEFORE "
                "writing anything into their audit.yml or assay_questions/.")),
+    ("suggestions", ("WHAT TO PUT IN THEIR audit.yml, derived from what the checks actually "
+                     "found: vocabulary candidates ranked by how often the warehouse joins on "
+                     "them, columns named like a key that are nearly-but-not unique, waivers "
+                     "whose reason is already written in a ruling, and per-check actions backed "
+                     "by measured agreement. Call this when somebody asks how to configure "
+                     "assay, or after `findings` when the list is long. It returns every "
+                     "`means:` and `implies:` EMPTY, and you must leave them empty: a "
+                     "definition you write from a model name looks exactly like one they chose "
+                     "and then rides along with every judged question forever.")),
+    ("evidence", ("The exact STATE a judged answer was computed from, as it was sent. Call it "
+                  "before disagreeing with an answer: if the answer is wrong and the state is "
+                  "wrong, what gets sent needs fixing; if the answer is wrong and the state is "
+                  "right, the question does. Those are different files, and without this you "
+                  "are guessing which.")),
 ]
+
+# *** A TOOL'S DESCRIPTION WAS FETCHED BY ITS POSITION IN THIS LIST. ***
+# `TOOLS[6][1]` for `rebase`, `TOOLS[11][1]` for `review_queue`, and the numbers were already out
+# of order because tools were added at the end and wired in wherever. Inserting one entry above
+# silently re-points every later tool at a neighbour's description -- an agent then reads the
+# wrong instructions for the right tool, which is the worst possible shape for this particular
+# failure. Position is not identity. The name is.
+_BY_NAME = {name: desc for name, desc in TOOLS}
+
+
+def _desc(name: str) -> str:
+    if name not in _BY_NAME:
+        raise KeyError(f"no description for tool `{name}`. Add it to TOOLS.")
+    return _BY_NAME[name]
 
 
 def server_class():
@@ -650,61 +781,70 @@ def serve(target: str, store_path: str | None = None) -> None:
     be = Backend(target, store_path)
     app = Server("assay")
 
-    @app.tool(description=TOOLS[0][1])
+    @app.tool(description=_desc("contract"))
     def contract(model: str) -> str:
         return json.dumps(be.contract(model), default=str)
 
-    @app.tool(description=TOOLS[12][1])
+    @app.tool(description=_desc("guide"))
     def guide(topic: str = "") -> str:
         # Markdown, not JSON: it is prose for the agent to read and act on, and wrapping prose in
         # a JSON string only makes it harder to read for no gain.
         from .guide import guide as _guide
         return _guide(topic)
 
-    @app.tool(description=TOOLS[1][1])
+    @app.tool(description=_desc("lineage"))
     def lineage(model: str, column: str) -> str:
         return json.dumps(be.lineage(model, column), default=str)
 
-    @app.tool(description=TOOLS[2][1])
+    @app.tool(description=_desc("blast_radius"))
     def blast_radius(model: str) -> str:
         return json.dumps(be.blast_radius(model), default=str)
 
-    @app.tool(description=TOOLS[3][1])
+    @app.tool(description=_desc("findings"))
     def findings(model: str = "", limit: int = 20, check: str = "") -> str:
         return json.dumps(be.findings(model or None, limit, check), default=str)
 
-    @app.tool(description=TOOLS[4][1])
+    @app.tool(description=_desc("changed_contracts"))
     def changed_contracts() -> str:
         return json.dumps(be.changed_contracts(), default=str)
 
-    @app.tool(description=TOOLS[5][1])
+    @app.tool(description=_desc("practices"))
     def practices(model: str = "") -> str:
         return json.dumps(be.practices(model), default=str)
 
-    @app.tool(description=TOOLS[7][1])
+    @app.tool(description=_desc("rule"))
     def rule(verdict: str, why: str, finding: str = "", subject: str = "", question: str = "",
              correction: str = "", decided_by: str = "") -> str:
         return json.dumps(be.rule(verdict, why, finding, subject, question, correction,
                                   decided_by), default=str)
 
-    @app.tool(description=TOOLS[8][1])
+    @app.tool(description=_desc("violations"))
     def violations(model: str = "") -> str:
         return json.dumps(be.violations(model), default=str)
 
-    @app.tool(description=TOOLS[9][1])
+    @app.tool(description=_desc("claims"))
     def claims(model: str = "") -> str:
         return json.dumps(be.claims(model), default=str)
 
-    @app.tool(description=TOOLS[10][1])
+    @app.tool(description=_desc("traversal"))
     def traversal(model: str) -> str:
         return json.dumps(be.traversal(model), default=str)
 
-    @app.tool(description=TOOLS[11][1])
+    @app.tool(description=_desc("review_queue"))
     def review_queue(limit: int = 20) -> str:
         return json.dumps(be.review_queue(limit), default=str)
 
-    @app.tool(description=TOOLS[6][1])
+    @app.tool(description=_desc("rebase"))
     def rebase() -> str:
         return json.dumps(be.rebase(), default=str)
+
+    @app.tool(description=_desc("suggestions"))
+    def suggestions(section: str = "", limit: int = 15) -> str:
+        return json.dumps(be.suggestions(section, limit), default=str)
+
+    @app.tool(description=_desc("evidence"))
+    def evidence(decision_key: str = "", question: str = "", subject: str = "",
+                 limit: int = 5) -> str:
+        return json.dumps(be.evidence(decision_key, question, subject, limit), default=str)
 
     app.run()

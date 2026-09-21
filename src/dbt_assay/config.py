@@ -133,6 +133,30 @@ def shipped_action(check: str) -> str:
     return ""
 
 
+def shipped_block(check: str) -> str:
+    """The `questions:` entry `assay init` ships for this check, as YAML text, or "".
+
+    *** `shipped_action` RETURNS A TOKEN SOMETIMES AND A SENTENCE OTHER TIMES. ***
+    A flat opinion comes back as `queue`, which is a value `action:` accepts. A thresholded one
+    comes back as `queue above a threshold`, which is English -- correct for a console line, and
+    it was being pasted straight into a draft `action:` field by `assay suggest`. That block does
+    not load: `ThresholdError: unknown action`. One field carrying two kinds of thing is the
+    defect this file exists to find, and it was in this file.
+
+    So a caller that needs YAML asks for YAML and gets the real shipped entry, thresholds and
+    all, rather than reconstructing it from a summary of itself.
+    """
+    import yaml
+    try:
+        q = (yaml.safe_load(DEFAULT_YML) or {}).get("questions") or {}
+    except Exception:                                            # noqa: BLE001
+        return ""
+    cfg = q.get(check)
+    if not isinstance(cfg, dict) or not cfg:
+        return ""
+    return yaml.safe_dump({check: cfg}, sort_keys=True, default_flow_style=False).rstrip()
+
+
 def known_checks() -> set:
     """Every `check` a Finding can carry, read from the source that constructs them.
 

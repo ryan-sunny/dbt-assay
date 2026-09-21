@@ -90,6 +90,35 @@ The four things a project configures, and what you must know before helping with
 options are domain knowledge you do not have. Ask, draft from what they say, and show them the
 measurement that would justify a waiver rather than asserting one.
 
+`suggestions()` does the reading for you. It is the join between "257 findings" and "these four
+lines of YAML", and every row carries the measurement that produced it, so you can show them the
+evidence instead of an opinion:
+
+- columns the warehouse joins on constantly and the vocab has never heard of, with the counts
+  (`section_id`: 65 hops across 24 models, on the warehouse this was built against);
+- columns named like a key that are **nearly** unique -- `incident_id` at 19,566 distinct in
+  19,628 rows. A spot check passes. That is the point;
+- a reason given on several subjects, which means something upstream of the config is missing.
+  **It refuses to say whether that is a vocab term or a broken check, and so should you.** Ask
+  them: would a reader who knew this term still call the finding correct? Yes means vocab, no
+  means the check is wrong. On the project this was built against the answer was the second one,
+  and the fix was structural rather than a third waiver;
+- `disagree` rulings that nothing waives, with the reason already written by whoever ruled;
+- per-check actions backed by measured agreement, and an explicit "no measurement here" where
+  there is none. **Do not propose an action from the shipped default alone** -- it reads as
+  measured and is not.
+
+**Every `means:` and `implies:` comes back empty, and you must hand it over empty.** This is the
+one instruction in this file most worth following exactly. A definition you write from a model
+name is plausible, is not knowledge, and looks identical in `audit.yml` to one they decided on --
+and from then on it is sent with every judged question about that warehouse. There is no later
+step that catches it.
+
+`evidence(decision_key=..., question=..., subject=...)` returns the exact state a judged answer
+was computed from. Call it before you disagree with an answer: if the answer is wrong **and** the
+state is wrong, what gets sent needs fixing; if the answer is wrong and the state is right, the
+question does. Those are different files, and without the state you are guessing which.
+
 ## Before you hand it back
 
 8. `violations()` — **what would actually fail a build**, under this project's own `audit.yml`.
@@ -173,6 +202,8 @@ and nothing is lost:
 | `violations()` | `assay check --json`, then read `action` |
 | `rule(finding, …)` | `assay review --subject <s> --question <q> --verdict <v> --note <why>` |
 | `review_queue()` | `assay review` |
+| `suggestions()` | `assay suggest -t target/`, or `--section vocab` |
+| `evidence()` | `assay evidence -q <question> -s <model>` |
 | `guide(topic)` | `assay guide <topic>` |
 
 The one difference worth knowing: the MCP tools reload when the manifest moves, and a CLI run

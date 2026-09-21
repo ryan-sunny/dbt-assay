@@ -293,11 +293,80 @@ assay probe               # run it, via `dbt show --inline`. assay never holds a
 assay review -i           # a / d / u / s, least certain first
 assay disagreements       # N rejected findings, how many separate bugs? free
 assay disagreements --judge  # ...also asks whether differently-worded reasons are one defect
+assay calibrate           # the grain judgment against the keys the project ALREADY declares.
+                          # Every `unique` test is a human statement of a key, so the labeled
+                          # set is free and already in the repo: a confusion matrix rather than
+                          # an impression, which is the only thing that earns a question the
+                          # right to fail a build.
 assay calibration         # agreement BANDED by confidence, per family, per source.
                           # A choice bands by `confidence`; a noul by its ANSWER
 assay effectiveness       # did the questions get BETTER? agreement per family, per version
 assay effectiveness --json
 ```
+
+**From what it found to what you should therefore configure**
+
+```bash
+assay suggest -t target/          # candidates, each with the measurement behind it
+assay suggest --section vocab     # one section at a time
+assay suggest --out drafts.yml    # ...and a worksheet to edit in place
+```
+
+This is the step onboarding was missing. `guide` explains what a vocab term is for, `init` writes
+defaults, and nothing went from 257 findings to the four lines of YAML that would settle sixty of
+them. Seven rules, each reporting what it measured: columns joined in many hops and absent from the
+vocab (`section_id`, 65 hops across 24 models on the field warehouse), columns named like a key that
+are *nearly* unique and so pass every spot check (`incident_id`, 19,566 distinct in 19,628 rows), one
+reason given on several subjects, `disagree` rulings that nothing waives, per-family agreement from
+the rulings you already gave, and checks firing that `audit.yml` does not name.
+
+**It proposes the candidate and the measurement. It never proposes the meaning.** `means:` and
+`implies:` arrive empty, with the evidence underneath them. A plausible vocab block written from
+model names looks exactly like knowledge, is not, and then rides along with every judged question
+from that point on.
+
+Two rules deliberately refuse to finish the job. A reason repeating across subjects points at a
+missing vocabulary term *or* at a case the check gets wrong, and those go in different files; on
+this project that distinction went the second way, and the fix was structural (0.15.0, 0.21.1)
+rather than a third waiver. And where there is no measured agreement for a family, `suggest` says
+so and proposes nothing, rather than falling back to the shipped default and reading as measured.
+
+Rulings whose `source` is `label` are excluded from every rule that needs a reason: they are the
+project's own declarations read back as verdicts, and their note is a generated stub. On the field
+warehouse that is 26 of 38 disagreements, which left in would have drafted 26 waivers justified by
+the sentence "the project asserts out".
+
+**Reading an answer against what produced it**
+
+```bash
+assay evidence -q <question> -s <model>   # the exact state a judged answer was computed from
+assay evidence --key <decision_key> --json
+```
+
+An answer without its input can only be believed, not checked. Every judged answer is a function
+of a state assay assembled and then threw away, so a disagreement was unresolvable: nobody could
+tell whether the judge was wrong or whether it had been handed the wrong facts. Those are opposite
+repairs -- one edits the question, one edits what gets sent -- and picking between them was
+guesswork. States are stored keyed by their hash, so one state reused across a thousand answers is
+stored once.
+
+An answer from before state storage says so, in those words. Its absence is never rendered as an
+empty state.
+
+**Keeping the store from growing forever**
+
+```bash
+assay prune --dry-run     # what it would drop, per table, and what it would never touch
+assay prune               # drop findings, edge facts and unreadable rows from superseded runs
+```
+
+`prune` is explicit and never runs on its own. It drops only what a later run RE-DERIVES from the
+same manifest -- findings, edge facts, the unreadable list -- and it will not touch the tables that
+cost something to produce: rulings, claims, adjudications, observed keys, and the run log itself.
+On a real store that is 3,563 findings down to 730 and 8,595 edge facts down to 1,719, with every
+paid table byte-identical afterwards. The split is declared in `store.PRUNABLE` and
+`store.NEVER_PRUNED` rather than inferred, so a new table is not silently prunable: it belongs to
+one list or the other, and a test fails until it does.
 
 A verdict is about a VERSION of a question, so the store keys on `(subject, question,
 prompt_version)` and a re-ruling after a rewrite is kept rather than overwriting the old one. That
@@ -639,7 +708,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.32.2
+- uses: ryan-sunny/dbt-assay@v0.33.0
   with:
     target: target-head
     baseline: base/target

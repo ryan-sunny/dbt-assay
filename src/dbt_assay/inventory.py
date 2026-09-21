@@ -51,6 +51,15 @@ class Fact:
     source: str = "unknown"
     confidence: float | None = None
     note: str = ""
+    # *** WHICH RELATION IT WAS READ FROM, WHEN IT PASSES THROUGH. ***
+    # `ColumnProvenance` has computed this since the beginning and the Fact dropped it on the
+    # floor, so every reader downstream knew a column was `carried` and not what it was carried
+    # FROM. That is the difference between "this column passes through" and "this column passes
+    # through a LEFT join, so it is null wherever that join missed".
+    origin: str = ""
+    # The exact operation behind the class, e.g. `agg:min`. Same reason as `origin`: the parser
+    # knows it and every reader downstream had to guess.
+    root: str = ""
     # A fact built on an unresolved premise must say so rather than inherit a confidence it did
     # not earn. Confidences are never multiplied; provenance is carried instead.
     resting_on: list = field(default_factory=list)
@@ -346,7 +355,9 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
             note = p.evidence if p else ""
             if kind == "unknown" and blind:
                 note = blind
-            pf = Fact(kind, "derived", note=note)
+            pf = Fact(kind, "derived", note=note,
+                      origin=(p.origin or "") if p else "",
+                      root=(getattr(p, "root", "") or "") if p else "")
             ce = ColumnEntry(name=c, provenance=pf, in_key=c in key_cols)
             r = judged.get(f"role__{c}")
             if r:

@@ -108,3 +108,18 @@ def test_one_pathological_model_does_not_abort_the_run():
     finally:
         parse_mod._extract = real
     assert d.ok is False and "could not read the parsed SQL" in d.error
+
+
+def test_a_filter_clause_resolves_to_the_aggregate_it_decorates():
+    """`FILTER (WHERE ...)` is the aggregate's own clause, so the root is the aggregate.
+
+    Read as `filter`, the root says an aggregate happened and hides WHICH, and which is the whole
+    question: `count(*) filter (...)` is never NULL, `min(x) filter (...)` is NULL whenever the
+    filter keeps nothing.
+    """
+    import sqlglot
+
+    from dbt_assay.parse import _classify
+    for sql, want in (("count(*) filter (where x > 1)", "agg:count"),
+                      ("min(x) filter (where y)", "agg:min")):
+        assert _classify(sqlglot.parse_one(sql, dialect="duckdb")) == want, sql

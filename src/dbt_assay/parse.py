@@ -243,6 +243,13 @@ def _classify(e: exp.Expression) -> str:
         return "literal"
     if isinstance(e, exp.Cast):
         return _classify(e.this)
+    # *** `FILTER (WHERE ...)` IS THE AGGREGATE'S OWN CLAUSE, SO THE ROOT IS THE AGGREGATE. ***
+    # Read as `filter`, it says an aggregate happened and hides WHICH, and which is the entire
+    # question: `count(*) filter (...)` is never NULL and `min(x) filter (...)` is NULL whenever
+    # the filter keeps nothing. Callers that only needed the class already treated `filter` as
+    # aggregated; descending costs them nothing and makes the root exact.
+    if isinstance(e, exp.Filter):
+        return _classify(e.this)
     if isinstance(e, exp.AggFunc):
         return f"agg:{func_name(e).lower()}"
     if isinstance(e, exp.Func):

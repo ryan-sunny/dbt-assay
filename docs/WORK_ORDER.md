@@ -262,3 +262,133 @@ it grows when questions are asked, which is correct.
 - **`assay tests --gaps-only` is genuinely good** and was not discovered until late in a long
   session with the skill loaded. Whatever ships from §3 should land next to it rather than beside
   it.
+
+---
+---
+
+# Part two: closing the loop from findings to configuration
+
+Written 2026-09-21, later the same day, against 0.32.2 on the same warehouse. Part one was written
+before any of it shipped; this records what did, and then the one thing it exposed.
+
+## What shipped from part one
+
+| § | state |
+|---|---|
+| 1. Make confidence answerable | **shipped** (0.29.0) as `assay calibration`. The premise above was wrong and is left standing as written: `column_is_part_of_the_key` is a `noul`, whose answer IS the probability, so banding it by `confidence` finds nulls and concludes "unanswerable". Banding by the answer works. Left uncorrected because a work order that quietly edits its own bad reasoning teaches nothing |
+| 2. Ship a dbt package | **shipped as queries, not models** (0.29.0). Three examples over the previously unread tables |
+| 3. The over-assertion check | open |
+| 4. Read `run_results.json` | **shipped** (0.29.0) as `assay tests --run-results`. Verified against the real artifacts of a production outage: it named the capped count, the 108 skipped nodes, and "398 of 1,282 tests executed, covering 105 of 326 models" |
+| 5. Probe and the MCP line | **decided** (0.31.0). No ad-hoc query tool, recorded as rejected. Probe walks least-recently-observed, reach-ranked, deterministic. Cross-process read-only is blocked too, so the DuckDB lock is guidance, not tool shape |
+| 6. Write surface | **documented**. One schema; no roles exist on DuckDB |
+| 7. Retention | open |
+
+Also shipped and not in part one: `seed_reaches_nothing`, the `observed_keys` timestamped series and
+its two drift checks, the unconfigured-checks panel, and the Overview.
+
+---
+
+## 8. `assay suggest` — the half of onboarding that assumes you built the tool
+
+`guide` teaches what a vocab term is for. `init` writes defaults. `config` shows what resolved.
+**Nothing goes from what the check found to what this project should therefore configure.** So
+onboarding currently reads: here are 236 findings, and here is an essay on how config works, now
+make the connection yourself. A person who built the tool makes it in an afternoon. Nobody else
+does.
+
+It is derivable. Two worked examples, both done by hand on sunny_data in one session, both from
+data already sitting in the store.
+
+### Evidence one: the top vocab candidate is the most-joined column in the warehouse
+
+`section_id` is joined on in **65 hops across 24 models** and is absent from a 15-term vocab.
+`section_key` is present, under a different name. And the non-obvious fact about it was produced by
+a production incident the same day: **6,251 address rows resolve to `section_id` values carrying an
+`LGC` prefix — land-grant cells, not PLSS sections — which `int_water_sections` does not contain**,
+concentrated in Saguache, Costilla, Las Animas, Archuleta and Huerfano.
+
+That is the `case_number` shape exactly: a key whose membership is not what the name suggests. The
+signal that finds it is arithmetic over `edge_facts` plus a set difference against `vocab`.
+
+### Evidence two: two waivers were saying one sentence
+
+`audit.yml` waives `bbox_as_radius` on `stg_blm_plss_sections` and on `int_water_land_grant_cells`,
+and both reasons say the same thing: the envelope is a grid cell built from bounds stored on the
+row, not an approximation of a radius. `xmin/xmax/ymin/ymax` are joined in **14 hops across 9
+models**, so the next model to do it needs a third waiver.
+
+One vocab term replaces both and covers the next one. The signal is a reason appearing in more than
+one waiver.
+
+### And the decisive one: this is already how the config got written
+
+That first waiver is a **verbatim descendant of an agent ruling** in `adjudications` — same
+`ST_MakeEnvelope(cx0, cy0, cx1, cy1)`, same "the envelope is a GRID CELL". Somebody read a ruling
+and typed it into `audit.yml`. The command automates a path that has already produced good config
+on this warehouse; it does not invent a new one.
+
+### The tri-partition that makes it more than a findings list
+
+The store holds 195 adjudications. Split by verdict they point at three different files:
+
+| verdict | n here | what it means | where it belongs |
+|---|---|---|---|
+| `disagree` with a reason | 12 | the check is right to look and wrong here | a **waiver**, reason already written |
+| the same reason on N subjects | 2 pairs | not N waivers — one missing thing | **vocab**, or the check itself |
+| `unclear` | 17 | the state does not carry what the question asks | the **question**. Never config |
+
+That last row is why `unclear` must stay out of an agreement denominator, which `calibration`
+already does: disagreement means the criteria are wrong, unclear means the question cannot be
+answered from what it was given, and those are different edits.
+
+The repeated-reason row has a second reading worth keeping: "A UNION MEMBER EDGE CANNOT MULTIPLY"
+appears on two models, and the right response was not two waivers — it was the structural fix that
+landed in 0.15.0 and 0.21.1. A reason repeating is the signal that something upstream of the config
+is missing.
+
+### Derivation rules
+
+| section | signal, all from the store after a `check` |
+|---|---|
+| vocab | columns joined in many hops, absent from vocab, ranked by hops × models |
+| vocab | any column whose **observed** uniqueness contradicts its name — an `*_id` reading `has_duplicates` |
+| vocab | one reason appearing across ≥2 waivers or ≥2 rulings |
+| waivers | `disagree` rulings, agent's reason as the draft, expiry required |
+| questions | checks firing that `audit.yml` does not name. The panel exists; it needs to emit the YAML block |
+| questions | per-check agreement from `calibration` — a family at 68% should not be `fail`, and the number says so |
+| explanations | recurring "the world is like that" reasons on row adjudications |
+
+### The line that keeps it honest
+
+**It proposes the candidate and the measurement. It never proposes the meaning.**
+
+It may say `section_id` is joined in 65 hops, is absent from vocab, and that 6,251 of its values
+resolve to nothing. It may not say what `section_id` means. `means:` and `implies:` arrive **empty**
+with the evidence underneath them.
+
+This is not a style preference. The skill already carries the rule — an agent must not invent
+configuration on someone's behalf, because a plausible vocab block written from model names looks
+like knowledge, is not, and then goes out with every judged question from that point on. A
+`suggest` that fills in `means:` would be that failure shipped as a feature, and it would be the
+most confident-sounding output the tool produces.
+
+### The loop
+
+```
+check      ->  236 findings, 3 checks unconfigured, 15 vocab terms
+suggest    ->  6 candidates, each with what was measured about it
+             (a person writes the meanings. This step cannot be automated)
+check      ->  fewer findings, and the ones left are the real ones
+```
+
+### One success criterion, so it cannot become a firehose
+
+**A suggestion is good if accepting it moves a number.** Track proposals against what the next
+`check` does. A vocab term that changes no judgment is a term paid for on every call that bought
+nothing, and it should be visible as such rather than counted as configuration coverage.
+
+### Not in scope
+
+Do not generate `means:` or `implies:`. Do not propose a waiver without a reason drawn from a real
+ruling. Do not suggest a check action from its shipped default alone — the measured agreement is
+the input, and where there is none, say there is none.

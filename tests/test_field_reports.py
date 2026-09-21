@@ -670,15 +670,31 @@ def test_an_agent_can_ask_what_would_actually_fail_the_build():
     assert "violations()" in SKILL_MD, "the procedure must tell the agent to call it"
 
 
-def test_every_mcp_tool_description_is_still_indexed_correctly():
-    """The tool list and the decorators are two copies of one order, and an off-by-one silently
-    gives a tool somebody else's description."""
+def test_every_mcp_tool_is_described_by_its_own_name(): 
+    """*** A DESCRIPTION WAS FETCHED BY POSITION, AND POSITION IS NOT IDENTITY. ***
+
+    The decorators read `TOOLS[6][1]`, `TOOLS[11][1]` and so on, so inserting one entry re-points
+    every later tool at a neighbour's description. The failure is silent and it is the worst
+    possible shape for this particular bug: an agent reads the wrong instructions for the right
+    tool and follows them.
+
+    This used to assert the two orders matched, which made the hazard a test's job. The lookup is
+    keyed by name now, so the hazard is gone; what is left to check is that the two SETS agree --
+    a tool registered with no entry raises, and an entry with no tool is dead text nobody reads.
+    """
     import inspect
+    import re
 
     from dbt_assay import mcp_server
     src = inspect.getsource(mcp_server.serve)
-    for i, (name, _d) in enumerate(mcp_server.TOOLS):
-        assert f"TOOLS[{i}][1])\n    def {name}(" in src, f"{name} is not registered at index {i}"
+    registered = set(re.findall(r'@app\.tool\(description=_desc\("(\w+)"\)\)', src))
+    assert registered, "the registration reader found nothing; it is broken"
+    described = {name for name, _d in mcp_server.TOOLS}
+    assert registered <= described, f"registered with no description: {registered - described}"
+    assert described <= registered, f"described but never registered: {described - registered}"
+    # and each decorator sits directly above the function it names
+    for name in registered:
+        assert re.search(rf'_desc\("{name}"\)\)\n    def {name}\(', src), name
 
 
 def test_an_empty_table_is_not_a_verified_grain():

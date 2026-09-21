@@ -301,7 +301,13 @@ def _tiny():
             "models": [{"uid": "m", "name": "a"}], "edges": [], "claims": [],
             "findings": [{"id": "f1", "check": "c"}], "decisions": [], "questions": [],
             "adjudications": [], "config": {"provider": "auto"}, "runs": [],
-            "unreadable": [], "unconfigured": [], "effectiveness": [], "moved": {}}
+            "unreadable": [], "unconfigured": [], "effectiveness": [], "moved": {},
+            # A non-empty row, so the round trip is exercising the section rather than comparing
+            # two empty lists and passing for the wrong reason.
+            "suggestions": [{"section": "vocab", "key": "section_id", "headline": "h",
+                             "measured": ["65 join hops"], "draft": "vocab:\n  section_id:",
+                             "basis": "joined in many hops, absent from vocab", "rank": 1.0,
+                             "decide": ""}]}
 
 
 def test_the_artifact_is_one_line_per_entity(tmp_path):
@@ -908,3 +914,25 @@ def test_the_page_reaches_out_to_nothing(tmp_path):
     for scheme in ("http://", "https://", "//cdn", "<img"):
         assert scheme not in shell, f"the page shell reaches out to {scheme}"
 
+
+
+def test_every_css_variable_the_page_uses_is_defined():
+    """An undefined `var(--x)` drops the whole declaration, silently.
+
+    *** THIS IS THE GUARD-THAT-CANNOT-SEE SHAPE, IN CSS. ***
+    A border written against a token that does not exist is not an error and does not warn: the
+    declaration is discarded and the element renders without it, looking like a deliberate choice.
+    Caught here first time out, on three tokens invented for a new panel (`--accent`, `--warn`,
+    `--panel`) that this page has never had.
+    """
+    import re
+    from pathlib import Path
+
+    from dbt_assay import explorer
+    src = Path(explorer.__file__).read_text()
+    root = src[src.index(":root{"):src.index(":root{") + 400]
+    defined = set(re.findall(r"--([a-z-]+)\s*:", root))
+    assert len(defined) > 5, "the token reader found almost nothing; it is broken"
+    used = set(re.findall(r"var\(--([a-z-]+)\)", src))
+    assert used, "the usage reader found nothing; it is broken"
+    assert not (used - defined), sorted(used - defined)

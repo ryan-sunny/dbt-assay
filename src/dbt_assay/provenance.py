@@ -54,6 +54,12 @@ class ColumnProvenance:
     kind: str
     evidence: str = ""
     origin: str | None = None        # the relation it was last read from, when it passes through
+    # *** THE EXACT OPERATION, NOT JUST THE CLASS IT FALLS IN. ***
+    # `_root_class` already knows a column is `agg:min` and then reports only "aggregated", and
+    # the difference is the whole question: `count(x)` over a group is never NULL and `min(x)`
+    # over an all-NULL group IS. Nine classes cannot carry that; the root can, and it costs
+    # nothing because it is computed either way.
+    root: str = ""
 
 
 # *** EVERY ROOT NAMES AN OPERATION, SO A ROOT IS NEVER "UNKNOWN". ***
@@ -111,7 +117,7 @@ def classify(uid: str, project, digests, schema, dialect: str | None = None
             if kind == "computed" and not root.startswith("func:") and root not in ("case",
                                                                                     "coalesce"):
                 why = f"{why} ({root})"
-            out[c] = ColumnProvenance(c, kind, why)
+            out[c] = ColumnProvenance(c, kind, why, root=root)
             continue
 
         # It passes through. WHICH relation it came from decides whether the origin is still
@@ -146,17 +152,17 @@ def classify(uid: str, project, digests, schema, dialect: str | None = None
 
         owner = schema.uid_of.get((origin or "").lower())
         if owner and owner in project.sources:
-            out[c] = ColumnProvenance(c, "from_source", EXPLAIN["from_source"], origin)
+            out[c] = ColumnProvenance(c, "from_source", EXPLAIN["from_source"], origin, root)
         elif owner or root == "column":
-            out[c] = ColumnProvenance(c, "carried", EXPLAIN["carried"], origin)
+            out[c] = ColumnProvenance(c, "carried", EXPLAIN["carried"], origin, root)
         elif ambiguous:
             out[c] = ColumnProvenance(
                 c, "unknown",
                 f"a `select *` carries it and {len(ambiguous)} parents publish this name "
                 f"({', '.join(sorted(ambiguous)[:4])}), so which one it is cannot be settled "
-                f"from the SQL. Name the columns, or qualify the star.", origin)
+                f"from the SQL. Name the columns, or qualify the star.", origin, root)
         else:
-            out[c] = ColumnProvenance(c, "unknown", EXPLAIN["unknown"], origin)
+            out[c] = ColumnProvenance(c, "unknown", EXPLAIN["unknown"], origin, root)
     return out
 
 

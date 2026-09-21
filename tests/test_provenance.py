@@ -56,3 +56,30 @@ def test_a_trace_stops_at_the_first_hop_that_did_something(project_dir):
     p, d, sch = _load(project_dir)
     hops = provenance.trace("amount", "model.p.stg_bad_notnull", p, d, sch)
     assert hops and hops[-1][2] == "defaulted"
+
+
+def test_a_passed_through_column_says_WHICH_relation_it_came_from(project_dir):
+    """`carried` without an origin is half a fact.
+
+    The class said a column passes through and dropped the name of what it passed through FROM,
+    so no reader could tell "this column passes through" from "this column passes through a LEFT
+    join, so it is NULL wherever that join missed". The parser had the relation the whole time.
+    """
+    p, d, sch = _load(project_dir)
+    got = provenance.classify("model.p.int_bad_unique", p, d, sch)
+    carried = [v for v in got.values() if v.kind in ("carried", "from_source")]
+    assert carried, "fixture has no passed-through column; this test is not measuring anything"
+    assert any(v.origin for v in carried), "a passed-through column named no origin"
+
+
+def test_the_exact_operation_survives_the_class_it_is_filed_under(project_dir):
+    """Nine classes cannot carry the difference between `count()` and `min()`, and it matters.
+
+    `count(x)` over a group is 0 and `min(x)` over an all-NULL group is NULL, so a `not_null` test
+    on one cannot fail and on the other is one unlucky group from failing. Both are `aggregated`.
+    The root is computed either way, so carrying it costs nothing.
+    """
+    p, d, sch = _load(project_dir)
+    got = provenance.classify("model.p.int_bad_unique", p, d, sch)
+    assert got["n"].kind == "aggregated"
+    assert got["n"].root == "agg:count", got["n"].root

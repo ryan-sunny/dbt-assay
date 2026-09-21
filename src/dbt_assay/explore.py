@@ -28,7 +28,11 @@ def _fact(f) -> dict | None:
     return {"value": f.value, "source": f.source,
             "confidence": round(f.confidence, 4) if f.confidence is not None else None,
             "resting_on": getattr(f, "resting_on", None) or None,
-            "note": getattr(f, "note", "") or ""}
+            "note": getattr(f, "note", "") or "",
+            # Which relation a passed-through value was read from. Empty for anything computed
+            # here, which is correct: there is no upstream to name.
+            "origin": getattr(f, "origin", "") or "",
+            "root": getattr(f, "root", "") or ""}
 
 
 # *** THE DISTRIBUTION IS THE SINGLE BIGGEST THING IN THE FILE AND THE LEAST READ. ***
@@ -169,6 +173,14 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         # this is the direction that grows by itself: every release adds checks.
         "unconfigured": [{"check": c, "shipped": a}
                          for c, a in cfg.unconfigured({f["check"] for f in find_rows})],
+        # *** WHAT TO CONFIGURE, BESIDE WHAT WAS FOUND, IN THE SAME ARTIFACT. ***
+        # A findings list and a config file in two different places is the gap `suggest` exists to
+        # close, and putting the suggestions anywhere else would reopen it one layer out. They are
+        # derived from the same store the rest of this object comes from, so they diff alongside
+        # it: a suggestion that appears is a candidate that arrived, and one that disappears was
+        # either configured or stopped being true, which is the "did accepting it move a number"
+        # question the work order asks for.
+        "suggestions": _suggestions(store, cfg, {f["check"] for f in find_rows}),
         "runs": _runs(store),
         # *** THE TWO THINGS THE RECORD SAID THAT NOTHING ELSE DID. ***
         # Everything else on the record duplicates a section the Overview now renders natively, so
@@ -383,6 +395,23 @@ def _config(cfg) -> dict:
     return out
 
 
+def _suggestions(store, cfg, firing: set) -> list:
+    """What this project should configure, derived from what was found. Never a meaning."""
+    try:
+        from . import suggest as _sug
+        run_id = None
+        if store is not None:
+            row = store.con.execute(
+                "select run_id from runs order by started_at desc, run_id desc limit 1").fetchone()
+            run_id = row[0] if row else None
+        return [s.as_dict() for s in _sug.build(store, cfg, firing, run_id)]
+    except Exception:                                            # noqa: BLE001
+        # A store too old to carry a signal still renders every other section. An empty list here
+        # reads as "no candidates", which is why the page prints the rule that found nothing
+        # rather than an empty panel.
+        return []
+
+
 def _effectiveness(store) -> list:
     """Per family, per version: how often people agreed, and what is still open.
 
@@ -485,7 +514,7 @@ def _unreadable(store, project) -> list:
 # The page still EMBEDS this rather than fetching it, because browsers block `fetch` on `file://`.
 # Reading the artifact is a build step, not a runtime load.
 _LINES = ("models", "edges", "claims", "findings", "decisions", "questions",
-          "adjudications", "unreadable", "runs", "effectiveness")
+          "adjudications", "unreadable", "runs", "effectiveness", "suggestions")
 # *** AND ITS EMPTY VALUE, BECAUSE A LIST DEFAULTING TO `{}` IS THE SAME BUG AS `[]` -> `{}`. ***
 # Caught by the round-trip guard: an artifact with no `unconfigured.json` handed back a dict where
 # a list belongs, and `.length` on a dict is `undefined` rather than an error -- so the page would

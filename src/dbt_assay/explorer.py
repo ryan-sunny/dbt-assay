@@ -34,6 +34,17 @@ header{padding:18px 24px 0;border-bottom:1px solid var(--line);background:var(--
 h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.01em}
 h1 span{font-weight:400;color:var(--dim);font-size:14px;margin-left:8px}
 .sub{color:var(--dim);font-size:12.5px;margin:3px 0 14px}
+.rule{font-size:11.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;
+  margin:14px 0 6px}
+.sug{border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:4px;
+  padding:10px 12px;margin:0 0 8px;background:var(--bg)}
+.sug-h{font-weight:600;margin-bottom:5px}
+.sug-m{margin:0 0 6px;padding-left:18px;color:var(--dim);font-size:12.5px}
+.sug-m li{margin:1px 0}
+.sug-d{white-space:pre-wrap;font-size:12.5px;border-left:2px solid var(--amber);
+  padding:5px 0 5px 9px;margin:6px 0;color:var(--ink)}
+.sug-y{white-space:pre-wrap;font-size:12px;background:var(--card);border:1px solid var(--line);
+  border-radius:3px;padding:8px 10px;margin:6px 0 0;overflow-x:auto}
 nav{display:flex;gap:2px;flex-wrap:wrap}
 nav button{appearance:none;border:1px solid transparent;border-bottom:none;background:none;
 font:inherit;font-size:13px;color:var(--dim);padding:7px 13px;cursor:pointer;
@@ -296,7 +307,16 @@ def explorer_html(data: dict, record_html: str) -> str:
     # page's styles with its own. It goes into an isolated iframe instead, and the only safe way
     # to carry a document through HTML is as a JSON string -- json encoding already escapes
     # everything, where hand-escaping a nested document is how a page silently truncates.
-    data = {**data, "record": record_html}
+    # *** ONE SHAPE, WHICHEVER PATH GOT HERE. ***
+    # `read_data` fills every declared section, so an artifact round-trip hands back `[]` where a
+    # direct call from the store simply has no key. The page then embeds two different JSON blobs
+    # for one project, and `assay page --from` stops reproducing the page it was made from. The
+    # round-trip guard caught exactly this the first time a section was added, which is the whole
+    # reason that guard compares bytes rather than rendering.
+    from .explore import _LINES, _WHOLE
+    filled = {n: [] for n in _LINES}
+    filled.update({n: empty() for n, empty in _WHOLE})
+    data = {**filled, **data, "record": record_html}
     blob = json.dumps(data, separators=(",", ":"), sort_keys=True, default=str)
     blob = blob.replace("</", "<\\/").replace("<!--", "<\\!--")
 
@@ -305,6 +325,7 @@ def explorer_html(data: dict, record_html: str) -> str:
         "claims": len(data["claims"]), "findings": len(data["findings"]),
         "decisions": len(data["decisions"]), "questions": len(data["questions"]),
         "unreadable": len(data["unreadable"]),
+        "suggestions": len(data.get("suggestions") or []),
     }
     # *** THE OVERVIEW IS THE WAY IN, NOT THE LAST TAB. ***
     # It is the only surface here with an argument to make rather than a table to show, and a
@@ -316,6 +337,7 @@ def explorer_html(data: dict, record_html: str) -> str:
         ("chain", "The chain", counts["edges"]),
         ("claims", "Claims", counts["claims"]),
         ("findings", "Findings", counts["findings"]),
+        ("suggest", "What to configure", counts["suggestions"]),
         ("answers", "Answers", counts["decisions"]),
         ("questions", "Questions", counts["questions"]),
         ("config", "Config", None),
@@ -1357,6 +1379,77 @@ function block(title, note, node) {
   return b;
 }
 
+/* ---------------------------------------------------------------------- What to configure
+
+   *** THE FINDINGS AND THE CONFIG WERE TWO TABS THAT NEVER REFERRED TO EACH OTHER. ***
+   One said 257 things are wrong. The other showed the YAML that decides which of them matter. The
+   step between -- "so write THIS" -- was left to the reader, and on this page that gap looked
+   exactly like a gap in the tool. Now it is a tab, and every row in it carries the measurement
+   that produced it, so a reader can disagree with the evidence rather than with the proposal.
+
+   *** EVERY `means:` AND `implies:` IS EMPTY, ON THE PAGE TOO. ***
+   Not an oversight and not something the page should helpfully fill from the model name. A
+   plausible definition written here would look exactly like a definition somebody decided on,
+   and would then travel with every judged question from that point on. */
+function suggestTab(host) {
+  const S = DATA.suggestions || [], bits = [];
+  bits.push(el('p', {class: 'note', text: 'Candidates drawn from what the checks actually found, '
+    + 'each with the measurement behind it. assay proposes the candidate and the measurement. It '
+    + 'never proposes the meaning, so every means: and implies: below is empty on purpose.'}));
+
+  if (!S.length) {
+    /* An empty list is not a complete config, and the two must not read alike. */
+    bits.push(section('nothing to suggest', el('p', {class: 'note', text:
+      'No rule found a candidate. That is not the same as the config being complete: each rule '
+      + 'needs its own evidence, and most of it is written during `assay check` and `assay probe`. '
+      + 'A store with no rulings in it cannot propose a waiver, and says so rather than implying '
+      + 'there is nothing to waive.'})));
+    host.replaceChildren(...bits);
+    return;
+  }
+
+  const LABEL = {open: 'Decide first', vocab: 'Vocabulary', questions: 'Per-check policy',
+                 waivers: 'Waivers', explanations: 'Row explanations'};
+  const SECT = ['open', 'vocab', 'questions', 'waivers', 'explanations'];
+  for (const sec of SECT) {
+    const rows = S.filter(x => x.section === sec);
+    if (!rows.length) continue;
+    const body = el('div', {});
+    let lastBasis = null, lastDecide = null;
+    for (const r of rows) {
+      /* Each RULE is its own list. Two rules measure different things in different units, so a
+         single ranking across them would declare one more important by an accident of scale. */
+      if (r.basis !== lastBasis) {
+        body.append(el('div', {class: 'rule', text: r.basis}));
+        lastBasis = r.basis;
+        lastDecide = null;
+      }
+      /* *** THE REFUSAL IS A PROPERTY OF THE RULE, NOT OF THE ROW. ***
+         Printed per card it was eight identical paragraphs, and eight copies of one sentence
+         read as noise rather than as the instruction it is -- so the eye skips it, which is the
+         opposite of what a block headed "assay will not pick between them" is for. */
+      if (r.decide && r.decide !== lastDecide) {
+        body.append(el('div', {class: 'sug-d', text: r.decide}));
+        lastDecide = r.decide;
+      }
+      const card = el('div', {class: 'sug'});
+      card.append(el('div', {class: 'sug-h', text: r.headline}));
+      if (r.measured && r.measured.length) {
+        const ul = el('ul', {class: 'sug-m'});
+        for (const m of r.measured) ul.append(el('li', {text: m}));
+        card.append(ul);
+      }
+      if (r.draft) card.append(el('pre', {class: 'sug-y', text: r.draft}));
+      body.append(card);
+    }
+    bits.push(section(LABEL[sec] + ' (' + rows.length + ')', body));
+  }
+  bits.push(el('p', {class: 'note', text: 'A suggestion is worth taking if accepting it moves a '
+    + 'number. A vocabulary term that changes no judgment is paid for on every call and bought '
+    + 'nothing, and the next run of this page will still be listing it.'}));
+  host.replaceChildren(...bits);
+}
+
 function goTab(name, label) {
   const a = el('a', {class: 'lk', href: '#', text: label});
   a.onclick = e => { e.preventDefault(); open(name); };
@@ -1531,6 +1624,7 @@ function understoodTab(host) {
 
 /* ---------------------------------------------------------------------------------- tabs */
 const VIEWS = {models: modelsTab, chain: chainTab, claims: claimsTab, findings: findingsTab,
+               suggest: suggestTab,
                answers: answersTab, questions: questionsTab, config: configTab,
                understood: understoodTab};
 const built = {};

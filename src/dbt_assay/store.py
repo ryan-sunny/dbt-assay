@@ -120,6 +120,26 @@ create table if not exists adjudications (
     decided_at   timestamp,
     primary key (subject, question, prompt_version)
 );
+-- *** WHAT THE MODEL WAS SHOWN, NOT ONLY WHAT IT SAID. ***
+-- `model_decisions` kept a HASH of the state and threw the state away, so every reader could see
+-- the answer, the distribution and a 120-character label, and none of them could see the evidence
+-- that produced it. An agent ruling on a finding was being asked to judge an answer without the
+-- question's own input.
+--
+-- Keyed by the hash, so identical states store ONCE: a real store holds 9,945 decisions over
+-- 4,048 distinct states, and a cache hit re-uses a state by definition.
+--
+-- It is small, and the reason is the design rather than luck. A real claim state is ~320-540
+-- characters, because "small state, better answer" is a measured rule here -- 0.96 with what the
+-- claim needed against 0.47 with one extra correct sentence. Sized before building it: about
+-- 5 MB of text for a 358-model warehouse, half a megabyte on disk after compression, against a
+-- 13.9 MB store. An earlier estimate said 183 MB by reading `input_tokens`, which is the QUESTION
+-- plus the state and is dominated by the question, resent in full on every call.
+create table if not exists states (
+    state_hash varchar primary key,
+    state      varchar,
+    first_seen timestamp
+);
 create table if not exists edge_facts (
     run_id varchar, parent varchar, child varchar, parent_name varchar, child_name varchar,
     available integer, carried integer, dropped integer, joined_on varchar, dropped_cols varchar,
@@ -738,3 +758,81 @@ class Store:
         a = {tuple(r) for r in self.con.execute(q, [run_a]).fetchall()}
         b = {tuple(r) for r in self.con.execute(q, [run_b]).fetchall()}
         return {"new": sorted(b - a), "gone": sorted(a - b), "same": len(a & b)}
+
+
+# --------------------------------------------------------------------------------- retention
+
+# *** THE SCHEMA ALREADY ENCODES WHAT IS SAFE TO DELETE. ***
+# A table carrying `run_id` is exactly one a parser regenerates for free: `assay check` rebuilds
+# every row in seconds with no network and no spend. A table without one is exactly one that cost
+# money or a keypress -- answers were paid for, claims were paid for, and a verdict is somebody's
+# afternoon. So the split is not a judgement call, it is a column.
+#
+# Over-pruning costs one `assay check`. Under-pruning costs disk. Getting it wrong in the other
+# direction costs the only thing in the store a release can never rebuild.
+PRUNABLE = ("findings", "edge_facts", "unreadable")
+NEVER_PRUNED = ("model_decisions", "claims", "adjudications", "observed_keys", "runs")
+
+
+def prune(store, keep: int = 10) -> dict:
+    """Drop all but the last `keep` runs from the tables a parser can regenerate.
+
+    Returns {table: rows_removed}, plus `runs_kept` and `runs_dropped`.
+
+    *** NOTHING WITHOUT A run_id IS EVER TOUCHED, AND THAT IS STRUCTURAL RATHER THAN CAREFUL. ***
+    The loop only visits `PRUNABLE`. There is no flag, no `--all`, and no path through this
+    function that reaches `model_decisions` -- because the way this goes wrong is somebody adding
+    one later for a good reason.
+
+    `runs` itself is kept whole. It is the clock every other table is dated by, nine rows on a
+    real store, and dropping the row that names a run while keeping findings that point at it is
+    how a `run_id` becomes unresolvable.
+    """
+    if keep < 1:
+        raise ValueError("keep must be at least 1; pruning to zero runs is not a retention "
+                         "policy, it is a delete")
+    rows = store.con.execute(
+        "select run_id from runs order by started_at desc, run_id desc").fetchall()
+    live = [r[0] for r in rows[:keep]]
+    dead = [r[0] for r in rows[keep:]]
+    out = {"runs_kept": len(live), "runs_dropped": len(dead)}
+    if not dead:
+        return out
+    # A run present in a fact table and absent from `runs` has no clock, so it cannot be ranked
+    # and must not be deleted on a guess. It is reported and left.
+    for table in PRUNABLE:
+        try:
+            known = {r[0] for r in store.con.execute(
+                f"select distinct run_id from {table}").fetchall()}
+        except Exception:                                                # noqa: BLE001, S112
+            # A table this store does not have yet. The others still prune.
+            continue
+        orphans = known - {r[0] for r in rows}
+        if orphans:
+            out.setdefault("orphan_runs", set()).update(orphans)
+        n = store.con.execute(
+            f"select count(*) from {table} where run_id in "
+            f"({','.join('?' * len(dead))})", dead).fetchone()[0]
+        if n:
+            store.con.execute(
+                f"delete from {table} where run_id in "
+                f"({','.join('?' * len(dead))})", dead)
+        out[table] = n
+    if "orphan_runs" in out:
+        out["orphan_runs"] = sorted(out["orphan_runs"])
+    return out
+
+
+def orphan_states(store) -> int:
+    """States no decision points at any more. Reported, never deleted here.
+
+    A state is owned by the decision that produced it, and decisions are never pruned -- so an
+    orphan means something else removed a decision, which is worth saying out loud rather than
+    tidying away.
+    """
+    try:
+        return store.con.execute(
+            "select count(*) from states s where not exists "
+            "(select 1 from model_decisions d where d.state_hash = s.state_hash)").fetchone()[0]
+    except Exception:                                                    # noqa: BLE001
+        return 0

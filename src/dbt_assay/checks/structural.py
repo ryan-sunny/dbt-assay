@@ -539,3 +539,121 @@ def default_share_sql(rows: list, dialect: str = "duckdb") -> str:
             f"select '{rel}.{col}' as c, count(*) as n, "
             f"count(*) filter (where \"{col}\" is not distinct from {lit}) as d from {rel}")
     return " union all ".join(parts)
+
+
+# ------------------------------------------------- the mirror of test_cannot_fail
+
+def test_outruns_its_source(project, digests, schema=None, entries=None) -> list[Finding]:
+    """A test asserting something the column it tests has no right to promise.
+
+    *** `test_cannot_fail` IS THE ABSENCE DIRECTION. THIS IS THE OTHER ONE. ***
+    That family answers "here is something nothing asserts" and is this project's most reliable,
+    38 of 38 agreed. This answers "here is something asserted that was never true upstream", and
+    it is the one a real outage produced:
+
+        not_null on int_water_well_parcel.parcel_id, failed on ONE row of 49,034.
+        The column is CARRIED from water_parcels, where 7,226 of 2,732,262 rows are null.
+
+    The test could only ever have been one bad row from failing. It took a long time to find that
+    row, and when it did the obvious repair was to drop a legitimately matched well -- fixing the
+    data to protect an assertion the data never supported.
+
+    *** AND THE FREE SIGNAL HAS TO BE EXACT, NOT MERELY SUGGESTIVE. ***
+    The first version fired when the parent simply did not declare `not_null` on the column. That
+    is 148 of 227 carried-column tests on a real warehouse -- 65%, because not declaring
+    `not_null` on every parent column is ordinary practice rather than a defect. A check that
+    fires on the normal case is the `209 of 573` shape, and it is how a list of exceptions becomes
+    a list.
+
+    So the free half is only the two cases where the column CAN be null by construction, both
+    readable off the AST:
+
+      - it is carried from a UNION arm that pads it with `CAST(NULL AS ...)`, so it is null for
+        every row that arm contributes;
+      - it is carried from a LEFT, RIGHT or FULL joined parent, so it is null for every driving
+        row the join did not match. A `not_null` there is asserting the join always matches, which
+        is a claim the join itself does not make;
+      - it is produced by a NULL-PRESERVING AGGREGATE, so it is null for every group whose inputs
+        are all null. This is the one the outage was, and it took carrying the exact AST root to
+        see: the model above was rewritten to an INNER join after the incident, so the join half
+        of this check is correctly silent on it -- and `parcel_id` is `min(parcel_id)` over a
+        grouped CTE, which returns NULL for a group where every parcel has a null id, and the
+        INNER join keeps that row because it joins on `addr_key`, not on `parcel_id`. The repair
+        moved the nullability; it did not remove it.
+
+        `count` is the exception and it is the common case: `count(x)` over a group is 0, never
+        NULL. On the field warehouse that is 16 of the 23 aggregated `not_null` tests, so telling
+        the aggregates apart is the difference between 7 findings and 23.
+
+    Whether the parent actually CONTAINS nulls is a count, and counts arrive with `--verify` like
+    every other counted check here -- absent rather than guessed.
+    """
+    # *** WHICH AGGREGATES CANNOT RETURN NULL. ***
+    # Every other aggregate returns NULL for an all-NULL group, and a GROUP BY still emits that
+    # row. Listed as the exceptions rather than the rule, because a new aggregate nobody has
+    # thought about should read as null-preserving -- the safe direction for a check that says
+    # "this assertion may not hold".
+    NEVER_NULL = {"count", "count_if", "countif", "count_distinct", "approx_count_distinct"}
+    out = []
+    if entries is None:
+        return out
+    by_uid = {e.uid: e for e in entries}
+
+    for t in project.tests:
+        if t.kind != "not_null" or not t.column or not t.tests_model:
+            continue
+        e = by_uid.get(t.tests_model)
+        if e is None:
+            continue
+        ce = next((c for c in e.columns if c.name.lower() == t.column.lower()), None)
+        if ce is None or ce.provenance is None:
+            continue
+        # The RELATION it was read from, not the prose explaining the class.
+        origin = str(getattr(ce.provenance, "origin", "") or "")
+        note = str(ce.provenance.note or "")
+
+        # *** ONLY THE TWO CASES WHERE THE COLUMN CAN BE NULL BY CONSTRUCTION. ***
+        parent_name, why = "", ""
+        if ce.provenance.value == "null_placeholder":
+            parent_name = "a union arm"
+            why = ("this column is padded with `CAST(NULL AS ...)` in a UNION arm, so it is NULL "
+                   "for every row that arm contributes. The test cannot pass while that arm "
+                   "produces rows.")
+        elif ce.provenance.value == "carried":
+            for pname, kind in sorted((e.join_kind or {}).items()):
+                if (kind and kind != "INNER"
+                        and (pname.lower() in origin.lower()
+                             or origin.lower().endswith("." + pname.lower()))):
+                    parent_name = pname
+                    why = (f"carried from `{pname}`, which is {kind} JOINed here -- so it is NULL "
+                           f"for every driving row that join does not match. This test asserts "
+                           f"the join always matches, which the join itself does not claim.")
+                    break
+        elif ce.provenance.value == "aggregated":
+            fn = str(getattr(ce.provenance, "root", "") or "").split(":", 1)[-1].lower()
+            if fn and fn not in NEVER_NULL:
+                parent_name = f"{fn}()"
+                why = (f"produced by `{fn}()`, which returns NULL for any group where every "
+                       f"input row is NULL -- and the GROUP BY still emits that row. The test "
+                       f"asserts no group is ever entirely empty of a value, which is a claim "
+                       f"about the data, not about the aggregate.")
+        if not why:
+            continue
+
+        out.append(Finding(
+            check="test_outruns_its_source", subject=e.uid, subject_name=e.name,
+            file=e.path, base=2,
+            summary=f"`not_null` on {e.name}.{t.column}, which can be NULL by construction: "
+                    f"{parent_name}",
+            detail=(f"{why}\n\nThe failure mode is not a red build. It is a test that passes for "
+                    "years and then fails on ONE row, long after the code that could explain it "
+                    "was written -- and the obvious repair at that point is to delete the row, "
+                    "which fixes the data to protect an assertion the data never supported.\n\n"
+                    "Measured in the field: `not_null` on `int_water_well_parcel.parcel_id` "
+                    "failed on one row of 49,034, and the column is carried from a parent where "
+                    "7,226 of 2,732,262 rows are null. It could only ever have been one bad row "
+                    "from failing.\n\nEither assert it where the value is produced, or stop "
+                    "asserting it here.\n\n" + note),
+            evidence={"column": t.column, "carried_from": parent_name, "test": t.name,
+                      "provenance": ce.provenance.value}))
+    return out

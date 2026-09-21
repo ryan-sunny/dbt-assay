@@ -2417,6 +2417,269 @@ def calibration(
                   "confidence is worthless.[/]")
 
 
+@app.command()
+def prune(
+    keep: int = typer.Option(10, "--keep", "-k", help="how many runs to keep"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="say what would go, delete nothing"),
+) -> None:
+    """Drop old runs from the tables a parser can regenerate. Never touches anything paid for.
+
+    *** THE SCHEMA ALREADY ENCODES WHAT IS SAFE TO DELETE. ***
+    A table carrying `run_id` is exactly one `assay check` rebuilds for free, in seconds, with no
+    network and no spend. A table without one is exactly one that cost money or a keypress:
+    answers and claims were paid for, and a verdict is somebody's afternoon.
+
+    So over-pruning costs one `assay check`, and there is no path through this command that
+    reaches `model_decisions`, `claims` or `adjudications` at all. Nothing runs on its own --
+    a destructive action as a side effect of opening a file is how this goes wrong.
+    """
+    from .store import NEVER_PRUNED, PRUNABLE, orphan_states
+    from .store import prune as _prune
+    if not Path(store_path).exists():
+        console.print(f"[yellow]no store at {store_path}.[/] Nothing to prune.")
+        raise typer.Exit(0)
+    st = Store(store_path)
+    try:
+        before = {t: st.con.execute(f"select count(*) from {t}").fetchone()[0]
+                  for t in PRUNABLE + NEVER_PRUNED}
+        if dry_run:
+            rows = st.con.execute(
+                "select run_id from runs order by started_at desc, run_id desc").fetchall()
+            dead = [r[0] for r in rows[keep:]]
+            console.print(f"[bold]{len(rows) - len(dead)}[/] run(s) kept, "
+                          f"[bold]{len(dead)}[/] would be dropped. Nothing was deleted.")
+            for t in PRUNABLE:
+                if not dead:
+                    continue
+                n = st.con.execute(
+                    f"select count(*) from {t} where run_id in "
+                    f"({','.join('?' * len(dead))})", dead).fetchone()[0]
+                console.print(f"  [dim]{t}: {n:,} of {before[t]:,} row(s)[/]")
+            raise typer.Exit(0)
+        got = _prune(st, keep)
+        orph = orphan_states(st)
+    finally:
+        st.close()
+
+    console.print(f"[bold]{got['runs_kept']}[/] run(s) kept, "
+                  f"[bold]{got['runs_dropped']}[/] dropped.")
+    t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    t.add_column("table"); t.add_column("removed", justify="right")
+    t.add_column("left", justify="right"); t.add_column("")
+    for name in PRUNABLE:
+        removed = got.get(name, 0)
+        t.add_row(name, f"{removed:,}", f"{before[name] - removed:,}",
+                  "[dim]regrown by `assay check`, free[/]")
+    for name in NEVER_PRUNED:
+        t.add_row(name, "[dim]0[/]", f"{before[name]:,}",
+                  "[dim]never pruned: paid for[/]")
+    console.print(t)
+    if got.get("orphan_runs"):
+        console.print(f"[yellow]{len(got['orphan_runs'])} run id(s) appear in a fact table and "
+                      f"not in `runs`[/] [dim]-- no clock, so they cannot be ranked and were "
+                      f"left alone rather than deleted on a guess.[/]")
+    if orph:
+        console.print(f"[dim]{orph:,} stored state(s) no decision points at. Not deleted: a "
+                      f"state is owned by its decision and decisions are never pruned, so an "
+                      f"orphan means something else removed one.[/]")
+
+
+@app.command()
+def suggest(
+    target: str = typer.Option("", "--target", "-t", help="path to dbt target/"),
+    config_dir: str = typer.Option(".", "--config", help="where audit.yml lives"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    section: str = typer.Option("", "--section",
+                                help="vocab | questions | waivers | explanations | open"),
+    limit: int = typer.Option(12, "--limit", "-n", help="how many to print"),
+    out: str = typer.Option("", "--out", help="write the drafts to a file as well"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    """What this project should configure, drawn from what the checks actually found.
+
+    *** ONBOARDING IS MISSING THE STEP BETWEEN "257 FINDINGS" AND "FOUR LINES OF YAML". ***
+    `guide` explains what a vocab term is for and `init` writes defaults, and nothing goes from
+    one to the other. A person who built the tool makes that jump in an afternoon. Nobody else
+    does. This is derivable from the store, and it has already been done by hand here: the first
+    waiver in `audit.yml` is a verbatim descendant of a ruling in `adjudications`.
+
+    *** IT PROPOSES THE CANDIDATE AND THE MEASUREMENT. IT NEVER PROPOSES THE MEANING. ***
+    `means:` and `implies:` come out EMPTY, with the evidence underneath them. A plausible vocab
+    block written from model names looks like knowledge, is not, and then rides along with every
+    judged question from that point on.
+    """
+    from . import suggest as sug
+    cfg = Config.load(config_dir)
+    store = Store(store_path) if Path(store_path).exists() else None
+
+    # Which checks are firing, so `questions` can name the ones config has not heard of. A target
+    # is optional: without one the store still carries every other signal, and the section that
+    # needs a fresh run says so rather than reporting an empty list as "nothing to configure".
+    firing, ran = set(), False
+    if target:
+        tdir = _find_target(target)
+        project, digests, _f, schema, _s = _load(tdir, None)
+        # `live.all_findings` is the ONE stream that carries every family -- structural, judged,
+        # counted and changed. Rebuilding the list here from `run_all` would quietly omit the
+        # entries-aware checks, and `suggest` would then report those families as unconfigured
+        # because it could not see them fire. A second spelling of "what is firing" is the exact
+        # defect this tool checks other people's warehouses for.
+        entries = inv_mod.build(project, digests, schema, store,
+                                probe_mod.read(store) if store else {})
+        firing = {f.check for f in live_mod.all_findings(project, digests, schema, entries, store,
+                                                     cfg.row_loss_threshold)}
+        ran = True
+
+    run_id = None
+    if store is not None:
+        row = store.con.execute(
+            "select run_id from runs order by started_at desc, run_id desc limit 1").fetchone()
+        run_id = row[0] if row else None
+
+    items = sug.build(store, cfg, firing, run_id)
+    if section:
+        items = [i for i in items if i.section == section]
+    shown = items[:limit]
+
+    if json_out:
+        console.print_json(data={"suggestions": [i.as_dict() for i in shown],
+                                 "total": len(items), "ran_checks": ran})
+        return
+
+    if store is None:
+        console.print(f"[yellow]no store at {store_path}.[/] [dim]Almost every signal here is a "
+                      f"measurement taken during `assay check`, so run one first.[/]")
+    if not ran:
+        console.print("[dim]No --target, so the `questions` section cannot say which checks are "
+                      "firing but unconfigured. Everything else comes from the store.[/]\n")
+    if not shown:
+        console.print("[green]Nothing to suggest.[/] [dim]That means the rules found no "
+                      "candidate, which is not the same as the config being complete -- each "
+                      "rule needs its own evidence, and `assay suggest --json` shows which "
+                      "found nothing.[/]")
+        return
+
+    ORDER = {"open": "DECIDE FIRST", "vocab": "VOCAB", "questions": "QUESTIONS",
+             "waivers": "WAIVERS", "explanations": "EXPLANATIONS"}
+    last, last_basis, last_decide = None, None, None
+    for i in shown:
+        if i.section != last:
+            console.print(f"\n[bold]{ORDER.get(i.section, i.section.upper())}[/]")
+            last, last_basis, last_decide = i.section, None, None
+        if i.basis != last_basis:
+            # Each rule is its own list. The numbers under one rule are comparable and the
+            # numbers under two rules are not, so they are never run together into one ranking.
+            console.print(f"  [dim]-- {i.basis}[/]")
+            last_basis, last_decide = i.basis, None
+        # The refusal belongs to the RULE. Repeated under every row it is eight copies of one
+        # paragraph, which reads as noise and gets skipped -- the opposite of its job.
+        if i.decide and i.decide != last_decide:
+            console.print("")
+            for line in i.decide.splitlines():
+                console.print(f"    [yellow]{line}[/]")
+            last_decide = i.decide
+        console.print(f"\n  {i.headline}")
+        for m in i.measured:
+            console.print(f"    [dim]- {m}[/]")
+        if i.draft:
+            console.print("")
+            for line in i.draft.splitlines():
+                console.print(f"      [cyan]{line}[/]")
+
+    if len(items) > len(shown):
+        console.print(f"\n[dim]{len(items) - len(shown)} more. `--limit` or `--section`.[/]")
+    console.print("\n[dim]Every `means:` and `implies:` above is empty on purpose. assay measured "
+                  "the candidate; it cannot know what the term means here, and a guess would look "
+                  "exactly like knowledge.[/]")
+
+    if out:
+        Path(out).write_text(_suggest_file(shown, len(items)))
+        console.print(f"[green]drafts written to {out}[/] [dim]-- fill the empty fields in, then "
+                      f"paste the blocks you keep into audit.yml.[/]")
+
+
+def _suggest_file(items: list, total: int) -> str:
+    """The same drafts, as a file somebody edits in place.
+
+    Deliberately NOT valid YAML to paste wholesale: the meaning fields are empty, so a file that
+    merged cleanly into `audit.yml` would be a file that configured empty meanings. It is a
+    worksheet, and the blocks move across one at a time once they say something.
+    """
+    lines = ["# assay suggest -- candidates and what was measured about them.",
+             "#",
+             "# Every `means:` and `implies:` is EMPTY and assay will not fill it. It measured",
+             "# the candidate; what the term means in this warehouse is yours. A plausible guess",
+             "# here looks like knowledge and then rides along with every judged question.",
+             "#",
+             f"# {len(items)} shown of {total} found.", ""]
+    for i in items:
+        lines.append(f"# --- {i.section.upper()}: {i.key}")
+        lines.append(f"# {i.headline}")
+        for m in i.measured:
+            for j, part in enumerate(str(m).splitlines()):
+                lines.append(f"#   {'- ' if j == 0 else '  '}{part}")
+        if i.decide:
+            lines.append("#")
+            for line in i.decide.splitlines():
+                lines.append(f"#   {line}")
+        lines.append("")
+        lines += i.draft.splitlines()
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+@app.command()
+def evidence(
+    decision_key: str = typer.Option("", "--key", help="the exact decision to show"),
+    question: str = typer.Option("", "--question", "-q"),
+    subject: str = typer.Option("", "--subject", "-s", help="model name or uid, substring match"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    limit: int = typer.Option(3, "--limit", "-n"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    """The exact state a judged answer was computed from, as it was sent.
+
+    *** AN ANSWER WITHOUT ITS INPUT CAN ONLY BE BELIEVED, NOT CHECKED. ***
+    Every judged answer is a function of a state assay assembled and then threw away, so a
+    disagreement was unresolvable: nobody could tell whether the judge was wrong or whether it had
+    been handed the wrong facts. Those are opposite repairs -- one edits the question, one edits
+    what gets sent -- and picking between them was guesswork.
+
+    States are stored by hash, so one state reused across a thousand answers is stored once.
+    """
+    from .mcp_server import Backend
+    if not Path(store_path).exists():
+        console.print(f"[yellow]no store at {store_path}.[/] [dim]Run a judged command once.[/]")
+        raise typer.Exit(0)
+    be = Backend.__new__(Backend)
+    be.store_path = store_path
+    got = be.evidence(decision_key, question, subject, limit)
+    if json_out:
+        console.print_json(data=got)
+        return
+    if got.get("error"):
+        console.print(f"[yellow]{got['error']}[/]")
+        raise typer.Exit(1)
+    if not got["decisions"]:
+        console.print("[yellow]no judged answers match.[/] [dim]Nothing was found, which is not "
+                      "the same as a state being empty.[/]")
+        return
+    for d in got["decisions"]:
+        console.print(f"\n[bold]{d['question']}[/] [dim]{d['decision_key']}[/]")
+        console.print(f"  answer: [cyan]{d['answer']}[/]"
+                      + (f"   confidence: {d['confidence']}" if "confidence" in d else
+                         "   [dim](a noul carries no separate confidence: the answer IS the "
+                         "probability)[/]"))
+        console.print(f"  [dim]state {d['state_hash']} - prompt {d['prompt_version']} - "
+                      f"{d['decided_at']}[/]")
+        if d.get("state_missing"):
+            console.print(f"  [yellow]{d['state_missing']}[/]")
+        else:
+            console.print_json(data=d["state"])
+    console.print(f"\n[dim]{got['how_to_read']}[/]")
+
+
 @app.command(name="guide")
 def guide_cmd(
     topic: str = typer.Argument("", help="start | vocab | questions | waivers | policy | "

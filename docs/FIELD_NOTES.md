@@ -2728,3 +2728,158 @@ because a decoration nobody wants is not a setting.
 The one assertion worth keeping from it survived: **the page shell reaches out to nothing.** No
 `http://`, no `https://`, no CDN, no `<img>`. Self-contained is the delivery model, and on
 `file://` a blocked request fails silently rather than loudly.
+
+---
+
+## 0.33.0: the tool knew where the column came from and dropped it
+
+Three things shipped here. Two of them are the same defect, found twice in one afternoon, in the
+codebase whose whole purpose is finding it in other people's.
+
+### `test_outruns_its_source`, and why it found nothing twice
+
+The outage this check exists for: `not_null` on `int_water_well_parcel.parcel_id` failed on **one
+row of 49,034**. It had passed for months. The obvious repair at that point was to delete the row
+-- fixing the data to protect an assertion the data never supported.
+
+The first version fired whenever a carried column's parent did not declare `not_null` on it. That
+is **148 of 227** carried-column tests, 65%, because not declaring `not_null` on every parent
+column is ordinary practice rather than a defect. A check that fires on the normal case is the
+`209 of 573` shape and it is how a list of exceptions becomes a list. Rejected.
+
+The second version took only the two cases where the column can be NULL **by construction**: a
+UNION arm padding it with `CAST(NULL AS ...)`, and a column carried from a LEFT/RIGHT/FULL joined
+parent. Exact, free, readable off the AST. It found **zero**.
+
+Zero was wrong, and finding out why turned up the real bug:
+
+```python
+pf = Fact(kind, "derived", note=note)   # ColumnProvenance.origin is DROPPED here
+```
+
+`ColumnProvenance` has computed `origin` -- the relation a passed-through column was read from --
+since the beginning, and the inventory threw it away. So every reader downstream knew a column was
+`carried` and not what it was carried **from**, which is the difference between "this column passes
+through" and "this column passes through a LEFT join, so it is null wherever that join missed".
+1,921 columns on the field warehouse carry an origin. None of it reached anything.
+
+With the origin carried, the check still found zero -- and this time zero was **correct**. Every
+carried `not_null` column in a model with a LEFT join is carried from the *driving* table, which a
+LEFT join does not make nullable. The check was right to be silent.
+
+The field case had moved. `int_water_well_parcel` was rewritten to an INNER join after the
+incident, so the join half is correctly silent on it today. And `parcel_id` is still
+`min(parcel_id)` over a grouped CTE:
+
+```sql
+parcels as (select canon_addr_key(situs_address) as addr_key, ..., min(parcel_id) as parcel_id
+            from {{ ref('water_parcels') }} group by 1, 2)
+...
+from keyed k join parcels p on p.addr_key = k.addr_key
+```
+
+`min()` over a group whose parcels all have a null id returns NULL, and the INNER join keeps that
+row because it joins on `addr_key`, not on `parcel_id`. **The repair moved the nullability; it did
+not remove it.** Measured today: `water_parcels.parcel_id` is 5,876 null in 2,732,101 rows;
+`int_water_well_parcel.parcel_id` is 0 null in 48,648. The test passes, and is one unlucky group
+from not passing.
+
+Seeing that needed the same fix a second time. `_root_class` computes `agg:min`, files it under
+`aggregated`, and returns only the class -- so nine classes had to carry a distinction they cannot
+carry: **`count(x)` over a group is 0 and `min(x)` over an all-NULL group is NULL.** A `not_null`
+on the first cannot fail; on the second it is one group from failing. The root is computed either
+way, so carrying it costs nothing.
+
+With the root carried: **7 findings of 646 `not_null` tests, 1.1%**, and the field case is one of
+them. Without it, all 23 aggregated tests fire and 16 of those are counts. That is the difference
+between a list of exceptions and a list.
+
+A third small one fell out of the same reading. `FILTER (WHERE ...)` is an aggregate's own clause,
+and `_classify` never descended into it, so two field-warehouse columns read `filter` -- a root
+that says an aggregate happened and hides which. Both were counts.
+
+### `assay suggest`: the step between 257 findings and four lines of YAML
+
+`guide` teaches what a vocab term is for. `init` writes defaults. `config` shows what resolved.
+Nothing went from what the check found to what this project should therefore configure, so
+onboarding read: here are 257 findings, here is an essay on how config works, now connect them. A
+person who built the tool does that in an afternoon. Nobody else does.
+
+It is derivable, and it had already been done by hand here: the first waiver in `audit.yml` is a
+verbatim descendant of an agent ruling sitting in `adjudications`. Somebody read a ruling and typed
+it in. Seven rules now, 71 candidates on this warehouse, each carrying the measurement that
+produced it -- including the two the work order predicted by hand: `section_id` at **65 hops across
+24 models**, and `xmin`/`xmax` at 14 hops across 9.
+
+**It proposes the candidate and the measurement. It never proposes the meaning.** `means:` and
+`implies:` arrive empty. A plausible vocab block written from model names looks exactly like
+knowledge, is not, and then rides along with every judged question from that point on -- the tool's
+worst failure shipped as a feature, and the most confident-sounding output it would produce.
+
+Four things it refuses to do, each because the first attempt did them and was wrong:
+
+- **A reason repeating across subjects points at two different files and it will not pick.** The
+  spec files this under vocab. On this warehouse "A UNION MEMBER EDGE CANNOT MULTIPLY" appears on
+  8 subjects and the right answer was neither a waiver nor a term -- it was the structural fix
+  that landed in 0.15.0 and 0.21.1. Guessing costs a silence on 8 models and the ninth found in
+  production, so both readings print with the question that separates them.
+- **A label is not a reason.** 26 of 38 disagreements on this warehouse have `source='label'`:
+  the project's own declarations read back as verdicts, with a generated stub for a note. Left in,
+  the first run collapsed them into one 13-subject "finding" whose entire content was the word
+  `asserts`, and the waiver rule would have drafted 26 waivers justified by "the project asserts
+  out". The filter is the source column, not a length cutoff -- a number picked off one
+  warehouse's histogram quietly drops a real short reason on the next one.
+- **No measured agreement says so.** A rule that falls back to the shipped default produces a
+  recommendation indistinguishable from a measured one. Silence has causes -- nobody ruled, or
+  everybody ruled `unclear` -- and those are different next steps, so each is named.
+- **Two rules are never ranked against each other.** `section_id` scores 65 hops x 24 models =
+  1560; `incident_id` scores 99.68% unique. Sorting them together declares one rule more important
+  by an accident of scale and buries every near-unique key under the join counts forever.
+
+That last number is its own finding. `has_duplicates` is not the signal; **how nearly a column is a
+key** is. `_dlt_load_id` holds 3 distinct values in 1,744,203 rows -- a batch stamp, oddly named,
+and nobody has ever been misled by it. `incident_id` is 19,566 distinct in 19,628: it passes every
+spot check, every sample, every casual inspection, and it is not a key. 45 of 55 candidates
+identify a minority of their rows and are now excluded.
+
+The drafts are also checked for being **loadable**, which is not the same as being valid YAML.
+`shipped_action` returns `queue` for a flat opinion and the sentence `queue above a threshold` for
+a thresholded one -- both strings, both valid YAML, and the second makes `Config` raise
+`unknown action`. One field carrying two kinds of thing, in the file that exists to find that.
+
+### Stored states, and pruning what can be regenerated
+
+Every judged answer is a function of a state assay assembled and then threw away. A disagreement
+was therefore unresolvable: nobody could tell whether the judge was wrong or whether it had been
+handed the wrong facts, and those are opposite repairs -- one edits the question, one edits what
+gets sent. States are stored by hash now, so one state reused across a thousand answers is stored
+once, and `assay evidence` / the `evidence()` tool hand it back. An answer from before state
+storage says so in those words rather than rendering as an empty state.
+
+`assay prune` drops only what a later `check` re-derives for free from the same manifest. The split
+is declared rather than inferred: `PRUNABLE` is findings, edge facts and the unreadable list;
+`NEVER_PRUNED` is rulings, claims, adjudications, observed keys and the run log. On a real store,
+findings 3,563 -> 730 and edge facts 8,595 -> 1,719, with every paid table byte-identical
+afterwards. Nothing runs on its own: a destructive action as a side effect of opening a file is how
+this goes wrong.
+
+### Four guards that were not looking at what they claimed to
+
+Each of these passed while the thing it guards was broken.
+
+- **`@app.tool(description=TOOLS[6][1])`.** Every MCP tool description was fetched by position, and
+  the indices were already out of order because tools were added at the end and wired in wherever.
+  Inserting one entry re-points every later tool at a neighbour's description -- an agent then
+  reads the wrong instructions for the right tool and follows them. Keyed by name now, and the
+  test that policed the two orders checks the two *sets* instead.
+- **`assay <name>` in the docs.** The docs guard matched the bare command name anywhere in either
+  document. `assay calibrate` had never been documented and passed on the word "calibrate"
+  appearing in prose; `assay evidence` passed the same way the day it was written. Tightened, it
+  found both immediately.
+- **`var(--accent)`.** Three CSS tokens invented for the new panel do not exist in this page.
+  An undefined `var()` is not an error: the declaration is discarded and the element renders
+  without it, looking deliberate. A test now asserts every token used is defined.
+- **The artifact round trip.** Adding `suggestions` to `assemble` and not to the page's own
+  defaults made `--from` render a different byte stream than the run it came from, because
+  `read_data` fills every declared section and a direct call simply has no key. That guard
+  compares bytes, which is the only reason it caught it.

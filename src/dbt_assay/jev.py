@@ -287,6 +287,14 @@ def decide(store, client: Client, state, questions: dict, *, decision_key: str,
             rows.append([decision_key, q, kind, answer, conf, probs, sh,
                          prompt_version, served, call_id, caller,
                          (contexts or {}).get(q, ""), used])
+        # *** THE STATE ITSELF, KEYED BY ITS HASH. ***
+        # Written before the answers, so a decision can never point at a state that is not there.
+        # `insert or ignore`: the same state under the same hash is the same state, and a cache
+        # hit re-uses one by definition.
+        store.con.execute(
+            "insert or ignore into states (state_hash, state, first_seen) "
+            "values (?, ?, current_timestamp)",
+            [sh, json.dumps(state, default=str, sort_keys=True)])
         store.con.executemany(
             """insert or replace into model_decisions
                (decision_key, question, kind, answer, confidence, probabilities, state_hash,

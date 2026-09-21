@@ -49,12 +49,24 @@ def commands() -> set[str]:
 
 
 def test_every_cli_command_is_named_in_the_docs():
+    """*** AND IT HAS TO LOOK FOR THE COMMAND, NOT FOR THE WORD. ***
+
+    This matched the bare name anywhere in either document, so `assay evidence` was already
+    "documented" by the sentence *the reason is a MEASUREMENT* containing no such word -- but by
+    `evidence` appearing in a dozen unrelated paragraphs. A command called `page`, `check`,
+    `diff` or `config` is a common English word, and the guard passed for every one of them on
+    prose that has nothing to do with the command.
+
+    A guard that matches something other than what it is checking is the defect this codebase
+    keeps finding in other people's warehouses. It looks for `assay <name>`, which is how a
+    document actually introduces a command.
+    """
     docs = _docs()
     if docs is None:
         pytest.skip("no docs in a wheel install")
     cmds = commands()
     assert len(cmds) > 20, "the command reader found almost nothing; it is broken"
-    missing = sorted(c for c in cmds if c not in docs)
+    missing = sorted(c for c in cmds if f"assay {c}" not in docs)
     assert not missing, missing
 
 
