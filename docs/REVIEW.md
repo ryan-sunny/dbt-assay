@@ -219,3 +219,84 @@ proposed handing the agent the key to it. `decided_by` as provenance with the ti
 `review_queue()` is the other half and matters more than it looks: an agent that can see the queue
 it is building can rank its own next reading by blast radius, which is the difference between
 ruling on 99 findings and ruling on the 99 that matter in an order somebody would choose.
+
+---
+
+# Round three, 0.16.0: the release is good and `rule()` orphaned all 99 rulings
+
+## Verified fixed
+
+`traverse` re-run: **`silently_multiplied` 177 → 78**, `same_thing` 94 → 273, and only 274 of 543
+edges re-asked because the rest cached. Five of the eight models I disagreed on are now correct —
+`buyer_leads`, `fact_residential_permit`, `multifamily_leads`, `water_stream_gauges` and
+`buyer_leads_enriched` all read `same_thing` or `deliberately_coarser`.
+
+`effectiveness --source all` is the best new thing here. It turns the rulings into a measurement of
+the CHECKS:
+
+```
+hop_multiplies_rows   23 ruled   0/10 agreed (0%)   13 unclear   10 open
+join_fans_out          4 ruled   4/4  (100%)
+test_cannot_fail      38 ruled   38/38 (100%)
+water.prio             8 ruled   8/8  (100%)
+```
+
+and its closing line is the right rule stated once: **"Reword an option to fix a disagreement; add a
+field to fix an unclear."**
+
+## THE BUG: every agent ruling is orphaned
+
+```
+findings.subject        'model.sunny_data.int_azcc_owners'    fully-qualified unique_id
+adjudications.subject   'int_azcc_owners'                     the bare name rule() accepted
+```
+
+```
+agent rulings                                     99
+rulings that join to a finding on `subject`        0
+rulings that join on `subject_name` instead      249   <- the join that would work
+```
+
+`rule()` took a bare model name, returned `recorded: true`, and wrote 99 rows that can never reach
+the findings they are about. It is the same shape as the eight other absence-reads-as-success
+defects in `FIELD_NOTES.md`, this time in the write path of the feature built to close the loop.
+
+**The visible symptom is `review_queue()`.** It returns 20 items with **0 agent readings attached**
+while its own note says *"Findings an agent has read are first: a person confirming a reading is one
+keypress."* The feature is described in its own output and does not work.
+
+> **Fix:** normalise in `rule()` — resolve a bare name to the model's `unique_id` — and reject a
+> subject that matches no finding and no decision. A ruling nobody can join is not evidence, which
+> is the same argument the tool already makes for a waiver without a reason.
+
+## The granularity gap underneath it
+
+`rule(subject, question)` identifies a MODEL and a CHECK. Findings are finer than that:
+
+```
+az_section_summary        test_cannot_fail       8 findings
+fact_residential_permit   hop_multiplies_rows    6 findings
+water_section_summary     test_cannot_fail       6 findings
+```
+
+One verdict lands on all of them. **That is how I got `dim_business` wrong.** I read its union arms,
+ruled `disagree` on the model, and two of its six edges were not union arms at all —
+`crime_leads` and `business_leads` read `dim_business` on `(geography, building_key)` while its
+grain is `(geography, business_key, building_key)`. Measured: **69,966 rows over 47,178 distinct
+pairs, a 1.48× fan-out.** `silently_multiplied` at 0.45 was correct and my blanket disagree was not.
+
+So one of the twelve disagrees in the last report was mine, not the checker's — and the reason is
+that the API let me rule on six different edges with one keypress and one reading.
+
+> **Fix:** `rule()` should take the finding's own identity. `review_queue()` already returns
+> `check + model + summary` per item; returning an id and accepting it back would close both this
+> and the orphaning at once.
+
+## Still open from round two
+
+- `practices` prints `holds: 0 rows, 0 distinct` where `patch` refuses the same table as
+  `EMPTY ... passes for the wrong reason`.
+- Lockfile detection looks beside `dbt_project.yml`; here that is `./transform/dbt_project.yml`
+  while `uv.lock` is at `./uv.lock`, one level up.
+- `--dbt-bin` on `practices`/`adjudicate`/`probe` versus `--dbt` on `patch`/`onboard`, and it
+  flipped between 0.9.4 and 0.13.0.
