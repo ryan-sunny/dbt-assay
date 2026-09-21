@@ -3066,3 +3066,75 @@ README carried almost none of 0.33–0.34: not `suggest`, not `prune`, not `evid
 form, not the second skill, not the new check. OVERVIEW had them because it was edited alongside
 the work; the front door was not. Both are current, and both guards run in the suite rather than
 depending on somebody remembering to look.
+
+## `code_contradicts_a_claim`: 1 of 8, read by hand
+
+The largest family on this warehouse — **115 findings, 90 models** — and **zero verdicts**, so
+`suggest` was correctly saying it had no agreement rate to gate on. That is the only honest thing
+to say about it and it is not useful, so the readings were done.
+
+Twelve findings, one per model, highest blast radius first, each read against the SQL. Six of them
+independently repeat a second session's sample and agree with it on all six.
+
+| verdict | n | meaning |
+|---|---|---|
+| `disagree` | 7 | the finding is wrong |
+| `agree` | 1 | the finding is right |
+| `unclear` | 4 | the claim cannot be settled from this model's SQL |
+
+**1 of 8 = 12% agreement**, unclear excluded from the denominator as everywhere else.
+
+The one correct finding is the shape the check is for: `stg_maricopa_parcels` claims "the FULL
+Maricopa assessor roll" and line 27 is `where physical_address is not null and owner_name is not
+null`. A universal quantifier and a filter that breaks it.
+
+The clearest false positive is also the most confident. `stg_denver_food` at **p=0.92**, claim
+"Drop CLOSED (not operating)", line 23:
+
+```sql
+and status not ilike '%closed%'
+```
+
+One where-clause, saying exactly what the claim says. The same shape repeats: `stg_business_entities`
+claims the shared macro and line 9 literally calls `{{ owner_key('entityname') }}`;
+`stg_co_health` claims five verticals and lines 7-12 route to exactly those five.
+
+### Nothing gates, and that is the gating machinery working
+
+`code_contradicts_a_claim` has no shipped action and no `audit.yml` entry, so it falls back to
+severity and stops nothing. `gating.min_adjudications: 20` and `min_agreement: 0.85` mean a family
+at 12% could never gate even if somebody configured it. The protection held without anybody
+noticing it was being tested.
+
+The cost is not a broken build. It is that the largest family on the page is mostly wrong, and a
+list that is mostly wrong is a list that gets muted. Worth noting that
+`description_contradicts_the_code` — the same claim-reading shape — IS set to `queue` in this
+project's `audit.yml`, on 18 findings and 4 agree / 4 unclear.
+
+### Two candidate fixes, both rejected by their own numbers
+
+**A rule for claims about other models.** `dim_building` claims "every fact joins here instead of
+re-deriving it". No amount of reading `dim_building.sql` settles that — the subject is the
+consumers. A real shape, and a phrase-based detector for it matched 28 claims of 5,794, most of
+which are answerable: "READS STAGING, NOT az_section_summary or any mart" is about this model's own
+reads and a parser can check it. A rule that fires on the normal case is the shape this project
+keeps rejecting, so it was rejected here too.
+
+**Loosening the literal-value rule.** `unanswerable_from_sql` refuses a claim asserting a number
+only when the claim names no real column. Two of the four unclears carry a count and do name one —
+"the FULL active liquor roster (~20k licensed venues)", "every row carries a phone". Dropping the
+`and not named` guard reaches **4 of 115 findings** and would be wrong on one of them:
+`portfolio_score (0-100)` is a range specification, answerable from the expression that produces it.
+Four findings, one of them broken, is not a trade worth making — and the `(0-100)` case is the
+reason that guard is there.
+
+### What it actually needs
+
+The false positives are not one structural shape. Every one is a comment sitting directly above the
+code implementing it — and so is the single TRUE finding, so "the claim is a comment in this file"
+separates nothing. The difference is semantic: a universal quantifier broken by a filter, versus a
+description of an operation the code performs. That is a question-quality problem, which is what
+`prompt_version` and `effectiveness` exist to measure across a rewrite.
+
+Measuring a rewrite needs verdicts, and there are none. The twelve readings are loaded into the
+review form as `--reads`, where confirming or overturning each is one click.
