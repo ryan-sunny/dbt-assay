@@ -1,6 +1,8 @@
 """The question banks are DATA, and data is what packaging silently drops."""
 from pathlib import Path
 
+import pytest
+
 import dbt_assay
 from dbt_assay.contracts import load_all_banks
 
@@ -177,3 +179,66 @@ def test_the_diagram_the_readme_points_at_exists_and_has_no_external_refs():
     for forbidden in ("<script", "xlink:href", "<foreignObject", "<image"):
         assert forbidden not in body, forbidden
     assert 'src="docs/how-jev-fits.svg"' in (root / "README.md").read_text()
+
+
+def test_the_release_script_and_the_ci_guard_read_the_same_version():
+    """*** EIGHT VERSIONS WERE BUMPED, PUSHED, AND NEVER TAGGED. ***
+
+    0.25 through 0.45 exist as commits and as nothing else. The release is tag-driven, so bumping
+    `__version__` and pushing felt like releasing and published nothing -- and PyPI only shows the
+    LAST successful upload, so the gap was invisible from the outside until somebody looked. A
+    thing that stopped happening, reported the same way as a thing that is fine, which is the
+    defect this project exists to find.
+
+    Two spellings of "what version is this" is how they drift apart again, so both read it from
+    the package.
+    """
+    from pathlib import Path
+
+    import dbt_assay
+    root = Path(dbt_assay.__file__).parent.parent.parent
+    script = root / "scripts" / "release.sh"
+    ci = root / ".github" / "workflows" / "ci.yml"
+    if not script.exists():
+        pytest.skip("no repo checkout here")
+    read = 'import dbt_assay; print(dbt_assay.__version__)'
+    assert read in script.read_text(), "the release script invents its own version"
+    assert read in ci.read_text(), "the CI guard invents its own version"
+
+
+def test_the_release_script_refuses_the_ways_a_release_goes_wrong():
+    """It refuses rather than guesses. Each of these was a real way to publish something wrong."""
+    from pathlib import Path
+
+    import dbt_assay
+    script = Path(dbt_assay.__file__).parent.parent.parent / "scripts" / "release.sh"
+    if not script.exists():
+        pytest.skip("no repo checkout here")
+    body = script.read_text()
+    assert "set -euo pipefail" in body
+    for guard, why in (
+        ("git status --porcelain", "a dirty tree would publish uncommitted work"),
+        ("already tagged", "PyPI is append-only; a reused version cannot be corrected"),
+        ("uv run pytest -q", "the suite is a gate, not a suggestion"),
+        ("uv run ruff check", "lint is a gate too"),
+        ("pyproject says", "two files carry the version and they can disagree"),
+    ):
+        assert guard in body, f"the release script does not refuse: {why}"
+    # the commit and the tag leave together or not at all
+    assert 'git push origin HEAD "v$VER"' in body, (
+        "pushing the commit separately from the tag is how main ends up carrying a version "
+        "nothing published")
+
+
+def test_ci_fails_on_main_when_the_version_has_no_tag():
+    from pathlib import Path
+
+    import dbt_assay
+    ci = Path(dbt_assay.__file__).parent.parent.parent / ".github" / "workflows" / "ci.yml"
+    if not ci.exists():
+        pytest.skip("no repo checkout here")
+    body = ci.read_text()
+    assert "released:" in body, "the tag guard is gone"
+    assert "github.ref == 'refs/heads/main'" in body, "the guard would fire on every branch"
+    assert "there is no v$VER tag" in body
+    assert "scripts/release.sh" in body, "the failure does not say how to fix it"

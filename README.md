@@ -895,6 +895,29 @@ or a keypress: rulings, claims, adjudications, observed keys, the run log. On a 
 in `store.PRUNABLE` and `store.NEVER_PRUNED` rather than inferred, so a new table is not silently
 prunable — it belongs to one list or the other, and a test fails until it does.
 
+## Releasing
+
+```bash
+scripts/release.sh            # release whatever __version__ says
+scripts/release.sh 0.47.0     # bump to this, commit the bump, then release
+```
+
+One command, because a two-step ritual whose second step is optional gets skipped. **Eight
+versions were bumped, committed and pushed without a tag** — 0.25 through 0.45 exist as commits
+and as nothing else. The release is tag-driven, so bumping `__version__` felt like releasing and
+published nothing, and PyPI only ever shows the *last successful upload*, so the gap was invisible
+from outside until somebody looked. A thing that stopped happening, reported the same way as a
+thing that is fine, which is the defect this whole project exists to find.
+
+The script refuses rather than guesses: a dirty tree, a version already tagged (PyPI is
+append-only — a released version can be yanked but never replaced), a red suite, a failed lint, or
+`pyproject.toml` and `__init__.py` disagreeing about the version. The commit and the tag are pushed
+together, because pushing the commit first is exactly how main comes to carry a version nothing
+published.
+
+And CI guards it on main: a version sitting on `main` with no matching tag fails the build and says
+which command fixes it.
+
 ## Maintenance
 
 Maintained for my own use. PRs read when convenient, issues may sit, fork freely.

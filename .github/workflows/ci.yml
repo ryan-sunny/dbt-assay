@@ -27,6 +27,34 @@ jobs:
       # needs one is a test that cannot run in CI, and the judgment tier is opt-in by design.
       - run: uv run --python ${{ matrix.python }} pytest -q
 
+  # *** EIGHT VERSIONS WERE BUMPED AND NEVER TAGGED, AND NOTHING SAID SO. ***
+  # The release is tag-driven, so bumping `__version__` and pushing felt like releasing and
+  # published nothing. 0.25 through 0.45 exist as commits and as nothing else. PyPI only shows the
+  # LAST successful upload, so the gap is invisible from the outside until somebody looks -- which
+  # is the shape this whole project exists to find: a thing that stopped happening, reported the
+  # same way as a thing that is fine.
+  #
+  # On main only: a version sitting on main with no tag is a version nobody can install.
+  released:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+      - name: the version on main is tagged
+        run: |
+          VER=$(uv run python -c "import dbt_assay; print(dbt_assay.__version__)")
+          git fetch --tags --quiet
+          if git rev-parse "v$VER" >/dev/null 2>&1; then
+            echo "v$VER is tagged."
+          else
+            echo "::error::main is on $VER and there is no v$VER tag, so nothing published it."
+            echo "::error::Release with: scripts/release.sh"
+            exit 1
+          fi
+
   lint:
     runs-on: ubuntu-latest
     steps:
