@@ -101,3 +101,33 @@ def test_the_decision_key_grammar_is_documented():
     body = DOC.read_text()
     for shape in ("::claim::", "::edge::", "::finding::", "::pred::"):
         assert shape in body, f"{shape} is not in the schema doc"
+
+
+def test_every_table_has_a_prune_policy(live):
+    """*** `states` WAS IN NEITHER LIST, WHICH IS THE ONE THING THE SPLIT FORBIDS. ***
+
+    A table carrying `run_id` is one `assay check` rebuilds for free. One without it cost a model
+    call or somebody's afternoon. `prune` deletes the first kind, and a table in neither list is a
+    table whose cost nobody decided -- it is simply never considered, which is silence rather than
+    a decision.
+
+    `SCHEMA.md` claimed "a new table belongs to one list or the other and a test fails until it
+    does" while no such test existed: a documentation claim the code did not support, in the tool
+    whose largest check family is `code_contradicts_a_claim`.
+    """
+    from dbt_assay.store import NEVER_PRUNED, PRUNABLE
+    declared = set(PRUNABLE) | set(NEVER_PRUNED)
+    assert len(live) > 5, "the table reader found almost nothing; it is broken"
+    unassigned = sorted(set(live) - declared)
+    assert not unassigned, (
+        f"no prune policy for: {unassigned}. Every table is either free to rebuild (PRUNABLE) or "
+        f"cost something (NEVER_PRUNED). There is no third answer.")
+    phantom = sorted(declared - set(live))
+    assert not phantom, f"a prune list names tables that do not exist: {phantom}"
+
+
+def test_the_two_prune_lists_do_not_overlap():
+    """A table cannot be both free to rebuild and expensive to lose."""
+    from dbt_assay.store import NEVER_PRUNED, PRUNABLE
+    both = set(PRUNABLE) & set(NEVER_PRUNED)
+    assert not both, both

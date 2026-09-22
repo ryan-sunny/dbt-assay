@@ -10,7 +10,8 @@ prune` deletes only the first kind, and the split is declared in code rather tha
 
 ```python
 PRUNABLE     = ("findings", "edge_facts", "unreadable")
-NEVER_PRUNED = ("model_decisions", "claims", "adjudications", "observed_keys", "runs")
+NEVER_PRUNED = ("model_decisions", "claims", "adjudications", "observed_keys", "runs",
+                "states")
 ```
 
 A new table belongs to one list or the other and a test fails until it does, so nothing becomes
@@ -205,3 +206,54 @@ different row from one against v4 and cannot silently authorize it. The suffix o
 (`+scoped+description_only`) records the STATE SHAPE rather than the question text — a known gap
 is that `stale_decisions` compares only the base, so changing what gets sent is not counted by
 anything.
+
+---
+
+## Why there are no foreign keys
+
+Fair question to ask of this tool in particular. The answer is partly "structurally impossible",
+partly "not worth a destructive migration", and partly "this already went wrong once". All three
+are measured rather than argued.
+
+**What is actually broken today.** Zero orphans on every join that has a real target:
+
+| join | orphans |
+|---|---|
+| `findings.run_id` → `runs` | 0 of 4,940 |
+| `edge_facts.run_id` → `runs` | 0 of 11,460 |
+| `adjudications.decision_key` → `model_decisions` | 0 of 195 |
+| `adjudications` `::claim::` → `claims` | 0 |
+| `model_decisions.state_hash` → `states` | 9,945 — but `states` is empty; state storage shipped in 0.33.0 and these predate it |
+
+**It has gone wrong before.** 99 agent rulings once existed under a subject that resolved to no
+model, so they attached to nothing and counted toward nothing. That is exactly the failure a
+foreign key prevents. It was fixed by refusing the write — `rule` will not record a subject it
+cannot resolve — and by `assay review --repair` for the ones whose model name was unambiguous.
+Validation at the write, not a constraint at the table.
+
+**Two of these cannot be foreign keys at all**, and it is not a matter of effort:
+
+- `adjudications.subject` is **polymorphic**. It is a model `unique_id`, or that plus
+  `::finding::<id>`, or `::win::<n>`, or `::claim::<id>`. There is no single table to point at.
+- `adjudications.decision_key` → `model_decisions.decision_key` is refused by DuckDB: the parent's
+  primary key is `(decision_key, question, prompt_version, model_version)`, and a foreign key
+  needs a unique target. One column of a composite key is not one.
+- Separately, the column uses `''` to mean "structural finding, no question was asked". A foreign
+  key requires `NULL` for that; `''` is a value and would be an orphan.
+
+**The `run_id` ones could be, and are not.** They work — verified: the constraint refuses an orphan
+insert, and `prune` still runs, because prune deletes children and keeps the runs. What stops it is
+that **DuckDB has no `ALTER TABLE ADD CONSTRAINT`**, so adding one means rebuilding tables in every
+existing store, on a file holding model calls and human verdicts. That is a destructive migration
+to prevent a class of orphan that currently has zero instances and whose only writer is this
+codebase.
+
+So: a real smell, two instances that are structurally impossible, one that is a deliberate trade
+with a stated reason. Written down here rather than left for somebody to notice.
+
+**And one thing this section found.** It said, in an earlier draft, "a new table belongs to one
+list or the other and a test fails until it does." No such test existed, and `states` was in
+neither list. A documentation claim the code did not support, in the project whose largest check
+family is `code_contradicts_a_claim`, written the same day. The test exists now and `states` is
+`NEVER_PRUNED` — a state is what was sent to a call somebody paid for, and a decision without the
+state it was computed from is an answer nobody can check.

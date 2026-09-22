@@ -3507,3 +3507,38 @@ sets match in both directions.
 Three guards caught their own cases during this: the MCP tool count in the docs (fifteen, now
 sixteen), the CLI-parity table in the skill, and the checked-in-equals-shipped check. Every one of
 those was written after a defect of that shape got out.
+
+### The schema doc found two things in itself
+
+Writing the ER diagram was supposed to be documentation. It turned up a defect and a false claim.
+
+**`states` was in neither prune list.** `PRUNABLE` is what a `check` rebuilds for free;
+`NEVER_PRUNED` is what cost a model call or somebody's afternoon. A table in neither is a table
+whose cost nobody decided — it is simply never considered. It is `NEVER_PRUNED` now: a state is
+what was sent to a paid call, and a decision without the state it was computed from is an answer
+nobody can check.
+
+**And the doc claimed a guard that did not exist.** It said "a new table belongs to one list or
+the other and a test fails until it does." No such test existed. That is `code_contradicts_a_claim`
+— the project's own largest check family — in its own documentation, written the same day. Two
+tests now: every table has a policy, and the two lists do not overlap.
+
+### "no foreign keys" is a fair thing to ask of this tool
+
+So it is answered with numbers rather than argued. Zero orphans today on every join with a real
+target. 99 agent rulings once existed under a subject that resolved to no model — exactly what a
+foreign key prevents — and were fixed by refusing the write rather than by constraining the table.
+
+Two of the joins cannot be foreign keys at all. `adjudications.subject` is polymorphic: a model
+uid, or that plus `::finding::`, `::win::` or `::claim::`. And a key on
+`model_decisions.decision_key` is refused by DuckDB, because the parent's primary key is
+`(decision_key, question, prompt_version, model_version)` and one column of a composite key is not
+a unique target. The column also uses `''` for "structural, no question asked", where a foreign
+key would need `NULL`.
+
+The `run_id` ones would work — verified: the constraint refuses an orphan, and `prune` still runs,
+because prune deletes children and keeps runs. What stops them is that **DuckDB has no
+`ALTER TABLE ADD CONSTRAINT`**, so adding one rebuilds tables in every existing store, on a file
+holding model calls and human verdicts, to prevent a class of orphan with zero current instances
+and one writer. Recorded as a deliberate trade with its reason, in `SCHEMA.md`, rather than left
+for somebody to notice.

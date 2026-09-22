@@ -825,8 +825,15 @@ class Store:
 #
 # Over-pruning costs one `assay check`. Under-pruning costs disk. Getting it wrong in the other
 # direction costs the only thing in the store a release can never rebuild.
+# *** A STATE IS NOT REBUILDABLE: IT IS WHAT WAS SENT TO A CALL SOMEBODY PAID FOR. ***
+# It was in neither list, which is the one thing this split is supposed to make impossible -- and
+# `SCHEMA.md` said "a new table belongs to one list or the other and a test fails until it does"
+# while no such test existed. Kept, because a decision without the state it was computed from is
+# an answer nobody can check. Orphans -- a state no decision points at -- are reported by
+# `orphan_states()` and deleted by nothing, since a state is owned by its decision.
 PRUNABLE = ("findings", "edge_facts", "unreadable")
-NEVER_PRUNED = ("model_decisions", "claims", "adjudications", "observed_keys", "runs")
+NEVER_PRUNED = ("model_decisions", "claims", "adjudications", "observed_keys", "runs",
+                "states")
 
 
 def prune(store, keep: int = 10) -> dict:
