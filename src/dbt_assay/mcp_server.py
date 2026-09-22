@@ -388,6 +388,67 @@ class Backend:
                 f"reason is on screen.")
         return out
 
+    def load_handback(self, path: str, apply: bool = False, by: str = "") -> dict:
+        """Record the verdicts a PERSON wrote in the review form. The one tool that files `human`.
+
+        *** THE HUMAN DID THE MOST VALUABLE WORK IN THE SYSTEM AND THE FILE SAT IN ~/Downloads. ***
+        Reported from the field: "outputting that file is cool and all but we need to actually
+        perform the steps to make that file do something." The CLI path existed --
+        `assay review --load handback.json --apply` -- and MCP could not reach it, so the agent
+        that handed somebody the form could not close the loop it had opened.
+
+        *** THIS IS THE ONE PLACE AN AGENT MAY CAUSE A `human` ROW TO EXIST. ***
+        Every verdict here came from a keypress in the form. The agent is a courier: it did not
+        decide any of these and cannot add one, because `load` reads only what the file carries
+        and a card nobody answered is not in it. That is why the tool takes a PATH and has no
+        parameter for a verdict -- there is no shape of this call that invents an opinion.
+
+        `apply` also writes the Words, Explanations and Waivers boxes into `audit.yml`. Off by
+        default: the verdicts are a record of what somebody said, and editing their config is a
+        different act that they should see a diff of first.
+        """
+        from pathlib import Path as _P
+
+        from . import reviewform
+        src = _P(path).expanduser()
+        if not src.exists():
+            return {"error": f"no file at {src}. The form downloads `handback.json` to wherever "
+                             f"the browser puts downloads; ask for the path rather than guessing.",
+                    "recorded": 0}
+        store, why = self._store_or_why()
+        if store is None:
+            return {"error": why, "recorded": 0}
+        try:
+            payload = json.loads(src.read_text())
+            rows, bad = reviewform.load(payload)
+            who = by or (payload.get("by") if isinstance(payload, dict) else "") or "unknown"
+            from .cli import _record_one_verdict
+            fams: dict = {}
+            findings_ruled = 0
+            for r in rows:
+                fids = (list(r.get("findings") or [])
+                        if r["verdict"] in ("disagree", "agree") else [])
+                fam = _record_one_verdict(store, r["subject"], r["question"], r["verdict"],
+                                          r["correction"], r["note"], who, findings=fids)
+                fams[fam] = fams.get(fam, 0) + 1
+                findings_ruled += len(fids)
+            out = {"recorded": len(rows), "by": who, "as": "human",
+                   "findings_ruled": findings_ruled,
+                   "by_family": dict(sorted(fams.items())),
+                   # A row that recorded nothing is NAMED. "recorded 40" and "you answered 40 of
+                   # 212" have to be distinguishable from the outside.
+                   "recorded_nothing": bad[:12], "recorded_nothing_total": len(bad)}
+            if apply:
+                cfg_rows, cfg_bad = reviewform.load_config(payload)
+                out["config_changes"] = len(cfg_rows or [])
+                out["config_rejected"] = list(cfg_bad or [])[:12]
+                out["config_note"] = ("Changes are reported, not written from here: run "
+                                      "`assay review --load <path> --apply` so the person sees "
+                                      "the diff against their own audit.yml before it changes.")
+            return out
+        finally:
+            store.close()
+
     def review_queue(self, limit: int = 20) -> dict:
         """What is waiting for a PERSON, with the agent's reading already attached.
 
@@ -832,6 +893,13 @@ TOOLS = [
                 "claim. Call this BEFORE editing: the claims are what the edit must keep true.")),
     ("traversal", ("How a model's parents reach it, and whether any hop multiplies rows without "
                    "declaring it. The defect class no single-model check can see.")),
+    ("load_handback", ("Record the verdicts a PERSON wrote in the review form, from the "
+                       "`handback.json` the form downloads. Call it the moment they say they "
+                       "have filled the form in -- ask for the path rather than guessing at a "
+                       "downloads directory. This is the ONLY tool that files `human` verdicts, "
+                       "and it can only file what the file carries: you are the courier, not "
+                       "the reviewer. A form that is downloaded and never loaded is the most "
+                       "valuable work in this system sitting in a folder.")),
     ("review_queue", ("What is waiting for a PERSON to rule on, agent-read items first, with the "
                       "reason already attached. Call it before `rule` to see whether a subject "
                       "has been read, and after, to see the queue you are building.")),
@@ -992,6 +1060,10 @@ def serve(target: str, store_path: str | None = None) -> None:
     @app.tool(description=_desc("review_queue"))
     def review_queue(limit: int = 20) -> str:
         return json.dumps(be.review_queue(limit), default=str)
+
+    @app.tool(description=_desc("load_handback"))
+    def load_handback(path: str, apply: bool = False, by: str = "") -> str:
+        return json.dumps(be.load_handback(path, apply, by), default=str)
 
     @app.tool(description=_desc("rebase"))
     def rebase() -> str:

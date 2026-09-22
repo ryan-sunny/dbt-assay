@@ -1987,6 +1987,10 @@ def page(
                                   help="render the page from a data artifact instead of from a "
                                        "warehouse. No dbt target and no store needed, so any "
                                        "past commit's artifact renders as the page it was"),
+    form: str = typer.Option(None, "--form",
+                             help="path to the review form, relative to this page, so the two "
+                                  "link to each other. The report is read-only; the form owns "
+                                  "every box you type into."),
 ) -> None:
     """Everything assay knows about this warehouse, as one file you can open.
 
@@ -2144,6 +2148,12 @@ def page(
         ddir = data_dir or str(Path(out).with_suffix("").name + "-data")
         ddir = str(Path(out).parent / ddir) if not Path(ddir).is_absolute() else ddir
         written = explore.write_data(data, ddir, record)
+        # *** THE LINK IS NOT PART OF THE ARTIFACT. ***
+        # It is where this reader keeps their copy of the form, which is a fact about a directory
+        # and not about the warehouse. Setting it before `write_data` would put it in the
+        # committed artifact and make two people's pages differ over nothing.
+        if form:
+            data["meta"] = {**data["meta"], "form": form}
         doc = explorer.explorer_html(data, record)
     if store is not None:
         store.close()

@@ -1130,7 +1130,7 @@ a column is, what the grain is, and what would break before it writes a line. Th
 it the **obligation** — without it an agent checks when it remembers, and with it, checking is the
 procedure.
 
-Nineteen tools. Most report; seven do something else:
+Twenty tools. Most report; eight do something else:
 
 | tool | what it is for |
 |---|---|
@@ -1140,6 +1140,7 @@ Nineteen tools. Most report; seven do something else:
 | `evidence(question, subject)` | the exact **state** a judged answer was computed from. Call it before disagreeing with one: if the answer is wrong and the state is wrong, what gets sent needs fixing; if the state is right, the question does |
 | `vocabulary()` | their words, **where each one is true**, and everything wrong with the list. A term goes into every judged question's state, so one asserted outside where it holds is wrong in every answer about that part of the project at once — measured at 25% of one real warehouse's answers. Call it before writing or editing a term |
 | `spend()` | what the judged tier has **cost** here, by caller and by day. Put it in front of somebody before proposing a judged run |
+| `load_handback(path)` | record the verdicts a **person** wrote in the review form. The only tool that files `human` verdicts, and it can only file what the file carries — the agent is the courier, not the reviewer. Without it the form downloads and the most valuable work in the system sits in a folder |
 | `stale(exact)` | judged answers about SQL that has **since changed**, so an agent knows whether an answer it is about to rely on is still about the code in front of it. `exact=true` rebuilds the state and catches a change to a *parent*; neither form makes an API call |
 
 Each has a CLI equivalent, because a skill with no MCP connection is still a procedure:

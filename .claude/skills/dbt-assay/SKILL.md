@@ -158,6 +158,17 @@ question does. Those are different files, and without the state you are guessing
     before ruling, to see whether a subject has already been read, and after, to see the queue you
     are building. Your ruling never clears an item from it.
 
+11. **Drain the queue BEFORE you hand anybody a form.** `assay review --emit` renders every
+    finding, read or not, and a person opening a form where a quarter of the cards say "nothing
+    on this question" is being asked to do the reading you were there to do. Rule on everything
+    in `review_queue()` first, then emit.
+
+12. `load_handback(path)` — **the moment they say they have filled the form in.** The form
+    downloads `handback.json` and nothing happens until it is loaded; a form that is downloaded
+    and never loaded is the most valuable work in this system sitting in a folder. Ask for the
+    path rather than guessing at a downloads directory. This is the only tool that files `human`
+    verdicts and it can only file what the file carries — you are the courier, not the reviewer.
+
 ## When they have agreed with findings and want them fixed
 
 ```bash
@@ -251,6 +262,7 @@ and nothing is lost:
 | `violations()` | `assay check --json`, then read `action` |
 | `rule(finding, …)` | `assay review --subject <s> --question <q> --verdict <v> --note <why>` |
 | `review_queue()` | `assay review` |
+| `load_handback(path)` | `assay review --load handback.json` (add `--apply` to write audit.yml) |
 | `plan()` | `assay plan -t target/` (writes `assay_plan.jsonl`) |
 | `suggestions()` | `assay suggest -t target/`, or `--section vocab` |
 | `evidence()` | `assay evidence -q <question> -s <model>` |

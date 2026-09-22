@@ -137,7 +137,7 @@ pre{background:#f6f9fa;border:1px solid var(--line);border-radius:6px;padding:9p
 overflow:auto;font-size:11.5px;margin:6px 0;white-space:pre-wrap;word-break:break-word}
 .tot{color:var(--faint)}
 .hero{display:flex;gap:26px;flex-wrap:wrap;margin:4px 0 22px}
-.herobig{flex:1 1 300px;min-width:280px}
+.herobig{flex:1 1 260px;min-width:240px}
 .herobig .lab{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);
 font-weight:600;margin-bottom:4px}
 .heron{font-size:46px;font-weight:700;letter-spacing:-.02em;line-height:1}
@@ -503,6 +503,14 @@ def explorer_html(data: dict, record_html: str) -> str:
         ("questions", "Questions", counts["questions"]),
         ("config", "Config", None),
     ]
+    # *** THIS PAGE IS READ-ONLY AND THE FORM IS WHERE YOU CHANGE THINGS. ***
+    # Two artifacts that link, rather than one that half-does both: the report says WHAT, the form
+    # owns every box you type into. Without a link between them the split reads as a missing
+    # feature -- "it doesnt even offer the ability to configure anything?" -- rather than as a
+    # decision. A relative path, so the pair travels as two files in one directory.
+    form = str(data.get("meta", {}).get("form") or "")
+    form_link = (f' &middot; <a class="lk" href="{e(form)}">open the review form</a>'
+                 if form else "")
     nav = "".join(
         f'<button role="tab" data-tab="{t}" aria-selected="{"true" if i == 0 else "false"}">'
         f'{e(label)}{f"<b>{n:,}</b>" if n is not None else ""}</button>'
@@ -517,7 +525,7 @@ def explorer_html(data: dict, record_html: str) -> str:
 <header>
 <h1>{e(meta['project'])}<span>everything assay knows</span></h1>
 <div class="sub">{meta['models']} models &middot; {meta['sources']} sources &middot;
-manifest generated {e(str(meta['generated_at']))} &middot; assay {e(meta['version'])}</div>
+manifest generated {e(str(meta['generated_at']))} &middot; assay {e(meta['version'])}{form_link}</div>
 <nav role="tablist">{nav}</nav>
 </header>
 <main>{panels}</main>
@@ -704,7 +712,7 @@ function conf(x) {
    once however many there are -- and since it is then small, you can zoom and drag.
    The cap is a real wall rather than a layout limit: past this a picture is a hairball whatever
    you do with it, and the list is the better answer. */
-const BAND_MAX = 60, BW = 210, BH = 66, GAPX = 16, BANDY = 152, MINW = 860;
+const BAND_MAX = 60, BW = 210, BH = 66, GAPX = 16, MINW = 860;
 /* *** A BOX 148 WIDE HOLDING 22 MONOSPACE CHARACTERS IS A BOX THAT OVERFLOWS. ***
    Reported from the field with a screenshot: `int_az_parcel_sections` painted through its own
    border and then through the right edge of the drawing. Truncating by character count guesses
@@ -928,9 +936,21 @@ function lineage(m) {
   const wrap = el('div', {class: 'linwrap'});
   const drawIn = ins.length <= BAND_MAX, drawOut = outs.length <= BAND_MAX;
   const nTop = drawIn ? ins.length : 0, nBot = drawOut ? outs.length : 0;
-  const cols = Math.max(nTop, nBot, 1);
+  /* *** TWENTY PARENTS IN ONE ROW IS A DRAWING NOBODY CAN READ. ***
+     The band spread across a viewBox as wide as it needed, and `meet` then zoomed the whole
+     thing out until the node text was too small to read -- "its just a big fuckin mess it needs
+     to be like a 5x4 grid or something with enough space". A band wraps now, so twenty parents
+     are four rows of five and the drawing stays near enough to square that fitting it keeps the
+     names legible. */
+  const PER_ROW = 5, GAPY = 26;
+  const rowsIn = Math.ceil(nTop / PER_ROW), rowsOut = Math.ceil(nBot / PER_ROW);
+  const cols = Math.min(PER_ROW, Math.max(nTop, nBot, 1));
   const W = Math.max(cols * (BW + GAPX) + GAPX, MINW);
-  const H = BANDY * 2 + BH + 30;
+  const bandH = r => Math.max(r, 0) * (BH + GAPY);
+  /* The focus sits below the parents with room for the connectors, wherever that lands. */
+  const topH = bandH(rowsIn), gapToFocus = 62;
+  const fyTop = topH + (rowsIn ? gapToFocus : 20);
+  const H = fyTop + BH + (rowsOut ? gapToFocus : 20) + bandH(rowsOut);
   /* The SVG fills the viewport and the viewBox is the drawing, so everything fits at any count.
      Sizing the element to the drawing instead is what clipped the fifth parent off the edge. */
   const s = svg('svg', {class: 'lin', viewBox: `0 0 ${W} ${H}`,
@@ -940,23 +960,30 @@ function lineage(m) {
         markerHeight: 7, orient: 'auto'}, [svg('path', {d: 'M0,0 L8,4 L0,8 z'})]),
     svg('clipPath', {id: CLIP}, [svg('rect', {width: BW - 6, height: BH})])]));
 
-  const fx = (W - BW) / 2, fy = BANDY;
-  const rowFor = (i, n) => (W - (n * (BW + GAPX) - GAPX)) / 2 + i * (BW + GAPX);
+  const fx = (W - BW) / 2, fy = fyTop;
+  /* Where box `i` of `n` sits in a wrapped band. The last row is centred on its own count, so a
+     band of twelve is 5 + 5 + 2 with the two in the middle rather than shoved left. */
+  const place = (i, n, yTop) => {
+    const row = Math.floor(i / PER_ROW), col = i % PER_ROW;
+    const inRow = Math.min(PER_ROW, n - row * PER_ROW);
+    return {x: (W - (inRow * (BW + GAPX) - GAPX)) / 2 + col * (BW + GAPX),
+            y: yTop + row * (BH + GAPY)};
+  };
 
   if (drawIn) ins.forEach((e, i) => {
-    const x = rowFor(i, ins.length);
+    const at = place(i, ins.length, 0);
     s.append(svg('path', {class: 'ln' + (e.driving ? ' drv' : '') + (why(e) ? ' nb' : ''),
       'marker-end': 'url(#ah)',
-      d: `M${x + BW / 2},${BH} C${x + BW / 2},${BH + 40} ${fx + BW / 2},${fy - 40} ${fx + BW / 2},${fy - 6}`}));
-    s.append(box(x, 0, e.parent_name, edgeNote(e), 'par' + (why(e) ? ' nb' : ''),
+      d: `M${at.x + BW / 2},${at.y + BH} C${at.x + BW / 2},${at.y + BH + 40} ${fx + BW / 2},${fy - 40} ${fx + BW / 2},${fy - 6}`}));
+    s.append(box(at.x, at.y, e.parent_name, edgeNote(e), 'par' + (why(e) ? ' nb' : ''),
                  ev => { ev.stopPropagation();
                    nodeCard(ev.currentTarget, e.parent_name, e); }));
   });
   if (drawOut) outs.forEach((e, i) => {
-    const x = rowFor(i, outs.length);
+    const at = place(i, outs.length, fy + BH + gapToFocus);
     s.append(svg('path', {class: 'ln', 'marker-end': 'url(#ah)',
-      d: `M${fx + BW / 2},${fy + BH} C${fx + BW / 2},${fy + BH + 40} ${x + BW / 2},${BANDY * 2 - 40} ${x + BW / 2},${BANDY * 2 - 6}`}));
-    s.append(box(x, BANDY * 2, e.child_name, edgeNote(e), 'chi',
+      d: `M${fx + BW / 2},${fy + BH} C${fx + BW / 2},${fy + BH + 40} ${at.x + BW / 2},${at.y - 40} ${at.x + BW / 2},${at.y - 6}`}));
+    s.append(box(at.x, at.y, e.child_name, edgeNote(e), 'chi',
                  ev => { ev.stopPropagation();
                    nodeCard(ev.currentTarget, e.child_name, e); }));
   });
@@ -1347,6 +1374,17 @@ function findingsTab(host) {
 }
 
 /* ------------------------------------------------------------------------------ Answers */
+/* `model.p.orders::claim::a1b2c3` -> {name: 'orders', scope: 'claim'}. The grammar is documented
+   in SCHEMA.md and is string convention rather than constraint, so it is decomposed in ONE place
+   rather than re-split at each call site. */
+function subjectOf(a) {
+  const key = String(a.key || '');
+  const cut = key.indexOf('::');
+  const head = cut === -1 ? key : key.slice(0, cut);
+  const rest = cut === -1 ? '' : key.slice(cut + 2);
+  return {name: head.split('.').pop() || key, scope: rest.split('::')[0] || ''};
+}
+
 function answersTab(host) {
   const fam = {};
   for (const a of DATA.decisions) {
@@ -1383,18 +1421,27 @@ function answersTab(host) {
       {key: 'v', label: 'versions', mono: 1, val: g => Object.keys(g.versions).sort().join(', ')},
     ],
     rowsOf: g => g.rows,
+    /* *** SEVEN COLUMNS, AND ONE OF THEM HELD TWO DIFFERENT KINDS OF THING. ***
+       `subject` fell back to the decision's CONTEXT when it could not resolve a model name, and
+       a claim-scoped decision's context is the claim's own text -- so one cell in a column of
+       model names held 120 characters of prose. Reported from the field as "is that about an
+       assay column or water table shit?", which is the right question to ask of a column that
+       answers two things.
+
+       The subject is now always the subject, derived from the decision key, with a pill for the
+       scope. What it was asked ABOUT has its own column, and the full text is in the pane. */
     rowCols: [
-      {key: 'q', label: 'question', mono: 1, val: a => a.question},
-      {key: 'ctx', label: 'subject', val: a => a.context || a.key,
-       cell: a => { const n = (a.key || '').split('.').pop().split('::')[0];
-         return BY_NAME[n] ? link(n) : el('span', {text: a.context || a.key}); }},
-      {key: 'about', label: 'about', val: a => a.context},
+      {key: 'ctx', label: 'subject', mono: 1, val: a => subjectOf(a).name,
+       cell: a => { const s = subjectOf(a);
+         const box = el('span', {});
+         box.append(BY_NAME[s.name] ? link(s.name) : el('span', {class: 'mono', text: s.name}));
+         if (s.scope) box.append(el('span', {class: 'pill', text: s.scope}));
+         return box; }},
+      {key: 'about', label: 'about', val: a => a.context,
+       cell: a => el('span', {text: (a.context || '').slice(0, 90)
+                                    + ((a.context || '').length > 90 ? '\u2026' : '')})},
       {key: 'a', label: 'answered', val: a => a.answer},
-      {key: 'c', label: 'conf', n: 1, val: a => a.confidence, cell: a => conf(a.confidence)},
-      {key: 'r', label: 'next best', val: a => a.runner_up && a.runner_up[0],
-       cell: a => a.runner_up ? el('span', {class: 'tot',
-         text: a.runner_up[0] + ' ' + a.runner_up[1].toFixed(2)}) : el('span')},
-      {key: 'v', label: 'version', mono: 1, val: a => a.prompt_version},
+      {key: 'c', label: 'confidence', n: 1, val: a => a.confidence, cell: a => conf(a.confidence)},
     ],
     rowSort: 'c', rowDir: 1,
     rowText: a => [a.question, a.key, a.context, a.answer, a.prompt_version].join(' '),
@@ -1812,40 +1859,61 @@ function understoodTab(host) {
   const M_ = DATA.models, F = DATA.findings, meta = DATA.meta;
   const bits = [];
 
-  // ---- the hero. One number, no comparison: a bar of it would be a bar of one.
+  /* *** THE OVERVIEW LED WITH AN INVENTORY OF FINDINGS BY CHECK. ***
+     That is a table of contents, not an argument. The first screen has to say the thing nothing
+     else could have done: it read every sentence this warehouse says about itself, put a
+     question to each one, and found defects no dbt test can express -- for the price of a
+     coffee. The loop number is still here, one block down, because it is the honest measure;
+     it is just not the opening. */
   const ruledN = F.filter(f => f.ruled_finding).length;
   const agentN = DATA.adjudications.filter(a => a.source === 'agent').length;
   const humanN = DATA.adjudications.filter(a => a.source === 'human').length;
+  const checks = new Set(F.map(f => f.check)).size;
+  const classified = DATA.claims.filter(c => c.kind).length;
+  const spent = (DATA.cost || {}).usd;
+  const money = spent == null ? null : '$' + spent.toFixed(2);
+
   bits.push(el('div', {class: 'hero'}, [
     el('div', {class: 'herobig'}, [
-      el('div', {class: 'lab', text: 'findings a person has ruled on'}),
-      el('div', {}, [el('span', {class: 'heron', text: num(ruledN)}),
-                     el('span', {class: 'heroof', text: ' of ' + num(F.length)})]),
-      el('p', {class: 'note',
-                text: 'Moves only when somebody reads SQL. No release moves it.'}),
+      el('div', {class: 'lab', text: 'it read this warehouse'}),
+      el('div', {}, [el('span', {class: 'heron', text: num(meta.models)}),
+                     el('span', {class: 'heroof', text: ' models · ' + num(DATA.edges.length)
+                                                        + ' hops'})]),
+      el('p', {class: 'note', text: num(DATA.claims.length) + ' sentence(s) extracted from '
+        + 'descriptions and comments, ' + num(classified) + ' classified, '
+        + num(DATA.decisions.length) + ' question(s) answered.'}),
     ]),
     el('div', {class: 'herobig'}, [
-      el('div', {class: 'lab', text: 'and by whom'}),
-      el('div', {}, [el('span', {class: 'heron small', text: num(humanN)}),
-                     el('span', {class: 'heroof', text: ' human · ' + num(agentN) + ' agent'})]),
-      el('p', {class: 'note',
-                text: 'Agent rulings triage what to read first. They gate nothing.'}),
+      el('div', {class: 'lab', text: 'and found'}),
+      el('div', {}, [el('span', {class: 'heron', text: num(F.length)}),
+                     el('span', {class: 'heroof', text: ' across ' + num(checks) + ' checks'})]),
+      el('p', {class: 'note', text: 'A dbt test asserts a value in a column. These are about '
+        + 'grain, meaning, provenance and drift -- the things no unique or not_null can say.'}),
+    ]),
+    el('div', {class: 'herobig'}, [
+      el('div', {class: 'lab', text: 'for'}),
+      el('div', {}, [el('span', {class: 'heron small', text: money == null ? 'no ledger' : money})]),
+      el('p', {class: 'note', text: money == null
+        ? 'This store predates the ledger, so what it cost is unknown rather than zero.'
+        : 'Every call recorded, one row each. The Spend tab has the whole ledger.'}),
     ]),
   ]));
 
-  // ---- what assay can even see
+  // ---- the loop number. It moves only when a person reads SQL, which is why it is not the hero.
   const unread = meta.models - (meta.coverage || {}).readable;
-  bits.push(el('div', {class: 'tiles'}, [
-    tile(num(meta.models), 'models', num(meta.yours) + ' yours, ' + num(meta.packaged) + ' packaged'),
-    tile(num((meta.coverage || {}).readable || 0), 'assay could read',
-         unread ? num(unread) + ' it could not, and that is not a pass' : 'all of them',
-         unread ? 'bad' : ''),
-    tile(num(DATA.edges.length), 'hops in the DAG', num(meta.sources) + ' sources'),
-    tile(num(DATA.claims.length), 'claims extracted',
-         num(DATA.claims.filter(c => c.contradicted != null).length) + ' contradicted'),
-    tile(num(DATA.decisions.length), 'answers stored',
-         num(DATA.questions.length) + ' question families'),
-  ]));
+  bits.push(block('How much of it a person has actually read',
+    'The one number no release can move. Agent rulings triage what to read first and gate '
+    + 'nothing.',
+    el('div', {class: 'tiles'}, [
+      tile(num(ruledN) + ' of ' + num(F.length), 'findings ruled on',
+           humanN + ' human verdict(s), ' + agentN + ' agent', ruledN ? '' : 'bad'),
+      tile(num((meta.coverage || {}).readable || 0), 'assay could read',
+           unread ? num(unread) + ' it could not, and that is not a pass' : 'all of them',
+           unread ? 'bad' : ''),
+      tile(num(DATA.claims.filter(c => c.contradicted != null).length), 'claims the code contradicts',
+           'of ' + num(DATA.claims.length) + ' extracted'),
+      tile(num(DATA.questions.length), 'question families', num(meta.sources) + ' sources read'),
+    ])));
 
   // ---- grain: a composition of a known whole, ordered by evidence, so one hue dark->light
   const g = {declared: 0, derived: 0, judged: 0, none: 0};

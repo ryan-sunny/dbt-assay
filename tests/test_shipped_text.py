@@ -119,3 +119,61 @@ def test_the_suggest_module_still_explains_the_choice_it_refuses_to_make():
     """The version numbers went; the point they were making did not."""
     src = (PKG / "suggest.py").read_text()
     assert "would a reader who knew this term still call the finding correct" in src.lower()
+
+
+# ------------------------------------------------------------ the loop the form could not close
+
+def test_load_handback_is_the_only_mcp_tool_that_can_file_a_human_verdict():
+    """*** THE PERSON DID THE WORK AND THE FILE SAT IN ~/Downloads. ***
+
+    `rule` files `agent` and says so at length, because an agent able to raise the ruled-on
+    number would destroy the one figure nobody can game. `load_handback` files `human` -- and it
+    can only file what the downloaded file carries, which is why it takes a PATH and has no
+    parameter for a verdict. There is no shape of that call that invents an opinion.
+    """
+    import inspect
+
+    from dbt_assay.mcp_server import TOOLS, Backend
+    names = [n for n, _d in TOOLS]
+    assert "load_handback" in names, "the form's output still reaches nothing from MCP"
+    sig = inspect.signature(Backend.load_handback)
+    assert set(sig.parameters) - {"self"} == {"path", "apply", "by"}
+    for bad in ("verdict", "agree", "disagree", "note"):
+        assert bad not in sig.parameters, f"an agent could invent a {bad} through this tool"
+
+
+def test_the_handback_loader_names_the_rows_that_recorded_nothing(tmp_path):
+    """"recorded 40" and "you answered 40 of 212" have to be distinguishable from the outside."""
+    import json
+
+    from dbt_assay.mcp_server import Backend
+    from dbt_assay.store import Store
+
+    store_path = tmp_path / "s.duckdb"
+    Store(str(store_path)).close()
+    hb = tmp_path / "handback.json"
+    hb.write_text(json.dumps({
+        "by": "ryan",
+        "verdicts": [
+            {"subject": "model.p.orders", "question": "grain__is_it", "verdict": "agree",
+             "note": "read it", "findings": ["abc"]},
+            # A card somebody typed a note on and never ruled. It records NOTHING and is named.
+            {"subject": "model.p.items", "question": "grain__is_it", "verdict": "",
+             "note": "typed a note and never ruled"},
+        ],
+    }))
+    be = Backend.__new__(Backend)
+    be._store_or_why = lambda: (Store(str(store_path)), "")
+    out = be.load_handback(str(hb), by="ryan")
+    assert out["recorded"] == 1
+    assert out["as"] == "human"
+    assert out["findings_ruled"] == 1
+    assert out["recorded_nothing_total"] == 1, out
+
+
+def test_a_missing_handback_says_to_ask_rather_than_guessing(tmp_path):
+    from dbt_assay.mcp_server import Backend
+    be = Backend.__new__(Backend)
+    out = be.load_handback(str(tmp_path / "nope.json"))
+    assert out["recorded"] == 0
+    assert "ask for the path" in out["error"]

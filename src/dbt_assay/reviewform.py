@@ -450,7 +450,19 @@ padding:14px 24px}
 h1{margin:0;font-size:17px}
 h1 span{font-weight:400;color:var(--dim);font-size:13px;margin-left:8px}
 .bar{display:flex;align-items:center;gap:14px;margin-top:8px;flex-wrap:wrap}
-.tabs{display:flex;gap:2px;margin-top:10px;border-bottom:1px solid var(--line)}
+.tabgap{flex:1 1 auto}
+.task{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--ink);
+border-radius:6px;padding:14px 16px;margin:0 0 16px}
+.taskh{margin:0 0 6px;font-size:15px;font-weight:650}
+.tasklab{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);
+margin:10px 0 4px}
+.taskex{margin:0;white-space:pre-wrap;font-size:12px;background:var(--bg);
+border:1px solid var(--line);border-radius:4px;padding:8px 10px;overflow-x:auto}
+.measured.dim{color:var(--faint);margin-top:10px}
+.tabs{display:flex;gap:2px;margin-top:10px;border-bottom:1px solid var(--line);
+align-items:center;flex-wrap:wrap;padding-bottom:6px}
+.tabs .count{margin-right:4px}
+.tabs input,.tabs .go,.tabs #clear{margin-bottom:0}
 .tabs button{background:none;border:0;border-bottom:2px solid transparent;font:inherit;
 font-size:13px;color:var(--dim);padding:7px 13px;cursor:pointer}
 .tabs button.on{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
@@ -630,6 +642,22 @@ function card(c) {
     answers[c.key] = Object.assign({}, answers[c.key], {note: note.value}); save();
   };
   ans.append(note);
+  /* *** THE AGENT'S READING IS ALREADY ON THE CARD, TWO INCHES ABOVE THIS BOX. ***
+     "if optional is empty i feel like taking the agents output should be an option as the why."
+     Re-typing a reason you just read and agree with is the kind of work a form should not ask
+     for. It fills the box and nothing more: the verdict is still the reader's click, and the
+     text lands in a field they can edit before it is recorded. */
+  const agentWhy = (c.read && c.read.why) || (c.agent && c.agent.note) || '';
+  if (agentWhy) {
+    const use = el('button', {class: 'accept', type: 'button',
+                              text: 'use the agent\u2019s reason'});
+    use.onclick = () => {
+      note.value = agentWhy;
+      answers[c.key] = Object.assign({}, answers[c.key], {note: agentWhy});
+      save(); tick();
+    };
+    ans.append(use);
+  }
   box.append(ans);
   return box;
 }
@@ -672,10 +700,7 @@ function tick() {
     : (edits ? edits + ' box(es) filled across the form' : 'nothing filled yet');
   document.getElementById('dl').disabled = n === 0 && edits === 0;
   const single = p.pages <= 1;
-  for (const id of ['prev', 'next', 'where']) {
-    const el_ = document.getElementById(id);
-    el_.style.display = single ? 'none' : '';
-  }
+  document.getElementById('pager').style.display = single ? 'none' : '';
   if (!single) {
     document.getElementById('where').textContent =
       'page ' + (p.at + 1) + ' of ' + p.pages + ' · ' + p.tot + ' ' + PANE_NOUN[pane];
@@ -753,12 +778,40 @@ function field(label, pathParts, current, placeholder, big) {
   return wrap;
 }
 
+/* *** A TAB HAS TO SAY WHAT TO DO BEFORE IT SAYS HOW IT WORKS. ***
+   Every one of these tabs opened with a paragraph about the mechanism, and a reader who does not
+   already know the tool cannot get a task out of it. Imperative first, then one filled example,
+   then why it matters. */
+function explainer(task, how, example, why) {
+  const box = el('div', {class: 'task'});
+  box.append(el('h2', {class: 'taskh', text: task}));
+  box.append(el('p', {class: 'measured', text: how}));
+  if (example) {
+    box.append(el('div', {class: 'tasklab', text: 'one filled in'}));
+    box.append(el('pre', {class: 'taskex', text: example}));
+  }
+  if (why) box.append(el('p', {class: 'measured dim', text: why}));
+  return box;
+}
+
 function wordsTab(host) {
   const bits = [];
-  bits.push(el('p', {class: 'measured', text:
-    'A word here is sent with EVERY judged question about every model it applies to, which is why '
-    + 'one that is false in part of the project is false in every answer about that part. assay '
-    + 'filled in what it measured; the sentence is yours.'}));
+  /* *** IT DESCRIBED THE MECHANISM AND NEVER SAID WHAT TO DO. ***
+     "its SO UNCLEAR what you should actually be doing here." The task in the imperative, then
+     one worked example filled in, then the consequence. The example is shown ONCE at the top
+     rather than repeated as a placeholder on all forty cards. */
+  bits.push(explainer(
+    'Write one sentence per word, in your own words.',
+    'These are words your warehouse uses that assay has no definition for. Say what each one '
+    + 'means to somebody on their first day, and what follows from it that the name does not '
+    + 'say. Scope it if the word is only true in part of the project.',
+    'backorder\n'
+    + '  means:      an order placed for stock that has not arrived yet\n'
+    + '  implies:    it has no ship date, so anything averaging ship time must exclude it\n'
+    + '  applies_to: path:models/marts/orders',
+    'Every word you fill in is sent with EVERY judged question about every model it applies to. '
+    + 'That is why it improves answers to questions you never wrote -- and why one that is false '
+    + 'in part of the project is false in every answer about that part.'));
   const _p = pageOf('words');
   for (const w of CTX.words.slice(_p.from, _p.to)) {
     const row = el('div', {class: 'wrow'});
@@ -775,11 +828,11 @@ function wordsTab(host) {
       + (where ? ', under ' + where : '')
       + ((u.examples || []).length ? '  e.g. ' + u.examples.join(', ') : '')}));
     row.append(field('means', ['vocab', w.term, 'means'], w.means,
-                     'the sentence you would say to a new engineer on their first day', 1));
+                     'what is a ' + w.term + '?', 1));
     row.append(field('implies', ['vocab', w.term, 'implies'], w.implies,
-                     'what follows from it that the name does not say', 1));
+                     'what does knowing it is a ' + w.term + ' tell you?', 1));
     row.append(field('applies_to', ['vocab', w.term, 'applies_to'], w.applies_to,
-                     'blank means every model. e.g. path:models/marts'));
+                     'blank means every model'));
     if (w.suggested) {
       const b = el('button', {class: 'accept', text: 'use ' + w.suggested});
       b.onclick = () => { setEdit(['vocab', w.term, 'applies_to'].join('\u001f'), w.suggested);
@@ -796,10 +849,15 @@ function wordsTab(host) {
 }
 
 function explanationsTab(host) {
-  const bits = [el('p', {class: 'measured', text:
-    'Options for the failing-row family, per mart. These ARE the domain knowledge: the generic '
-    + 'set is always available and these are added to it. One line each, saying what that kind of '
-    + 'failing row actually is here.'})];
+  const bits = [explainer(
+    'Name the kinds of failing row this mart actually has.',
+    'When a test fails, assay asks what KIND of row that is. The generic answers are always '
+    + 'available; these are yours, added to them. One line each.',
+    'orders_fct\n'
+    + '  backorder:  the stock had not arrived, so the ship date is legitimately null\n'
+    + '  test_order: a row our own QA writes nightly and deletes the next morning',
+    'These are the domain knowledge. A failing row somebody can name is a decision; one nobody '
+    + 'can name gets ruled `unclear` and measures nothing.')];
   const _p = pageOf('explanations');
   for (const x of CTX.explanations.slice(_p.from, _p.to)) {
     const row = el('div', {class: 'wrow'});
@@ -951,21 +1009,27 @@ def form_html(card_list: list, sql: dict, project: str, generated_at: str, versi
 <header>
 <h1>{e(project)}<span>{len(card_list)} to rule on &middot; {len(ctx.get("words") or [])} word(s) &middot; {withread} carry a reading &middot;
 assay {e(version)} &middot; manifest {e(str(generated_at))}</span></h1>
+<!-- *** WHAT YOU DO WITH THE WHOLE FORM SITS WITH THE TAB STRIP, NOT INSIDE A TAB. ***
+     Your name and the download button used to share a row with the findings pager, so switching
+     to a tab that has no pager slid them sideways: "so it doesnt get moved around by the UI when
+     switching tabs". They belong to the form, so they hold position on the form's own row. -->
 <nav class="tabs">
   <button data-pane="words" class="on">Words<b id="n-words"></b></button>
   <button data-pane="explanations">Explanations<b id="n-expl"></b></button>
   <button data-pane="waivers">Waivers<b id="n-waiv"></b></button>
   <button data-pane="monitoring">Monitoring<b id="n-mon"></b></button>
   <button data-pane="findings">Findings<b id="n-find"></b></button>
+  <span class="tabgap"></span>
+  <span class="count" id="count"></span>
+  <input type="text" id="by" placeholder="your name" style="width:150px">
+  <button class="go" id="dl">download handback.json</button>
+  <button id="clear">clear</button>
 </nav>
-<div class="bar">
+<!-- The pager belongs to one pane, so it appears with that pane and nowhere else. -->
+<div class="bar" id="pager">
   <button id="prev">&larr; previous</button>
   <span id="where"></span>
   <button id="next">next &rarr;</button>
-  <span class="count" id="count"></span>
-  <input type="text" id="by" placeholder="your name" style="width:160px">
-  <button class="go" id="dl">download handback.json</button>
-  <button id="clear">clear</button>
 </div>
 </header>
 <main>
