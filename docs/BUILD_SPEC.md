@@ -14,7 +14,7 @@ findings, 19,707 judged decisions, 617 tests.
 | 2 | stale against the code | to build |
 | 3 | understanding rollup | to build |
 | 4 | Elementary read + `volume_contradicts_a_claim` | to build |
-| 5 | the dbt package | to build, and see the note — I downgraded my own recommendation |
+| 5 | the dbt package (macros + hook, no models) | to build, last |
 
 ## A rule that now applies to all of it
 
@@ -388,20 +388,20 @@ rather than working around it.
 
 ---
 
-# 5. The dbt package — last, and I downgraded my own recommendation
+# 5. The dbt package — approved, built last
 
-**Read this before building it.** The engine cannot run in dbt, so the hook can only ever show
+Still last, because items 1–4 are what it surfaces: ship it earlier and the hook prints a findings
+count.
+
+**The one thing that must not slip.** The engine cannot run in dbt, so the hook can only ever show
 the LAST EXPORTED state. Skip assay for three weeks and it prints three-week-old findings on every
-build. Meanwhile `action.yml` already exists and runs the real checker on every PR, live.
+build. A surface that cannot be live and does not say so is the defect this whole tool exists to
+find, and 0.38.1 made announcing exactly that a rule. So every line the hook prints carries
+`as of <assay_runs.started_at>`, and when that is older than the current invocation by more than a
+day it says so in those words rather than leaving the reader to do the subtraction.
 
-So the package buys *"findings appear in your build log"* at the cost of a surface that can
-silently go stale. It earns its place only if (a) you build far more often than you PR, or (b) the
-**loop number** specifically — *of the N you agreed with, M are gone* — is worth seeing on every
-build. Build 1 to 4 first and decide then.
-
-**If it is built, the hook must print the age of what it is showing** — `as of <assay_runs.started_at>`
-— on every line. A surface that cannot be live and does not say so is the defect this whole tool
-is about, and 0.38.1 just made that a rule.
+`action.yml` stays the live path and the two are not competing: the action runs the real checker
+on a PR, the hook shows the last known state where you already are.
 
 ## What "become a dbt package like Elementary" can and cannot mean
 
@@ -497,3 +497,21 @@ with the data.
 against.
 
 ---
+
+## Done when
+
+- [ ] a package published from this repo — `dbt_project.yml` with a name, `on-run-end`, and
+      **no `model-paths`**
+- [ ] `dbt deps` installs it and the hook fires on `dbt build` with no further config
+- [ ] **zero models.** A test asserts the package ships no `.sql` under `models/`, because the
+      whole argument for macro-only collapses the moment one appears
+- [ ] the hook reads only relations `assay export` + `dbt seed` already created, and computes
+      nothing
+- [ ] it prints the open AGREED findings and the loop number, not the whole findings list
+- [ ] **every line carries `as of <date>`**, and a state older than a day says so
+- [ ] absent seeds produce silence, not an error — a project that has never run `assay export`
+      must be able to install this
+- [ ] it CANNOT fail a build, and a test proves it: gating stays in `assay check`
+- [ ] `vars:` covers only `assay_on_run_end`, `assay_schema`, `assay_print_limit` — nothing that
+      `audit.yml` decides, or they become two spellings
+- [ ] it is tested against a real fixture dbt project, not asserted in prose
