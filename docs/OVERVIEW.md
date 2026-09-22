@@ -487,6 +487,8 @@ against `(model, check)` cannot say which of that model's eight findings was the
 Agreeing and later dismissing does not count as fixed. That is a retraction, and counting it would
 make the one honest number gameable by the person it measures.
 
+The nine tables, what each answers, and how they join are in **[SCHEMA.md](SCHEMA.md)**, with an ER diagram.
+
 **Keeping the store from growing forever**
 
 ```bash
