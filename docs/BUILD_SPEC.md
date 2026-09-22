@@ -13,7 +13,7 @@ findings, 19,707 judged decisions, 617 tests.
 | 1 | cost ledger | **BUILT** — `model_calls`, `assay cost`, $1.32 lifetime measured |
 | 2 | stale against the code | **BUILT except `--exact`**, which the measurement disqualified |
 | 3 | understanding rollup | to build |
-| 4 | Elementary read + `volume_contradicts_a_claim` | to build |
+| 4 | Elementary read + `volume_contradicts_a_claim` | **BUILT** — `assay volume`, six absence states, one declared family |
 | 5 | the dbt package (macros + hook, no models) | to build, last |
 
 ## A rule that now applies to all of it
@@ -391,17 +391,53 @@ the free tier trustworthy.
 
 ## Done when
 
-- [ ] a reader for `data_monitoring_metrics`, `alerts_anomaly_detection` and
-      `dbt_source_freshness_results`, through the `dbt show` path `probe` uses
-- [ ] the three absence states are distinguished and none of them reads as "fine"
-- [ ] **the deferral announces itself**, per 0.38.1 — this is not optional
-- [ ] anything sourced from Elementary is in the COUNTED tier in the docs, never the free one
-- [ ] `volume_contradicts_a_claim` exists as one family, declaring `finding_when`, going through
-      the generic producer shipped in 0.38.0 — not a hand-written function
-- [ ] with no Elementary, assay still names what it would buy, computed from what it already knows
-- [ ] it produces the sentence: *`stg_maricopa_parcels` fell 41%. It claims to be "the FULL
-      Maricopa assessor roll" — a claim already flagged because line 27 drops rows missing an
-      address or owner. 22 marts read it.*
+- [x] a reader for `data_monitoring_metrics`, `elementary_test_results` and
+      `dbt_source_freshness_results`, through the `dbt show` path `probe` uses.
+      **`alerts_anomaly_detection` DOES NOT EXIST** — not in `main_elementary`, not in any schema,
+      on the box or the laptop. Anomalies live in `elementary_test_results` where
+      `test_type = 'anomaly_detection'`. A report claiming 476 rows from that table was written
+      against neither warehouse
+- [x] the absence states are distinguished and none of them reads as "fine". **There are SIX, not
+      three**, and the three that were not predicted are the ones that look most like success:
+      *abandoned* (`dbt_source_freshness_results`: 105 rows, nothing written for 76 days, while
+      every other Elementary table was current to yesterday), *stale failure* (a test whose last
+      result was a failure and which has not run since — twelve on the field warehouse, last run
+      2026-08-04 while the suite ran 2026-09-21), and *unreachable* (found by shipping the other
+      five and running it: `dbt` was not on the PATH, every statement returned `[]`, and the
+      reader announced that nothing monitors volume on a warehouse where Elementary had run an
+      hour earlier)
+- [x] **the deferral announces itself**, per 0.38.1, and now with the dates: `assay volume` says which relation was read, when it was last written, and what was NOT measured
+- [x] anything sourced from Elementary is in the COUNTED tier in the docs, never the free one
+- [x] `volume_contradicts_a_claim` exists as one family in `questions/volume.yml`, declaring
+      `finding_when`, going through the generic producer — not a hand-written function. The
+      gate-wiring inventory had to learn about declared families: it read `Finding(...)` calls,
+      which was the only way to make one before 0.38.0, so it filed every declared family as
+      "gates nothing"
+- [x] with no Elementary, assay still names what it would buy, computed from what it already knows: the models with a mart downstream that no volume history covers
+- [x] it produces that sentence, and the shape is proved end to end on a live warehouse: five
+      movement/claim pairs asked for **$0.0003** — 3 *the claim survives the movement*, 2 *the
+      claim says nothing about volume*, 0 false contradictions. Sane, and five is not a
+      verification; `docs/VERIFICATION.md` records it as unchecked
+
+## What the measurement changed, and it was not small
+
+**Every bucket is written many times.** A real table held NINE rows for one bucket, identical but
+for `updated_at`, because Elementary re-records the open bucket on every run. The first version of
+the query took "the last two rows by `bucket_end`" and therefore compared a bucket against itself:
+it reported no movement on a table that had emptied, and — where duplicates straddled a boundary in
+an arbitrary order — movements of **+2061% that never happened**. That is `arbitrary_pick`, the
+defect this tool checks other people's SQL for, in assay's own reader. Collapsing to one row per
+(table, bucket) on the newest `updated_at` first turned 126 rows into **14 real buckets** and a
+dozen fictional movements into **one true one**.
+
+**History is not a backlog.** These tables accrue one row per test per run. Counting every `fail`
+ever recorded turns 3,030 anomaly rows into a 346-item queue, and a forwarded report made it 476.
+Newest-wins per key — the rule `live_decisions` already settled on — gives **twelve**.
+
+**An arbitrary row limit changes the answer.** `elementary_test_results` came back as exactly
+20,000 rows of 20,737, and "the latest result per test" computed over a truncated history can pick
+a row that is not the latest. Both queries collapse to one row per key IN SQL now, so a limit is a
+safety net rather than a sampler, and a limit that is hit anyway is reported.
 
 ---
 

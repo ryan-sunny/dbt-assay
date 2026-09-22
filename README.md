@@ -115,6 +115,23 @@ answer is still served everywhere it was served before, because hiding it leaves
 which is strictly worse than serving it dated. An answer `assay` cannot check at all reports as
 **cannot be checked**, in its own column, never folded into the ones that are current.
 
+## Volume, read from Elementary rather than rebuilt
+
+```bash
+assay volume            # what Elementary counted, joined to what your project claims
+assay volume --judge    # ...and whether a movement contradicts one of those claims
+```
+
+Elementary detects with no semantics — *row count fell 41%*. assay has the declared grain, the
+claims the project makes in its own prose, and the blast radius off the DAG, and has never tracked
+a row count. `volume_contradicts_a_claim` is the join, and it is the only question neither tool can
+answer alone. The counting is taken as fact, never re-litigated, and Elementary's results are never
+ingested as assay findings — that would corrupt the one number measuring the loop.
+
+Six absence states are told apart and **none of them reads as "fine"**, including the three a spec
+did not predict: a monitoring table nothing has written to for months, a test whose last result was
+a failure and which has not run since, and a warehouse assay could not reach at all.
+
 ## Read next
 
 - **[Full overview](docs/OVERVIEW.md)** — every command, every question, every config block, and
@@ -168,7 +185,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.43.0
+- uses: ryan-sunny/dbt-assay@v0.44.0
   with:
     target: target-head
     baseline: base/target

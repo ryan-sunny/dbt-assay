@@ -2776,6 +2776,279 @@ def stale(
 
 
 @app.command()
+def volume(
+    target: str = typer.Option(None, "--target", "-t"),
+    project_dir: str = typer.Option(".", "--project-dir"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
+    schema_name: str = typer.Option(None, "--elementary-schema",
+                                    help="where Elementary built its tables. Defaults to "
+                                         "`elementary.schema` in audit.yml, then "
+                                         "`<your schema>_elementary`."),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    dialect: str = typer.Option(None, "--dialect"),
+    judge: bool = typer.Option(False, "--judge",
+                               help="also ask whether a movement contradicts a claim this "
+                                    "project makes about itself. Costs a fraction of a cent; "
+                                    "everything else here is free."),
+    threshold: float = typer.Option(0.10, "--threshold",
+                                    help="how far a row count must move to be worth asking about"),
+    limit: int = typer.Option(0, "--limit", "-n", help="stop after N subjects (0 = all)"),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="what it would ask, and what it would cost. Sends nothing."),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """What Elementary counted, joined to what this project says about itself.
+
+    *** READ, NEVER REBUILD. ***
+    `observed_keys` counts uniqueness and nulls; nothing in assay tracks a row count over time, and
+    Elementary has been recording exactly that per table per bucket. The same treatment `practices`
+    gives dbt-project-evaluator: read the answer, join it to what assay knows, reimplement nothing.
+
+    *** THE HALF assay ADDS IS THE HALF ELEMENTARY CANNOT HAVE. ***
+    It detects with no semantics -- "row count fell 41%" -- and has not read the project's prose,
+    does not know the declared grain, and cannot see the DAG. Neither tool produces the joined
+    sentence alone.
+
+    *** AND AN ABSENT MEASUREMENT IS NOT A PASS. ***
+    Five states are told apart here and none of them reads as "fine": the package absent, present
+    but never run, one bucket where an anomaly needs two, a table nothing has written to for
+    months, and -- the one nobody predicted -- a test whose last result was a FAILURE and which
+    has not run since. In any Elementary view that last one is indistinguishable from something
+    failing right now.
+
+    Counted tier: it needs your dbt connection, the same way `probe` does. assay never holds a
+    credential.
+    """
+    from . import elementary as elem
+    cfg = Config.load(config_path)
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
+    store = Store(store_path) if Path(store_path).exists() else None
+
+    opts = getattr(cfg, "elementary", None) or {}
+    schema_name = schema_name or opts.get("schema") or _default_elementary_schema(project)
+    stale_days = int(opts.get("stale_after_days") or elem.STALE_AFTER_DAYS)
+
+    def runner(sql: str, n: int):
+        return probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=n)
+
+    with console.status(f"reading {schema_name}..."):
+        rep = elem.read(runner, schema_name, stale_after_days=stale_days)
+
+    # ---- what could be read, and what could not
+    t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    t.add_column("relation"); t.add_column("state"); t.add_column("rows", justify="right")
+    t.add_column("newest")
+    for r in rep.readings:
+        colour = {"live": "green", "abandoned": "red"}.get(r.state, "yellow")
+        t.add_row(r.relation, f"[{colour}]{r.state.replace('_', ' ')}[/]",
+                  _n(r.rows) if r.rows else "[dim]0[/]",
+                  f"{r.newest:%Y-%m-%d}" if r.newest else "[dim]-[/]")
+    console.print()
+    console.print(t)
+    console.print()
+    for r in rep.readings:
+        if r.state != "live":
+            console.print(f"[yellow]{r.says()}[/]")
+        elif r.detail:
+            console.print(f"[yellow]{r.relation}: {r.detail}[/]")
+
+    if not rep.reachable:
+        console.print("\n[red]assay could not reach your warehouse[/], so nothing here was "
+                      "measured and nothing here is a statement about Elementary.")
+        console.print(f"[dim]It ran `dbt show` as `{dbt_bin}` in `{project_dir}`. If dbt lives in "
+                      f"a project environment, pass it whole: "
+                      f"`--dbt \"uv run dbt\"`.[/]")
+        if store:
+            store.close()
+        raise typer.Exit(1)
+
+    if not rep.installed:
+        # *** WITHOUT THE PACKAGE, SAY WHAT IT WOULD BUY, COMPUTED FROM WHAT assay KNOWS. ***
+        n_unwatched = len(elem.unwatched(rep, project))
+        console.print(f"\n[dim]{_n(n_unwatched)} model(s) with a mart downstream have no volume "
+                      f"history here, and assay does not measure that and does not intend to. "
+                      f"`elementary-data` does, and it is a dbt package.[/]")
+        raise typer.Exit(0)
+
+    # ---- the state nobody predicted
+    stale = rep.stale_failures()
+    if stale:
+        console.print(f"\n[bold red]{_n(len(stale))}[/] monitor(s) last FAILED and have not run "
+                      f"since. [dim]A stale failure looks exactly like a live one.[/]")
+        st = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        st.add_column("table"); st.add_column("check"); st.add_column("what")
+        st.add_column("last ran", justify="right")
+        for x in sorted(stale, key=lambda t: -(t.age_days or 0))[:12]:
+            st.add_row(x.table, x.kind.replace("_", " "), x.sub_type or "",
+                       f"{x.age_days:.0f}d ago")
+        console.print(st)
+
+    # ---- movement, ranked by what rests on it
+    moved = [v for v in rep.volumes if v.change is not None and abs(v.change) >= threshold]
+    by_name = {m.name.lower(): u for u, m in project.models.items()}
+    rows = []
+    for v in sorted(moved, key=lambda v: -abs(v.change)):
+        uid = by_name.get(v.table)
+        radius = project.blast_radius(uid) if uid else {"descendants": 0, "marts": 0}
+        rows.append((v, uid, radius))
+    rows.sort(key=lambda r: (-r[2]["marts"], -abs(r[0].change)))
+    if rows:
+        console.print(f"\n[bold]{_n(len(rows))}[/] table(s) moved by "
+                      f"{threshold * 100:.0f}% or more, highest blast radius first")
+        mt = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        mt.add_column("table"); mt.add_column("change", justify="right")
+        mt.add_column("rows now", justify="right"); mt.add_column("marts", justify="right")
+        mt.add_column("")
+        for v, uid, radius in rows[:15]:
+            mt.add_row(v.table, f"{v.change * 100:+.1f}%", _n(int(v.latest or 0)),
+                       _n(radius["marts"]),
+                       "[dim]not a model in this project[/]" if uid is None else "")
+        console.print(mt)
+
+    # *** COVERAGE, BECAUSE 311 OF 358 MODELS BEING UNWATCHED IS NOT "NO VOLUME PROBLEMS". ***
+    unwatched = elem.unwatched(rep, project)
+    console.print(f"\n[dim]{_n(len(rep.volumes))} relation(s) have a row-count history; "
+                  f"{_n(len(unwatched))} model(s) with a mart downstream have none. "
+                  f"Nothing here covers those.[/]")
+
+    if as_json:
+        console.print_json(_json.dumps({
+            "readings": [{"relation": r.relation, "state": r.state, "rows": r.rows,
+                          "newest": str(r.newest) if r.newest else None,
+                          "age_days": r.age_days, "says": r.says()} for r in rep.readings],
+            "moved": [{"table": v.table, "change": v.change, "rows": v.latest,
+                       "marts": radius["marts"]} for v, _u, radius in rows],
+            "stale_failures": [{"table": x.table, "kind": x.kind, "sub_type": x.sub_type,
+                                "age_days": x.age_days} for x in stale],
+            "unwatched": [{"model": n, "descendants": d, "marts": m} for _u, n, d, m in unwatched],
+        }, default=str))
+
+    if not judge and not dry_run:
+        console.print("\n[dim]`--judge` asks whether a movement contradicts a claim this project "
+                      "makes about itself. That is the one question neither tool can answer "
+                      "alone.[/]")
+        if store:
+            store.close()
+        raise typer.Exit(0)
+
+    _judge_volume(project, digests, schema, store, store_path, cfg, rep, threshold, limit,
+                  dry_run)
+
+
+def _default_elementary_schema(project) -> str:
+    """Elementary builds into `<your schema>_elementary` unless told otherwise.
+
+    A guess, and it is named as one: `--elementary-schema` and `elementary.schema` both override,
+    and a schema that is not there reports as ABSENT rather than as nothing to report.
+    """
+    base = ""
+    for m in (project.models or {}).values():
+        if not getattr(m, "is_installed_package", False) and m.schema:
+            base = m.schema
+            break
+    return f"{base}_elementary" if base else "elementary"
+
+
+def _judge_volume(project, digests, schema, store, store_path, cfg, rep, threshold, limit,
+                  dry_run) -> None:
+    """Ask the one question neither tool can answer alone."""
+    from . import elementary as elem
+    from .contracts import QUESTIONS
+    q = QUESTIONS.get("volume_contradicts_a_claim")
+    if q is None:
+        console.print("[red]the volume question is not loaded.[/] `assay banks` lists what is.")
+        raise typer.Exit(1)
+    if store is None:
+        console.print("[yellow]no store, so there are no claims to check a movement against.[/] "
+                      "[dim]`assay claims --extract` pulls them out of your own prose.[/]")
+        raise typer.Exit(0)
+
+    subjects = elem.claim_subjects(rep, project, store, threshold)
+    if limit:
+        subjects = subjects[:limit]
+    if not subjects:
+        console.print("\n[dim]no movement lines up with a claim, so there is nothing to ask. "
+                      "That is code narrowing before anything is spent, not a clean bill.[/]")
+        return
+
+    entries = {e.uid: e for e in inv_mod.build(project, digests, schema, store,
+                                               probe_mod.read(store))}
+    vocab_ctx = _state_ctx(project, digests, schema, store, cfg)
+    from .jev import USD_PER_INPUT_TOKEN
+    est = 0.0
+    for uid, vol, claim in subjects:
+        st = elem.claim_state(project, uid, vol, claim, entries.get(uid),
+                              vocab_ctx.vocab_for(uid))
+        est += len(_json.dumps(st, default=str)) / 4 * USD_PER_INPUT_TOKEN
+    console.print(f"\n[bold]{_n(len(subjects))}[/] movement/claim pair(s), about "
+                  f"[bold]${est:.4f}[/bold]")
+    if dry_run:
+        uid, vol, claim = subjects[0]
+        console.print(_json.dumps(elem.claim_state(project, uid, vol, claim, entries.get(uid),
+                                                   vocab_ctx.vocab_for(uid)),
+                                  indent=1, default=str)[:1400])
+        console.print("[dim]Nothing was sent.[/]")
+        return
+
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        console.print("[yellow]no API key.[/] [dim]`assay config` shows what was resolved; "
+                      "--dry-run needs none.[/]")
+        raise typer.Exit(1)
+
+    hits, counts = [], Counter()
+    want = q.get("finding_when") or []
+    want = [want] if isinstance(want, str) else list(want)
+    with console.status(f"asking about {len(subjects)} pair(s)..."):
+        for i, (uid, vol, claim) in enumerate(subjects):
+            st = elem.claim_state(project, uid, vol, claim, entries.get(uid),
+                                  vocab_ctx.vocab_for(uid))
+            rec = states.make("volume", vocab_ctx,
+                              key=f"{uid}::volume::{claim['claim_id']}",
+                              inputs={"uid": uid, "claim_id": claim["claim_id"]}, state=st)
+            try:
+                # so the answer records the checksum of the SQL it was computed from
+                store.use_project(project)
+                ans = decide(store, client, rec, {q["id_prefix"]: choice_q(
+                    "volume_contradicts_a_claim")},
+                    contexts={q["id_prefix"]: f"{project.models[uid].name}: "
+                                              f"{claim['text'][:100]}"},
+                    prompt_version=q["prompt_version"], caller="assay.volume")
+            except BudgetExceeded as e:
+                console.print(f"[yellow]stopped at the cap: {e}[/]")
+                break
+            a = ans.get(q["id_prefix"]) or {}
+            counts[a.get("answer")] += 1
+            if a.get("answer") in want:
+                hits.append((uid, vol, claim, a))
+    console.print(f"[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}[/]")
+    _report_vocab_drops()
+
+    t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    t.add_column("answer"); t.add_column("n", justify="right")
+    for k, n in counts.most_common():
+        t.add_row(str(k), _n(n))
+    console.print()
+    console.print(t)
+
+    for uid, vol, claim, a in hits[:8]:
+        m = project.models[uid]
+        radius = project.blast_radius(uid)
+        console.print(f"\n[bold red]{m.name}[/] fell {vol.change * 100:+.1f}% "
+                      f"[dim]({_n(int(vol.previous or 0))} -> {_n(int(vol.latest or 0))})[/]")
+        console.print(f'   it claims: "{claim["text"][:180]}"', style="italic")
+        console.print(f"   [dim]{_n(radius['marts'])} mart(s) read it · "
+                      f"p={a.get('confidence') or 0:.2f}[/]")
+    console.print("\n[dim]These are findings resting on `volume_contradicts_a_claim`, which "
+                  "cannot fail a build until people have ruled on it -- the same discipline every "
+                  "other family follows. `assay check` shows them beside everything else.[/]")
+
+
+@app.command()
 def version():
     """Print the version."""
     console.print(f"assay {__version__}")

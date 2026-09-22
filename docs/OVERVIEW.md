@@ -125,7 +125,7 @@ Every one of those shapes this tool: arithmetic and dates are settled by sqlglot
 never asked, states are the smallest thing that can answer the question, and there is one noul per
 rule rather than one over a list of them. The [README](../README.md) carries the measurements.
 
-Seventeen question families ship. The one worth seeing first:
+Eighteen question families ship. The one worth seeing first:
 
 ### Does the description still describe the code?
 
@@ -209,7 +209,7 @@ fires after the spend is not a cap.
 
 ## Every question, and what rests on it
 
-Seventeen families ship. `assay config` shows how many verdicts each has and which can gate;
+Eighteen families ship. `assay config` shows how many verdicts each has and which can gate;
 `rests_on` on a finding names the family it derives from, and these are those names.
 
 | family | type | finding it feeds |
@@ -614,6 +614,48 @@ never wired up.
 - **warn** -- a term no model in the project mentions at all. Not wrong, not free: it rides along
   in every state on every call.
 
+
+## Volume: read what Elementary counted, never rebuild it
+
+```bash
+assay volume                       # what it counted, joined to what your project claims
+assay volume --judge               # ...and whether a movement contradicts one of those claims
+assay volume --dry-run --judge     # the state and the cost. Sends nothing.
+```
+
+`observed_keys` counts uniqueness and nulls on the relations somebody probed. Nothing in assay has
+ever tracked a **row count over time**, so "this table halved last night" was invisible — and
+Elementary, where it is installed, has been recording exactly that per table per bucket all along.
+Same treatment `practices` gives dbt-project-evaluator: read the answer, join it to what assay
+knows, reimplement nothing. Counted tier — it needs your dbt connection, the way `probe` does, and
+assay still never holds a credential.
+
+**The half assay adds is the half Elementary cannot have.** It detects with no semantics: *row
+count fell 41%*. It has not read your prose, does not know the declared grain, and cannot see the
+DAG. `volume_contradicts_a_claim` puts the counted movement, the sentence your project wrote about
+itself, and the blast radius in one state and asks the only question neither tool can answer alone.
+The counting is not re-litigated — it is given as fact.
+
+**Six states, and none of them reads as "fine".** The spec named three; a real warehouse had six,
+and the three nobody predicted are the ones that look most like success:
+
+| state | what it means |
+|---|---|
+| package absent | volume is not measured here and nothing in this report covers it |
+| installed, never run | Elementary is present and its models are not built — a different fix |
+| one bucket | an anomaly needs two observations; one is no answer, not a small one |
+| **abandoned** | the table is full and nothing has written to it for months. On the warehouse this was built against, `dbt_source_freshness_results` held 105 rows and had not been touched for 76 days while every other Elementary table was current to yesterday |
+| **stale failure** | a test whose last result was a *failure* and which has not run since. In any Elementary view that is indistinguishable from something failing right now |
+| **unreachable** | assay could not reach the warehouse, so nothing was measured. Found by shipping the other five and running it: `dbt` was not on the PATH, every statement failed, and the reader announced that nothing monitors volume — on a warehouse where Elementary had run an hour earlier |
+
+**It does not ingest Elementary's results as assay findings.** They are not assay's, and claiming
+them would corrupt the one number that measures the loop — *of the N a person agreed with, M are
+gone*. What assay does say is about the **monitoring**: a model with marts downstream that no
+volume history covers, which only assay can say because only assay knows what rests on it.
+
+Coverage is reported rather than assumed. On that warehouse, 120 relations have a row-count history
+and **232 models with a mart downstream have none** — which is not "no volume problems".
+
 **Keeping the store from growing forever**
 
 ```bash
@@ -969,7 +1011,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.43.0
+- uses: ryan-sunny/dbt-assay@v0.44.0
   with:
     target: target-head
     baseline: base/target

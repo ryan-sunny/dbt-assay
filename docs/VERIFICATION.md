@@ -17,6 +17,7 @@ Verified on a 357-model Colorado water-rights warehouse and two public dbt repos
 |---|---|---|
 | `claim_alignment` | read against the SQL it judged, four rounds | the QUESTION, yes. Its FINDINGS, no -- see below |
 | `edge_preserves_the_grain` | top hit read against the model | found a bounding-box **overlap** join feeding a mart: `join irr i on p.xmin <= i.xmax and p.xmax >= i.xmin`. One parcel matches many polygons |
+| `volume_contradicts_a_claim` | **not checked against real data by a person** | five answers read on a live warehouse: 3 *claim survives*, 2 *says nothing about volume*, 0 contradictions. Sane, and five is not a verification |
 | `column_role` | 61 free labels from the project's own tests | agreed with 57; reading the 4 disagreements showed **3 were the label being wrong** |
 | `description_contradicts_the_code` | top finding read against the data | `stg_boulder_permits` claims "residential filtered out"; of 14,150 surviving rows, 157 are explicitly multifamily and 13,620 are trade permits |
 | `field_matches_its_name` | 4 planted cases on real column values | 4/4. Real counties `matches` @0.92; city names in a `county` column `holds_something_else` @0.80; river names 0.99 vs numeric codes 0.96 |

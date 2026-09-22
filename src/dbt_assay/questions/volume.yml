@@ -1,0 +1,58 @@
+# Volume, joined to what the project says about itself.
+#
+# *** NEITHER TOOL PRODUCES THIS SENTENCE ALONE. ***
+# Elementary detects with no semantics: "row count fell 41%". It does not know the model's declared
+# grain, it has not read the project's own prose, and it cannot see the DAG. assay has all three
+# and has never tracked a row count over time. The join is the whole point, and it is why this is
+# ONE question rather than a re-implementation of anomaly detection.
+#
+# *** THE QUESTION IS NOT "IS THIS ANOMALY REAL". ***
+# Counting settled that before anything was asked. The question is whether the movement
+# CONTRADICTS a sentence this project wrote about itself -- which needs the claim, the grain and
+# the movement in one state, and is exactly the shape the claim families already handle.
+version: 1
+
+volume_contradicts_a_claim:
+  id_prefix: "volume"
+  type: choice
+  prompt_version: "volume.v1"
+  subject: model
+  instructions:
+    question: >-
+      This table's row count moved between two observations. The project makes the claim below
+      about this model, in its own documentation or comments. Does the movement contradict the
+      claim?
+    note: >-
+      `movement` was COUNTED, not judged -- treat it as fact. Judge only whether the claim and
+      the movement can both be true. A claim that says nothing about how many rows there are
+      cannot be contradicted by a change in how many rows there are.
+  criteria:
+    contradicts_the_claim:
+      what: >-
+        The claim asserts something the movement makes false -- completeness, a fixed set, a
+        guaranteed grain, or a volume the number now disagrees with.
+      examples:
+        - "the claim says it holds the FULL set of something and the count fell by half"
+        - "the claim says one row per entity and the count is now larger than that entity's table"
+        - "the claim names a fixed set of categories and the count trebled"
+    the_claim_survives_the_movement:
+      what: >-
+        Both can be true at once. The claim is about shape, meaning or provenance rather than
+        about how many rows there are, or the movement is the size the claim would predict.
+      examples:
+        - "the claim describes what one row IS, and rows were added"
+        - "the claim says it is refreshed weekly, and this is a weekly refresh"
+    the_claim_says_nothing_about_volume:
+      what: >-
+        The claim and the movement are about different things entirely, so there is nothing to
+        contradict. NOT the same as the claim surviving a movement it speaks to.
+      examples:
+        - "the claim documents a column's units"
+        - "the claim names the upstream source"
+    cannot_tell_from_this:
+      what: >-
+        The claim is too vague to be contradicted, or deciding needs something not in this state.
+        Say this rather than guessing -- an unresolved answer is a question for a person.
+  # The whole reason this family exists as a DECLARATION rather than a function: `check` builds
+  # the finding from this list, through the generic producer shipped in 0.38.0.
+  finding_when: ["contradicts_the_claim"]

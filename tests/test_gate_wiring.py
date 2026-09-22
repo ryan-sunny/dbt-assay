@@ -95,6 +95,13 @@ def test_a_family_with_no_finding_is_declared_rather_than_silently_useless():
     nobody spends an afternoon ruling on a question that gates nothing."""
     banks = set(load_all_banks())
     used = {r for _c, r in _findings_declared_in(judged) if r}
+    # *** A DECLARED FAMILY PRODUCES FINDINGS WITHOUT A HAND-WRITTEN FUNCTION. ***
+    # This scan reads `Finding(...)` calls, which was the only way to make one until 0.38.0 added
+    # the generic producer: a family declaring `finding_when` lands in the same stream, carries
+    # `rests_on`, and gates under the same discipline. Reading only the functions would file every
+    # such family as "gates nothing" -- the exact wrong answer for the mechanism built to stop
+    # exactly that.
+    used |= {name for name, q in load_all_banks().items() if (q or {}).get("finding_when")}
     orphans = banks - used
     # This is an inventory, not a failure: it documents the real state in one place.
     assert orphans == judged.FAMILIES_WITHOUT_FINDINGS, (

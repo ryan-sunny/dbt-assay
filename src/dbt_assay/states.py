@@ -464,6 +464,14 @@ def _failing_row(_ctx, _inputs):
     raise NotImplementedError("failing-row states are built at the call site from stored failures")
 
 
+@builder("volume", reproducible=False,
+         because="its state carries a row COUNT read out of the warehouse at a moment in time, "
+                 "which is a measurement rather than something the code says")
+def _volume(_ctx, _inputs):
+    """Never called: the caller supplies this state, because it holds a counted movement."""
+    raise NotImplementedError("volume states are built from what Elementary counted")
+
+
 @builder("practice", reproducible=False,
          because="its state carries a row read out of a dbt-project-evaluator table in the "
                  "warehouse, which is a measurement rather than something the code says")

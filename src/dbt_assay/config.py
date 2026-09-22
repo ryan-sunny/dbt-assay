@@ -258,6 +258,9 @@ class Config:
     explanations: dict = field(default_factory=dict)
     # Per-check overrides for the standard-practice split: enforce | recommend | adjudicate | off.
     practices: dict = field(default_factory=dict)
+    # Where Elementary built its tables, and how long a monitor may go unwritten before assay
+    # stops treating it as current. Both have defaults; neither is warehouse-specific.
+    elementary: dict = field(default_factory=dict)
     provider: str = "auto"
     model: str = "jev-latest"
     max_spend_usd: float = 1.0
@@ -311,6 +314,7 @@ class Config:
         # the same validator -- which refuses syntax it does not understand rather than matching
         # everything, because a selector silently ignored scopes nothing while looking as though
         # it did.
+        cfg.elementary = data.get("elementary") or {}
         cfg.vocab = data.get("vocab") or {}
         for term, body in cfg.vocab.items():
             sel = (body or {}).get("applies_to") if isinstance(body, dict) else None
@@ -499,6 +503,12 @@ questions:
     act:
       annotate: "p > 0.50"
       queue:    "p > 0.75"
+
+# elementary: where Elementary built its tables, for `assay volume`. assay READS what it measured
+# and rebuilds none of it. Defaults to `<your schema>_elementary`.
+#   schema: analytics_elementary
+#   stale_after_days: 14   # a monitor unwritten for longer is reported as stopped, not as clean
+elementary: {}
 
 # practices: override how a standard dbt-project-evaluator check is treated.
 #   enforce (exact, may gate) | recommend (informational) | adjudicate (ask) | off
