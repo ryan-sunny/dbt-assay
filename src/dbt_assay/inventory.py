@@ -142,6 +142,16 @@ class ModelEntry:
     # not the HTML, not the pull request. It printed once, where it was asked, and was gone. A
     # finding has to land in the same stream as every other finding or nobody acts on it twice.
     doc_conflict: Fact | None = None
+    # *** AND THE SAME SENTENCE IS TRUE OF EVERY CUSTOM FAMILY. ***
+    # The comment above was written when the description family printed once and reached nothing.
+    # A family declared in `assay_questions/*.yml` is in exactly that position today: asked, paid
+    # for, stored, printed by `assay ask`, and invisible to `check` -- because `_judgments` loads
+    # every stored answer for this model and the loop below keeps only the ones a shipped family
+    # named. The rest were read out of the store and dropped.
+    #
+    # `{question_id: {answer, confidence, probabilities, context, decision_key}}`, kept whole so a
+    # generic producer can turn any family's `finding_when` into a finding.
+    judged: dict = field(default_factory=dict)
 
     @property
     def confidence_floor(self) -> str:
@@ -287,6 +297,7 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
 
         # ---- grain, strongest evidence first ----
         judged = _judgments(store, uid)
+        entry.judged = judged
         for q, v in judged.items():
             if q.startswith("edge") and v.get("answer") == "silently_multiplied":
                 try:

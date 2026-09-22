@@ -335,11 +335,98 @@ CHECKS = (measure_inside_the_grain, unresolved_judgment, description_contradicts
           code_contradicts_a_claim, hop_multiplies_rows)
 
 
+def declared_findings(project, entries) -> list[Finding]:
+    """Findings from any family that DECLARES which answers are defects.
+
+    *** A CUSTOM QUESTION COULD BE ASKED AND COULD NEVER BE A FINDING. ***
+    `CHECKS` is five hand-written functions, so a family added in `assay_questions/*.yml` had no
+    function and therefore no finding. It was askable, answerable, storable and printable, and
+    `assay check` -- the thing everybody runs -- could not see it. Measured in the field: two
+    custom questions, 42 and 21 answers up to p=1.00, zero findings in any run.
+
+    *** AND THE TOOL DEMANDED THE FIELD THAT WOULD HAVE FIXED IT. ***
+    `finding_when:` names the answers that are defects. `lint.py` makes omitting it an ERROR --
+    "asked, paid for, stored, and produces no finding" -- and `assay ask` reads it, and nothing in
+    this module did. So an author was told to declare it, declared it, and the error message
+    stayed true in `check` whatever they wrote. Zero of seventeen shipped families declare it,
+    because they have hand-written functions instead, which is why nobody noticed.
+
+    This is the same defect the field notes record one station earlier: a family with a new name
+    was loaded, linted, listed and never asked, fixed in 0.7.0 by a generic ASKER. The FINDER was
+    never generalized.
+
+    The gate discipline is unchanged and that is the point: a custom family lands in the same
+    stream, carries `rests_on`, and cannot fail a build until people have ruled on it -- exactly
+    like a shipped one.
+    """
+    from .contracts import QUESTIONS
+    out: list[Finding] = []
+    for name, q in sorted(QUESTIONS.items()):
+        want = (q or {}).get("finding_when")
+        if not want:
+            continue
+        want = [want] if isinstance(want, str) else list(want)
+        prefix = (q or {}).get("id_prefix", "")
+        for e in entries:
+            for qid, v in sorted((getattr(e, "judged", None) or {}).items()):
+                # The stored answer is keyed by the family's id_prefix, optionally uniquified with
+                # `__N` when one model carries several. Both spellings belong to this family.
+                if not (qid == prefix or qid.startswith(prefix + "__")):
+                    continue
+                answer = (v or {}).get("answer")
+                if answer not in want:
+                    continue
+                probs = (v or {}).get("probabilities") or {}
+                try:
+                    p_ = float(probs.get(answer, 0) or 0)
+                except (TypeError, ValueError):
+                    p_ = 0.0
+                out.append(Finding(
+                    check=name,
+                    # *** IT RESTS ON ITSELF, SO THE FLOOR APPLIES. ***
+                    # Without this a custom family reads as STRUCTURAL -- a parser decided it, may
+                    # gate immediately -- which is the opposite of true for the one kind of check
+                    # nobody has ever measured.
+                    rests_on=name,
+                    subject=e.uid, subject_name=e.name, file=e.path,
+                    summary=_declared_summary(name, q, e, answer),
+                    detail=((q.get("instructions") or {}).get("question", "").strip()
+                            or f"`{name}` answered `{answer}` for this model."),
+                    base=2,
+                    evidence={"answer": answer, "probability": round(p_, 3),
+                              "asked": name, "context": (v or {}).get("context", "")},
+                ))
+    return out
+
+
+def _declared_summary(name: str, q: dict, entry, answer: str) -> str:
+    """One readable line. Never invents a headline.
+
+    A family whose YAML cannot produce a sentence is a lint problem at authoring time, not a
+    finding with a generated title at check time -- so the fallback names the family and the
+    answer and claims nothing else.
+    """
+    # *** A CRITERION IS A DICT IN EVERY REAL BANK, AND A STRING IN THE TEST THAT WAS WRITTEN
+    # ALONGSIDE THIS. *** The shipped shape is `{answer: {what: "...", examples: [...]}}`; the
+    # fixture used `{answer: "..."}` and passed, so the first real run raised on `.strip()`. Both
+    # are read, because a bank is a file somebody wrote and either is a reasonable thing to write.
+    crit = (q.get("criteria") or {}).get(answer)
+    if isinstance(crit, dict):
+        crit = crit.get("what") or crit.get("means") or ""
+    label = str(crit or "").strip()
+    if label:
+        return f"{entry.name}: {label[:110]}"
+    return f"{entry.name}: `{name}` answered `{answer}`"
+
+
 def run_all(project, entries, declared, digests=None) -> list[Finding]:
     out = grain_contradicts_declared_key(project, entries, declared)
     out += identifier_outside_the_grain(project, entries, digests)
     for fn in CHECKS:
         out.extend(fn(project, entries))
+    # Every family that declares its own defect answers, shipped or not. `CHECKS` stays for the
+    # families whose finding needs more than the answer -- a claim's text, a hop's collapse note.
+    out += declared_findings(project, entries)
     return sorted((_weightless(f, project) for f in out), key=lambda f: -f.weight)
 
 

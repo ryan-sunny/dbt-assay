@@ -3542,3 +3542,49 @@ because prune deletes children and keeps runs. What stops them is that **DuckDB 
 holding model calls and human verdicts, to prevent a class of orphan with zero current instances
 and one writer. Recorded as a deliberate trade with its reason, in `SCHEMA.md`, rather than left
 for somebody to notice.
+
+## 0.38.0: a custom question could be asked and could never be a finding
+
+Reported from a session that wrote two water questions, asked them, and watched them vanish.
+
+`judged.run_all` built findings from a fixed tuple of five hand-written functions. A family
+declared in `assay_questions/*.yml` has no function, so it had no finding — askable, answerable,
+storable, printable by `assay ask`, and invisible to the one command everybody runs.
+
+**And the tool demanded the field that would have fixed it.** `finding_when:` names the answers
+that are defects:
+
+| surface | reads it |
+|---|---|
+| `lint.py` | **yes** — omitting it is an ERROR: *"asked, paid for, stored -- and produces no finding"* |
+| `assay ask` | **yes** |
+| `judged.py` | **no** |
+| the 17 shipped families | **0 declare it** — they have hand-written functions instead |
+
+So an author is told they must declare it, declares it, and `check` ignores it. The linter's error
+message stays literally true no matter what they write.
+
+This is the same defect the field notes already record one station earlier — *a family with a new
+name is loaded, linted, listed by `assay banks`, and never asked* — fixed in 0.7.0 by a generic
+ASKER. The FINDER was never generalized, and nobody noticed because no shipped family goes through
+that path.
+
+`inventory.py` had the matching half: `_judgments` loads every stored answer for a model and the
+loop kept only what a shipped family named. Everything else was read out of the store and dropped.
+The entry keeps them now, under the comment that was already there for the description family:
+*"A JUDGMENT THAT ONLY ITS OWN COMMAND CAN SEE IS NOT PART OF THE TOOL."*
+
+Measured against the live store: **42 and 21 findings**, exactly what the reporting session
+predicted from `model_decisions`. Total 252 to 329.
+
+`rests_on` is the family, so the gate discipline is unchanged: a custom family cannot fail a build
+until people have ruled on it, exactly like a shipped one.
+
+### The test that measured its author's assumption
+
+The fixture wrote `criteria: {answer: "a sentence"}`. Every real bank writes
+`{answer: {what: "...", examples: [...]}}`. Nine tests passed, and the first run against a real
+question bank raised `'dict' object has no attribute 'strip'`.
+
+A fixture that is not the shape the code will meet measures the author, not the code. Both shapes
+are read now, and the test pins the one that ships.

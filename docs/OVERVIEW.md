@@ -346,6 +346,20 @@ waiver needs an expiry date to approximate, for free.
 `calibration` and `effectiveness` measure, and the dismissal against the exact findings the card
 showed.
 
+**Your own questions become findings**
+
+A family declared in `assay_questions/*.yml` names the answers that are defects with
+`finding_when:`, and `assay check` produces a finding for each one — in the same stream, with the
+same gate discipline, as a shipped family. It carries `rests_on`, so it cannot fail a build until
+people have ruled on it.
+
+Until 0.38.0 it could not. `judged.run_all` built findings from five hand-written functions, so a
+YAML family was askable, answerable, storable, printable by `assay ask` — and invisible to `check`.
+Meanwhile the linter made omitting `finding_when:` an error, on the grounds that without it a
+question is "asked, paid for, stored, and produces no finding", which was true in `check` however
+it was written. On the warehouse this was built against that was 42 and 21 findings nobody could
+see.
+
 **Settling things by counting, through your own dbt**
 
 ```bash
@@ -844,7 +858,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.37.1
+- uses: ryan-sunny/dbt-assay@v0.38.0
   with:
     target: target-head
     baseline: base/target
