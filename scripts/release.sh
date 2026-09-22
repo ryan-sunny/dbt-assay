@@ -18,6 +18,10 @@ cd "$(dirname "$0")/.."
 die() { printf '\n\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 say() { printf '\033[2m%s\033[0m\n' "$*"; }
 
+# Overridable, but never the machine default by accident.
+GIT_NAME="${ASSAY_GIT_NAME:-Ryan Christensen}"
+GIT_EMAIL="${ASSAY_GIT_EMAIL:-ryan@sunnydata.co}"
+
 WANT="${1:-}"
 if [ -n "$WANT" ]; then
   CUR=$(uv run python -c "import dbt_assay; print(dbt_assay.__version__)")
@@ -29,8 +33,16 @@ if [ -n "$WANT" ]; then
       && rm -f src/dbt_assay/__init__.py.bak
     sed -i.bak "s/dbt-assay@v$CUR/dbt-assay@v$WANT/" README.md docs/OVERVIEW.md \
       && rm -f README.md.bak docs/OVERVIEW.md.bak
+    # *** THE LOCK CARRIES THE VERSION TOO, AND `uv run` REWRITES IT. ***
+    # The first version committed the bump and THEN ran `uv run` to read the version back, which
+    # re-synced `uv.lock` and left the tree dirty a line later -- so the script refused its own
+    # release. Settle the lock before staging, so the bump commit is the whole bump.
+    uv sync --all-extras --quiet
     git add -A
-    git commit -q -m "$WANT"
+    # *** THE IDENTITY IS THE PROJECT'S, NOT THE MACHINE'S. ***
+    # A plain `git commit` here signed the bump as `ryanchristensen@Ryans-MacBook-Air.local`,
+    # because this repo sets no identity and the global one is whatever the laptop says.
+    git -c user.name="$GIT_NAME" -c user.email="$GIT_EMAIL" commit -q -m "$WANT"
   fi
 fi
 
@@ -56,7 +68,7 @@ say "built $(ls dist | tr '\n' ' ')"
 
 # *** THE COMMIT AND THE TAG GO TOGETHER OR NEITHER GOES. ***
 # Pushing the commit first is how main ends up carrying a version nothing published.
-git tag -a "v$VER" -m "$VER"
+git -c user.name="$GIT_NAME" -c user.email="$GIT_EMAIL" tag -a "v$VER" -m "$VER"
 git push origin HEAD "v$VER"
 
 printf '\n\033[32mreleased v%s\033[0m\n' "$VER"
