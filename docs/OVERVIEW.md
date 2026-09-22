@@ -842,7 +842,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.37.0
+- uses: ryan-sunny/dbt-assay@v0.37.1
   with:
     target: target-head
     baseline: base/target
@@ -918,16 +918,17 @@ a column is, what the grain is, and what would break before it writes a line. Th
 it the **obligation** — without it an agent checks when it remembers, and with it, checking is the
 procedure.
 
-Fifteen tools. Most report; three do something else:
+Sixteen tools. Most report; four do something else:
 
 | tool | what it is for |
 |---|---|
 | `guide(topic)` | how to SET assay up — vocabulary, questions, waivers, policy. Read before writing anything into someone's `audit.yml` |
+| `plan(limit)` | **what to change**, for the findings a person agreed with. `fix_shape` is the KIND of change, looked up from the check name; the words are not in it |
 | `suggestions(section)` | **what to put in their `audit.yml`**, derived from what the checks found, each row carrying its measurement. Every `means:` and `implies:` comes back empty and must stay empty |
 | `evidence(question, subject)` | the exact **state** a judged answer was computed from. Call it before disagreeing with one: if the answer is wrong and the state is wrong, what gets sent needs fixing; if the state is right, the question does |
 
 Each has a CLI equivalent, because a skill with no MCP connection is still a procedure:
-`assay guide`, `assay suggest`, `assay evidence`. The skill file carries the mapping.
+`assay guide`, `assay plan`, `assay suggest`, `assay evidence`. The skill file carries the mapping.
 
 ### What a finding hands the agent
 

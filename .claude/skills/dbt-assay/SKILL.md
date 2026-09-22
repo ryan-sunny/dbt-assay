@@ -164,6 +164,13 @@ question does. Those are different files, and without the state you are guessing
 assay plan -t target/       # writes assay_plan.jsonl
 ```
 
+**If the plan is empty, nobody has reviewed anything yet — that is not a clean warehouse.** A plan
+is built only from findings a person agreed with. Getting those is the `assay-review` skill:
+`assay review --emit review.html -t target/` writes a form they fill in at their own pace, and
+`--load verdicts.json` records it. Do not start editing off the raw findings list; most of what is
+in it has never been read by anyone, and on a real warehouse a judged family can run 12% agreement
+until somebody looks.
+
 **Read that file before you edit anything.** One object per thing to do, only findings a PERSON
 agreed with, only ones still present, highest blast radius first. Each carries:
 
@@ -227,6 +234,7 @@ and nothing is lost:
 | `violations()` | `assay check --json`, then read `action` |
 | `rule(finding, …)` | `assay review --subject <s> --question <q> --verdict <v> --note <why>` |
 | `review_queue()` | `assay review` |
+| `plan()` | `assay plan -t target/` (writes `assay_plan.jsonl`) |
 | `suggestions()` | `assay suggest -t target/`, or `--section vocab` |
 | `evidence()` | `assay evidence -q <question> -s <model>` |
 | `guide(topic)` | `assay guide <topic>` |

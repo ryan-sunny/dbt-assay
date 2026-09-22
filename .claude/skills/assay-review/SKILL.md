@@ -145,6 +145,48 @@ rather than pushing for a yes.
 Every few findings, say how many are left, in one line. When they are done, run `check` again and
 tell them what moved. That is the only thing that makes the next session happen.
 
+## What each verdict actually does
+
+Say this the first time, because it changes how carefully somebody answers.
+
+- **`disagree` removes the finding.** Permanently, from `assay check` and from every surface that
+  reads it. It is not a note — it is a dismissal, and it is the thing that makes reviewing
+  compound instead of tax. It lapses by itself if the model is later edited into a genuinely
+  different defect, because the dismissal is keyed to the finding and the finding's identity
+  includes its evidence.
+- **`agree` removes nothing.** The finding is real, so it stays. What it does is make the finding
+  answerable later: `assay check` reports how many of the agreed findings are now gone, and that
+  needs the FINDING, not the model. It also puts it in `assay plan`.
+- **`unclear` removes nothing and gates nothing.** It is evidence the QUESTION could not be
+  answered from what it was given, which is fixed by adding to the state rather than by rewording
+  an option.
+
+Agreeing and then later dismissing the same finding does not count as fixed. That is a retraction,
+and it is excluded on purpose: the one honest number on the board must not be movable by changing
+your mind.
+
+## When they want the agreed ones fixed
+
+```bash
+assay plan -t target/       # writes assay_plan.jsonl
+```
+
+Only the findings they agreed with, only ones still present, highest blast radius first. Each row
+carries `fix_shape` — the KIND of change, looked up from the check name, so it is exact — plus
+`how`, `their_reason`, and the evidence.
+
+**`fix_shape` gives you the shape, never the words.** For a prose finding the shape is "edit the
+claim at its file:line", and what the sentence should say instead is a judgment about their
+warehouse. Propose it; do not write it as though you knew.
+
+Then `assay check` again, and tell them the one line that matters:
+
+    of the 12 finding(s) a person agreed with, 5 are gone and 7 are still here.
+
+Every other number moves when assay improves. That one moves when somebody read SQL and then
+changed it, and neither a release nor you can touch it. It is the only evidence the session was
+worth their time.
+
 ## What NOT to do
 
 - **Do not batch.** "Here are ten, tell me which are wrong" is the failure mode this replaces.

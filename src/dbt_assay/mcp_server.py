@@ -575,6 +575,40 @@ class Backend:
         self.baseline = live.Snapshot.of(self.state().entries)
         return {"ok": True, "models": len(self.baseline.entries)}
 
+    def plan(self, limit: int = 25) -> dict:
+        """What to DO about the findings a PERSON agreed with.
+
+        *** THE LOOP RAN OUT BETWEEN "THIS IS REAL" AND "IT IS FIXED". ***
+        `findings` says what is wrong. `rule` records what you concluded. Nothing said what to
+        change, so an agent holding forty agreed findings had forty sentences and no next step.
+
+        The fix SHAPE is a lookup on the check name -- exact, free, and the same for every model
+        carrying that check. The WORDS are not: what a sentence should say instead is a judgment
+        about a real warehouse, and writing one yourself is the same failure as writing a
+        vocabulary definition yourself.
+        """
+        from . import plan as plan_mod
+        store, why = self._store_or_why()
+        rows = plan_mod.build(live.findings_for(self.state(), None), store)
+        out = {
+            "to_fix": rows[:limit], "total": len(rows),
+            "rule": ("`fix_shape` is what KIND of change this is, and it is exact. It does not "
+                     "tell you the words -- for a prose finding, what the sentence should say "
+                     "instead is theirs. Propose it and let them decide."),
+            "then": ("after the edit: changed_contracts, violations, then `assay check`, which "
+                     "reports how many of the agreed findings are now gone. That is the only "
+                     "number measuring whether any of this worked."),
+        }
+        if not rows:
+            n = len(store.ruled_findings("agree")) if store is not None else 0
+            out["nothing_to_plan"] = (
+                f"{n} finding(s) carry a human `agree`. A plan is built from those and only "
+                f"those. An empty plan means nobody has agreed with anything yet, NOT that the "
+                f"warehouse is clean. `assay review --emit` is where verdicts come from.")
+        if why:
+            out["store"] = why
+        return out
+
     def suggestions(self, section: str = "", limit: int = 15) -> dict:
         """What this project should CONFIGURE, from what the checks found.
 
@@ -734,6 +768,14 @@ TOOLS = [
                      "`means:` and `implies:` EMPTY, and you must leave them empty: a "
                      "definition you write from a model name looks exactly like one they chose "
                      "and then rides along with every judged question forever.")),
+    ("plan", ("WHAT TO CHANGE, for the findings a person has agreed with. Call it after "
+              "they have reviewed and before you edit. Each row carries `fix_shape` -- "
+              "the KIND of change, looked up from the check name, so it is exact -- plus "
+              "`their_reason`, the only part that knows anything about this warehouse. "
+              "It does NOT carry the words: what a sentence should say instead is a "
+              "judgment about their data, so propose it and let them decide. An empty "
+              "plan means nobody has agreed with anything yet, not that the warehouse "
+              "is clean.")),
     ("evidence", ("The exact STATE a judged answer was computed from, as it was sent. Call it "
                   "before disagreeing with an answer: if the answer is wrong and the state is "
                   "wrong, what gets sent needs fixing; if the answer is wrong and the state is "
@@ -849,6 +891,10 @@ def serve(target: str, store_path: str | None = None) -> None:
     @app.tool(description=_desc("rebase"))
     def rebase() -> str:
         return json.dumps(be.rebase(), default=str)
+
+    @app.tool(description=_desc("plan"))
+    def plan(limit: int = 25) -> str:
+        return json.dumps(be.plan(limit), default=str)
 
     @app.tool(description=_desc("suggestions"))
     def suggestions(section: str = "", limit: int = 15) -> str:

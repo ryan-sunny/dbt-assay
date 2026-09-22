@@ -18,7 +18,21 @@ exist, which families ship, which config keys are read -- is read from the real 
 """
 from __future__ import annotations
 
-TOPICS = ("start", "vocab", "questions", "waivers", "policy", "explanations", "ruling")
+# *** THE INDEX AND THE TOPIC LIST WERE TWO COPIES OF ONE LIST. ***
+# `TOPICS` was a tuple and `index()` was a hand-written markdown table, so a topic added to one
+# rendered fine, answered fine, and was invisible in the only place anybody looks for it. That is
+# how `loop` shipped unlisted. One mapping now; both are derived from it.
+BLURBS: dict[str, str] = {
+    "start": "the order to do things in, and what costs nothing",
+    "loop": "findings -> verdicts -> fixes -> fewer findings, and what measures it",
+    "vocab": "what your words mean HERE, sent with every question",
+    "questions": "how to frame one the model can actually answer",
+    "waivers": "findings that are fine here, and the reason that holds up",
+    "policy": "what each check does on a build, and what may gate",
+    "explanations": "the options for adjudicating failed rows",
+    "ruling": "reading a finding and recording what you concluded",
+}
+TOPICS = tuple(BLURBS)
 
 
 def _lint_rules() -> list[str]:
@@ -321,8 +335,61 @@ Measured: a blanket disagree on `dim_business` covered six edges of which two we
 the API let one keypress answer all of them. Pass the finding id.
 """
 
+LOOP = """\
+# loop: findings -> verdicts -> fixes -> fewer findings
+
+The whole point, and the only part that compounds. Four steps, and the last one is what says
+whether the first three were worth doing.
+
+**1. `assay check`** finds it. Structural checks are free; judged ones cost a call and are cached.
+
+**2. `assay review --emit review.html -t target/`** writes a form: one card per (model, check),
+twenty at a time, highest blast radius first, with the SQL and any reading an agent recorded.
+Filled in whenever there is ten minutes, offline, no server. `--load verdicts.json` records the
+lot. One turn per finding is one turn per finding, and a backlog of 159 is 159 turns nobody sits
+through -- that is why the answering leaves the conversation.
+
+**3. `assay plan -t target/`** turns the agreed ones into what to change. The fix SHAPE is a
+lookup on the check name, so it is exact and costs nothing. The WORDS are not in it.
+
+**4. `assay check` again**, which reports:
+
+    of the 12 finding(s) a person agreed with, 5 are gone and 7 are still here.
+
+**That is the only number here that measures the LOOP rather than the tool.** Every other figure
+moves when assay gets better. This one moves when somebody reads SQL and then changes it, and
+neither a release nor an agent can touch it.
+
+## What a verdict does, which is not obvious
+
+`disagree` DISMISSES the finding -- permanently, from `check` and everything reading it. It is
+what stops reviewing being a tax: without it, ruling 115 findings wrong left you with 115
+findings. It lapses by itself if the model is edited into a genuinely different defect, because
+the dismissal is keyed to the finding and a finding's identity includes its evidence.
+
+`agree` removes nothing, because the finding is real. It is what makes step 4 answerable, and it
+needs the FINDING: a verdict filed against (model, check) cannot say which of that model's eight
+findings was the real one.
+
+`unclear` removes nothing and gates nothing. It is evidence the question could not be answered
+from the state it was given.
+
+Agreeing and then dismissing does not count as fixed. That is a retraction, and counting it would
+make the one honest number gameable by the person it measures.
+
+## Only a person's verdict does any of this
+
+An agent ruling triages what to read first. It never dismisses, never counts toward an agreement
+rate, and never authorizes a gate -- an agent that could dismiss could silence a project by
+reading none of it carefully. `source = 'human'` is set by the code path rather than by anything
+about who ran it, and `--by` is free text that nothing validates, so the honesty of whoever runs
+it is the entire mechanism.
+"""
+
+
 _TEXT = {"start": START, "vocab": VOCAB, "questions": QUESTIONS, "waivers": WAIVERS,
-         "policy": POLICY, "explanations": EXPLANATIONS, "ruling": RULING}
+         "policy": POLICY, "explanations": EXPLANATIONS, "ruling": RULING,
+         "loop": LOOP}
 
 
 def guide(topic: str = "") -> str:
@@ -346,12 +413,6 @@ def index() -> str:
         "# Setting assay up\n\n"
         "`assay guide <topic>`, and `assay guide start` if this project has never run it.\n\n"
         "| topic | what it covers |\n|---|---|\n"
-        "| `start` | the order to do things in, and what costs nothing |\n"
-        "| `vocab` | what your words mean HERE, sent with every question |\n"
-        "| `questions` | how to frame one the model can actually answer |\n"
-        "| `waivers` | findings that are fine here, and the reason that holds up |\n"
-        "| `policy` | what each check does on a build, and what may gate |\n"
-        "| `explanations` | the options for adjudicating failed rows |\n"
-        "| `ruling` | reading a finding and recording what you concluded |\n\n"
+        + "".join(f"| `{t}` | {b} |\n" for t, b in BLURBS.items()) + "\n"
         f"`audit.yml` is read for: {', '.join('`' + k + '`' for k in keys)}.\n"
         "`assay init` writes one with the defaults and enables no spend.\n")

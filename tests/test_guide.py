@@ -98,3 +98,36 @@ def test_the_guide_reaches_an_agent_and_a_terminal():
     # and the skill must TEACH the setup job, not merely list the tool
     for phrase in ('guide("vocab")', 'guide("questions")', "Do not invent configuration"):
         assert phrase in skilltext.SKILL_MD, phrase
+
+
+def test_every_guide_topic_is_listed_in_the_index():
+    """*** `TOPICS` AND THE INDEX TABLE WERE TWO COPIES OF ONE LIST. ***
+
+    A topic added to the tuple rendered fine and answered fine and was invisible in the only
+    place anybody looks for it, which is how `loop` shipped unlisted. Both derive from one
+    mapping now; this is the guard that keeps it that way.
+    """
+    from dbt_assay import guide as g
+    idx = g.index()
+    assert g.TOPICS, "the topic list is empty; the reader is broken"
+    for t in g.TOPICS:
+        assert f"`{t}`" in idx, f"{t} answers but is not in the index"
+        body = g.guide(t)
+        assert body and len(body) > 200, f"{t} is listed and says nothing"
+    # ...and nothing listed that does not answer
+    import re
+    listed = set(re.findall(r"^\| `([a-z]+)` \|", idx, re.MULTILINE))
+    assert listed == set(g.TOPICS), listed ^ set(g.TOPICS)
+
+
+def test_the_loop_topic_says_what_a_verdict_actually_does():
+    """The non-obvious half: `disagree` dismisses permanently, `agree` removes nothing.
+
+    Somebody answering a form without knowing that is answering a different question.
+    """
+    from dbt_assay.guide import guide
+    body = guide("loop")
+    assert "DISMISSES" in body or "dismisses" in body
+    assert "removes nothing" in body
+    assert "retraction" in body
+    assert "assay plan" in body

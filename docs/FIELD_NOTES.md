@@ -3476,3 +3476,34 @@ Two things it refuses:
 Gone is gone for any reason — fixed, refactored away, model deleted. It does not claim the edit
 caused it. It claims the thing somebody said was real is no longer reported, which is what they
 wanted.
+
+### 0.37.1: the loop shipped and nothing that follows it knew
+
+Auditing every agent-facing surface for the four steps, rather than assuming one edit covered it:
+
+| surface | knew about `plan` | knew what a verdict does |
+|---|---|---|
+| MCP tools | **no tool at all** | — |
+| `dbt-assay` skill | yes | no |
+| `assay-review` skill | **no** | **no** |
+| `assay guide` | **no** | **no** |
+
+`plan` was CLI-only, so an agent connected over MCP could not reach it. The review procedure
+ended at recording a verdict and never said what one DOES — which matters, because `disagree`
+dismisses the finding permanently and `agree` removes nothing, and somebody answering without
+knowing that is answering a different question. `guide` had seven topics and none of them was the
+loop.
+
+All four closed: a `plan()` tool (16 now), a "what each verdict actually does" section in the
+review skill, a pointer from the edit skill saying an empty plan means nobody has reviewed rather
+than nothing is wrong, and `assay guide loop`.
+
+**And the topic index was a second copy of the topic list.** `TOPICS` was a tuple; `index()` was a
+hand-written markdown table. A topic added to one rendered fine, answered fine, and was invisible
+in the only place anybody looks for it — which is exactly how `loop` shipped unlisted for the ten
+minutes between adding it and checking. One mapping now, both derived, and a guard asserts the two
+sets match in both directions.
+
+Three guards caught their own cases during this: the MCP tool count in the docs (fifteen, now
+sixteen), the CLI-parity table in the skill, and the checked-in-equals-shipped check. Every one of
+those was written after a defect of that shape got out.
