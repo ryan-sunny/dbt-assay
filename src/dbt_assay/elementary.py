@@ -62,11 +62,23 @@ class Reading:
     age_days: float | None = None
     detail: str = ""
     cadence: object = None            # what THIS relation's own write history says
-    threshold_days: int | None = None  # the number that decided `abandoned`, and where it came from
+    threshold_days: int | None = None  # the number that decided `abandoned`
+    # *** AND WHERE THAT NUMBER CAME FROM, WHICH IS NOT ALWAYS THIS RELATION. ***
+    # It read "late after 1 day -- recorded 1 write, which is not enough to say what a normal gap
+    # is": a threshold and, in the same breath, the statement that one could not be derived. The
+    # number came from the FALLBACK and the message quoted the relation's own failed history as
+    # though it had produced it. Found by reading the output rather than by any test.
+    threshold_from: object = None
 
     @property
     def usable(self) -> bool:
         return self.state == LIVE
+
+    def why_threshold(self) -> str:
+        """Where the number actually came from -- never the history that failed to produce it."""
+        if self.threshold_from is None:
+            return "Nothing measured could say what late means here, so a default was used."
+        return f"That is {self.threshold_from.explain()}."
 
     def says(self) -> str:
         """One sentence a person can act on. Never 'fine'."""
@@ -89,11 +101,11 @@ class Reading:
             return (f"`{self.relation}` holds one observation per table. An anomaly needs two, so "
                     f"there is nothing to compare yet.")
         if self.state == ABANDONED:
-            how = f" It was {self.cadence.explain()}." if self.cadence else ""
-            return (f"`{self.relation}` holds {self.rows:,} row(s) and nothing has written to it "
-                    f"for {self.age_days:.0f} days (newest {self.newest:%Y-%m-%d}), against a "
-                    f"threshold of {self.threshold_days}.{how} A monitor that stopped reads "
-                    f"exactly like one that finds nothing.")
+            return (f"`{self.relation}` holds {_plural(self.rows, 'row')} and nothing has written "
+                    f"to it for {_plural(round(self.age_days or 0), 'day')} "
+                    f"(newest {self.newest:%Y-%m-%d}), against a threshold of "
+                    f"{_plural(self.threshold_days, 'day')}. {self.why_threshold()} A monitor "
+                    f"that stopped reads exactly like one that finds nothing.")
         return f"`{self.relation}`: {self.rows:,} row(s), newest {self.newest:%Y-%m-%d}."
 
 
@@ -223,6 +235,15 @@ def _query(schema: str, rel: str) -> str:
     return f"select * from {schema}.{rel}"
 
 
+def _plural(n, word: str) -> str:
+    """`1 write`, `2 writes`. `1 write(s)` is what a template looks like, not what English does."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return f"? {word}s"
+    return f"{n:,} {word}" if n == 1 else f"{n:,} {word}s"
+
+
 def _norm(full_name: str) -> str:
     """`SUNNY.MAIN_WATER.WATER_WELLS` -> `water_wells`.
 
@@ -315,17 +336,17 @@ def read(runner, schema: str, *, stale_after_days: int = STALE_AFTER_DAYS,
         # normally gone between writes; the project's build cadence is only the fallback for one
         # without enough history of its own.
         own = _cadence_of(write_history(runner, schema, rel), f"`{rel}`'s own write history")
-        limit_days = own.derived_staleness_days
+        limit_days, from_ = own.derived_staleness_days, own
         if limit_days is None and fallback is not None:
-            limit_days = fallback.derived_staleness_days
+            limit_days, from_ = fallback.derived_staleness_days, fallback
         if limit_days is None:
-            limit_days = stale_after_days
+            limit_days, from_ = stale_after_days, None
         state = LIVE
         if age is not None and age > limit_days:
             state = ABANDONED
         rep.readings.append(Reading(
             rel, state, rows=n, newest=newest, age_days=age, cadence=own,
-            threshold_days=limit_days,
+            threshold_days=limit_days, threshold_from=from_,
             detail=(f"read {len(rows):,} of {n:,} row(s): the limit was reached, so this is "
                     f"part of the table" if truncated else "")))
         if rel == METRICS:
@@ -564,10 +585,10 @@ class Cadence:
     def explain(self) -> str:
         p90 = self.normal_gap_days
         if p90 is None:
-            return (f"only {self.writes} write(s) recorded, which is not enough to say what a "
-                    f"normal gap is")
-        return (f"written {self.writes:,} time(s) over {self.days_spanned:.0f} days; 9 gaps in 10 "
-                f"are under {p90:.1f} day(s), from {self.source}")
+            return (f"not derivable from {self.source}: only {_plural(self.writes, 'write')} "
+                    f"recorded, and a normal gap needs more than that")
+        return (f"{self.source}: {_plural(self.writes, 'write')} over "
+                f"{self.days_spanned:.0f} days, 9 gaps in 10 under {p90:.1f}")
 
 
 def _cadence_of(stamps: list, source: str) -> Cadence:
@@ -656,15 +677,15 @@ def monitoring_findings(rep: Report, project, cad: Cadence | None = None,
                 check="monitor_ran_then_stopped", subject="", subject_name="", file="",
                 summary=f"`{r.relation}` has not been written to for {r.age_days:.0f} days, and "
                         f"a stopped monitor reads exactly like one that finds nothing",
-                detail=(f"Newest row {r.newest:%Y-%m-%d}, {r.rows:,} row(s) in the table. "
-                        f"Late after {r.threshold_days} day(s)"
-                        + (f" -- {r.cadence.explain()}" if r.cadence else "")
-                        + ". Nothing here is multiplied by an invented number: late is longer "
-                          "than this relation has normally gone between writes."),
+                detail=(f"Newest row {r.newest:%Y-%m-%d}, {_plural(r.rows, 'row')} in the "
+                        f"table. Late after {_plural(r.threshold_days, 'day')}. "
+                        f"{r.why_threshold()} Nothing here is multiplied by an invented number: "
+                        f"late is longer than it has normally gone between writes."),
                 base=3, evidence={"relation": r.relation, "age_days": round(r.age_days or 0, 1),
                                   "newest": str(r.newest),
                                   "threshold_days": r.threshold_days,
-                                  "derived_from": (r.cadence.source if r.cadence else "")}))
+                                  "derived_from": (r.threshold_from.source
+                                                   if r.threshold_from else "a default")}))
 
     # *** ONE FINDING WITH A COUNT, NOT ONE PER MODEL. ***
     # The first version emitted a finding per unwatched model: 232 rows on a real warehouse, which
@@ -677,7 +698,8 @@ def monitoring_findings(rep: Report, project, cad: Cadence | None = None,
         top = [{"model": n, "marts": m, "models_downstream": d} for _u, n, d, m in gaps[:15]]
         out.append(Finding(
             check="volume_is_not_being_watched", subject="", subject_name="", file="",
-            summary=f"{len(gaps):,} model(s) with a mart downstream have no row-count history",
+            summary=f"{_plural(len(gaps), 'model')} with a mart downstream have no row-count "
+                    f"history",
             detail=(f"{watched:,} relation(s) are watched. assay does not measure volume and does "
                     f"not intend to -- this says only that nobody else is either, which is a "
                     f"coverage fact and not a data one. Worst by reach: "
@@ -691,15 +713,16 @@ def monitoring_findings(rep: Report, project, cad: Cadence | None = None,
     if declared and ran is not None and declared > ran:
         out.append(Finding(
             check="test_declared_but_never_run", subject="", subject_name="", file="",
-            summary=f"{declared - ran:,} of {declared:,} declared test(s) have never produced a "
-                    f"result",
+            summary=f"{declared - ran:,} of {_plural(declared, 'declared test')} have never "
+                    f"produced a result",
             detail=("A test that never ran and a test that passed are indistinguishable in a "
                     "summary, and only one of them has looked at your data."),
             base=2, evidence={"declared": declared, "ever_ran": ran}))
     if cov.get("skipped_results"):
         out.append(Finding(
             check="test_skipped_rather_than_passed", subject="", subject_name="", file="",
-            summary=f"{cov['skipped_results']:,} test result(s) are SKIPPED, which is not a pass",
+            summary=f"{_plural(cov['skipped_results'], 'test result')} are SKIPPED, which is not "
+                    f"a pass",
             detail=("dbt skips a test whose model failed upstream. A green run can contain a "
                     "test that has not evaluated your data in months."),
             base=1, evidence={"skipped": cov["skipped_results"]}))

@@ -2930,7 +2930,7 @@ def volume(
     if not rep.installed:
         # *** WITHOUT THE PACKAGE, SAY WHAT IT WOULD BUY, COMPUTED FROM WHAT assay KNOWS. ***
         n_unwatched = len(elem.unwatched(rep, project))
-        say(f"\n[dim]{_n(n_unwatched)} model(s) with a mart downstream have no volume "
+        say(f"\n[dim]{elem._plural(n_unwatched, 'model')} with a mart downstream have no volume "
                       f"history here, and assay does not measure that and does not intend to. "
                       f"`elementary-data` does, and it is a dbt package.[/]")
         raise typer.Exit(0)
@@ -2945,22 +2945,23 @@ def volume(
             continue
         c = getattr(r, "cadence", None)
         if configured:
-            say(f"[dim]{r.relation}: late after {configured} day(s), set in audit.yml[/]")
+            say(f"[dim]{r.relation}: late after {elem._plural(configured, 'day')}, "
+                f"set in audit.yml[/]")
         elif r.threshold_days is not None:
-            say(f"[dim]{r.relation}: late after {r.threshold_days} day(s) -- "
+            say(f"[dim]{r.relation}: late after {elem._plural(r.threshold_days, 'day')} -- "
                 f"{c.explain() if c else 'derived'}[/]")
 
     # ---- what is wrong with the MONITORING, which is assay's to say
     mfs = elem.monitoring_findings(rep, project, cad, cov,
                                    min_marts=int(mon.get("min_marts") or 1))
     if mfs:
-        say(f"\n[bold]{_n(len(mfs))}[/] monitoring finding(s) "
+        say(f"\n[bold]{_n(len(mfs))}[/] monitoring {'finding' if len(mfs) == 1 else 'findings'} "
                       f"[dim](about the monitoring, never about your data)[/]")
         mt = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
         mt.add_column("check"); mt.add_column("what"); mt.add_column("marts", justify="right")
         shown = sorted(mfs, key=lambda f: (-f.base, -f.marts))[:10]
         for f in shown:
-            mt.add_row(f.check, f.summary[:86], _n(f.marts) if f.marts else "")
+            mt.add_row(f.check, _clip(f.summary, 86), _n(f.marts) if f.marts else "")
         say(mt)
         rest = len(mfs) - len(shown)
         if rest:
@@ -2969,14 +2970,17 @@ def volume(
     # ---- the state nobody predicted
     stale = rep.stale_failures()
     if stale:
-        say(f"\n[bold red]{_n(len(stale))}[/] monitor(s) last FAILED and have not run "
+        say(f"\n[bold red]{_n(len(stale))}[/] {'monitor' if len(stale) == 1 else 'monitors'} last FAILED and have not run "
                       f"since. [dim]A stale failure looks exactly like a live one.[/]")
         st = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
-        st.add_column("table"); st.add_column("check"); st.add_column("what")
-        st.add_column("last ran", justify="right")
+        st.add_column("table"); st.add_column("column"); st.add_column("check")
+        st.add_column("what"); st.add_column("last ran", justify="right")
+        # *** THREE IDENTICAL-LOOKING ROWS WERE THREE DIFFERENT COLUMNS. ***
+        # `denver_rental_licenses / schema change / column_added` appeared three times, because
+        # the thing that made them different was the column and the column was not in the table.
         for x in sorted(stale, key=lambda t: -(t.age_days or 0))[:12]:
-            st.add_row(x.table, x.kind.replace("_", " "), x.sub_type or "",
-                       f"{x.age_days:.0f}d ago")
+            st.add_row(x.table, x.column or "[dim]-[/]", x.kind.replace("_", " "),
+                       x.sub_type or "", f"{x.age_days:.0f}d ago")
         say(st)
 
     # ---- movement, ranked by what rests on it
@@ -2989,7 +2993,7 @@ def volume(
         rows.append((v, uid, radius))
     rows.sort(key=lambda r: (-r[2]["marts"], -abs(r[0].change)))
     if rows:
-        say(f"\n[bold]{_n(len(rows))}[/] table(s) moved by "
+        say(f"\n[bold]{_n(len(rows))}[/] {'table' if len(rows) == 1 else 'tables'} moved by "
                       f"{threshold * 100:.0f}% or more, highest blast radius first")
         mt = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
         mt.add_column("table"); mt.add_column("change", justify="right")
@@ -3003,9 +3007,9 @@ def volume(
 
     # *** COVERAGE, BECAUSE 311 OF 358 MODELS BEING UNWATCHED IS NOT "NO VOLUME PROBLEMS". ***
     unwatched = elem.unwatched(rep, project)
-    say(f"\n[dim]{_n(len(rep.volumes))} relation(s) have a row-count history; "
-                  f"{_n(len(unwatched))} model(s) with a mart downstream have none. "
-                  f"Nothing here covers those.[/]")
+    say(f"\n[dim]{elem._plural(len(rep.volumes), 'relation')} have a row-count history; "
+        f"{elem._plural(len(unwatched), 'model')} with a mart downstream have none. "
+        f"Nothing here covers those.[/]")
 
     if as_json:
         console.print_json(_json.dumps({
@@ -3101,6 +3105,14 @@ def _monitoring_findings(project, cfg, verify: bool, project_dir: str, profiles_
                 r.state = elem.ABANDONED if r.age_days > int(configured) else elem.LIVE
     return elem.monitoring_findings(rep, project, cad, cov,
                                     min_marts=int(mon.get("min_marts") or 1))
+
+
+def _clip(text: str, n: int) -> str:
+    """Cut at a word, not mid-word. `and a stopped monitor re` is a slice, not a sentence."""
+    if len(text) <= n:
+        return text
+    cut = text[:n]
+    return (cut[:cut.rfind(" ")].rstrip(" ,.;") + "...") if " " in cut else cut + "..."
 
 
 def _default_elementary_schema(project) -> str:

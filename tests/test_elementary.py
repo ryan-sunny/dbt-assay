@@ -297,7 +297,7 @@ def test_too_little_history_anywhere_derives_nothing_rather_than_a_default():
     assert cad.writes == 1
     assert cad.normal_gap_days is None
     assert cad.derived_staleness_days is None, "a guess is not better than saying you cannot tell"
-    assert "not enough" in cad.explain()
+    assert "not derivable" in cad.explain() and "only 1 write" in cad.explain()
 
 
 def test_one_build_issuing_many_invocations_is_one_day():
@@ -358,3 +358,45 @@ def test_assay_never_measures_volume_or_freshness_itself():
     assert "count(*)" in src, "it reads counts"
     assert "select count(" in src and "group by" not in src.split("_LATEST_VOLUME")[0], \
         "assay must not compute its own aggregates over your data"
+
+
+def test_the_threshold_says_where_it_actually_came_from():
+    """*** IT STATED A THRESHOLD AND, IN THE SAME BREATH, THAT IT HAD NONE. ***
+
+        late after 1 day -- recorded 1 write(s), which is not enough to say what a normal gap is
+
+    The number came from the FALLBACK and the sentence quoted the relation's own failed history as
+    though it had produced it. Found by reading the output, which is the step that was skipped.
+    """
+    fallback = E._cadence_of([datetime(2026, 9, d) for d in (1, 4, 7, 10, 13)],   # noqa: DTZ001
+                             "this project's build cadence")
+
+    def runner(sql, n):
+        low = sql.lower()
+        if "assay_reachable" in low:
+            return [{"assay_reachable": 1}]
+        if E.FRESHNESS not in low:
+            return []
+        if low.strip().startswith("select count(*) as n from"):
+            return [{"n": 3}]
+        if "assay_day" in low:
+            return [{"assay_day": "2026-07-08"}]          # one write, ever
+        return [{"created_at": "2026-07-08 13:08:14"}]
+
+    r = E.read(runner, "elem", now=NOW, fallback=fallback).reading(E.FRESHNESS)
+    assert r.threshold_days == 3
+    assert r.threshold_from is fallback, "the reading does not know where its number came from"
+    said = r.says()
+    assert "build cadence" in said, "it does not name the source of the number it used"
+    assert "not derivable" not in said, (
+        "it is still quoting the history that FAILED to produce the threshold it just stated")
+
+
+def test_things_are_counted_in_english():
+    """`1 write(s)` is what a template looks like, not what English does -- and it shipped."""
+    assert E._plural(1, "write") == "1 write"
+    assert E._plural(2, "write") == "2 writes"
+    assert E._plural(1300, "row") == "1,300 rows"
+    for r in (E.Reading("x", E.ABANDONED, rows=1, newest=datetime(2026, 7, 8),   # noqa: DTZ001
+                        age_days=76, threshold_days=1),):
+        assert "(s)" not in r.says(), r.says()
