@@ -3588,3 +3588,40 @@ question bank raised `'dict' object has no attribute 'strip'`.
 
 A fixture that is not the shape the code will meet measures the author, not the code. Both shapes
 are read now, and the test pins the one that ships.
+
+### 0.38.1: assay was silent because somebody else was covering it, and that somebody never ran
+
+Asked a plain question — *what if Elementary is not in the warehouse?* — and found the answer was
+already wrong for the package that IS.
+
+`source_freshness_undeclared` defers when dbt-project-evaluator is installed, on an argument that
+is right: *"printing the same finding twice is worse than not printing it — a reader cannot tell
+whether two tools agree or whether one is echoing the other."*
+
+The test was wrong. `installed()` reads the **manifest**, and a package being in the manifest is
+not its models being **built**. On this warehouse:
+
+- the evaluator is installed;
+- `fct_sources_without_freshness` is **NOT built** — 4 of its tables exist;
+- **29 of 212 sources declare no freshness**;
+- assay said nothing, the evaluator said nothing, and nobody was told.
+
+`practices.py` already carries this lesson for its own reads — *"an absent table and an empty one
+are not the same fact, and only one of them is a pass"* — learned in the field when five `fct_`
+models of many were built. It had learned it for READS and not for DEFERRALS.
+
+The fix is not to stop deferring: assay cannot see whether a model is built without a warehouse
+round trip, and this check is in the free tier. The fix is to **say so**.
+
+```
+1 check(s) deferred to another package. assay is silent because somebody else covers it.
+Verify that somebody actually ran.
+  source_freshness_undeclared: 29 of 212 source(s) declare no freshness. Not reported here
+  because dbt-project-evaluator is installed and ships `fct_sources_without_freshness` --
+  but only if that model is BUILT. If it is not, nobody is checking this.
+```
+
+**And this is the rule the Elementary work has to inherit.** Deferring to another tool is right
+and it is not free: every deferral announces itself, names what it is resting on, and says what
+breaks if that thing did not run. A tool that goes quiet on someone else's promise has to check
+the promise, or say out loud that it cannot.

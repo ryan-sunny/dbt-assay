@@ -4913,6 +4913,15 @@ def _report_refused_claim_findings() -> None:
     never refused by anything, so the read path refuses them too -- and a silent skip there would
     make a shrinking findings count read as a warehouse getting better.
     """
+    from .checks.sources import DEFERRED
+    if DEFERRED:
+        console.print(f"[yellow]{len(DEFERRED)} check(s) deferred to another package.[/] "
+                      f"[dim]assay is silent because somebody else covers it. Verify that "
+                      f"somebody actually ran.[/]")
+        for name, why in DEFERRED[:4]:
+            console.print(f"[dim]  {name}: {why}[/]")
+        DEFERRED.clear()
+
     from .inventory import REFUSED_CLAIM_FINDINGS
     if not REFUSED_CLAIM_FINDINGS:
         return

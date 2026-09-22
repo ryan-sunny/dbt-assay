@@ -30,8 +30,30 @@ def _child_uids(project, uid: str) -> list[str]:
     return list((project.raw.get("child_map", {}) or {}).get(uid, []) or [])
 
 
+# *** A DEFERRAL NOBODY IS TOLD ABOUT IS A CHECK THAT STOPPED LOOKING. ***
+# `source_freshness_undeclared` goes silent when dbt-project-evaluator is INSTALLED, on the
+# argument that printing the same finding twice is worse than printing it once. The argument is
+# right and the test was wrong: `installed` reads the MANIFEST, and a package being in the
+# manifest is not its models being BUILT.
+#
+# Measured on the field warehouse: the evaluator is installed, `fct_sources_without_freshness` is
+# NOT built -- 4 of its tables exist -- and 0 of 212 sources declare freshness. assay was silent
+# because somebody else was covering it, that somebody said nothing, and nobody was told.
+#
+# `practices.py` already learned this for its own reads: "an absent table and an empty one are not
+# the same fact, and only one of them is a pass." It learned it for reads and not for deferrals.
+#
+# The fix is not to stop deferring -- assay cannot see whether the table is built without a
+# warehouse round trip, and this check is in the free tier. The fix is to SAY SO.
+DEFERRED: list[tuple[str, str]] = []
+
+
 def installed(project, package: str) -> bool:
-    """Is this package part of the project? Pure manifest, no warehouse round trip."""
+    """Is this package part of the project? Pure manifest, no warehouse round trip.
+
+    NOTE: this answers "declared in packages.yml and fetched", NOT "its models are built". A
+    caller deferring on this must record the deferral in `DEFERRED` so the silence is visible.
+    """
     return any(n.get("package_name") == package
                for n in (project.raw.get("nodes", {}) or {}).values())
 
@@ -152,9 +174,19 @@ def source_freshness_undeclared(project, _digests=None) -> list[Finding]:
     echoing the other. assay defers where somebody else already answers, and covers the case where
     nobody does, which is a project without the package.
     """
-    if installed(project, EVALUATOR):
-        return []
     raw = project.raw.get("sources", {}) or {}
+    if installed(project, EVALUATOR):
+        n = sum(1 for uid in project.sources
+                if not ((raw.get(uid) or {}).get("freshness") or {}).get("warn_after", {}).get("count")
+                and not ((raw.get(uid) or {}).get("freshness") or {}).get("error_after", {}).get("count"))
+        if n:
+            DEFERRED.append((
+                "source_freshness_undeclared",
+                (f"{n} of {len(project.sources)} source(s) declare no freshness. Not reported "
+                 f"here because dbt-project-evaluator is installed and ships "
+                 f"`fct_sources_without_freshness` -- but only if that model is BUILT. If it is "
+                 f"not, nobody is checking this.")))
+        return []
     out = []
     for uid, s in project.sources.items():
         f = (raw.get(uid) or {}).get("freshness") or {}
