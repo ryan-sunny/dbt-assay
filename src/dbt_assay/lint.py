@@ -553,3 +553,194 @@ def override_drift(banks: dict, shipped: dict) -> list[Issue]:
                 f"`forked_from: {base.get('prompt_version')}` and assay will tell you when the "
                 f"shipped one moves."))
     return out
+
+
+# ------------------------------------------------------------------- the vocabulary
+# *** `assay banks` LINTS YOUR QUESTIONS HARD AND NOTHING EVER LINTED YOUR WORDS. ***
+# `config.py` read `data.get("vocab") or {}` and that was the whole check, while the same file's
+# own comment said a vocab entry is "injected into state for EVERY question, which is why it
+# improves answers to questions you never wrote" -- and, by the same mechanism, why a term that is
+# false here steers every answer wrong at once.
+#
+# Measured on a real warehouse: 16 terms, six of them asserting Colorado water law, sent to all 358
+# models. 4,997 of 19,707 judged answers -- 25% -- were about Arizona models that were told,
+# among other things, that prior appropriation decides who gets water and that all seven Colorado
+# water divisions are present.
+
+# A jurisdiction is a claim about WHERE a word is true, and a statute is the strongest form of it.
+_STATUTE = re.compile(r"\bC\.?R\.?S\.?\b|\bA\.?R\.?S\.?\b|\bU\.?S\.?C\.?\b|§|\bstat(?:ute)?\.?\s*\d",
+                      re.IGNORECASE)
+_STATES = ("alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut",
+           "delaware", "florida", "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa",
+           "kansas", "kentucky", "louisiana", "maine", "maryland", "massachusetts", "michigan",
+           "minnesota", "mississippi", "missouri", "montana", "nebraska", "nevada", "new hampshire",
+           "new jersey", "new mexico", "new york", "north carolina", "north dakota", "ohio",
+           "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina", "south dakota",
+           "tennessee", "texas", "utah", "vermont", "virginia", "washington", "west virginia",
+           "wisconsin", "wyoming")
+
+
+def _term_text(body) -> str:
+    return _text(body) if not isinstance(body, str) else body
+
+
+def lint_vocab(vocab: dict, project=None) -> list:
+    """Every way a vocabulary can be wrong in a way that costs something.
+
+    `project` is optional and two rules need it: a scope that matches nothing, and a term no model
+    in this warehouse ever mentions. Without it those are simply not reported -- never reported as
+    passing, which is the rule everything else here follows.
+    """
+    out: list[Issue] = []
+    for term, body in sorted((vocab or {}).items()):
+        txt = _term_text(body)
+        sel = body.get("applies_to") if isinstance(body, dict) else None
+
+        if isinstance(body, dict) and not (body.get("means") or "").strip():
+            # The one thing a term is FOR. A key with no `means` is a word with no definition
+            # taking up room in every state that gets sent.
+            out.append(Issue(f"vocab.{term}", "error", "term_undefined",
+                             "declares no `means`, so it defines nothing and is sent to every "
+                             "call anyway."))
+
+        # *** A TERM THAT ASSERTS LAW MUST SAY WHERE THE LAW RUNS. ***
+        if not sel:
+            statute = _STATUTE.search(txt)
+            named = [n for n in _STATES if n in txt.lower()]
+            if statute or named:
+                what = (f"cites {statute.group(0)!r}" if statute
+                        else f"names {named[0].title()}")
+                out.append(Issue(
+                    f"vocab.{term}", "warn", "asserts_law_everywhere",
+                    f"{what} and declares no `applies_to`, so it is asserted to every model in "
+                    f"the project as universal fact. A term asserted outside where it is true "
+                    f"steers every answer wrong at once. Scope it with a selector: "
+                    f"`applies_to: \"path:models/...\"`."))
+
+        if sel and project is not None:
+            from .selector import SelectorError, resolve
+            try:
+                if isinstance(sel, dict):
+                    keep = resolve(project, str(sel.get("select") or "")) or set()
+                    gone = resolve(project, str(sel["exclude"])) if sel.get("exclude") else set()
+                    scope = keep - (gone or set())
+                else:
+                    scope = resolve(project, str(sel))
+            except SelectorError as e:
+                out.append(Issue(f"vocab.{term}", "error", "scope_unreadable", str(e)))
+                continue
+            if scope is not None and not scope:
+                # *** A SCANNER MATCHING NOTHING PASSES WRONGLY. ***
+                # A term scoped to a path that does not exist reaches no state at all, and the
+                # config reads as though the word were defined.
+                out.append(Issue(
+                    f"vocab.{term}", "error", "scope_matches_nothing",
+                    f"`applies_to: {sel!r}` matches no model in this project, so this term is "
+                    f"never sent anywhere. It reads as defined and defines nothing."))
+
+    if project is not None:
+        out += _terms_by_reach(vocab, project, out)
+    return out
+
+
+def _common_dir(paths: list) -> str:
+    """The deepest directory every one of these files sits under, or '' when they scatter."""
+    if not paths:
+        return ""
+    parts = [str(p).split("/")[:-1] for p in paths]
+    common = parts[0]
+    for other in parts[1:]:
+        keep = 0
+        for a, b in zip(common, other, strict=False):
+            if a != b:
+                break
+            keep += 1
+        common = common[:keep]
+        if not common:
+            return ""
+    return "/".join(common)
+
+
+def _terms_by_reach(vocab: dict, project, said_already=None) -> list:
+    """Where each word actually appears, and whether that names a scope.
+
+    *** THE KEYWORD RULE CATCHES A STATUTE AND MISSES A DOCTRINE. ***
+    `nontributary` cites C.R.S. and is caught. `conditional` -- "a claim on water not yet
+    diverted, held open by showing reasonable diligence" -- asserts one state's prior-appropriation
+    law and names no state, so no list of words was going to find it.
+
+    *** AND "USED IN FEW MODELS" FIRES ON EVERYTHING. ***
+    The first version of this rule warned on twelve of sixteen real terms, including one used in
+    115 models that is genuinely about the whole warehouse. A guard that fires on almost every row
+    is a guard somebody switches off, and then the three rows that mattered go with it.
+    So the rule is not "few models". It is **the models that use this word all sit under one
+    directory, and most of the project does not** -- which is the only version that can name the
+    scope it is asking for, and a warning that can write its own fix is one worth reading.
+    """
+    models = list((getattr(project, "models", {}) or {}).values())
+    if len(models) < 8:
+        return []
+    already = {i.question.split(".", 1)[-1] for i in said_already or []
+               if i.rule == "asserts_law_everywhere"}
+    blobs = {m.unique_id: " ".join([m.name, m.description or "", " ".join(m.columns or {}),
+                                    m.compiled or ""]).lower() for m in models}
+    path_of = {m.unique_id: m.path for m in models}
+    out = []
+    for term, body in sorted((vocab or {}).items()):
+        if isinstance(body, dict) and body.get("applies_to"):
+            continue                      # already scoped; the scope is the answer
+        word, spaced = str(term).lower(), str(term).replace("_", " ").lower()
+        hits = [u for u, blob in blobs.items() if word in blob or spaced in blob]
+        if not hits:
+            out.append(Issue(f"vocab.{term}", "warn", "term_unused",
+                             f"no model in this project names this, in SQL, a column or a "
+                             f"description. It is still sent with all "
+                             f"{len(models):,} of them, on every call."))
+            continue
+        if term in already:
+            continue                      # the law rule said it louder and asks for the same fix
+        where = _common_dir([path_of[u] for u in hits])
+        # One directory, and it is not the whole models/ tree.
+        if not where or where.count("/") < 1:
+            continue
+        outside = sum(1 for m in models if not path_of[m.unique_id].startswith(where + "/"))
+        if outside < len(models) * 0.25:
+            continue                      # it is under that directory because nearly everything is
+        # *** AND THE SUGGESTION MUST NOT BE CONFIDENTLY WRONG. ***
+        # A subdirectory of `where` in which the word never appears is very likely the exception
+        # the scope has to subtract. On the warehouse this was built for that is `models/water/az`
+        # -- 70 models sitting INSIDE `models/water`, so the obvious suggestion would have sent
+        # one state's law to every model of the other one and read as working.
+        hit_set = set(hits)
+        kids: dict = {}
+        for m in models:
+            pth = path_of[m.unique_id]
+            if not pth.startswith(where + "/"):
+                continue
+            rest = pth[len(where) + 1:].split("/")
+            if len(rest) < 2:
+                continue                  # a file directly in `where`, not a subdirectory
+            kid = f"{where}/{rest[0]}"
+            k = kids.setdefault(kid, [0, 0])
+            k[0] += 1
+            k[1] += 1 if m.unique_id in hit_set else 0
+        silent = sorted(d for d, (n, h) in kids.items() if n >= 5 and h == 0)
+        # *** WITH THE `path:` PREFIX, OR THE SUGGESTION IS A SELECTOR THAT MATCHES NOTHING. ***
+        # A bare `models/water/az` has no colon, so `selector` reads it as a MODEL NAME, finds no
+        # model called that, and the exclusion silently subtracts nothing. A guard handing out a
+        # fix that quietly does nothing is the defect this whole tool is about, produced by the
+        # part of it that checks for exactly that.
+        drop = " ".join(f"path:{d}" for d in silent)
+        fix = (f"`applies_to: \"path:{where}\"`" if not silent else
+               f"`applies_to: {{select: \"path:{where}\", exclude: \"{drop}\"}}`")
+        note = ("" if not silent else
+                f" Note {', '.join(f'`{d}`' for d in silent)}: "
+                f"{'it is' if len(silent) == 1 else 'they are'} inside `{where}` and "
+                f"{'names' if len(silent) == 1 else 'name'} this word nowhere, so a bare "
+                f"`path:{where}` would still send it there.")
+        out.append(Issue(
+            f"vocab.{term}", "warn", "narrower_than_where_it_is_sent",
+            f"every model that names this word is under `{where}` ({len(hits):,} of them), and "
+            f"the term is sent to all {len(models):,}, including the {outside:,} outside it. If "
+            f"it is only true there, say so: {fix}.{note}"))
+    return out

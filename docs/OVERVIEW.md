@@ -544,6 +544,54 @@ is still served everywhere it was served before -- hiding it leaves the caller w
 is strictly worse than serving it dated. An answer with no recorded checksum reports as **cannot
 be checked** and is counted in its own column, never added to the current ones.
 
+**Where a word is true**
+
+```yaml
+vocab:
+  section_id:
+    means: "the geographic join grain, and NOT always a PLSS section"
+    # no applies_to: true everywhere, which is what every term meant before this existed
+
+  water_division:
+    means: "a Colorado water court region, 1 through 7"
+    applies_to:
+      select:  "path:models/water"
+      exclude: "path:models/water/az"
+```
+
+A vocab term goes into the state of EVERY question, which is why it improves answers to questions
+you never wrote -- and why a term that is false here steers every answer wrong at once. Measured on
+the warehouse this was built against: 16 terms, six of them asserting one state's water law
+including a statute citation, sent to all 358 models. **4,997 of 19,707 judged answers -- 25% of
+everything ever paid for there -- were about models in a different state**, and every one of them
+was told that prior appropriation decides who gets water.
+
+`applies_to` takes the same selector `--select` and `when.select` take, validated by the same
+validator, which refuses syntax it does not understand rather than matching everything. It also
+takes `{select:, exclude:}`, because the exception usually lives inside the rule: those Arizona
+models are `models/water/az`, *inside* `models/water`, so a bare `path:models/water` would reach
+every one of them and the scoping would read as working.
+
+A state about several models at once -- a chunk of column pairs, a chunk of tests -- gets the terms
+true of **all** of them. Not the union: a batch pairing one jurisdiction's model with another's
+would otherwise be told both regimes in a single call, which is worse than saying nothing. Every
+drop is counted and printed, because a vocabulary quietly thinning looks exactly like one that was
+never wired up.
+
+`assay config --target <dir>` lints it, and `--strict` exits non-zero:
+
+- **error** -- a term with no `means`, or a scope that matches no model. A term scoped to nothing
+  reads as defined and defines nothing.
+- **warn** -- a term citing a statute or naming a state with no `applies_to`.
+- **warn** -- a term whose word appears only under one directory while the term is sent to the
+  whole project. This is the rule that catches a *doctrine*, which no keyword list ever will:
+  `conditional` asserts one state's law and names no state. The message writes the selector for
+  you, including the `exclude`, and a test parses the suggestion and runs it -- the first version
+  proposed an exclusion with no `path:` prefix, which `selector` reads as a model name and which
+  therefore subtracts nothing.
+- **warn** -- a term no model in the project mentions at all. Not wrong, not free: it rides along
+  in every state on every call.
+
 **Keeping the store from growing forever**
 
 ```bash
@@ -899,7 +947,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.40.0
+- uses: ryan-sunny/dbt-assay@v0.41.0
   with:
     target: target-head
     baseline: base/target

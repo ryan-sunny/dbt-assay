@@ -65,6 +65,12 @@ class Builder:
 
 BUILDERS: dict = {}
 
+# *** THE CTX THAT DROPPED A TERM IS RARELY THE ONE REPORTING. ***
+# Several commands build a Ctx per call site, so a counter living on one instance would be a
+# number the surface never sees -- the failure this codebase keeps finding, where "it reported
+# nothing" and "it is not wired up" are the same output. Append-only, per process.
+VOCAB_DROPS: list = []
+
 
 def builder(name: str, *, reproducible: bool = True, because: str = ""):
     def register(fn):
@@ -96,11 +102,86 @@ class Ctx:
     vocab: dict = field(default_factory=dict)
     entries: list | None = None
     _memo: dict = field(default_factory=dict, repr=False)
+    # (term, the subjects it was dropped for) -- every time a scoped term did not reach a state.
+    # Counted rather than silent: a vocabulary quietly thinning is the same shape as one that was
+    # never wired up, and those must not read alike.
+    vocab_drops: list = field(default_factory=list, repr=False)
 
     def once(self, key: str, fn):
         if key not in self._memo:
             self._memo[key] = fn()
         return self._memo[key]
+
+    # ---------- the vocabulary, scoped ----------
+
+    def _scope_of(self, term: str, sel):
+        """The uids a term applies to, or None for 'everywhere'. Resolved once per term.
+
+        *** A SCOPE NEEDS TO SUBTRACT, BECAUSE THE EXCEPTION LIVES INSIDE THE RULE. ***
+        On the warehouse this was built for, the Arizona models are `models/water/az` -- 70 of
+        them, INSIDE `models/water`. So `path:models/water` for a term about Colorado law still
+        reaches every Arizona model, and the scoping would have read as working while changing
+        nothing for the case that motivated it. `applies_to` therefore takes either a selector or
+        `{select:, exclude:}`, which is the shape dbt's own `--select`/`--exclude` already has.
+        """
+        from .selector import resolve
+
+        def build():
+            if isinstance(sel, dict):
+                keep = resolve(self.project, str(sel.get("select") or "")) or set()
+                drop = resolve(self.project, str(sel.get("exclude") or "")) if sel.get("exclude") \
+                    else set()
+                return keep - (drop or set())
+            return resolve(self.project, str(sel))
+        return self.once(f"scope::{term}", build)
+
+    def vocab_for(self, *uids) -> dict:
+        """The terms that are true about EVERY subject in this state.
+
+        *** INTERSECTION, BECAUSE A STATE THAT CONTRADICTS ITSELF IS WORSE THAN A THIN ONE. ***
+        Some states are about several models at once -- a chunk of column pairs, a chunk of tests.
+        Under a union rule a batch pairing a Colorado model with an Arizona one would be told both
+        that prior appropriation decides who gets water and that an AMA permit does, in one call.
+        Under this rule it is told neither, keeps the terms that are true of both, and the drop is
+        recorded so a vocabulary thinning is visible rather than inferred.
+
+        A term with no `applies_to` is true everywhere, which is what every term meant before this
+        existed -- so a config written yesterday behaves identically today.
+        """
+        if not self.vocab:
+            return {}
+        known = [u for u in uids if u]
+        # *** AND A STATE WHOSE SUBJECTS COULD NOT BE RESOLVED KEEPS NO SCOPED TERM. ***
+        # `all(...)` over an empty list is True, so an empty subject set would quietly keep every
+        # scoped term and the scoping would read as working while doing nothing. That is the
+        # failure this feature exists to remove, one layer in. Caught by writing it wrong first:
+        # `align`'s pairs carry model NAMES, not uids, so the first version resolved none of them
+        # and kept the whole vocabulary.
+        resolved = bool(known)
+        out, dropped = {}, []
+        for term, body in self.vocab.items():
+            sel = body.get("applies_to") if isinstance(body, dict) else None
+            if not sel or self.project is None:
+                out[term] = body
+                continue
+            scope = self._scope_of(term, sel)
+            # `resolve` returns None for "everything" and an EMPTY SET for "matched nothing".
+            # Those are different facts and only one of them is a term that applies.
+            if scope is None or (resolved and all(u in scope for u in known)):
+                out[term] = body
+            else:
+                dropped.append(term)
+        if dropped:
+            rec = (tuple(sorted(dropped)), tuple(known))
+            self.vocab_drops.append(rec)
+            VOCAB_DROPS.append(rec)
+        return out
+
+    def uid_of_name(self, name: str) -> str | None:
+        """A model name back to its unique_id. `align` carries names, and a scope wants uids."""
+        by_name = self.once("by_name", lambda: {
+            m.name: u for u, m in (getattr(self.project, "models", {}) or {}).items()})
+        return by_name.get(name)
 
     # ---------- derived collections, one spelling each ----------
 
@@ -229,7 +310,7 @@ def why_not(name: str) -> str:
 def _description(ctx, inputs):
     from . import semantics as sem
     s = ctx.semantic_subjects().get(inputs["uid"])
-    return sem.description_state(s, ctx.vocab) if s else None
+    return sem.description_state(s, ctx.vocab_for(inputs["uid"])) if s else None
 
 
 @builder("predicates")
@@ -243,7 +324,7 @@ def _predicates(ctx, inputs):
     # rebuild impossible rather than silently smaller -- which would read as a changed state.
     if not set(want) <= set(s.predicates or []):
         return None
-    return sem.build_state(s, want, ctx.vocab)
+    return sem.build_state(s, want, ctx.vocab_for(inputs["uid"]))
 
 
 @builder("claim_kind")
@@ -256,7 +337,8 @@ def _claim_kind(ctx, inputs):
     m = ctx.project.models.get(inputs["uid"])
     if m is None:
         return None
-    return claims_mod.kind_state(m.name, chunk, m.description or "", ctx.vocab)
+    return claims_mod.kind_state(m.name, chunk, m.description or "",
+                                 ctx.vocab_for(inputs["uid"]))
 
 
 @builder("claim_align")
@@ -267,7 +349,7 @@ def _claim_align(ctx, inputs):
         return None
     ev = claims_mod.evidence_for(c.subject, ctx.project, ctx.digests, ctx.schema,
                                  ctx.observed(), claim_text=c.text)
-    return claims_mod.align_state(c, ev, ctx.vocab) if ev else None
+    return claims_mod.align_state(c, ev, ctx.vocab_for(c.subject)) if ev else None
 
 
 @builder("edge")
@@ -279,7 +361,8 @@ def _edge(ctx, inputs):
     cd = ctx.digests.get(f.child)
     if cd is None or not cd.ok:
         return None
-    return relate.edge_state(f, cd, ctx.declared(), ctx.vocab)
+    # A hop is about BOTH models, so it gets the terms true of both.
+    return relate.edge_state(f, cd, ctx.declared(), ctx.vocab_for(f.parent, f.child))
 
 
 @builder("subject")
@@ -295,7 +378,8 @@ def _subject(ctx, inputs):
     s = subs.get(inputs["key"])
     if s is None:
         return None
-    return {**s.state, **({"vocabulary": ctx.vocab} if ctx.vocab else {})}
+    v = ctx.vocab_for(s.uid)
+    return {**s.state, **({"vocabulary": v} if v else {})}
 
 
 @builder("ruling_pair")
@@ -314,7 +398,7 @@ def _grain(ctx, inputs):
     if cand is None:
         return None
     return contracts.build_state(uid, ctx.project, ctx.digests, ctx.schema, cand,
-                                 ctx.declared(), ctx.vocab)
+                                 ctx.declared(), ctx.vocab_for(uid))
 
 
 @builder("columns")
@@ -328,7 +412,8 @@ def _columns(ctx, inputs):
     proposed = ctx.proposed()
     grain = [x.lower() for x in (proposed[uid].columns if uid in proposed
                                  else ctx.declared().get(uid) or [])]
-    return columns_mod.build_state(uid, ctx.project, ctx.schema, facts, cols, grain, ctx.vocab)
+    return columns_mod.build_state(uid, ctx.project, ctx.schema, facts, cols, grain,
+                                   ctx.vocab_for(uid))
 
 
 @builder("align")
@@ -338,7 +423,10 @@ def _align(ctx, inputs):
     chunk = [pairs[k] for k in inputs["pairs"] if k in pairs]
     if len(chunk) != len(inputs["pairs"]):
         return None
-    return align_mod.build_state(chunk, ctx.vocab)
+    # A chunk of pairs spans two models each. Every one of them, or the term does not apply.
+    uids = {u for p in chunk
+            for u in (ctx.uid_of_name(p.model_a), ctx.uid_of_name(p.model_b)) if u}
+    return align_mod.build_state(chunk, ctx.vocab_for(*sorted(uids)))
 
 
 @builder("severity")
@@ -348,7 +436,8 @@ def _severity(ctx, inputs):
     chunk = [subs[t] for t in inputs["tests"] if t in subs]
     if len(chunk) != len(inputs["tests"]):
         return None
-    return testing_mod.build_state(chunk, ctx.vocab)
+    uids = {u for u in (t.model_uid for t in chunk) if u}
+    return testing_mod.build_state(chunk, ctx.vocab_for(*sorted(uids)))
 
 
 @builder("bank")

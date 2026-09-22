@@ -86,7 +86,7 @@ Six kinds of thing accrue, and five of them cost something to produce:
 | what | where | on a real 358-model warehouse |
 |---|---|---|
 | **your verdicts** — a finding you read and called real, wrong, or unclear | `adjudications` | 136 human, 105 from an agent, 82 derived from assertions already in the project |
-| **your vocabulary** — the words this project uses for its own concepts, sent with every question | `audit.yml` | the difference between a right answer and a confidently wrong one |
+| **your vocabulary** — the words this project uses for its own concepts, and *where each one is true* | `audit.yml` | 16 terms; 6 asserted one state's law to a project a quarter of which is in another |
 | **your own questions** — families you wrote, in YAML, no code change | `assay_questions/*.yml` | asked, stored, and (since 0.38.0) able to produce findings like any shipped one |
 | **what the project claims about itself**, as data rather than prose | `claims` | 5,794 atomic claims, each with an id that survives a paragraph being reflowed |
 | **what was actually counted**, as a series rather than a snapshot | `observed_keys` | 224 observations over 48 relations — a key that held last week and does not now |
@@ -168,7 +168,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.40.0
+- uses: ryan-sunny/dbt-assay@v0.41.0
   with:
     target: target-head
     baseline: base/target

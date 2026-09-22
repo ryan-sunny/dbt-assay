@@ -299,7 +299,37 @@ class Config:
         if not 0.0 <= cfg.min_agreement <= 1.0:
             raise ValueError(f"gating.min_agreement must be between 0 and 1, "
                              f"got {cfg.min_agreement}. It is a rate, not a percentage.")
+        # *** A TERM IS TRUE SOMEWHERE, NOT EVERYWHERE, AND NOTHING USED TO SAY WHERE. ***
+        # The whole vocabulary went into EVERY state. Measured on a real warehouse: 4,997 of
+        # 19,707 judged answers -- 25% -- were about Arizona models, and every one of them was
+        # sent sixteen assertions of Colorado water law as universal fact, including a statute
+        # citation with no force there. A term asserted outside where it is true steers every
+        # answer wrong at once, which this file's own comment already called the worst place in
+        # the project to be wrong.
+        #
+        # `applies_to` is a SELECTOR, the same one `when.select` takes on a question, validated by
+        # the same validator -- which refuses syntax it does not understand rather than matching
+        # everything, because a selector silently ignored scopes nothing while looking as though
+        # it did.
         cfg.vocab = data.get("vocab") or {}
+        for term, body in cfg.vocab.items():
+            sel = (body or {}).get("applies_to") if isinstance(body, dict) else None
+            if not sel:
+                continue
+            from .selector import validate as _validate
+            # A string, or {select:, exclude:} -- because the exception often lives INSIDE the
+            # rule: `models/water/az` sits under `models/water`, so a term about Colorado law
+            # scoped to `path:models/water` would still reach all 70 Arizona models.
+            if isinstance(sel, dict) and not sel.get("select"):
+                raise ThresholdError(
+                    f"vocab `{term}`: `applies_to` given as a mapping needs a `select`. An "
+                    f"`exclude` with nothing to subtract from scopes the term to nothing.")
+            exprs = ([sel.get("select"), sel.get("exclude")] if isinstance(sel, dict) else [sel])
+            for expr in [x for x in exprs if x]:
+                try:
+                    _validate(str(expr))
+                except Exception as e:
+                    raise ThresholdError(f"vocab `{term}`: {e}") from e
         cfg.explanations = data.get("explanations") or {}
         cfg.practices = data.get("practices") or {}
 
@@ -488,6 +518,15 @@ vocab: {}
 #  division:
 #    means: "a Colorado water court region, 1 through 7"
 #    implies: "a case number is unique only within one division"
+#    # WHERE IT IS TRUE. A selector, exactly like `when.select` on a question. Omit it and the
+#    # term is sent to every model, which is what you want for a term about YOUR data and not
+#    # what you want for one that asserts somebody's law. `assay config` warns about a term that
+#    # cites a jurisdiction and declares no scope.
+#    applies_to: "path:models/water"
+#    # ...or, when the exception lives inside the rule:
+#    applies_to:
+#      select:  "path:models/water"
+#      exclude: "path:models/water/az"
 
 # waivers: reason required, expiry optional but recommended.
 waivers: {}

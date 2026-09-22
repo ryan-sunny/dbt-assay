@@ -89,6 +89,26 @@ def _load(target: Path, dialect: str | None = None):
     return project, digests, failures, schema, schema_stats
 
 
+def _report_vocab_drops() -> None:
+    """*** A VOCABULARY QUIETLY THINNING LOOKS EXACTLY LIKE ONE THAT WAS NEVER WIRED UP. ***
+
+    A scoped term is dropped from a state that spans models it is not true of. That is the feature
+    working, and it is also the shape of the feature being broken, so it is counted and said. It
+    prints nothing when nothing was dropped.
+    """
+    drops = states.VOCAB_DROPS
+    if not drops:
+        return
+    per: Counter = Counter()
+    for terms, _subjects in drops:
+        for t in terms:
+            per[t] += 1
+    named = ", ".join(f"{t} ({_n(c)})" for t, c in per.most_common(4))
+    console.print(f"[dim]{_n(len(drops))} state(s) did not carry a scoped term: {named}"
+                  f"{' ...' if len(per) > 4 else ''}. "
+                  f"`applies_to` in audit.yml decides where a word is true.[/]")
+
+
 def _state_ctx(project, digests, schema, store, cfg, entries=None):
     """*** ONE STATE PATH, SO A STATE CAN BE BUILT AGAIN. ***
 
@@ -838,6 +858,41 @@ def onboard(
     console.print(t)
 
 
+def _lint_vocab(cfg, target: str | None, strict: bool) -> int:
+    """*** A TERM IS TRUE SOMEWHERE, AND NOTHING USED TO CHECK WHERE. ***
+
+    The whole vocabulary went into EVERY state. On a real warehouse that is sixteen terms, six of
+    them asserting one state's water law, reaching 358 models -- and 25% of every answer ever paid
+    for there was about a model in a different state. `assay banks` has always linted the
+    questions this hard; the words they are asked with were never checked at all.
+
+    Returns how many findings should fail the command.
+    """
+    from .lint import lint_vocab
+    project = None
+    if target:
+        try:
+            project, _d, _f, _sc, _st = _load(_find_target(target))
+        except Exception as e:                                   # noqa: BLE001
+            console.print(f"[dim]vocabulary linted without the project ({e}); a scope that "
+                          f"matches nothing and an unused term cannot be seen from here.[/]")
+    issues = lint_vocab(cfg.vocab, project)
+    if not issues:
+        if project is None:
+            console.print("[dim]  pass `--target` to also check every scope against the project: "
+                          "a scope matching no model defines nothing.[/]")
+        return 0
+    for i in issues:
+        colour = "red" if i.level == "error" else "yellow"
+        console.print(f"  [{colour}]{i.level}[/] [bold]{i.question}[/] [dim]{i.rule}[/]")
+        console.print(f"    [dim]{i.detail}[/]")
+    errs = sum(1 for i in issues if i.level == "error")
+    warns = len(issues) - errs
+    if warns and not strict:
+        console.print(f"[dim]  {_n(warns)} warning(s). `--strict` exits non-zero on them too.[/]")
+    return errs + (warns if strict else 0)
+
+
 def _warn_unknown_questions(cfg) -> None:
     """A `questions:` key matching no check configures nothing, and said so nowhere."""
     if not cfg.unknown_questions:
@@ -898,6 +953,10 @@ def config(
     store_path: str = typer.Option("assay.duckdb", "--store"),
     check: bool = typer.Option(False, "--check",
                                help="also make one real call to prove the key works"),
+    target: str = typer.Option(None, "--target", "-t",
+                               help="lint the vocabulary against this project too"),
+    strict: bool = typer.Option(False, "--strict",
+                                help="exit non-zero on a vocabulary warning as well as an error"),
 ):
     """What assay resolved: the config file, the provider, where the key came from, the cap.
 
@@ -940,8 +999,15 @@ def config(
                          "your environment, or put it in a .env here or above.[/]")
     console.print(t)
 
+    bad = 0
     if cfg.vocab:
-        console.print(f"\n[dim]vocabulary: {len(cfg.vocab)} term(s), sent with every question[/]")
+        scoped = sum(1 for b in cfg.vocab.values()
+                     if isinstance(b, dict) and b.get("applies_to"))
+        console.print(f"\n[dim]vocabulary: {_n(len(cfg.vocab))} term(s), "
+                      + (f"{_n(scoped)} scoped to part of the project, "
+                         f"{_n(len(cfg.vocab) - scoped)} sent with every question[/]" if scoped
+                         else "all of them sent with every question[/]"))
+        bad = _lint_vocab(cfg, target, strict)
     if cfg.waivers:
         console.print(f"[dim]waivers: {sum(len(v) for v in cfg.waivers.values())}[/]")
 
@@ -951,6 +1017,8 @@ def config(
     if not check:
         console.print("\n[dim]`assay config --check` makes one real call to prove the key "
                       "works.[/]")
+        if bad:
+            raise typer.Exit(1)
         return
     if not client.available:
         raise typer.Exit(1)
@@ -1109,8 +1177,9 @@ def claims(
                                  c.source_ref, a["answer"], a["confidence"], c.citation,
                                  "suppressed" if c.claim_id in suppressed else "active"))
     store.save_claims(rows)
-    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+    console.print(f"[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
+    _report_vocab_drops()
     t = Table(show_header=False, box=None, padding=(0, 2))
     for k, n in kinds.most_common():
         mark = "[bold]" if k in claims_mod.CHECKABLE else "[dim]"
@@ -1231,8 +1300,9 @@ def verify(
             console.print(f"    [dim]{_w}[/]")
         if len(unanswerable) > 6:
             console.print(f"  [dim]... {len(unanswerable) - 6} more[/]")
-    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+    console.print(f"[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
+    _report_vocab_drops()
     t = Table(show_header=False, box=None, padding=(0, 2))
     for k, n in counts.most_common():
         style = "[bold red]" if k == "contradicts" else "[dim]"
@@ -1319,8 +1389,9 @@ def traverse(
                 bad.append((f, (a["probabilities"] or {}).get("silently_multiplied", 0)))
     store.close()
 
-    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+    console.print(f"[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
+    _report_vocab_drops()
     t = Table(show_header=False, box=None, padding=(0, 2))
     for k, n in counts.most_common():
         style = "[bold red]" if k == "silently_multiplied" else "[dim]"
@@ -3276,8 +3347,9 @@ def calibrate(
     console.print(t)
     console.print(f"[dim]code alone was exact on {code_exact}/{len(work)}; "
                   f"with judgment {exact}/{n}[/]")
-    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+    console.print(f"[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
+    _report_vocab_drops()
     for name, v, got, want in [r for r in rows if r[1] != "exact"][:10]:
         console.print(f"  [yellow]{v}[/] {name}: got {got}  declared {want}")
     store.close()
@@ -3472,8 +3544,9 @@ def columns(
                              a.get("confidence")))
 
     n = agree + disagree
-    console.print(f"\n[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+    console.print(f"\n[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
+    _report_vocab_drops()
     if n:
         console.print(f"[bold]against the project's own tests:[/] {agree}/{n} agree "
                       f"({100 * agree // n}%)")
@@ -4418,8 +4491,9 @@ def semantics(
             if a and float(a["answer"]) >= 0.6:
                 stale.append((s.name, float(a["answer"])))
 
-    console.print(f"\n[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+    console.print(f"\n[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
+    _report_vocab_drops()
 
     if intents:
         t = Table(title="\nwhy the filters are there", header_style="bold")
@@ -4545,8 +4619,9 @@ def feeds(
             console.print(f"  [bold]{rel}.{c}[/]  {what}  [dim]@{conf:.2f}[/]")
     elif client.available:
         console.print("\n[green]no column's content disagrees with its name.[/]")
-    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+    console.print(f"[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
+    _report_vocab_drops()
     store.close()
 
 
@@ -4631,8 +4706,9 @@ def align(
         if not p.label:
             console.print(f"  [yellow]same concept, never joined[/] "
                           f"{p.model_a}.{p.column_a} ~ {p.model_b}.{p.column_b}")
-    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+    console.print(f"[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
+    _report_vocab_drops()
     store.close()
 
 
@@ -4824,8 +4900,9 @@ def tests_cmd(
             console.print(f"  [bold]{s.model}[/] {s.test_name[:46]}  [dim]{why} @{conf:.2f}[/]")
     else:
         console.print("\n[green]no test's severity disagrees with what it protects.[/]")
-    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+    console.print(f"[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
+    _report_vocab_drops()
     store.close()
 
 
@@ -4900,8 +4977,9 @@ def adjudicate(
         console.print(f"\n[red]{len(real)} row(s) nothing explains:[/]")
         for fr, conf in sorted(real, key=lambda x: -(x[1] or 0))[:8]:
             console.print(f"  [bold]{fr.model}[/] {fr.rule}  [dim]@{conf:.2f}[/]")
-    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+    console.print(f"[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
+    _report_vocab_drops()
     store.close()
 
 
@@ -5105,8 +5183,9 @@ def practices(
         for f, conf in sorted(verdicts.get(kind, []), key=lambda x: -(x[1] or 0))[:6]:
             console.print(f"  [yellow]{kind}[/] [bold]{f.model}[/] "
                           f"{f.check.replace('fct_','')} [dim]@{conf:.2f} · {f.marts} marts[/]")
-    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+    console.print(f"[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
+    _report_vocab_drops()
     store.close()
 
 
