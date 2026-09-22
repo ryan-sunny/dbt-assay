@@ -189,6 +189,224 @@ def load(payload) -> tuple[list, list]:
     return ok, bad
 
 
+def load_config(payload) -> tuple:
+    """`([Change], [problem])` for what they wrote under Words, Explanations and Waivers.
+
+    *** A PROPOSAL, NEVER A WRITE. ***
+    These come back as changes to `audit.yml`, which is their file: hand-written, commented, in
+    git. `assay review --load` shows them as a diff and writes nothing; `--apply` writes them, in
+    place, without touching a comment or reordering a key.
+
+    An empty value is a box somebody cleared, not an instruction to delete a term -- removing a
+    word from the vocabulary is a decision with project-wide reach and it is not made by a blank
+    text box.
+    """
+    from .configpatch import Change
+    rows = payload.get("config") if isinstance(payload, dict) else None
+    if not rows:
+        return [], []
+    if not isinstance(rows, list):
+        return [], ["`config` is not a list; this is not a form assay wrote"]
+    out, bad = [], []
+    for i, r in enumerate(rows):
+        if not isinstance(r, dict):
+            bad.append(f"config row {i} is not an object")
+            continue
+        path = [str(x) for x in (r.get("path") or []) if str(x).strip()]
+        value = r.get("value")
+        if not path:
+            bad.append(f"config row {i} names no key")
+            continue
+        if path[0] not in ("vocab", "explanations", "waivers"):
+            # The form writes these three. Anything else came from somewhere else, and a config
+            # editor that accepts an arbitrary path from a downloaded file is a hole.
+            bad.append(f"`{'.'.join(path)}`: the form only writes vocab, explanations and waivers")
+            continue
+        if path[-1] == "__new":
+            bad.append(f"`{'.'.join(path[:-1])}`: give the new option a name, not `__new`")
+            continue
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue                     # a cleared box is not a deletion
+        out.append(Change(path=path, value=value))
+    out.sort(key=lambda c: c.dotted)
+    return out, bad
+
+
+# ------------------------------------------------------------------------- the context
+
+# *** THE TOOL FORBIDS THE AGENT FROM WRITING THESE, AND GAVE THE PERSON NOWHERE TO WRITE THEM. ***
+# `suggestions()` returns every `means:` and `implies:` EMPTY and the agent skill says in capitals
+# to leave them empty, because a definition written from a model name looks exactly like one
+# somebody chose and then rides along with every judged question forever. So the only legitimate
+# author is the person -- and the only place they could write one was hand-editing audit.yml,
+# while they sat in this form typing sentences about their own warehouse.
+#
+# The `note` on a disagree card routinely IS the definition: "this isn't a building, it's a
+# diversion point". There was nowhere for that sentence to become a term.
+#
+# Three sections, and they are the three parts of audit.yml that are pure domain knowledge:
+#   words         -- reaches every judged answer about every model it applies to
+#   explanations  -- config.py calls this "the part of the file worth maintaining" in its own
+#                    comment, and nothing has ever let anybody maintain it
+#   waivers       -- `suggest` already finds the reason sitting inside a ruling
+
+
+def context(store, project, cfg, findings=None) -> dict:
+    """Everything a person could define here, with what assay measured beside it.
+
+    *** ASSAY FILLS WHAT IT MEASURED AND LEAVES THE SENTENCE EMPTY. ***
+    The same split as MY READ on a finding card: which models use the word, where they sit, what
+    the lint thinks, and a suggested scope -- all of it checkable. The `means:` is the person's.
+    """
+    from .lint import lint_vocab
+
+    issues: dict = {}
+    for i in lint_vocab(getattr(cfg, "vocab", None) or {}, project):
+        issues.setdefault(i.question.split(".", 1)[-1], []).append(
+            {"level": i.level, "rule": i.rule, "detail": i.detail})
+
+    models = list(getattr(project, "models", {}).values()) if project else []
+    words = []
+    for term, body in sorted((getattr(cfg, "vocab", None) or {}).items()):
+        body = body if isinstance(body, dict) else {"means": str(body)}
+        words.append({
+            "term": term, "known": True,
+            "means": body.get("means", ""), "implies": body.get("implies", ""),
+            "applies_to": _scope_text(body.get("applies_to")),
+            "issues": issues.get(term, []),
+            "used_by": _used_by(term, models),
+            "suggested": _suggested_scope(issues.get(term, []), project),
+        })
+    have = {w["term"] for w in words}
+    # *** A TAB WITH SIXTY BOXES IS A TAB SOMEBODY CLOSES. ***
+    # Every term they already have is shown, because those are the ones that are already reaching
+    # every answer. Candidates are ranked by how often this warehouse joins on them, and the top
+    # twenty is a sitting; the rest are still in `assay suggest --section vocab`.
+    more = 0
+    for row in _candidates(store, cfg, findings or []):
+        if row.key in have:
+            continue
+        have.add(row.key)
+        if len(words) - sum(1 for w in words if w["known"]) >= 20:
+            more += 1
+            continue
+        words.append({"term": row.key, "known": False, "means": "", "implies": "",
+                      "applies_to": "", "issues": [],
+                      "used_by": _used_by(row.key, models),
+                      "measured": list(row.measured or []), "basis": row.basis or "",
+                      "suggested": ""})
+    return {
+        "words": words,
+        "more_candidates": more,
+        "explanations": _explanation_rows(cfg, findings or []),
+        "waivers": _waiver_rows(store, cfg, findings or []),
+    }
+
+
+def _candidates(store, cfg, findings) -> list:
+    """Vocabulary candidates `suggest` already ranks, with `means:` empty as it always returns."""
+    from . import suggest as sug
+    if store is None:
+        return []
+    try:
+        firing = {f.check for f in findings}
+        return [r for r in sug.build(store, cfg, firing, None, sug.live_pairs(findings))
+                if r.section == "vocab"]
+    except Exception:                                            # noqa: BLE001
+        return []
+
+
+def _scope_text(sel) -> str:
+    if not sel:
+        return ""
+    if isinstance(sel, dict):
+        keep, drop = sel.get("select", ""), sel.get("exclude", "")
+        return f"{keep}  MINUS  {drop}" if drop else str(keep)
+    return str(sel)
+
+
+def _used_by(term: str, models: list) -> dict:
+    """Which models actually say this word. The measurement the person checks the scope against."""
+    word, spaced = str(term).lower(), str(term).replace("_", " ").lower()
+    hits = [m for m in models
+            if word in " ".join([m.name, m.description or "", " ".join(m.columns or {}),
+                                 m.compiled or ""]).lower()
+            or spaced in (m.description or "").lower()]
+    dirs: dict = {}
+    for m in hits:
+        dirs[m.path.rsplit("/", 1)[0]] = dirs.get(m.path.rsplit("/", 1)[0], 0) + 1
+    return {"models": len(hits), "of": len(models),
+            "directories": sorted(dirs.items(), key=lambda kv: -kv[1])[:4],
+            "examples": [m.name for m in hits[:5]]}
+
+
+def _suggested_scope(issues: list, project=None) -> str:
+    """The selector the lint already wrote, pulled out so a button can accept it.
+
+    *** AND ONLY FROM THE RULE THAT WRITES A REAL ONE. ***
+    `asserts_law_everywhere` ends with the PLACEHOLDER `applies_to: "path:models/..."`, and the
+    first version of this lifted that out and offered it as a button. Accepting it would have
+    scoped the term to a path with a literal ellipsis in it -- matching nothing, reading as
+    configured. Third time this shape has appeared in two days, so the suggestion is now resolved
+    against the project before it is offered at all.
+    """
+    import re
+    for i in issues:
+        if i.get("rule") != "narrower_than_where_it_is_sent":
+            continue
+        m = re.search(r"`applies_to: (.+?)`\.", i.get("detail", ""))
+        if not m:
+            continue
+        found = m.group(1)
+        if project is None:
+            return found
+        from .selector import resolve
+        for expr in re.findall(r'"([^"]+)"', found):
+            try:
+                if not resolve(project, expr):
+                    return ""              # a suggestion that matches nothing is not a suggestion
+            except Exception:                                    # noqa: BLE001
+                return ""
+        return found
+    return ""
+
+
+def _explanation_rows(cfg, findings) -> list:
+    """One row per mart that has failing-row adjudication to do, with what is configured now."""
+    have = getattr(cfg, "explanations", None) or {}
+    out = []
+    for mart in sorted({f.subject_name for f in findings} | set(have)):
+        opts = have.get(mart) or {}
+        out.append({"mart": mart, "options": [{"name": k, "means": v} for k, v in
+                                              sorted(opts.items())]})
+    return out[:40]
+
+
+def _waiver_rows(store, cfg, findings) -> list:
+    """Findings somebody already said were fine, with the reason they gave.
+
+    A waiver written from a ruling is the one kind assay can propose honestly: the reason is not
+    generated, it is the sentence the person typed when they disagreed.
+    """
+    if store is None:
+        return []
+    try:
+        ruled = store.agent_rulings() + [dict(r) for r in []]
+    except Exception:                                            # noqa: BLE001
+        return []
+    waived = getattr(cfg, "waivers", None) or {}
+    out = []
+    for r in ruled:
+        if str(r.get("verdict")) != "disagree" or not (r.get("note") or "").strip():
+            continue
+        model = str(r.get("subject", "")).split("::")[0].split(".")[-1]
+        if model in waived:
+            continue
+        out.append({"model": model, "check": r.get("family") or r.get("question") or "",
+                    "reason": r["note"], "source": r.get("source", "")})
+    return out[:40]
+
+
 # --------------------------------------------------------------------------------- the page
 
 _CSS = """
@@ -202,6 +420,25 @@ padding:14px 24px}
 h1{margin:0;font-size:17px}
 h1 span{font-weight:400;color:var(--dim);font-size:13px;margin-left:8px}
 .bar{display:flex;align-items:center;gap:14px;margin-top:8px;flex-wrap:wrap}
+.tabs{display:flex;gap:2px;margin-top:10px;border-bottom:1px solid var(--line)}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;font:inherit;
+font-size:13px;color:var(--dim);padding:7px 13px;cursor:pointer}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
+.tabs button b{font-weight:500;color:var(--faint);margin-left:5px;font-size:11.5px}
+.wrow{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:14px 16px;
+margin:0 0 12px}
+.wrow h3{margin:0 0 2px;font-size:14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.wrow .measured{color:var(--dim);font-size:12.5px;margin:6px 0 10px}
+.wrow label{display:block;font-size:11.5px;color:var(--faint);text-transform:uppercase;
+letter-spacing:.04em;margin:8px 0 3px}
+.wrow textarea,.wrow input{width:100%;font:inherit;font-size:13px;padding:6px 9px;
+border:1px solid var(--line);border-radius:4px;background:var(--bg)}
+.wrow textarea{min-height:46px;resize:vertical}
+.flag{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:9px;margin-right:6px;
+background:#fdf3e0;color:var(--amber)}
+.flag.error{background:#fbeceb;color:var(--red)}
+.accept{font-size:12px;padding:3px 9px;margin-top:6px;cursor:pointer;border:1px solid var(--line);
+border-radius:4px;background:var(--bg)}
 .count{font-variant-numeric:tabular-nums}
 button{font:inherit;padding:5px 12px;border:1px solid var(--line);background:var(--bg);
 border-radius:4px;cursor:pointer}
@@ -392,12 +629,141 @@ function download() {
   }
   out.sort((x, y) => (x.subject + x.question < y.subject + y.question ? -1 : 1));
   const body = JSON.stringify(
-    {project: D.project, by: document.getElementById('by').value || '', verdicts: out}, null, 2);
+    {project: D.project, by: document.getElementById('by').value || '', verdicts: out,
+     config: configChanges()}, null, 2);
   const url = URL.createObjectURL(new Blob([body], {type: 'application/json'}));
-  const a = el('a', {href: url, download: 'verdicts.json'});
+  const a = el('a', {href: url, download: 'handback.json'});
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+/* ------------------------------------------------------------------ words, and the rest
+
+   *** THE ONLY SURFACE WHERE A PERSON IS ALREADY TYPING SENTENCES ABOUT THEIR OWN WAREHOUSE. ***
+   `suggestions()` returns every `means:` empty and the agent is told to leave it empty, because a
+   definition written from a model name looks exactly like one somebody chose and then rides along
+   with every judged question forever. So the sentence has to be typed by a person, and until now
+   the only place to type it was a hand-edited audit.yml.
+
+   Nothing here is a verdict and nothing here is written by this page. Every box becomes a PROPOSED
+   change against audit.yml, shown as a diff by `assay review --load` and written only with
+   `--apply`. Their comments and key order are theirs.
+*/
+const CTX = D.context || {words: [], explanations: [], waivers: []};
+let edits = answers.__config || {};
+
+function setEdit(path, value) {
+  if (value === null || value === '') delete edits[path]; else edits[path] = value;
+  answers.__config = edits; save(); tick();
+}
+
+function configChanges() {
+  /* [{path, value, why}] -- identifiers and the sentence, never anything assay measured. */
+  return Object.keys(edits).sort().map(k => ({path: k.split('\u001f'), value: edits[k]}));
+}
+
+function field(label, pathParts, current, placeholder, big) {
+  const key = pathParts.join('\u001f');
+  const box = el(big ? 'textarea' : 'input', {placeholder: placeholder || ''});
+  box.value = key in edits ? edits[key] : (current || '');
+  box.oninput = () => setEdit(key, box.value.trim() === (current || '').trim()
+                              ? null : box.value.trim());
+  const wrap = el('div', {});
+  wrap.append(el('label', {text: label}), box);
+  return wrap;
+}
+
+function wordsTab(host) {
+  const bits = [];
+  bits.push(el('p', {class: 'measured', text:
+    'A word here is sent with EVERY judged question about every model it applies to, which is why '
+    + 'one that is false in part of the project is false in every answer about that part. assay '
+    + 'filled in what it measured; the sentence is yours.'}));
+  for (const w of CTX.words) {
+    const row = el('div', {class: 'wrow'});
+    const head = el('h3', {text: w.term});
+    row.append(head);
+    for (const i of (w.issues || []))
+      row.append(el('span', {class: 'flag' + (i.level === 'error' ? ' error' : ''),
+                             text: i.rule.replace(/_/g, ' ')}));
+    const u = w.used_by || {};
+    const where = (u.directories || []).map(d => d[0] + ' (' + d[1] + ')').join(', ');
+    row.append(el('div', {class: 'measured', text:
+      (w.known ? '' : 'not in your vocabulary yet. ')
+      + 'assay measured: ' + (u.models || 0) + ' of ' + (u.of || 0) + ' model(s) name this word'
+      + (where ? ', under ' + where : '')
+      + ((u.examples || []).length ? '  e.g. ' + u.examples.join(', ') : '')}));
+    row.append(field('means', ['vocab', w.term, 'means'], w.means,
+                     'the sentence you would say to a new engineer on their first day', 1));
+    row.append(field('implies', ['vocab', w.term, 'implies'], w.implies,
+                     'what follows from it that the name does not say', 1));
+    row.append(field('applies_to', ['vocab', w.term, 'applies_to'], w.applies_to,
+                     'blank means every model. e.g. path:models/water'));
+    if (w.suggested) {
+      const b = el('button', {class: 'accept', text: 'use ' + w.suggested});
+      b.onclick = () => { setEdit(['vocab', w.term, 'applies_to'].join('\u001f'), w.suggested);
+                          render(); };
+      row.append(b);
+    }
+    bits.push(row);
+  }
+  if (!CTX.words.length)
+    bits.push(el('p', {class: 'measured', text:
+      'No vocabulary and no candidates. `assay suggest --section vocab` ranks them by how often '
+      + 'this warehouse joins on them.'}));
+  host.replaceChildren(...bits);
+}
+
+function explanationsTab(host) {
+  const bits = [el('p', {class: 'measured', text:
+    'Options for the failing-row family, per mart. These ARE the domain knowledge: the generic '
+    + 'set is always available and these are added to it. One line each, saying what that kind of '
+    + 'failing row actually is here.'})];
+  for (const x of CTX.explanations) {
+    const row = el('div', {class: 'wrow'});
+    row.append(el('h3', {text: x.mart}));
+    for (const o of (x.options || []))
+      row.append(field(o.name, ['explanations', x.mart, o.name], o.means, '', 1));
+    row.append(field('(new option name)', ['explanations', x.mart, '__new'], '',
+                     'e.g. conditional_right: a claim on water not yet diverted', 1));
+    bits.push(row);
+  }
+  if (!CTX.explanations.length)
+    bits.push(el('p', {class: 'measured', text: 'Nothing to adjudicate yet.'}));
+  host.replaceChildren(...bits);
+}
+
+function waiversTab(host) {
+  const bits = [el('p', {class: 'measured', text:
+    'Findings somebody already said were fine, with the reason THEY gave. A waiver needs a reason '
+    + 'and an expiry is worth having; nothing here is written until you apply it.'})];
+  for (const w of CTX.waivers) {
+    const row = el('div', {class: 'wrow'});
+    row.append(el('h3', {text: w.model + '  ' + w.check}));
+    row.append(el('div', {class: 'measured', text: 'they said: ' + w.reason}));
+    row.append(field('reason', ['waivers', w.model, 'reason'], w.reason, '', 1));
+    row.append(field('until', ['waivers', w.model, 'until'], '', 'YYYY-MM-DD, optional'));
+    bits.push(row);
+  }
+  if (!CTX.waivers.length)
+    bits.push(el('p', {class: 'measured', text:
+      'Nothing proposed. A waiver assay proposes comes from a reason already written in a '
+      + 'ruling -- it never invents one.'}));
+  host.replaceChildren(...bits);
+}
+
+const PANES = {words: wordsTab, explanations: explanationsTab, waivers: waiversTab,
+               findings: null};
+const drawn = {};
+function openPane(name) {
+  document.querySelectorAll('.tabs button').forEach(b =>
+    b.classList.toggle('on', b.dataset.pane === name));
+  document.querySelectorAll('.pane').forEach(p => { p.hidden = p.id !== 'p-' + name; });
+  if (PANES[name] && !drawn[name]) { drawn[name] = 1; PANES[name](document.getElementById('p-' + name)); }
+}
+document.querySelectorAll('.tabs button').forEach(b => {
+  b.onclick = () => openPane(b.dataset.pane);
+});
 
 document.getElementById('prev').onclick = () => { page--; save(); render(); };
 document.getElementById('next').onclick = () => { page++; save(); render(); };
@@ -408,14 +774,22 @@ document.getElementById('clear').onclick = () => {
 };
 const pages = Math.max(1, Math.ceil(D.cards.length / PER));
 if (page >= pages) page = 0;
+document.getElementById('n-words').textContent = CTX.words.length || '';
+document.getElementById('n-expl').textContent = CTX.explanations.length || '';
+document.getElementById('n-waiv').textContent = CTX.waivers.length || '';
+document.getElementById('n-find').textContent = D.cards.length || '';
 render();
+openPane(CTX.words.length ? 'words' : 'findings');
 """
 
 
-def form_html(card_list: list, sql: dict, project: str, generated_at: str, version: str) -> str:
+def form_html(card_list: list, sql: dict, project: str, generated_at: str, version: str,
+              ctx: dict | None = None) -> str:
     """One self-contained file. No server, no fetch, no network."""
     e = html.escape
-    blob = json.dumps({"project": project, "cards": card_list, "sql": sql, "no_read": NO_READ},
+    ctx = ctx or {"words": [], "explanations": [], "waivers": []}
+    blob = json.dumps({"project": project, "cards": card_list, "sql": sql, "no_read": NO_READ,
+                       "context": ctx},
                       separators=(",", ":"), sort_keys=True, default=str)
     # `</script>` inside a model's SQL would end the tag and silently truncate the page. `<!--`
     # opens a comment inside a script element. A dbt model containing either is not exotic.
@@ -426,23 +800,36 @@ def form_html(card_list: list, sql: dict, project: str, generated_at: str, versi
 <title>{e(project)} &middot; assay review</title>
 <style>{_CSS}</style></head><body>
 <header>
-<h1>{e(project)}<span>{len(card_list)} to rule on &middot; {withread} carry a reading &middot;
+<h1>{e(project)}<span>{len(card_list)} to rule on &middot; {len(ctx.get("words") or [])} word(s) &middot; {withread} carry a reading &middot;
 assay {e(version)} &middot; manifest {e(str(generated_at))}</span></h1>
+<nav class="tabs">
+  <button data-pane="words" class="on">Words<b id="n-words"></b></button>
+  <button data-pane="explanations">Explanations<b id="n-expl"></b></button>
+  <button data-pane="waivers">Waivers<b id="n-waiv"></b></button>
+  <button data-pane="findings">Findings<b id="n-find"></b></button>
+</nav>
 <div class="bar">
   <button id="prev">&larr; previous</button>
   <span id="where"></span>
   <button id="next">next twenty &rarr;</button>
   <span class="count" id="count"></span>
   <input type="text" id="by" placeholder="your name" style="width:160px">
-  <button class="go" id="dl">download verdicts.json</button>
+  <button class="go" id="dl">download handback.json</button>
   <button id="clear">clear</button>
 </div>
 </header>
-<main><div id="cards"></div></main>
+<main>
+<div id="p-words" class="pane"></div>
+<div id="p-explanations" class="pane" hidden></div>
+<div id="p-waivers" class="pane" hidden></div>
+<div id="p-findings" class="pane" hidden><div id="cards"></div></div>
+</main>
 <footer>
 Answers are kept in this browser as you go, so you can close the tab and come back. Nothing is
 recorded anywhere until you download the file and run
-<code>assay review --load verdicts.json</code>. A card you did not answer is never submitted:
+<code>assay review --load handback.json</code>. Verdicts are recorded; anything you wrote under
+Words, Explanations or Waivers is shown to you as a diff against <code>audit.yml</code> and
+written only when you add <code>--apply</code>. A card you did not answer is never submitted:
 `human` means somebody answered it, and a default would make that false.
 <br><br>
 Twenty at a time, highest blast radius first. Twenty and stopping is a good session &mdash; the

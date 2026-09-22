@@ -166,6 +166,22 @@ assay plan -t target/       # writes assay_plan.jsonl
 
 **If the plan is empty, nobody has reviewed anything yet — that is not a clean warehouse.** A plan
 is built only from findings a person agreed with. Getting those is the `assay-review` skill:
+The form is not only findings. It carries three more sections, and they are the parts of
+`audit.yml` that are pure domain knowledge: **Words** (their vocabulary, with what assay measured
+about where each one is used and a suggested scope), **Explanations** (the per-mart options for
+failing-row adjudication) and **Waivers** (findings somebody already called fine, with the reason
+they gave). Words is the first tab, because a term reaches every judged answer about every model
+it applies to, while a verdict settles one finding.
+
+**Fill in what you measured and leave the sentence empty.** Same split as MY READ on a card: which
+models use the word, where they sit, what the lint says, a scope that resolves. Never the `means:`
+— a definition written from a model name looks exactly like one they chose, and then rides along
+with every judged question forever.
+
+What they write comes back as a PROPOSAL. `assay review --load handback.json` records the verdicts
+and prints the `audit.yml` changes as a diff; `--apply` writes them, in place, without touching a
+comment or reordering a key. Say what changed before you run it with `--apply`.
+
 `assay review --emit review.html -t target/` writes a form they fill in at their own pace, and
 `--load verdicts.json` records it. Do not start editing off the raw findings list; most of what is
 in it has never been read by anyone, and on a real warehouse a judged family can run 12% agreement

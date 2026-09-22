@@ -191,3 +191,109 @@ def test_every_css_variable_the_form_uses_is_defined():
     used = set(re.findall(r"var\(--([a-z-]+)\)", rf._CSS))
     assert defined and used
     assert not (used - defined), sorted(used - defined)
+
+
+# ------------------------------------------------------------------- the context sections
+
+def _cfg(tmp_path, body: str):
+    from dbt_assay.config import Config
+    (tmp_path / "audit.yml").write_text(body)
+    return Config.load(tmp_path)
+
+
+def test_the_form_carries_their_words_with_what_assay_measured(project_dir, tmp_path):
+    """*** THE TOOL FORBIDS THE AGENT FROM WRITING A `means:` AND GAVE THE PERSON NOWHERE. ***
+
+    `suggestions()` returns every `means:` empty and the skill says to leave it empty, because a
+    definition written from a model name looks exactly like one somebody chose and then rides
+    along with every judged question forever. The form is the one surface where a person is
+    already typing sentences about their own warehouse.
+    """
+    from dbt_assay import reviewform
+    from dbt_assay.manifest import Project
+    cfg = _cfg(tmp_path, 'vocab:\n  stg_bad_notnull:\n    means: "a staging model"\n')
+    ctx = reviewform.context(None, Project.load(project_dir), cfg, [])
+    w = next(x for x in ctx["words"] if x["term"] == "stg_bad_notnull")
+    assert w["means"] == "a staging model"
+    assert w["used_by"]["models"] >= 1, "assay did not measure where the word is used"
+    assert w["used_by"]["of"] > 1
+
+
+def test_a_suggestion_that_matches_nothing_is_never_offered(project_dir, tmp_path):
+    """*** THE PLACEHOLDER READS LIKE A SELECTOR. ***
+
+    `asserts_law_everywhere` ends with `applies_to: "path:models/..."` -- a literal ellipsis. The
+    first version of the form lifted that out and put it on an accept button, so one click would
+    have scoped the term to a path matching nothing while reading as configured. Third time this
+    shape appeared in two days.
+    """
+    from dbt_assay import reviewform
+    from dbt_assay.manifest import Project
+    cfg = _cfg(tmp_path, 'vocab:\n  t:\n    means: "a Colorado water court region"\n')
+    ctx = reviewform.context(None, Project.load(project_dir), cfg, [])
+    w = next(x for x in ctx["words"] if x["term"] == "t")
+    assert any(i["rule"] == "asserts_law_everywhere" for i in w["issues"])
+    assert w["suggested"] == "", "offered a suggestion built from the placeholder"
+
+
+def test_the_page_renders_the_context_and_stays_one_file(project_dir, tmp_path):
+    from dbt_assay import reviewform
+    from dbt_assay.manifest import Project
+    cfg = _cfg(tmp_path, 'vocab:\n  t:\n    means: "x"\n')
+    ctx = reviewform.context(None, Project.load(project_dir), cfg, [])
+    page = reviewform.form_html([], {}, "p", "now", "0.0", ctx)
+    for needed in ("data-pane=\"words\"", "wordsTab", "explanationsTab", "waiversTab",
+                   "handback.json"):
+        assert needed in page, needed
+    assert "fetch(" not in page and "<script src" not in page, "the form reached the network"
+
+
+# ------------------------------------------------------------------- the handback
+
+def test_config_changes_come_back_as_proposals():
+    from dbt_assay import reviewform
+    changes, bad = reviewform.load_config({"config": [
+        {"path": ["vocab", "wdid", "means"], "value": "a structure id"},
+        {"path": ["vocab", "wdid", "applies_to"], "value": "path:models/water"}]})
+    assert not bad
+    assert [c.dotted for c in changes] == ["vocab.wdid.applies_to", "vocab.wdid.means"]
+
+
+def test_a_cleared_box_is_not_a_deletion():
+    """Removing a word has project-wide reach and is not a decision a blank text box makes."""
+    from dbt_assay import reviewform
+    changes, bad = reviewform.load_config({"config": [
+        {"path": ["vocab", "wdid", "means"], "value": ""},
+        {"path": ["vocab", "wdid", "implies"], "value": None}]})
+    assert changes == [] and bad == []
+
+
+def test_the_form_cannot_write_outside_the_three_sections():
+    """*** A DOWNLOADED FILE NAMING AN ARBITRARY CONFIG PATH IS A HOLE. ***
+
+    Gating thresholds want the measured agreement rate in front of you; `assay effectiveness` is
+    that surface, not a text box in a form.
+    """
+    from dbt_assay import reviewform
+    changes, bad = reviewform.load_config({"config": [
+        {"path": ["questions", "grain_unresolved", "act"], "value": "p > 0.9"},
+        {"path": ["gating", "min_adjudications"], "value": 1}]})
+    assert changes == []
+    assert len(bad) == 2 and all("only writes" in b for b in bad)
+
+
+def test_an_unnamed_new_option_is_refused_by_name():
+    from dbt_assay import reviewform
+    changes, bad = reviewform.load_config({"config": [
+        {"path": ["explanations", "water_rights", "__new"], "value": "something"}]})
+    assert changes == []
+    assert bad and "give the new option a name" in bad[0]
+
+
+def test_a_handback_with_no_config_still_loads_its_verdicts():
+    """Every form written before this existed must still load."""
+    from dbt_assay import reviewform
+    rows, bad = reviewform.load({"verdicts": [
+        {"subject": "model.p.a", "question": "q", "verdict": "agree"}]})
+    assert len(rows) == 1 and not bad
+    assert reviewform.load_config({"verdicts": []}) == ([], [])

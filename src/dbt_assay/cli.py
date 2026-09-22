@@ -3644,7 +3644,11 @@ def review(
     config_path: str = typer.Option(".", "--config", help="where audit.yml lives, for --emit"),
     emit: str = typer.Option(None, "--emit",
                              help="write a form to this .html and record nothing. Needs --target"),
-    load: str = typer.Option(None, "--load", help="a verdicts.json the form handed back"),
+    load: str = typer.Option(None, "--load", help="a handback.json the form handed back"),
+    apply_config: bool = typer.Option(False, "--apply",
+                                      help="also WRITE the audit.yml changes the form proposed. "
+                                           "Without it they are shown as a diff and nothing is "
+                                           "written."),
     reads: str = typer.Option(None, "--reads",
                               help="a JSON of {'<subject>::<check>': {verdict, why}} to "
                                    "pre-fill MY READ on the emitted form"),
@@ -3669,6 +3673,7 @@ def review(
         raise typer.Exit(0)
     if load:
         _load_verdicts(store, load, who)
+        _load_config(load, config_path, apply_config)
         store.close()
         raise typer.Exit(0)
 
@@ -3748,9 +3753,10 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
         return
     p = Path(out)
     p.parent.mkdir(parents=True, exist_ok=True)
+    ctx = reviewform.context(store, project, cfg, findings)
     p.write_text(reviewform.form_html(
         cards, sql, project.project_name or "this project",
-        project.raw.get("metadata", {}).get("generated_at", ""), _pkg_version()))
+        project.raw.get("metadata", {}).get("generated_at", ""), _pkg_version(), ctx))
 
     n_read = sum(1 for c in cards if c.get("read") or c.get("agent"))
     console.print(f"wrote [bold]{p}[/] [dim]({len(cards)} card(s) from {len(findings)} finding(s); "
@@ -3761,8 +3767,62 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
     if len(cards) - n_read:
         console.print("   [dim]`--reads <json>` pre-fills MY READ, which is what makes each card "
                       "cheap to answer. An agent writes that file once, offline.[/]")
-    console.print(f"   [dim]Open it, answer what you can, download verdicts.json, then "
-                  f"`assay review --load verdicts.json --store {store_path}`.[/]")
+    console.print(f"   [dim]{_n(len(ctx['words']))} word(s), {_n(len(ctx['explanations']))} "
+                  f"mart(s) with options and {_n(len(ctx['waivers']))} proposed waiver(s) are in "
+                  f"there too. A word reaches every judged answer about every model it applies "
+                  f"to, which is why it is the first tab.[/]")
+    console.print(f"   [dim]Open it, answer what you can, download handback.json, then "
+                  f"`assay review --load handback.json --store {store_path}` -- add `--apply` to "
+                  f"write the audit.yml changes as well.[/]")
+
+
+def _load_config(path: str, config_path: str, do_write: bool) -> None:
+    """Show what the form proposed for `audit.yml`, and write it only when told to.
+
+    *** IT IS THEIR FILE AND MOST OF WHAT IS IN IT IS THE COMMENTS. ***
+    Fifty-three of the 253 lines on the field project's audit.yml are explanation, and PyYAML
+    cannot round-trip one. So this never loads-and-dumps: `configpatch` edits lines, inserts a key
+    under a key, and leaves ordering, comments, blank lines and quoting exactly where they were.
+    A path it cannot place unambiguously is refused with the YAML to paste, because a config
+    editor that writes something approximately where it belongs is worse than one that says it
+    could not.
+    """
+    from . import configpatch, reviewform
+    payload = _json.loads(Path(path).read_text())
+    changes, bad = reviewform.load_config(payload)
+    for b in bad:
+        console.print(f"   [yellow]{b}[/]")
+    if not changes:
+        return
+    target = Path(config_path) / "audit.yml"
+    if not target.exists():
+        console.print(f"[yellow]{target} does not exist[/], so there is nothing to change. "
+                      f"`assay onboard` writes one.")
+        return
+    before = target.read_text()
+    out = configpatch.apply(before, changes)
+    console.print(f"\n[bold]{_n(len(out.applied))}[/] change(s) to [bold]{target}[/]"
+                  + (" [dim](nothing written yet)[/]" if not do_write else ""))
+    for line in configpatch.diff(before, out.text):
+        style = ("green" if line.startswith("+") and not line.startswith("+++")
+                 else "red" if line.startswith("-") and not line.startswith("---") else "dim")
+        console.print(f"[{style}]{line}[/]")
+    for ch, why in out.refused:
+        console.print(f"[yellow]refused[/] [bold]{ch.dotted}[/] [dim]{why}[/]")
+        console.print(f"[dim]   paste it yourself: {ch.value}[/]")
+    if not do_write:
+        console.print("\n[dim]Nothing was written. `--apply` writes exactly the diff above; "
+                      "your comments and key order are untouched because it edits lines rather "
+                      "than re-serialising the file.[/]")
+        return
+    target.write_text(out.text)
+    console.print(f"\n[green]wrote {target}[/]")
+    # *** A SCOPE THAT CHANGES A STATE CHANGES WHAT IS CACHED. ***
+    if any(c.path[0] == "vocab" for c in changes):
+        console.print("[dim]A vocabulary change moves the state of every judged question about "
+                      "the models it reaches, so those cached answers become stale. "
+                      "`assay stale --exact --cost` quotes what re-asking them would cost before "
+                      "you spend it.[/]")
 
 
 def _load_verdicts(store, path: str, who: str) -> None:

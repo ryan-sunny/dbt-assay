@@ -287,6 +287,28 @@ assay review --emit review.html -t target/   # the form, with everything in it
 assay review --load verdicts.json            # every verdict at once
 ```
 
+The form is not only findings. Three more tabs carry the parts of `audit.yml` that are pure domain
+knowledge, and **Words comes first**: a verdict settles one finding, while a vocabulary term
+reaches every judged answer about every model it applies to.
+
+| tab | what it holds |
+|---|---|
+| **Words** | their vocabulary, plus candidates ranked by how often this warehouse joins on them. assay fills in what it measured — how many models name the word, which directories they sit in, what the lint says, a scope that resolves — and leaves `means:` empty, because a definition written from a model name looks exactly like one they chose |
+| **Explanations** | the per-mart options for failing-row adjudication. `config.py` calls this "the part of the file worth maintaining" in its own comment, and nothing had ever let anybody maintain it |
+| **Waivers** | findings somebody already called fine, carrying the reason *they* typed. assay never invents one |
+| **Findings** | the cards, as before |
+
+What they write comes back as a **proposal**, never a write. `assay review --load handback.json`
+records the verdicts and prints the `audit.yml` changes as a diff; `--apply` writes them. It edits
+lines rather than re-serialising, so comments, key order, blank lines and quoting all survive —
+measured on a real 253-line file: 53 comment lines, identical before and after. A path it cannot
+place unambiguously is refused with the YAML to paste, because a config editor that writes
+something approximately where it belongs is worse than one that says it could not.
+
+It writes `vocab`, `explanations` and `waivers` and nothing else. Gating thresholds want the
+measured agreement rate in front of you, and `assay effectiveness` is that surface.
+
+
 The one number a release cannot move is findings a person has ruled on, and on the warehouse this
 was built against it sat at **0 of 159** for months. Not for want of `assay review -i`, which has
 shipped for most of this project's life. Ruling meant leaving the conversation you were already in,
@@ -947,7 +969,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.42.0
+- uses: ryan-sunny/dbt-assay@v0.43.0
   with:
     target: target-head
     baseline: base/target
