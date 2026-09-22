@@ -16,6 +16,9 @@ import json
 import re
 from dataclasses import dataclass, field
 
+import sqlglot
+from sqlglot import exp
+
 from ..parse import Digest, case_branch_values
 
 # Functions that return DEGREES on geographic coordinates. Ranking by one of these orders an
@@ -478,6 +481,50 @@ CHECKS = (
 )
 
 
+def _aggregate_input_cannot_be_null(uid: str, column: str, project, digests) -> bool:
+    """True when the thing being aggregated can never be NULL, so the aggregate never is.
+
+    Two exact signals, both free:
+
+    - the argument is `COALESCE(x, <literal>)`. The same fact `test_cannot_fail` reads from the
+      other side: a literal tail means the expression cannot produce NULL;
+    - the argument is a column, and exactly ONE parent of this model declares a `not_null` test on
+      a column of that name. One parent is an answer. Several publishing the name is genuinely
+      ambiguous, and picking the first is the defect this file reports in other people's SQL, so
+      an ambiguous name settles nothing and the finding stands.
+    """
+    d = digests.get(uid)
+    expr = (getattr(d, "output_exprs", None) or {}).get((column or "").lower(), "") if d else ""
+    if not expr:
+        return False
+    try:
+        tree = sqlglot.parse_one(expr, dialect=getattr(project, "dialect", "duckdb"))
+    except Exception:                                            # noqa: BLE001
+        return False
+    agg = tree if isinstance(tree, exp.AggFunc) else next(iter(tree.find_all(exp.AggFunc)), None)
+    if agg is None:
+        # The column is read out of a CTE, so the aggregate is not in this expression and there is
+        # no argument to examine. No evidence is not evidence of safety.
+        return False
+
+    # A coalesce with a literal tail, anywhere in the aggregate's argument.
+    for co in agg.find_all(exp.Coalesce):
+        args = [co.this, *(co.expressions or [])]
+        if args and isinstance(args[-1], exp.Literal):
+            return True
+
+    names = {c.name.lower() for c in agg.find_all(exp.Column) if c.name}
+    if not names:
+        return False
+    for name in names:
+        owners = [p for p in (project.models[uid].parents if uid in project.models else [])
+                  if any(t.kind == "not_null" and (t.column or "").lower() == name
+                         and t.tests_model == p for t in project.tests)]
+        if len(owners) == 1:
+            return True
+    return False
+
+
 def run_all(project, digests: dict[str, Digest], schema=None) -> list[Finding]:
     from .sources import SOURCE_CHECKS, source_freshness_stale
     out: list[Finding] = []
@@ -594,6 +641,26 @@ def test_outruns_its_source(project, digests, schema=None, entries=None) -> list
     # thought about should read as null-preserving -- the safe direction for a check that says
     # "this assertion may not hold".
     NEVER_NULL = {"count", "count_if", "countif", "count_distinct", "approx_count_distinct"}
+
+    # *** AND AN AGGREGATE WHOSE INPUT CANNOT BE NULL CANNOT RETURN NULL. ***
+    # Ruled on all seven of this check's own findings by reading the SQL and then counting the
+    # parents. Three were wrong, all for one reason: the thing being aggregated is never NULL, so
+    # the group can never be entirely NULL.
+    #
+    #   bool_or(is_sfha)                    stg_fema_flood_zones.is_sfha carries `not_null`
+    #   bool_or(is_acquired)                stg_cwcb_isf.is_acquired     carries `not_null`
+    #   listagg(coalesce(use_label, '...')) a literal tail; the argument is `defaulted`
+    #
+    # against the two that are right, where the input carries no such test and does hold nulls:
+    #
+    #   min(letter_date)   1,300 null of 17,193, and 1,300 groups entirely null
+    #   min(parcel_id)     5,876 null of 2,732,101   <- the outage
+    #
+    # Both signals are free and exact: a `not_null` test is a declaration in the manifest, and a
+    # coalesce with a literal tail is the same thing `test_cannot_fail` reads in the other
+    # direction. Where the expression does not carry the aggregate at all -- the column is read
+    # out of a CTE -- there is no argument to check and the finding stands, which is the safe
+    # direction for a check whose claim is "this assertion may not hold".
     out = []
     if entries is None:
         return out
@@ -631,7 +698,8 @@ def test_outruns_its_source(project, digests, schema=None, entries=None) -> list
                     break
         elif ce.provenance.value == "aggregated":
             fn = str(getattr(ce.provenance, "root", "") or "").split(":", 1)[-1].lower()
-            if fn and fn not in NEVER_NULL:
+            if fn and fn not in NEVER_NULL and not _aggregate_input_cannot_be_null(
+                    e.uid, t.column, project, digests):
                 parent_name = f"{fn}()"
                 why = (f"produced by `{fn}()`, which returns NULL for any group where every "
                        f"input row is NULL -- and the GROUP BY still emits that row. The test "

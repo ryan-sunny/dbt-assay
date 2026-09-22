@@ -105,7 +105,7 @@ No API key, no network, no spend. `assay check`.
 | `bbox_as_radius` | a bounding box standing in for a radius |
 | `duckdb_full_match` | `~` is a full-string match in DuckDB, not a partial one |
 | `variant_column` | dlt's `__v_double` split, where one column silently became two |
-| `test_outruns_its_source` | a test asserting something the column has no right to promise: a `not_null` on a column carried from a LEFT-joined parent, padded with `CAST(NULL AS ...)` in a UNION arm, or produced by a NULL-preserving aggregate. `count()` over a group is 0; `min()` over an all-NULL group is NULL |
+| `test_outruns_its_source` | a test asserting something the column has no right to promise: a `not_null` on a column carried from a LEFT-joined parent, padded with `CAST(NULL AS ...)` in a UNION arm, or produced by a NULL-preserving aggregate. `count()` over a group is 0; `min()` over an all-NULL group is NULL. An aggregate whose input cannot be NULL — a column declared `not_null` upstream, or a `coalesce` with a literal tail — is not reported |
 | `narrow_read` | a model reading far fewer columns of a parent than it could, where the ones it skips carry the meaning |
 | `join_fans_out` | a join whose key is not unique on the far side, so one row becomes several |
 | `key_started_holding` | a column that now holds unique where it did not before. Nothing is wrong today; it is the moment to declare the key, before something depends on an accident |

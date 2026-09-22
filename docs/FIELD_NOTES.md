@@ -3171,3 +3171,44 @@ description of an operation the code performs. That is a question-quality proble
 
 Measuring a rewrite needs verdicts, and there are none. The twelve readings are loaded into the
 review form as `--reads`, where confirming or overturning each is one click.
+
+## 0.34.1: ruling on my own check found three of seven wrong
+
+`test_outruns_its_source` shipped in 0.33.0 with **seven findings and zero verdicts**, and one
+case verified against the data. The other six were never read. So they were — all seven, against
+the SQL, then against row counts in the warehouse.
+
+**Three were wrong, and all three for one reason: the thing being aggregated cannot be NULL.**
+
+| finding | the aggregate's input | verdict |
+|---|---|---|
+| `int_water_section_flood.intersects_sfha` | `bool_or(is_sfha)`, and `stg_fema_flood_zones.is_sfha` carries a `not_null` test — 0 null in 59,257 | **wrong** |
+| `int_water_section_isf.has_acquired_isf` | `bool_or(is_acquired)`, `stg_cwcb_isf.is_acquired` carries a `not_null` test | **wrong** |
+| `int_water_right_uses.decreed_uses_label` | `listagg(coalesce(use_label, ...))` — a default | **wrong**, see below |
+| `int_water_county_referral_record.first_reviewed` | `min(letter_date)`, no test, **1,300 null of 17,193 and 1,300 groups entirely null** | right |
+| `int_water_well_parcel.parcel_id` | `min(parcel_id)`, no test, 5,876 null of 2,732,101 | right — the outage |
+
+Both signals are free and already in the manifest. A `not_null` test on the aggregated column is a
+declaration that the input is never NULL, so no group is ever entirely NULL, so the aggregate never
+is. A `coalesce` with a literal tail is the same fact `test_cannot_fail` reads from the other side.
+Reading them takes the check from 5 right of 7 to **5 of 5 defensible**.
+
+### The third one is why the coalesce rule has to be narrow
+
+`listagg(coalesce(u.use_label, 'Unrecognised code ' || e.use_code))` LOOKS defaulted, and the tail
+is a concatenation rather than a literal. `'code ' || NULL` is NULL, so the coalesce can still
+produce NULL and the finding stands. Treating a `DPipe` as a literal would have suppressed a
+finding on the grounds that a NULL cannot happen — the one direction this check must never get
+wrong. It still fires, which is correct and is why it is listed above as wrong-in-substance but
+kept.
+
+Where the output expression is a bare column — the aggregate lives in a CTE and the column is read
+out of it — there is no argument to examine, and the finding stands. No evidence is not evidence of
+safety.
+
+### The part worth keeping separate
+
+This was found by ruling on the check's own output, which is the thing the whole review loop exists
+for and which had never been done to this check. It shipped, it was documented, it had tests, its
+one verified case was real, and **three of its seven live findings were wrong**. Tests written by
+the person who wrote the check do not find that. Counting the parent rows does.

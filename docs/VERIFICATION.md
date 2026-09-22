@@ -26,6 +26,7 @@ Verified on a 357-model Colorado water-rights warehouse and two public dbt repos
 | `row_explanation` | **a finding read in the field** | called wells `genuinely_wrong` at 0.50–0.70 on a **290-foot well with a water level of 26,018 feet**. The `accepted_range` test that surfaced them catches 12 rows; the real invariant `water_level_ft <= well_depth_ft` holds on **708**. It found a data defect *and* an inadequate test, from a sample of six rows |
 | `test_cannot_fail` | findings read on two public repos | found `'BA' as sigla_uf` carrying a `not_null` test in `basedosdados` |
 | `test_outruns_its_source` | **the finding read against the data it is about** | `int_water_well_parcel.parcel_id` is `min(parcel_id)` over a grouped CTE. Parent: **5,876 null of 2,732,101**. Child: **0 of 48,648**. The test passes today and is one all-NULL group from not passing — which is what the outage was, one row of 49,034 after months of green |
+| `test_outruns_its_source` | **all seven of its own findings ruled by hand, then counted** | 3 were wrong and all for one reason: the aggregated input cannot be NULL. `bool_or(is_sfha)` where `is_sfha` carries a `not_null` test; `listagg(coalesce(x, 'literal'))`. Reading those two declarations takes it to **5 of 5 defensible**, and the two verified true positives are `letter_date` (1,300 null of 17,193, with **1,300 groups entirely null** upstream) and `parcel_id` |
 
 ### Where `same_concept` is ambiguous rather than wrong
 
