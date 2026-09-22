@@ -3297,11 +3297,27 @@ def _load_verdicts(store, path: str, who: str) -> None:
     # verified, and the skill says so -- `source='human'` is set by this code path, not by
     # anything about who ran it.
     by = who or (payload.get("by") if isinstance(payload, dict) else "") or "unknown"
-    fams = Counter()
+    fams, dismissed = Counter(), 0
     for r in rows:
         fams[_record_one_verdict(store, r["subject"], r["question"], r["verdict"],
                                  r["correction"], r["note"], by)] += 1
+        # *** AND A `disagree` HAS TO ACTUALLY REMOVE THE THING. ***
+        # The verdict above is the measurement -- it is what `calibration` and `effectiveness`
+        # read. It does not dismiss, because it is recorded per (subject, question) and one model
+        # carries several findings of one check. The card knows which findings it showed, so the
+        # dismissal is written against those, and `apply_policy` drops exactly them.
+        if r["verdict"] == "disagree":
+            for fid in r.get("findings") or []:
+                store.adjudicate(f"{r['subject']}::finding::{fid}", r["question"],
+                                 r["question"].split("__")[0], "", "disagree", "",
+                                 r["note"] or "read and called wrong in the review form", by)
+                dismissed += 1
     console.print(f"recorded [bold]{len(rows)}[/] verdict(s) as `{by}`.")
+    if dismissed:
+        console.print(f"   [green]{dismissed} finding(s) dismissed[/] [dim]-- read and called "
+                      f"wrong, so `assay check` will not raise them again. A dismissal is keyed "
+                      f"to the finding, so it lapses on its own if the code changes into a "
+                      f"different defect.[/]")
     for fam, n in sorted(fams.items()):
         a = store.accuracy(fam)
         console.print(f"   [bold]{fam}[/] {n} new, now {a['n']} total, {a['agree']} agreeing")

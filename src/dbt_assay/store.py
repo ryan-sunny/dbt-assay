@@ -524,6 +524,33 @@ class Store:
         return [dict(zip(cols, r, strict=True))
                 for r in self.con.execute(q + " order by decided_at desc", args).fetchall()]
 
+    def dismissed(self) -> dict:
+        """`{finding_id: (who, when, why)}` a PERSON has read and called WRONG.
+
+        *** RULING A FINDING FALSE DID NOT MAKE IT GO AWAY. ***
+        Measured: record a human `disagree` on a finding, run `assay check` again, and the count
+        is unchanged -- 115 before, 115 after. Only a hand-written waiver in `audit.yml` removed
+        anything. So the loop did not compound: read 115 findings, rule every one of them wrong,
+        and tomorrow you are handed the same 115.
+
+        That is the whole premise of the review loop. A person disposes of a flag ONCE and it
+        stays disposed, or the flag is a tax rather than a question.
+
+        Keyed on the FINDING, not on (subject, question), and that is what makes it safe: the id
+        hashes the check, the subject, the summary and the non-measured evidence, so it survives
+        a rerun and CHANGES when the substance changes. Edit the model into a genuinely different
+        defect and the dismissal does not follow it -- which is the guarantee a waiver needs an
+        expiry date to approximate.
+        """
+        self.con.execute(DDL)
+        out = {}
+        for subj, who, when, note in self.con.execute(
+                "select subject, decided_by, decided_at, note from adjudications "
+                "where source = 'human' and verdict = 'disagree' "
+                "and subject like '%::finding::%' order by decided_at").fetchall():
+            out[str(subj).split("::finding::")[1]] = (who or "someone", when, note or "")
+        return out
+
     def ruled_pairs(self) -> set:
         """Every `(subject, question)` a PERSON has ruled on. What a verdict actually covers.
 

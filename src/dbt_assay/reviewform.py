@@ -177,7 +177,13 @@ def load(payload) -> tuple[list, list]:
             continue
         ok.append({"subject": subj, "question": q, "verdict": v,
                    "note": str(r.get("note", "") or ""),
-                   "correction": str(r.get("correction", "") or "")})
+                   "correction": str(r.get("correction", "") or ""),
+                   # *** THE FINDING IDS THE CARD COVERED, SO A `disagree` CAN ACTUALLY DISMISS. ***
+                   # A verdict is recorded against (subject, question), which is the right grain
+                   # for measuring a question and deliberately too coarse to delete evidence with
+                   # -- one model carries eight findings of one check. The card knows exactly
+                   # which ones it showed, so the dismissal lands on those and no others.
+                   "findings": [str(x) for x in (r.get("findings") or []) if x]})
     # A total order, so loading the same file twice writes the same rows in the same sequence.
     ok.sort(key=lambda r: (r["subject"], r["question"]))
     return ok, bad

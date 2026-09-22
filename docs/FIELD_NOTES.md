@@ -3212,3 +3212,44 @@ This was found by ruling on the check's own output, which is the thing the whole
 for and which had never been done to this check. It shipped, it was documented, it had tests, its
 one verified case was real, and **three of its seven live findings were wrong**. Tests written by
 the person who wrote the check do not find that. Counting the parent rows does.
+
+## 0.35.0: ruling a finding wrong did not make it go away
+
+The premise of the whole review loop is that a person disposes of a flag once and it stays
+disposed. A flag is allowed to be probabilistic — it is a question, not a verdict — but only if
+answering it is final.
+
+It was not. Record a human `disagree`, run `assay check` again: **115 before, 115 after.**
+`apply_policy` consulted `enabled`, the waivers in `audit.yml` and the selector scope, and never
+looked at `adjudications` at all. The only thing that had ever removed a finding was a
+hand-written waiver. So reading 115 findings and ruling every one of them wrong bought nothing,
+and the next run handed back the same 115.
+
+That is the difference between a tool that compounds and a tool that taxes, and every other
+number in this project was built on the assumption it worked.
+
+A `disagree` from a PERSON now removes the finding, and the run names who and why rather than
+dropping it silently — a finding that vanishes with no reason is indistinguishable from a check
+that stopped looking.
+
+**Keyed on the finding, which is what makes it safe.** `Finding.id` hashes the check, the subject,
+the summary and the non-measured evidence: stable across runs, different when the substance
+changes. So a dismissal lapses by itself if the model is edited into a genuinely different
+defect — the guarantee a waiver needs an expiry date to approximate, for free, with nothing to
+maintain.
+
+Four refusals, each of which would have been a real hazard:
+
+- `agree` removes nothing. It means the finding is RIGHT, and removing those deletes the evidence.
+- `unclear` removes nothing. It is evidence about the QUESTION.
+- an **agent** ruling never dismisses. One that could would let an agent silence a project by
+  reading none of it carefully.
+- a **model-level** ruling does not clear the model. One model carries eight findings of one
+  check, and `dim_business` was ruled a union false positive while two of its six edges really did
+  fan out 1.48x, measured at 69,966 rows over 47,178 pairs. That ruling is honest triage and far
+  too coarse to delete evidence with.
+
+`assay review --load` now writes both halves: the verdict against `(model, check)`, which is what
+`calibration` and `effectiveness` read, and the dismissal against the exact finding ids the card
+showed. Verified end to end on the field warehouse: emit 210 cards, answer four, load, and the
+findings go 255 to 254.

@@ -363,10 +363,28 @@ def apply_policy(findings, cfg, store, project=None) -> tuple[list, list]:
         from .contracts import QUESTIONS
         shipping = {n: (q or {}).get("prompt_version", "") for n, q in QUESTIONS.items()}
         rates = store.accuracy_by_family(shipping, default=f"assay.{__version__}")
+    # *** A FINDING A PERSON HAS READ AND CALLED WRONG DOES NOT COME BACK. ***
+    # Without this the review loop does not compound: 115 findings ruled false are 115 findings
+    # again tomorrow, and the only thing that ever removed one was a hand-written waiver. A flag
+    # you cannot dispose of is a tax, not a question.
+    dismissed = {}
+    if store is not None:
+        try:
+            dismissed = store.dismissed()
+        except Exception:                                        # noqa: BLE001
+            dismissed = {}
+
     kept, waived = [], []
     scope_cache: dict = {}
 
     for f in findings:
+        d = dismissed.get(f.id)
+        if d:
+            who, when, note = d
+            waived.append((f, f"dismissed by {who}"
+                              + (f" on {str(when)[:10]}" if when else "")
+                              + (f": {note[:160]}" if note else "")))
+            continue
         q = cfg.for_question(f.check)
         if not q.enabled:
             waived.append((f, "disabled in audit.yml"))

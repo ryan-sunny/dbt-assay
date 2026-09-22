@@ -311,6 +311,41 @@ every finding is the expensive half and it is what makes each card cheap to answ
 offline, it turns a form somebody closes into a form somebody answers. The emit line says how many
 cards already carry a reading and how many are a cold start.
 
+**A finding you have read and called wrong does not come back**
+
+This is what makes reviewing compound, and it did not work until 0.35.0. Recording a human
+`disagree` and running `assay check` again gave the same count — 115 before, 115 after — because
+`apply_policy` consulted waivers and scope and never looked at the rulings. The only thing that
+ever removed a finding was a hand-written waiver in `audit.yml`. So reading 115 findings and
+ruling every one of them wrong bought nothing.
+
+Now a `disagree` from a **person** removes the finding, and the run says who dismissed it and why:
+
+```
+1 finding(s) dismissed -- read and called wrong, so `assay check` will not raise them again.
+```
+
+Four things it deliberately does not do:
+
+- **`agree` does not remove anything.** It means the finding is RIGHT.
+- **`unclear` does not remove anything.** It is evidence about the question, not a verdict on the
+  model — disagreement means the criteria are wrong, unclear means the state does not carry what
+  the question asks, and they are fixed by different edits.
+- **An agent's ruling never dismisses.** An agent that could dismiss could silence a project by
+  reading none of it carefully. Agent rulings triage what a person should read first.
+- **A model-level ruling does not clear the model.** One model carries eight findings of one
+  check, and `dim_business` was ruled a union false positive while two of its six edges really
+  did fan out 1.48x. Dismissal is keyed to the FINDING.
+
+**And it lapses on its own.** A finding's id hashes the check, the subject, the summary and the
+non-measured evidence, so it survives a rerun and changes when the substance changes. Edit the
+model into a genuinely different defect and the dismissal does not follow it — the guarantee a
+waiver needs an expiry date to approximate, for free.
+
+`assay review --load` writes both: the verdict against `(model, check)`, which is what
+`calibration` and `effectiveness` measure, and the dismissal against the exact findings the card
+showed.
+
 **Settling things by counting, through your own dbt**
 
 ```bash
@@ -766,7 +801,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.34.1
+- uses: ryan-sunny/dbt-assay@v0.35.0
   with:
     target: target-head
     baseline: base/target
