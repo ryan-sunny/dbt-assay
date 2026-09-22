@@ -200,3 +200,47 @@ Freshness rides along with 4.
   destroys the distinction that decides what to do next.
 - **Estimating cost where the provider returned no usage.** NULL and a count, not an average.
 - **Asking Jev anything to find out what is stale.** Detection must be free or it will not run.
+
+---
+
+## What if the project has no Elementary?
+
+Most do not. The policy is already law here — `practices.py`, which reads dbt-project-evaluator
+the same way:
+
+> `(flags, unavailable). A check whose table is absent is reported, not counted clean.`
+
+And it was learned the hard way, in that file's own comment:
+
+> Reported from the field: five `fct_` models of many were built, and the categories whose tables
+> did not exist were reported as nothing at all. An absent table and an empty one are not the same
+> fact, and only one of them is a pass.
+
+**"Installed" is not binary, and the three states must be told apart.**
+
+| state | what assay says |
+|---|---|
+| package absent | *volume is not measured here, and nothing in this report covers it* |
+| installed, never run | *Elementary is present and its models have not been built* — a different fix |
+| built, one bucket | *present, and an anomaly needs two observations* — the same rule `observed_keys` already has |
+
+Never "no volume anomalies". That is the absence-reads-as-a-pass defect this whole project opens
+by describing.
+
+**Do we push people to install it?** Yes, and the way `suggest` does it: name the candidate and
+the measurement, never the conclusion. assay can compute what Elementary *would* buy without
+Elementary being there — it knows how many sources carry no freshness declaration, and how many
+marts rest on them. So the line is not "install Elementary", it is:
+
+> 6 sources feed 19 marts and nothing watches them for volume or silence. assay does not measure
+> that and does not intend to; `elementary-data` does, and it is a dbt package.
+
+Specific, checkable, and it stops being shown the moment the tables appear.
+
+### One architectural cost worth stating plainly
+
+Elementary's tables live in the warehouse, so reading them needs the `dbt show` path `probe`
+uses — a working dbt connection. assay's structural tier works with **no credential at all**, and
+that is a real part of what it is. So anything sourced from Elementary belongs in the **counted**
+tier beside `probe` and `--verify`, never in the free one, and the docs have to say so rather than
+blurring the line that makes the free tier trustworthy.
