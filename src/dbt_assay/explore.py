@@ -186,10 +186,32 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         # Everything else on the record duplicates a section the Overview now renders natively, so
         # keeping it as an iframe was the same numbers twice in one scroll. These two were the
         # reason it was still there, and they belong in the data rather than behind a frame.
+        # *** WHAT IT COST, BESIDE WHAT IT BOUGHT. ***
+        # The page held every answer and no dollar figure, so "is this worth running" had to be
+        # asked at a terminal against a different command. It is one row per CALL out of
+        # `model_calls` -- never a sum over the answer rows, which counts a batched call once per
+        # answer and reads $4.25 for a store that spent $1.32.
+        "cost": _cost(store),
         "effectiveness": _effectiveness(store),
         "moved": _moved(store, project),
         "unreadable": _unreadable(store, project),
     }
+
+
+def _cost(store) -> dict:
+    """The ledger, small enough to embed: totals plus the three breakdowns, no per-call rows."""
+    if store is None:
+        return {}
+    try:
+        from . import cost as cost_mod
+        led = cost_mod.ledger(store)
+    except Exception:                                            # noqa: BLE001
+        # A store written before `model_calls` existed still renders a page. The tab says the
+        # ledger is absent rather than showing a zero, which would read as "this was free".
+        return {}
+    keep = ("usd", "input_tokens", "calls", "output_tokens", "output_calls",
+            "calls_without_usage", "id_source", "by_caller", "by_family", "by_day")
+    return {k: led[k] for k in keep}
 
 
 def _latest_run(store, table: str) -> str | None:
@@ -522,7 +544,7 @@ _LINES = ("models", "edges", "claims", "findings", "decisions", "questions",
 # a list belongs, and `.length` on a dict is `undefined` rather than an error -- so the page would
 # have shown nothing and looked fine. Second time this class has appeared in this file.
 _WHOLE = (("meta", dict), ("config", dict), ("unconfigured", list),
-          ("moved", dict))
+          ("moved", dict), ("cost", dict))
 
 
 def write_data(data: dict, directory, record: str = "") -> list:

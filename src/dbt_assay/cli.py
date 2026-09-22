@@ -1756,8 +1756,8 @@ def page(
     """Everything assay knows about this warehouse, as one file you can open.
 
     Tabs: every model and what one row of it is, every hop and what it carries and drops, every
-    claim the project makes about itself, every finding, every answer ever given, every question
-    in full, and the resolved config. `--plain` writes the record instead: the small report that
+    claim the project makes about itself, every finding, every answer ever given, what every call
+    cost, every question in full, and the resolved config. `--plain` writes the record instead: the small report that
     answers "is this warehouse understood, and by whom", which is also the first tab here.
 
     *** ONE FILE, BECAUSE A DIRECTORY CANNOT BE OPENED FROM DISK. ***

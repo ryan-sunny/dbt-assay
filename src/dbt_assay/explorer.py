@@ -60,6 +60,7 @@ input[type=search],select{font:inherit;font-size:13px;padding:6px 9px;border:1px
 border-radius:6px;background:var(--card);color:var(--ink);min-width:150px}
 input[type=search]{min-width:290px}
 .count{color:var(--dim);font-size:12.5px}
+.big{font-size:22px;font-weight:650;letter-spacing:-.01em}
 table{border-collapse:collapse;width:100%;background:var(--card);font-size:13px}
 th{text-align:left;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
 color:var(--faint);padding:7px 9px;border-bottom:1px solid var(--line);position:sticky;top:0;
@@ -339,6 +340,7 @@ def explorer_html(data: dict, record_html: str) -> str:
         ("findings", "Findings", counts["findings"]),
         ("suggest", "What to configure", counts["suggestions"]),
         ("answers", "Answers", counts["decisions"]),
+        ("spend", "Spend", None),
         ("questions", "Questions", counts["questions"]),
         ("config", "Config", None),
     ]
@@ -1622,10 +1624,69 @@ function understoodTab(host) {
   host.replaceChildren(...bits);
 }
 
+/* ------------------------------------------------------------------------------- spend
+
+   *** THE PAGE HELD EVERY ANSWER AND NO DOLLAR FIGURE. ***
+   "Is this worth running" had to be asked at a terminal, against a different command, while the
+   thing it bought was sitting in the next tab. Every number here is one row per CALL out of
+   `model_calls`: a batch of eight questions about one state is ONE call and eight answers, so
+   totalling the answer rows counts it eight times -- $4.25 on a store that spent $1.32.
+*/
+function spendTab(host) {
+  const c = DATA.cost || {};
+  const bits = [];
+  if (!c.calls) {
+    /* An absent ledger is not a free project. This store predates `model_calls`, or nothing has
+       been asked here -- two different facts, and neither of them is a zero. */
+    bits.push(block('No ledger in this store',
+      DATA.decisions && DATA.decisions.length
+        ? 'This store holds ' + num(DATA.decisions.length) + ' answers and no record of the calls '
+          + 'that produced them: they were decided before assay recorded one. What they cost is '
+          + 'not zero, it is unknown, and the page will not print a number for it.'
+        : 'Nothing has been asked against this project yet.'));
+    host.replaceChildren(...bits);
+    return;
+  }
+  const money = n => '$' + (n < 1 ? n.toFixed(4) : n.toFixed(2));
+  bits.push(block('What the judged tier has cost', null, kv([
+    ['lifetime', el('span', {class: 'big', text: money(c.usd)})],
+    ['calls', num(c.calls)],
+    ['input tokens', num(c.input_tokens)],
+    ['output tokens', num(c.output_tokens) + ' -- shown, never priced: Jev does not bill output'],
+  ])));
+  const cols = [
+    {key: 'k', label: '', mono: 1, val: r => r[0]},
+    {key: 'calls', label: 'calls', n: 1, val: r => r[1]},
+    {key: 'tok', label: 'input tokens', n: 1, val: r => r[2]},
+    {key: 'usd', label: 'usd', n: 1, val: r => r[3], cell: r => el('span', {text: money(r[3])})},
+  ];
+  for (const [title, rows] of [['by caller', c.by_caller], ['by question family', c.by_family],
+                               ['by day', c.by_day]]) {
+    if (rows && rows.length) bits.push(block(title, null, grid(rows, cols, {sort: 'usd'})));
+  }
+  /* *** WHAT THIS TOTAL DOES NOT COVER, ON THE PAGE AND NOT ONLY IN THE TERMINAL. *** */
+  const notes = [];
+  if (c.calls_without_usage)
+    notes.push(num(c.calls_without_usage) + ' call(s) returned no usage and are not in this '
+      + 'total. Not estimated: an absent measurement is not a zero.');
+  const recon = (c.id_source || {}).reconstructed || 0;
+  if (recon)
+    notes.push(num(recon) + ' call(s) were reconstructed from the decision rows, because the '
+      + 'provider returned no call id before assay minted its own. They are priced at the rate '
+      + 'shipping now; no rate was recorded at the time.');
+  if (!c.output_calls)
+    notes.push('No call has ever returned an output token count. Jev does not bill output, so '
+      + 'nothing is missing from the dollars -- only from the counts.');
+  if (notes.length)
+    bits.push(block('What this does not cover', null,
+      el('ul', {}, notes.map(t => el('li', {text: t})))));
+  host.replaceChildren(...bits);
+}
+
 /* ---------------------------------------------------------------------------------- tabs */
 const VIEWS = {models: modelsTab, chain: chainTab, claims: claimsTab, findings: findingsTab,
                suggest: suggestTab,
-               answers: answersTab, questions: questionsTab, config: configTab,
+               answers: answersTab, spend: spendTab, questions: questionsTab, config: configTab,
                understood: understoodTab};
 const built = {};
 function open(name) {

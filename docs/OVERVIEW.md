@@ -514,7 +514,8 @@ assay stale                   # judged answers about SQL that has since changed
 assay stale --cost            # ...and what re-asking them would cost, before you spend it
 ```
 
-`jev.max_spend_usd` caps a run and dies with the process. `assay cost` is the ledger: one row per
+`jev.max_spend_usd` caps a run and dies with the process. `assay cost` is the ledger, and
+`assay page` carries the same figures as its **Spend** tab, beside the answers they bought: one row per
 CALL in `model_calls`, written at decide time with the rate that was in force, so a price change
 never rewrites what was already spent. It does not estimate -- a call the provider returned no
 usage for is excluded and counted, and output tokens are shown and never priced because Jev does

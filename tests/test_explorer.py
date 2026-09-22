@@ -302,6 +302,14 @@ def _tiny():
             "findings": [{"id": "f1", "check": "c"}], "decisions": [], "questions": [],
             "adjudications": [], "config": {"provider": "auto"}, "runs": [],
             "unreadable": [], "unconfigured": [], "effectiveness": [], "moved": {},
+            # A real ledger shape, so the round trip exercises the section rather than comparing
+            # two empty dicts and passing for the wrong reason.
+            "cost": {"usd": 0.0132, "input_tokens": 314265, "calls": 102, "output_tokens": 0,
+                     "output_calls": 0, "calls_without_usage": 1,
+                     "id_source": {"provider": 100, "reconstructed": 2},
+                     "by_caller": [["assay.claims", 100, 314265, 0.0132]],
+                     "by_family": [["sentence_is_a_claim", 100, 314265, 0.0132]],
+                     "by_day": [["2026-09-22", 100, 314265, 0.0132]]},
             # A non-empty row, so the round trip is exercising the section rather than comparing
             # two empty lists and passing for the wrong reason.
             "suggestions": [{"section": "vocab", "key": "section_id", "headline": "h",
