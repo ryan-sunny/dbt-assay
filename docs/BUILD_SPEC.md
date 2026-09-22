@@ -1,113 +1,36 @@
-# Build spec: the package shape, and four things it makes visible
+# Build spec
 
-Follows `VISIBILITY_SPEC.md`, which measured the gaps. This says what to build. Written
-2026-09-21 against `sunny_data` — 358 models, 254 findings, 9,945 judged decisions, 602 tests.
+Follows `VISIBILITY_SPEC.md`, which measured the gaps. This says what to build, with acceptance
+criteria you can check against. Written 2026-09-21 against `sunny_data` — 358 models, 329
+findings, 19,707 judged decisions, 617 tests.
 
-Ordered by what compounds: the package is last, because three of the four features have to exist
-before there is anything worth shipping in it.
+## State
 
----
+| # | item | status |
+|---|---|---|
+| 0b | generic finding producer | **SHIPPED 0.38.0** — 42 + 21 findings appeared |
+| — | deferrals announce themselves | **SHIPPED 0.38.1** — now a constraint on item 4 |
+| 1 | cost ledger | to build |
+| 2 | stale against the code | to build |
+| 3 | understanding rollup | to build |
+| 4 | Elementary read + `volume_contradicts_a_claim` | to build |
+| 5 | the dbt package | to build, and see the note — I downgraded my own recommendation |
 
-# 0. The dbt package, and the line it must not cross
+## A rule that now applies to all of it
 
-## What "become a dbt package like Elementary" can and cannot mean
+From 0.38.1, learned by finding it broken: **every deferral announces itself.** assay was silent
+on source freshness because dbt-project-evaluator covers it, that package's model was never built,
+29 of 212 sources declared no freshness, and nobody was told. Deferring to another tool is right
+and it is not free — name what you are resting on, and say what breaks if it did not run.
 
-Three separable things, and they have different answers.
-
-**The engine cannot be a package.** dbt's `on-run-end` runs SQL macros. assay's checker is Python
-walking sqlglot ASTs over compiled SQL. Not a preference — a wall.
-
-**It must not ship models, and this was already decided on measurement.** From this warehouse,
-re-verified:
-
-```
-models by package:      sunny_data 328,  elementary 30
-UNREADABLE by package:  elementary 30
-```
-
-**Every unreadable model in this project belongs to an installed package. None of the project's own
-are.** Elementary's models are macro-generated, so there is almost no SQL to read until dbt
-compiles them, and they arrive carrying 541 columns of unknown provenance. A tool that finds
-opacity must not install opacity. That is disqualifying, not ironic.
-
-**The fit and the config shape are worth taking, and there is a clean way.** Elementary ships
-**1,097 macros**, and assay parses none of them — macros are not nodes:
-
-```
-node resource_types assay reads:  model 358, test 1291, seed 35, operation 2
-macros:                           1788 total, 1097 from elementary, 0 parsed
-```
-
-So: **a macro-and-hook-only package. Zero models. Zero added opacity.**
-
-## What the package is
-
-```
-dbt-assay/                      # the dbt package, shipped from this repo
-  dbt_project.yml               # name: assay, on-run-end hook, no model-paths
-  macros/
-    on_run_end.sql              # the hook
-    assay_open_findings.sql     # reads the seeded tables
-    assay_config.sql            # var() lookups with defaults
-```
-
-`packages.yml` in the consuming project:
-
-```yaml
-packages:
-  - package: ryan-sunny/dbt_assay
-    version: [">=0.38.0", "<1.0.0"]
-```
-
-`dbt deps`, and the hook fires on every `dbt build` with **no further setup** — which is the
-property worth having and the reason Elementary's shape is right here.
-
-## What the hook does, and what it must not
-
-It runs after every build, in SQL, against relations that already exist because `assay export`
-seeded them.
-
-**It does:**
-- read `assay_findings` and `assay_adjudications` for the current run;
-- print the open **agreed** findings — the ones a person read and called real — with model and
-  check. Nothing else: a hook that prints 254 findings on every build is a hook people disable in
-  a week;
-- print the loop number: *of the N findings a person agreed with, M are gone*;
-- optionally materialise `assay_plan` as a relation, so BI and other models can read it.
-
-**It must not:**
-- fail the build. A package that can turn somebody's build red on install is a package nobody
-  installs. Gating stays in `assay check`, which the user runs deliberately, in CI, with a config
-  they wrote;
-- run any check. The seeds are the output of a check that already happened;
-- write anything if the seeds are absent — a project that has never run `assay export` gets
-  silence, not an error.
-
-## Config: `vars:` and `audit.yml` must not become two spellings
-
-The hook needs a handful of settings and `audit.yml` is a Python-side file the SQL cannot read.
-The rule: **`vars:` configures only the HOOK, and never anything `audit.yml` already decides.**
-
-```yaml
-vars:
-  assay_on_run_end: true         # print at all
-  assay_schema: analytics        # where the seeds landed
-  assay_print_limit: 10          # how many agreed findings to show
-```
-
-Nothing about questions, waivers, gating or spend appears here. Those decide what a build FAILS
-on and they live in one file. If a setting is ever wanted in both, it belongs in `audit.yml` and
-the hook reads the seeded `assay_runs` row instead — the config that produced the data travels
-with the data.
-
-**Size:** small. No Python. A `dbt_project.yml`, three macros, and a fixture project to test
-against.
+Item 4 inherits this directly. So does anything else that ever says "somebody else covers that".
 
 ---
 
-# 0b. A custom question can be asked and can never be a finding
+# 0b. A custom question can be asked and can never be a finding — SHIPPED (0.38.0)
 
-**This is a correctness bug in a shipped headline feature, and it outranks everything below it.**
+**Kept for the reasoning. 42 and 21 findings appeared on the live store, exactly what the
+reporting session predicted. Total 252 to 329.**
 
 ## What was found
 
@@ -211,6 +134,17 @@ two runs over one store produce one total.
 
 **Size:** small — three columns, one command, one migration.
 
+## Done when
+
+- [ ] `model_decisions` has `output_tokens`, `usd`, `model_name`; existing stores migrate without
+      losing rows (the `_add_missing_columns` path, called twice — see the `_reshape_adjudications`
+      scar)
+- [ ] `usd` is written at decide time from the rate then in force, never derived on read
+- [ ] `assay cost` totals by caller, by family, by day; `--since`; `--json`
+- [ ] a call the provider returned no usage for records NULL and the report says how many
+- [ ] two runs over one store print the same total
+- [ ] the number matches a hand-computed `sum(input_tokens) * rate` on a real store
+
 ---
 
 # 2. Stale against the code
@@ -255,6 +189,17 @@ Stale is reported, never suppressed.
 
 **Size:** small-to-medium.
 
+## Done when
+
+- [ ] `model_decisions.file_checksum` is written at decide time from the manifest's own sha256
+- [ ] `assay stale` lists judged answers whose model's checksum has moved, by family and by reach
+- [ ] `assay stale --exact` rebuilds states and compares `state_hash`, catching parent drift, and
+      makes no API calls
+- [ ] `assay stale --cost` quotes what re-asking would cost, using item 1's rate
+- [ ] a stale answer is still SERVED, never hidden — `live_decisions` already argues this and is
+      right
+- [ ] on the field store, the count is non-zero and a spot-checked model really did change
+
 ---
 
 # 3. Understanding rollup
@@ -292,6 +237,16 @@ The sentence it exists to produce is not a number:
 > finding in any of them.
 
 **Size:** medium. A join over facts that exist, plus a surface, plus the discipline not to average.
+
+## Done when
+
+- [ ] `assay understanding` prints one row per model with each component separate: grain + its
+      evidence, unresolved provenance count, claims verified, human verdicts, counted keys, marts
+- [ ] there is NO blended score anywhere in the output
+- [ ] ordering is by blast radius, and ties break deterministically
+- [ ] `--gaps` shows only models with something unknown
+- [ ] it produces the sentence it exists for: *N models carry M marts, have no declared grain, and
+      nobody has ruled on any of them*
 
 ---
 
@@ -370,20 +325,41 @@ the free tier trustworthy.
 
 **Size:** medium for the read and the absence handling, small for the join, one new judged family.
 
+## Done when
+
+- [ ] a reader for `data_monitoring_metrics`, `alerts_anomaly_detection` and
+      `dbt_source_freshness_results`, through the `dbt show` path `probe` uses
+- [ ] the three absence states are distinguished and none of them reads as "fine"
+- [ ] **the deferral announces itself**, per 0.38.1 — this is not optional
+- [ ] anything sourced from Elementary is in the COUNTED tier in the docs, never the free one
+- [ ] `volume_contradicts_a_claim` exists as one family, declaring `finding_when`, going through
+      the generic producer shipped in 0.38.0 — not a hand-written function
+- [ ] with no Elementary, assay still names what it would buy, computed from what it already knows
+- [ ] it produces the sentence: *`stg_maricopa_parcels` fell 41%. It claims to be "the FULL
+      Maricopa assessor roll" — a claim already flagged because line 27 drops rows missing an
+      address or owner. 22 marts read it.*
+
 ---
 
 # Order, and why
 
-0. **The generic finding producer.** A correctness bug in a shipped feature, not a new one: a
-   custom question can be asked, paid for, stored and printed, and can never become a finding —
-   while the linter demands the field that would fix it. Everything else here is an addition; this
-   is something that is supposed to work already.
-1. **Cost** — smallest, and answers a question with a real scar behind it.
-2. **Stale** — free, and turns every future judged spend into a quoted one.
-3. **Understanding** — uses only facts that exist, and tells you where 2 is worth spending.
-4. **Elementary + `volume_contradicts_a_claim`** — biggest, and produces something neither tool has.
-5. **The package** — last, because 1–4 are what it would surface. Shipping it earlier means
-   shipping a hook that prints a findings count.
+Cost first because it is smallest and answers a question with a real scar behind it. Stale second
+because it is free and turns every future judged spend into a quoted one, which makes everything
+after it easier to authorize. Understanding third because it uses only facts that already exist
+and tells you where the judged tier is worth spending. Elementary fourth because it is the biggest
+and produces something neither tool has alone. The package last, and only if it still looks worth
+it by then.
+
+**1 and 2 share a migration.** Both add columns to `model_decisions`. Do them in one pass or the
+second rebuild is wasted work on a table holding paid data.
+
+**3 wants 2.** "Are this model's judged answers still current" is a component of understanding,
+and without item 2 it cannot be answered.
+
+**4 wants 0.38.0**, which shipped: `volume_contradicts_a_claim` should be a declared family going
+through the generic producer, not a sixth hand-written function. If writing it feels like it needs
+a hand-written function, that is a signal the generic producer is missing something — fix that
+rather than working around it.
 
 # What this deliberately does not propose
 
@@ -395,3 +371,115 @@ the free tier trustworthy.
 - **A hook that can fail a build.** Gating stays in `assay check`, run deliberately, against a
   config the user wrote.
 - **Estimating cost where the provider returned no usage.** NULL and a count, never an average.
+
+---
+
+# 5. The dbt package — last, and I downgraded my own recommendation
+
+**Read this before building it.** The engine cannot run in dbt, so the hook can only ever show
+the LAST EXPORTED state. Skip assay for three weeks and it prints three-week-old findings on every
+build. Meanwhile `action.yml` already exists and runs the real checker on every PR, live.
+
+So the package buys *"findings appear in your build log"* at the cost of a surface that can
+silently go stale. It earns its place only if (a) you build far more often than you PR, or (b) the
+**loop number** specifically — *of the N you agreed with, M are gone* — is worth seeing on every
+build. Build 1 to 4 first and decide then.
+
+**If it is built, the hook must print the age of what it is showing** — `as of <assay_runs.started_at>`
+— on every line. A surface that cannot be live and does not say so is the defect this whole tool
+is about, and 0.38.1 just made that a rule.
+
+## What "become a dbt package like Elementary" can and cannot mean
+
+Three separable things, and they have different answers.
+
+**The engine cannot be a package.** dbt's `on-run-end` runs SQL macros. assay's checker is Python
+walking sqlglot ASTs over compiled SQL. Not a preference — a wall.
+
+**It must not ship models, and this was already decided on measurement.** From this warehouse,
+re-verified:
+
+```
+models by package:      sunny_data 328,  elementary 30
+UNREADABLE by package:  elementary 30
+```
+
+**Every unreadable model in this project belongs to an installed package. None of the project's own
+are.** Elementary's models are macro-generated, so there is almost no SQL to read until dbt
+compiles them, and they arrive carrying 541 columns of unknown provenance. A tool that finds
+opacity must not install opacity. That is disqualifying, not ironic.
+
+**The fit and the config shape are worth taking, and there is a clean way.** Elementary ships
+**1,097 macros**, and assay parses none of them — macros are not nodes:
+
+```
+node resource_types assay reads:  model 358, test 1291, seed 35, operation 2
+macros:                           1788 total, 1097 from elementary, 0 parsed
+```
+
+So: **a macro-and-hook-only package. Zero models. Zero added opacity.**
+
+## What the package is
+
+```
+dbt-assay/                      # the dbt package, shipped from this repo
+  dbt_project.yml               # name: assay, on-run-end hook, no model-paths
+  macros/
+    on_run_end.sql              # the hook
+    assay_open_findings.sql     # reads the seeded tables
+    assay_config.sql            # var() lookups with defaults
+```
+
+`packages.yml` in the consuming project:
+
+```yaml
+packages:
+  - package: ryan-sunny/dbt_assay
+    version: [">=0.38.0", "<1.0.0"]
+```
+
+`dbt deps`, and the hook fires on every `dbt build` with **no further setup** — which is the
+property worth having and the reason Elementary's shape is right here.
+
+## What the hook does, and what it must not
+
+It runs after every build, in SQL, against relations that already exist because `assay export`
+seeded them.
+
+**It does:**
+- read `assay_findings` and `assay_adjudications` for the current run;
+- print the open **agreed** findings — the ones a person read and called real — with model and
+  check. Nothing else: a hook that prints 254 findings on every build is a hook people disable in
+  a week;
+- print the loop number: *of the N findings a person agreed with, M are gone*;
+- optionally materialise `assay_plan` as a relation, so BI and other models can read it.
+
+**It must not:**
+- fail the build. A package that can turn somebody's build red on install is a package nobody
+  installs. Gating stays in `assay check`, which the user runs deliberately, in CI, with a config
+  they wrote;
+- run any check. The seeds are the output of a check that already happened;
+- write anything if the seeds are absent — a project that has never run `assay export` gets
+  silence, not an error.
+
+## Config: `vars:` and `audit.yml` must not become two spellings
+
+The hook needs a handful of settings and `audit.yml` is a Python-side file the SQL cannot read.
+The rule: **`vars:` configures only the HOOK, and never anything `audit.yml` already decides.**
+
+```yaml
+vars:
+  assay_on_run_end: true         # print at all
+  assay_schema: analytics        # where the seeds landed
+  assay_print_limit: 10          # how many agreed findings to show
+```
+
+Nothing about questions, waivers, gating or spend appears here. Those decide what a build FAILS
+on and they live in one file. If a setting is ever wanted in both, it belongs in `audit.yml` and
+the hook reads the seeded `assay_runs` row instead — the config that produced the data travels
+with the data.
+
+**Size:** small. No Python. A `dbt_project.yml`, three macros, and a fixture project to test
+against.
+
+---
