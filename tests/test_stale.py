@@ -34,16 +34,37 @@ def store(tmp_path):
     s.close()
 
 
-def _ask(store, project, key="model.p.stg_bad_notnull", n=2, tokens=1000, call_id="gen-1"):
+def ctx_for(project, target, store):
+    """The real Ctx, loaded the way every command loads it."""
+    from dbt_assay import states
+    from dbt_assay.infer import Schema, derive_columns
+    from dbt_assay.parse import digest
+    digests = {uid: digest(m.compiled, m.name)
+               for uid, m in project.models.items() if m.readable}
+    schema = Schema.load(project, target)
+    derive_columns(project, digests, schema)
+    return states.Ctx(project=project, digests=digests, schema=schema, store=store)
+
+
+def _ask(store, project, target, key="model.p.stg_bad_notnull", n=2, tokens=1000,
+         call_id="gen-1"):
+    """Through the real builder, so the stored state is one a rebuild can produce."""
+    from dbt_assay import states
     store.use_project(project)
+    uid = key.split("::")[0]
+    rec = states.make("grain", ctx_for(project, target, store), key=key, inputs={"uid": uid})
+    if rec is None:
+        # a key that names no model -- `pair::`, `bank::` -- which is one of the three states
+        # `assay stale` must report as uncheckable rather than current
+        rec = states.Recipe(builder="ruling_pair", key=key, inputs={"key": key},
+                            state={"check_or_question_both_rulings_are_about": "x"})
     return decide(store, FakeClient(n_answers=n, usage={"input_tokens": tokens},
                                     call_id=call_id),
-                  {"sql": "select 1"}, _questions(n),
-                  decision_key=key, prompt_version="v1", caller="assay.claims")
+                  rec, _questions(n), prompt_version="v1", caller="assay.claims")
 
 
-def test_the_checksum_is_written_at_decide_time(store, project):
-    _ask(store, project)
+def test_the_checksum_is_written_at_decide_time(store, project, project_dir):
+    _ask(store, project, project_dir)
     got = {r[0] for r in store.con.execute(
         "select file_checksum from model_decisions").fetchall()}
     assert got == {project.models["model.p.stg_bad_notnull"].checksum}
@@ -52,7 +73,7 @@ def test_the_checksum_is_written_at_decide_time(store, project):
 
 def test_an_unchanged_model_reads_as_current_and_a_changed_one_as_moved(store, project,
                                                                         project_dir):
-    _ask(store, project)
+    _ask(store, project, project_dir)
     out = stale.survey(store, project)
     assert len(out["moved"]) == 0 and out["current"] == 2
 
@@ -67,14 +88,14 @@ def test_an_unchanged_model_reads_as_current_and_a_changed_one_as_moved(store, p
     assert out["by_family"] == [("sentence_is_a_claim", 2)]
 
 
-def test_a_decision_with_no_checksum_is_uncheckable_and_not_current(store, project):
+def test_a_decision_with_no_checksum_is_uncheckable_and_not_current(store, project, project_dir):
     """*** THE WHOLE FIELD STORE IS IN THIS STATE, AND IT MUST NOT READ AS FINE. ***
 
     All 19,707 answers on the field warehouse were decided before the column existed. Backfilling
     today's checksum onto them would make every one report "current", which is precisely the lie
     this tool exists to find.
     """
-    _ask(store, project)
+    _ask(store, project, project_dir)
     store.con.execute("update model_decisions set file_checksum = null")
     out = stale.survey(store, project)
     assert out["current"] == 0 and len(out["moved"]) == 0
@@ -82,10 +103,10 @@ def test_a_decision_with_no_checksum_is_uncheckable_and_not_current(store, proje
     assert out["why_uncheckable"] == [("decided before assay recorded a checksum", 2)]
 
 
-def test_a_key_that_names_no_model_is_uncheckable_by_name(store, project):
+def test_a_key_that_names_no_model_is_uncheckable_by_name(store, project, project_dir):
     """`pair::` and `bank` keys -- 190 of 19,707 on the field store. Never a model, so never a
     checksum, and the report says which of the three reasons applies."""
-    _ask(store, project, key="pair::column_is_part_of_the_key::abc", n=1)
+    _ask(store, project, project_dir, key="pair::column_is_part_of_the_key::abc", n=1)
     out = stale.survey(store, project)
     assert len(out["uncheckable"]) == 1
     assert out["why_uncheckable"] == [("the decision key does not name a model", 1)]
@@ -94,8 +115,8 @@ def test_a_key_that_names_no_model_is_uncheckable_by_name(store, project):
 def test_only_the_latest_answer_to_a_question_counts(store, project, project_dir):
     """The rule `live_decisions` settled on: the newest answer wins, with no family resolution
     anywhere near it. A superseded row must not be surveyed twice."""
-    _ask(store, project, n=2)
-    _ask(store, project, n=2, tokens=1100, call_id="gen-2")
+    _ask(store, project, project_dir, n=2)
+    _ask(store, project, project_dir, n=2, tokens=1100, call_id="gen-2")
     out = stale.survey(store, project)
     assert out["judged"] == 2, "two questions, not four rows"
 
@@ -104,8 +125,8 @@ def test_the_quote_is_what_those_calls_cost_not_an_average(store, project, proje
     """A mean applied to a count is an estimate wearing a measurement's clothes. Each stale answer
     came from a call whose tokens are recorded, so the quote is the sum of those calls."""
     from dbt_assay.jev import USD_PER_INPUT_TOKEN as RATE
-    _ask(store, project, key="model.p.stg_bad_notnull", tokens=1000, call_id="c1")
-    _ask(store, project, key="model.p.stg_ok_notnull", tokens=3000, call_id="c2")
+    _ask(store, project, project_dir, key="model.p.stg_bad_notnull", tokens=1000, call_id="c1")
+    _ask(store, project, project_dir, key="model.p.stg_ok_notnull", tokens=3000, call_id="c2")
 
     mf = json.loads((project_dir / "manifest.json").read_text())
     mf["nodes"]["model.p.stg_bad_notnull"]["checksum"]["checksum"] = "f" * 64
@@ -119,8 +140,8 @@ def test_the_quote_is_what_those_calls_cost_not_an_average(store, project, proje
 
 def test_the_moved_list_is_ordered_by_blast_radius(store, project, project_dir):
     """Ordering is by what rests on it, and ties break on the name, so two runs agree."""
-    _ask(store, project, key="model.p.stg_bad_notnull", call_id="c1")     # has a child
-    _ask(store, project, key="model.p.stg_ok_notnull", call_id="c2")      # has none
+    _ask(store, project, project_dir, key="model.p.stg_bad_notnull", call_id="c1")     # has a child
+    _ask(store, project, project_dir, key="model.p.stg_ok_notnull", call_id="c2")      # has none
     mf = json.loads((project_dir / "manifest.json").read_text())
     for uid in ("model.p.stg_bad_notnull", "model.p.stg_ok_notnull"):
         mf["nodes"][uid]["checksum"]["checksum"] = "f" * 64

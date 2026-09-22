@@ -51,9 +51,20 @@ def _questions(n: int) -> dict:
             for i in range(n)}
 
 
+def recipe(store, key: str):
+    """A REAL recipe, through the real builder. `decide` refuses a bare dict.
+
+    `bank` is the one builder whose state needs no dbt project -- it is built from assay's own
+    question bank -- so the cost tests exercise the true path without carrying a warehouse.
+    """
+    from dbt_assay import states
+    return states.make("bank", states.Ctx(store=store), key=key,
+                       inputs={"family": "column_role"})
+
+
 def _ask(store, client, key="model.p.stg_bad_notnull", n=8, version="v1"):
-    return decide(store, client, {"sql": "select 1"}, _questions(n),
-                  decision_key=key, prompt_version=version, caller="assay.claims")
+    return decide(store, client, recipe(store, key), _questions(n),
+                  prompt_version=version, caller="assay.claims")
 
 
 @pytest.fixture
@@ -157,9 +168,9 @@ def test_a_batch_spanning_families_is_not_attributed_to_one_of_them(store):
     """A call's cost is one number and cannot be filed under two families. `(mixed)` is the
     honest answer, said out loud, rather than a split nobody measured."""
     decide(store, FakeClient(usage={"input_tokens": 900}, call_id="mixed-1"),
-           {"sql": "select 1"},
+           recipe(store, "model.p.stg_bad_notnull"),
            {"sentence__0": {"type": "noul", "instructions": {"question": "?"}},
             "desc": {"type": "noul", "instructions": {"question": "?"}}},
-           decision_key="model.p.stg_bad_notnull", prompt_version="v1", caller="assay.claims")
+           prompt_version="v1", caller="assay.claims")
     fams = [row[0] for row in cost.ledger(store)["by_family"]]
     assert fams == ["(mixed)"], fams

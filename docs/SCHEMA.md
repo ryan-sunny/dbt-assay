@@ -92,6 +92,8 @@ erDiagram
         varchar caller
         int input_tokens "THE CALL'S count, repeated on every answer -- never SUM this"
         varchar file_checksum "sha256 of the model's source when this was decided"
+        varchar state_builder "which registered builder made the state"
+        varchar state_inputs "json: the identifiers it was built from, so it can be built again"
         timestamp decided_at
     }
     MODEL_CALLS {
@@ -207,6 +209,20 @@ rulings were structural, so a calibration report has to exclude them by construc
 ---
 
 ## Three properties that are load-bearing
+
+**A `state_hash` is only worth having if the state can be built again.** Every judged answer
+stores a hash of what was sent, and for eighteen releases nothing could reproduce one: each of the
+eighteen call sites assembled its own dict, two of them inline, two merging the project's
+vocabulary in at the point of the call. Measured on the field warehouse, rebuilding all 871 model
+and edge subjects matched **0** stored hashes — not drift, just a state nothing could produce
+twice. `state_builder` and `state_inputs` fix that: the builder is registered by name, the inputs
+are identifiers rather than content, and `make()` and `rebuild()` are the same function call. The
+same measurement now returns **871 of 871**.
+
+Three states cannot be rebuilt and are declared so, with the reason on the builder: a feed's
+sample, a failing row dbt stored, a practice check's output. Each carries rows read out of the
+warehouse at a moment in time. `assay stale --exact` reports them as *not comparable* rather than
+as unchanged.
 
 **The thing with a price is the CALL, and `model_decisions` is one row per ANSWER.** A batch of
 eight questions about one state is one call and eight rows, and `input_tokens` is the call's

@@ -245,19 +245,18 @@ Stale is reported, never suppressed.
       carry their reasons (`disagreements` asks about verdict pairs, `judge_overlap` about
       assay's own question bank — neither is a dbt model)
 - [x] `assay stale` lists judged answers whose model's checksum has moved, by family and by reach
-- [ ] `assay stale --exact` — **NOT BUILT, and the specced design does not work.** Measured:
-      rebuilding all 871 model and edge subjects of the field project through `subjects.build` and
-      hashing them reproduces **0** of the stored `state_hash` values, because the call sites add
-      to the state before sending it (`{**sub.state, "vocabulary": ...}`) and several families
-      build their state elsewhere entirely. Shipped as specced, `--exact` would report 100% of
-      judged answers as drifted on a warehouse where almost nothing changed — a wrong answer
-      presented as measured, which is the defect this tool exists to find. Needs a decision:
-      a transitive checksum over ancestors (exact about the code, no state rebuild), or making
-      the state builders the single path every caller sends through
-- [x] `assay stale --cost` quotes what re-asking would cost — the sum of those answers' OWN
-      calls at the rate stored on each, not an average applied to a count
-- [x] a stale answer is still SERVED, never hidden — this module returns counts and lists and
-      removes nothing from anybody's read path
+- [x] `assay stale --exact` rebuilds states and compares `state_hash`, catching parent drift, and
+      makes no API calls. **The specced design was disqualified on measurement and the cause was
+      fixed instead.** Rebuilding all 871 model and edge subjects through `subjects.build`
+      reproduced 0 of the stored hashes, because eighteen call sites each assembled their own
+      state and two merged the vocabulary in at the point of the call. `states.py` is now the one
+      path: a builder registered by name, `inputs` that are identifiers rather than derived
+      content, and `make()`/`rebuild()` calling the same function. The same measurement returns
+      **871 of 871**. A test builds every one of the twelve reproducible builders, sends it
+      through `decide`, rebuilds it from only what the store recorded, and asserts the hash is
+      identical; another proves the exact tier catches a change to a PARENT that the checksum
+      tier cannot see. Three builders carry warehouse data, cannot be rebuilt, and are declared
+      with their reasons rather than reading as unchanged
 - [ ] on the field store, the count is non-zero — **cannot be met yet, and must not be faked.**
       All 18,079 current answers there were decided before the column existed, so every one
       reports `cannot be checked` (17,889 with no checksum, 190 under keys that name no model —

@@ -384,6 +384,17 @@ def caller_of(name: str, bank: dict | None = None) -> tuple[str, str, str] | Non
     return CALLERS.get(name)
 
 
+def bank_state(bank: dict) -> dict:
+    """What a question's own options look like to a judge.
+
+    Named and importable because `assay stale --exact` has to build it again from the bank, and a
+    dict assembled inside a loop is a state only that loop can produce.
+    """
+    crit = bank.get("criteria") or {}
+    return {"the_question": (bank.get("instructions") or {}).get("question", ""),
+            "options": {k: _text(v) for k, v in crit.items()}}
+
+
 def judge_overlap(banks: dict, client, store=None) -> list[Issue]:
     """Ask whether any two options of a question could both be right about the same subject.
 
@@ -409,8 +420,7 @@ def judge_overlap(banks: dict, client, store=None) -> list[Issue]:
         crit = bank.get("criteria") or {}
         if len(crit) < 3:
             continue                      # two options cannot overlap without being identical
-        state = {"the_question": (bank.get("instructions") or {}).get("question", ""),
-                 "options": {k: _text(v) for k, v in crit.items()}}
+        state = bank_state(bank)
         # *** A PROBABILITY AGAINST A THRESHOLD FLAPS, AND THIS IS MEANT FOR CI. ***
         # Reported from the field: seven warnings on one run, six on the next, over an UNCHANGED
         # set of banks. A family sitting near the line will flip forever and no one will trust the
@@ -418,9 +428,11 @@ def judge_overlap(banks: dict, client, store=None) -> list[Issue]:
         # and only a REWORDED one is asked again -- which is exactly when it should be.
         try:
             if store is not None:
+                from . import states
                 from .jev import decide
-                got = decide(store, client, state, q,
-                             decision_key=f"bank::{name}",
+                rec = states.make("bank", states.Ctx(store=store), key=f"bank::{name}",
+                                  inputs={"family": name})
+                got = decide(store, client, rec, q,
                              prompt_version=spec["prompt_version"], caller="assay.banks")
                 a = got.get("overlap") or {}
                 ans = {"choice": a.get("answer"), "confidence": a.get("confidence"),

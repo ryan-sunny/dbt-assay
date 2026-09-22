@@ -55,6 +55,12 @@ SQL = {
     # DuckDB `~` against a pattern with no metacharacters: a full match that finds nothing
     "stg_bad_tilde": "select id from raw.t where name ~ 'Denver'",
     "stg_ok_tilde": "select id from raw.t where name ~ '.*Denver.*'",
+    # *** TWO MODELS NAMING THE SAME CONCEPT DIFFERENTLY. ***
+    # Without a pair like this the fixture produces zero align candidates at the real threshold,
+    # so `align`'s state builder could not be exercised by anything -- and a builder no test
+    # rebuilds is a builder nothing proves can be rebuilt.
+    "stg_customer_a": "select customer_id, customer_name, order_total from raw.a",
+    "stg_customer_b": "select cust_id, cust_name, order_amount from raw.b",
 }
 
 TESTS = [

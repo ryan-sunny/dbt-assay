@@ -218,7 +218,8 @@ class Store:
         "adjudications": [("source", "varchar"), ("decision_key", "varchar")],
         "findings": [("finding_id", "varchar")],
         "model_decisions": [("input_tokens", "integer"), ("context", "varchar"),
-                            ("file_checksum", "varchar")],
+                            ("file_checksum", "varchar"), ("state_builder", "varchar"),
+                            ("state_inputs", "varchar")],
     }
 
     def _migrate(self) -> None:

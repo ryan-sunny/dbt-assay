@@ -217,3 +217,43 @@ def run_all(project, digests: dict[str, Digest], schema=None, *,
         b = project.blast_radius(f.subject)
         f.descendants, f.marts = b["descendants"], b["marts"]
     return facts, sorted(findings, key=lambda f: -f.weight)
+
+
+def edge_state(f, cd, declared: dict, vocab: dict | None = None) -> dict:
+    """What one hop looks like to a judge. Built HERE rather than in the command.
+
+    *** IT LIVED INSIDE `assay traverse`'s LOOP, WHICH IS WHY IT COULD NOT BE REBUILT. ***
+    Forty lines of dict assembly at a call site is a state only that call site can produce, and
+    `assay stale --exact` has to produce it again from the same edge months later. Nothing about
+    the logic changed on the way here.
+    """
+    st = {
+        "parent": {"model": f.parent_name,
+                   "declared_key": declared.get(f.parent) or None,
+                   "columns": list(f.carried or [])[:25]},
+        "child": {"model": f.child_name,
+                  "declared_key": declared.get(f.child) or None,
+                  "joins_on": list(f.joined_on or [])[:10],
+                  "groups_by": list(cd.group_by or [])[:10] or None,
+                  "uses_qualify": bool(getattr(cd, "has_qualify", False)) or None},
+        "columns_the_child_drops": sorted(f.dropped or [])[:20] or None,
+    }
+    # *** WITHOUT THIS, EVERY WORD OF THE STATE IS TRUE AND THE CONCLUSION IS WRONG. ***
+    # A parent collapsed inside a subquery before the join cannot fan the join out. 33% of 543
+    # hops read `silently_multiplied` on a real warehouse, and the top one was exactly this shape.
+    pre = (cd.pre_aggregated or {}).get(f.parent_name)
+    if pre is not None:
+        st["the_child_already_collapsed_the_parent_before_joining"] = {
+            "relation": f.parent_name,
+            "to_one_row_per": pre or "a distinct",
+        }
+    if f.parent_name in (cd.union_members or set()):
+        st["the_child_reads_this_parent_as_one_arm_of_a_UNION"] = (
+            "so one row of the parent is one row of the child. The child having more rows than "
+            "this parent is the union, not a fan-out on this hop.")
+    st = {k: v for k, v in st.items() if v}
+    st["parent"] = {k: v for k, v in st["parent"].items() if v}
+    st["child"] = {k: v for k, v in st["child"].items() if v}
+    if vocab:
+        st["vocabulary"] = vocab
+    return st

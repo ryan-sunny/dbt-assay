@@ -86,6 +86,16 @@ create table if not exists model_decisions (
     -- a model (`pair::`, `bank`) or the project was not registered -- which reports as "cannot be
     -- checked", never as current.
     file_checksum  varchar,
+    -- *** HOW TO BUILD THIS STATE AGAIN. ***
+    -- The registered builder's name, and the identifiers it was built from -- a uid, a list of
+    -- claim ids, a pair of relations. Never derived content: content recorded here is content a
+    -- rebuild could not notice changing, which is the one thing the rebuild is for.
+    --
+    -- Before this, `state_hash` was a one-way number. It could say two answers came from the same
+    -- state and could never say whether that state is still what the code says, because nothing
+    -- could produce it a second time -- measured at 0 of 871 subjects on the field warehouse.
+    state_builder  varchar,
+    state_inputs   varchar,      -- json
     decided_at     timestamp,
     primary key (decision_key, question, prompt_version, model_version)
 );
@@ -309,10 +319,26 @@ def _checksum_for(store, decision_key: str) -> str | None:
     return have.get(str(decision_key).split("::")[0]) or None
 
 
-def decide(store, client: Client, state, questions: dict, *, decision_key: str,
+def decide(store, client: Client, recipe, questions: dict, *,
            prompt_version: str, caller: str = "assay", contexts: dict | None = None) -> dict:
-    """Cached judgments. Returns {question: {kind, answer, confidence, probabilities, cached}}."""
+    """Cached judgments. Returns {question: {kind, answer, confidence, probabilities, cached}}.
+
+    *** IT TAKES A RECIPE, NOT A STATE, AND THAT IS THE WHOLE POINT. ***
+    Eighteen callers used to assemble their own dict here. Two wrote it out inline, two merged the
+    vocabulary in at the call site, and the result was a `state_hash` nothing could ever reproduce:
+    rebuilding all 871 model and edge subjects of a real warehouse matched ZERO stored hashes.
+    A `states.Recipe` carries the builder's name and the identifiers it was built from, so the
+    same function can build it again months later and the comparison becomes possible. A bare dict
+    is refused rather than accepted and quietly made unreproducible.
+    """
     from .contracts import check_question_ids
+    from .states import Recipe
+    if not isinstance(recipe, Recipe):
+        raise TypeError(
+            "decide() takes a states.Recipe, not a raw state. Build it with `states.make(<builder>"
+            ", ctx, key=..., inputs=...)`, so that `assay stale --exact` can build it again. "
+            f"Got {type(recipe).__name__}.")
+    state, decision_key = recipe.state, recipe.key
     check_question_ids(questions)
     store.con.execute(DDL)
     sh = state_hash(state)
@@ -357,6 +383,7 @@ def decide(store, client: Client, state, questions: dict, *, decision_key: str,
         out_used = int(out_used) if out_used is not None else None
         usd = used * USD_PER_INPUT_TOKEN if used is not None else None
         checksum = _checksum_for(store, decision_key)
+        inputs_json = json.dumps(recipe.inputs, sort_keys=True, default=str)
         rows = []
         answers_map = resp.get("answers") or {}
         for q, ans in answers_map.items():
@@ -365,7 +392,8 @@ def decide(store, client: Client, state, questions: dict, *, decision_key: str,
                        "probabilities": json.loads(probs), "cached": False}
             rows.append([decision_key, q, kind, answer, conf, probs, sh,
                          prompt_version, served, call_id, caller,
-                         (contexts or {}).get(q, ""), used, checksum])
+                         (contexts or {}).get(q, ""), used, checksum,
+                         recipe.builder, inputs_json])
         # *** THE STATE ITSELF, KEYED BY ITS HASH. ***
         # Written before the answers, so a decision can never point at a state that is not there.
         # `insert or ignore`: the same state under the same hash is the same state, and a cache
@@ -386,6 +414,6 @@ def decide(store, client: Client, state, questions: dict, *, decision_key: str,
             """insert or replace into model_decisions
                (decision_key, question, kind, answer, confidence, probabilities, state_hash,
                 prompt_version, model_version, call_id, caller, context, input_tokens,
-                file_checksum, decided_at)
-               values (?,?,?,?,?,?,?,?,?,?,?,?,?,?, current_timestamp)""", rows)
+                file_checksum, state_builder, state_inputs, decided_at)
+               values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, current_timestamp)""", rows)
     return hits

@@ -526,7 +526,19 @@ once per answer: on a real store that is $4.25 against $1.32.
 
 `assay stale` reads the sha256 dbt already records for every model's source file and compares it
 to the one stored on the answer. No call, no warehouse connection. It is necessary and not
-sufficient, and says so: a comment edit trips it and a change to a PARENT does not. A stale answer
+sufficient, and says so: a comment edit trips it and a change to a PARENT does not.
+
+`--exact` is the one that catches the parent. It rebuilds the state each answer was computed from,
+through the same builder that produced it, and compares the hash -- still with no call. That only
+works because there is exactly one path that builds a state: `states.py` registers a builder by
+name and records the identifiers it was built from, so `make()` and `rebuild()` are the same
+function call. Before that module existed, rebuilding all 871 model and edge subjects of a real
+warehouse reproduced **0** of the stored hashes -- not drift, just a state nothing could produce
+twice. It is 871 of 871 now, and a test proves it for every builder rather than asserting it.
+Three states carry rows read out of the warehouse -- a feed's sample, a failing row, a practice
+check's output -- and are reported as *not comparable*, by name, with the reason.
+
+A stale answer
 is still served everywhere it was served before -- hiding it leaves the caller with nothing, which
 is strictly worse than serving it dated. An answer with no recorded checksum reports as **cannot
 be checked** and is counted in its own column, never added to the current ones.
@@ -886,7 +898,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.39.0
+- uses: ryan-sunny/dbt-assay@v0.40.0
   with:
     target: target-head
     baseline: base/target

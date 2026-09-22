@@ -31,6 +31,86 @@ from collections import defaultdict
 MOVED, CURRENT, UNCHECKABLE = "moved", "current", "uncheckable"
 
 
+EXACT_CURRENT, EXACT_MOVED, EXACT_UNCOMPARABLE = "current", "moved", "uncomparable"
+
+
+def exact(store, ctx) -> dict:
+    """Rebuild each answer's state from the code and compare it to the hash that was sent.
+
+    *** THIS IS THE CHECK THE FILE CHECKSUM CANNOT MAKE. ***
+    A checksum moves when a comment is edited and does not move when a PARENT changes. The state
+    is the thing the answer was actually computed from, so a state that rebuilds identically means
+    the answer still stands, and one that rebuilds differently means it does not -- including when
+    nothing about the model's own file moved.
+
+    *** AND IT ONLY WORKS BECAUSE THERE IS ONE PATH THAT BUILDS A STATE. ***
+    Before `states.py`, every caller assembled its own dict and two merged the vocabulary in at
+    the call site. Rebuilding all 871 model and edge subjects of the field warehouse reproduced
+    ZERO of the stored hashes -- not drift, just a state nothing could produce twice. `rebuild()`
+    calls the same function `make()` called, with the same inputs, so agreement is structural.
+
+    *** THREE STATES CANNOT BE REBUILT AND SAY SO BY NAME. ***
+    A feed's sample, a failing row, a practice check's output: each carries rows read out of the
+    warehouse at a moment in time. They are reported as NOT COMPARABLE with the reason attached,
+    never as unchanged. Makes no API calls -- it is a rebuild and a hash.
+    """
+    import json
+
+    from . import states
+    from .jev import state_hash
+
+    rows = store.con.execute(
+        """select decision_key, question, state_hash, state_builder, state_inputs
+           from (select *, row_number() over (partition by decision_key, question
+                                              order by decided_at desc) as rn
+                 from model_decisions) where rn = 1""").fetchall()
+
+    out = {EXACT_CURRENT: 0, EXACT_MOVED: [], EXACT_UNCOMPARABLE: 0}
+    why: dict = defaultdict(int)
+    for key, question, stored_hash, builder_name, raw_inputs in rows:
+        if not builder_name:
+            out[EXACT_UNCOMPARABLE] += 1
+            why["decided before assay recorded how the state was built"] += 1
+            continue
+        blocked = states.why_not(builder_name)
+        if blocked:
+            out[EXACT_UNCOMPARABLE] += 1
+            why[blocked] += 1
+            continue
+        try:
+            inputs = json.loads(raw_inputs or "{}")
+        except ValueError:
+            out[EXACT_UNCOMPARABLE] += 1
+            why["the recorded inputs are not readable"] += 1
+            continue
+        try:
+            rebuilt = states.rebuild(builder_name, ctx, inputs)
+        except Exception as e:                                   # noqa: BLE001
+            # *** A BUILDER THAT RAISES IS NOT A PASS AND NOT A DRIFT. ***
+            out[EXACT_UNCOMPARABLE] += 1
+            why[f"the {builder_name} state could not be rebuilt: {type(e).__name__}"] += 1
+            continue
+        if not rebuilt:
+            out[EXACT_UNCOMPARABLE] += 1
+            why["what it was asked about no longer exists in this project"] += 1
+            continue
+        if state_hash(rebuilt) == stored_hash:
+            out[EXACT_CURRENT] += 1
+        else:
+            uid = str(key).split("::")[0]
+            model = ctx.project.models.get(uid) if ctx.project else None
+            out[EXACT_MOVED].append({
+                "key": key, "question": question, "builder": builder_name,
+                "uid": uid, "model": model.name if model else uid.split(".")[-1],
+            })
+    out["judged"] = len(rows)
+    out["why_uncomparable"] = sorted(why.items(), key=lambda kv: (-kv[1], kv[0]))
+    out["by_model"] = _by_model([{**d, "family": d["builder"], **(
+        ctx.project.blast_radius(d["uid"]) if ctx.project and d["uid"] in ctx.project.models
+        else {"descendants": 0, "marts": 0})} for d in out[EXACT_MOVED]])
+    return out
+
+
 def _latest(store) -> list:
     """The current answer to each question, one row per (decision_key, question).
 

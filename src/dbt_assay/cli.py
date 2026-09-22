@@ -11,7 +11,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import __version__, contracts, live, mcp_server, provenance, relate
+from . import __version__, contracts, live, mcp_server, provenance, relate, states
 from . import align as align_mod
 from . import backtest as backtest_mod
 from . import claims as claims_mod
@@ -78,6 +78,17 @@ def _load(target: Path, dialect: str | None = None):
     schema = Schema.load(project, target)
     schema_stats = derive_columns(project, digests, schema)
     return project, digests, failures, schema, schema_stats
+
+
+def _state_ctx(project, digests, schema, store, cfg, entries=None):
+    """*** ONE STATE PATH, SO A STATE CAN BE BUILT AGAIN. ***
+
+    Every judged command used to assemble its own dict, two of them inline and two of them merging
+    the vocabulary in at the call site. `states.make` is the only producer now, and it records the
+    builder and the identifiers so `assay stale --exact` can build the same state months later.
+    """
+    return states.Ctx(project=project, digests=digests or {}, schema=schema, store=store,
+                      vocab=getattr(cfg, "vocab", None) or {}, entries=entries)
 
 
 def _review_coverage(findings, store_path: str) -> None:
@@ -588,15 +599,16 @@ def _onboard_judge(project, digests, schema, findings, config_path: str, store_p
     stale, asked = [], 0
     with console.status(f"judging {len(picked)} description(s)..."):
         st_store = Store(store_path)
+        ctx = _state_ctx(project, digests, schema, st_store, cfg, entries=None)
         for sub in picked:
-            st = sem_mod.description_state(sub, cfg.vocab)
-            if not st:
+            rec = states.make("description", ctx, key=f"{sub.uid}::desc",
+                              inputs={"uid": sub.uid})
+            if rec is None:
                 continue
             try:
                 # so the answer records the checksum of the SQL it was computed from
                 st_store.use_project(project)
-                ans = decide(st_store, client, st, sem_mod.description_question(),
-                             decision_key=f"{sub.uid}::desc",
+                ans = decide(st_store, client, rec, sem_mod.description_question(),
                              prompt_version=sem_mod.DESC_VERSION, caller="assay.onboard")
             except BudgetExceeded as e:
                 console.print(f"   [yellow]stopped at the spend cap: {e}[/]")
@@ -973,7 +985,7 @@ def claims(
     from .selector import resolve
     cfg = Config.load(config_path)
     tdir = _find_target(target)
-    project, digests, _f, _schema, _s = _load(tdir)
+    project, digests, _f, schema, _s = _load(tdir)
     store = Store(store_path)
 
     if not extract:
@@ -1060,17 +1072,20 @@ def claims(
     rows, kinds = [], Counter()
     with console.status(f"classifying {n_new} sentence(s)..."):
         for uid, cs in todo.items():
-            m = project.models[uid]
             for chunk in [cs[i:i + claims_mod.CHUNK]
                           for i in range(0, len(cs), claims_mod.CHUNK)]:
-                st = claims_mod.kind_state(m.name, chunk, m.description or "", cfg.vocab)
+                rec = states.make(
+                    "claim_kind", _state_ctx(project, digests, schema, store, cfg),
+                    key=f"{uid}::sentence::{chunk[0].claim_id}",
+                    inputs={"uid": uid, "claim_ids": [c.claim_id for c in chunk]})
+                if rec is None:
+                    continue
                 try:
                     # so the answer records the checksum of the SQL it was computed from
                     store.use_project(project)
-                    ans = decide(store, client, st, claims_mod.kind_questions(chunk),
+                    ans = decide(store, client, rec, claims_mod.kind_questions(chunk),
                                  contexts={f"sentence__{i}": c.text[:120]
                                            for i, c in enumerate(chunk)},
-                                 decision_key=f"{uid}::sentence::{chunk[0].claim_id}",
                                  prompt_version=claims_mod.KIND_VERSION, caller="assay.claims")
                 except BudgetExceeded as e:
                     console.print(f"[yellow]stopped at the cap: {e}[/]")
@@ -1176,13 +1191,16 @@ def verify(
                 continue
             c = claims_mod.Claim(r["claim_id"], r["subject"], r["subject_name"], r["text"],
                                  r["source_kind"], r["source_ref"], citation=r["citation"] or "")
+            rec = states.make("claim_align", _state_ctx(project, digests, schema, store, cfg),
+                              key=f"{c.subject}::claim::{c.claim_id}",
+                              inputs={"claim_id": c.claim_id})
+            if rec is None:
+                continue
             try:
                 # so the answer records the checksum of the SQL it was computed from
                 store.use_project(project)
-                ans = decide(store, client, claims_mod.align_state(c, ev, cfg.vocab),
-                             claims_mod.align_question(),
+                ans = decide(store, client, rec, claims_mod.align_question(),
                              contexts={"claim": f"{c.subject_name}: {c.text[:120]}"},
-                             decision_key=f"{c.subject}::claim::{c.claim_id}",
                              prompt_version=claims_mod.ALIGN_VERSION, caller="assay.verify")
             except BudgetExceeded as e:
                 console.print(f"[yellow]stopped at the cap: {e}[/]")
@@ -1264,50 +1282,20 @@ def traverse(
         console.print("[yellow]no API key.[/] [dim]`assay config` shows what was resolved.[/]")
         raise typer.Exit(1)
 
-    declared = relate.declared_keys(project)
+    ctx = _state_ctx(project, digests, schema, store, cfg)
     counts, bad = Counter(), []
     with console.status(f"judging {len(cands)} edge(s)..."):
         for f in cands:
-            cd = digests.get(f.child)
-            if cd is None or not cd.ok:
+            rec = states.make("edge", ctx, key=f"{f.child}::edge::{f.parent}",
+                              inputs={"parent": f.parent, "child": f.child})
+            if rec is None:
                 continue
-            st = {
-                "parent": {"model": f.parent_name,
-                           "declared_key": declared.get(f.parent) or None,
-                           "columns": list(f.carried or [])[:25]},
-                "child": {"model": f.child_name,
-                          "declared_key": declared.get(f.child) or None,
-                          "joins_on": list(f.joined_on or [])[:10],
-                          "groups_by": list(cd.group_by or [])[:10] or None,
-                          "uses_qualify": bool(getattr(cd, "has_qualify", False)) or None},
-                "columns_the_child_drops": sorted(f.dropped or [])[:20] or None,
-            }
-            # *** WITHOUT THIS, EVERY WORD OF THE STATE IS TRUE AND THE CONCLUSION IS WRONG. ***
-            # A parent collapsed inside a subquery before the join cannot fan the join out. 33% of
-            # 543 hops read `silently_multiplied` on a real warehouse, and the top one was exactly
-            # this shape.
-            pre = (cd.pre_aggregated or {}).get(f.parent_name)
-            if pre is not None:
-                st["the_child_already_collapsed_the_parent_before_joining"] = {
-                    "relation": f.parent_name,
-                    "to_one_row_per": pre or "a distinct",
-                }
-            if f.parent_name in (cd.union_members or set()):
-                st["the_child_reads_this_parent_as_one_arm_of_a_UNION"] = (
-                    "so one row of the parent is one row of the child. The child having more "
-                    "rows than this parent is the union, not a fan-out on this hop.")
-            st = {k: v for k, v in st.items() if v}
-            st["parent"] = {k: v for k, v in st["parent"].items() if v}
-            st["child"] = {k: v for k, v in st["child"].items() if v}
-            if cfg.vocab:
-                st["vocabulary"] = cfg.vocab
             try:
                 # so the answer records the checksum of the SQL it was computed from
                 store.use_project(project)
-                ans = decide(store, client, st,
+                ans = decide(store, client, rec,
                              {"edge": choice_q("edge_preserves_the_grain")},
                              contexts={"edge": f"{f.parent_name} -> {f.child_name}"},
-                             decision_key=f"{f.child}::edge::{f.parent}",
                              prompt_version=_prompt_version("edge_preserves_the_grain"),
                              caller="assay.traverse")
             except BudgetExceeded as e:
@@ -1556,15 +1544,17 @@ def disagreements(
                 else:
                     q = QUESTIONS["same_defect"]
                     console.print(f"[dim]asking about {len(pairs)} differently-worded pair(s)...[/]")
+                    pair_ctx = _state_ctx(None, {}, None, store, cfg)
                     for key, a, b in pairs:
+                        rec = states.make("ruling_pair", pair_ctx, key=key,
+                                          inputs={"key": key})
+                        if rec is None:
+                            continue
                         ans = decide(
-                            store, client,
-                            {"check_or_question_both_rulings_are_about": a["family"],
-                             "first_reason": (a["note"] or "")[:700],
-                             "second_reason": (b["note"] or "")[:700]},
+                            store, client, rec,
                             {q["id_prefix"]: noul_q("same_defect")},
                             contexts={q["id_prefix"]: f"{a['subject']} ~ {b['subject']}"},
-                            decision_key=key, prompt_version=q["prompt_version"],
+                            prompt_version=q["prompt_version"],
                             caller="assay.disagreements")
                         got = (ans or {}).get(q["id_prefix"]) or {}
                         try:
@@ -2169,15 +2159,20 @@ def ask(
         want = [want] if isinstance(want, str) else (want or [])
         counts, hits = Counter(), []
         with console.status(f"asking {name} about {len(subs)} subject(s)..."):
+            ctx = _state_ctx(project, digests, schema, store, cfg)
             for sub in subs:
+                rec = states.make("subject", ctx, key=sub.key,
+                                  inputs={"kind": q["subject"], "key": sub.key,
+                                          "subject_state": q.get("subject_state", "full")})
+                if rec is None:
+                    continue
                 try:
                     # so the answer records the checksum of the SQL it was computed from
                     store.use_project(project)
-                    ans = decide(store, client, {**sub.state, **({"vocabulary": cfg.vocab}
-                                                                if cfg.vocab else {})},
+                    ans = decide(store, client, rec,
                                  {q["id_prefix"]: choice_q(name)},
                                  contexts={q["id_prefix"]: f"{sub.name}"},
-                                 decision_key=sub.key, prompt_version=q["prompt_version"],
+                                 prompt_version=q["prompt_version"],
                                  caller=f"assay.ask.{name}")
                 except BudgetExceeded as e:
                     console.print(f"  [yellow]stopped at the cap: {e}[/]")
@@ -2264,19 +2259,25 @@ def regress(
             subs = {x.key: x for x in subjects_mod.build(
                 q["subject"], subjects_mod.SubjectSource(project, digests, schema, store),
                 state=q.get("subject_state", "full"))}
+            ctx = _state_ctx(project, digests, schema, store, cfg)
             for r in rows:
                 sub = subs.get(r["subject"])
                 if sub is None:
                     skipped.append((r, "that subject no longer exists in this project"))
                     continue
+                rec = states.make("subject", ctx, key=sub.key,
+                                  inputs={"kind": q["subject"], "key": sub.key,
+                                          "subject_state": q.get("subject_state", "full")})
+                if rec is None:
+                    skipped.append((r, "that subject no longer exists in this project"))
+                    continue
                 try:
                     # so the answer records the checksum of the SQL it was computed from
                     store.use_project(project)
-                    got = decide(store, client,
-                                 {**sub.state, **({"vocabulary": cfg.vocab} if cfg.vocab else {})},
+                    got = decide(store, client, rec,
                                  {q["id_prefix"]: choice_q(fam)},
                                  contexts={q["id_prefix"]: sub.name},
-                                 decision_key=sub.key, prompt_version=q["prompt_version"],
+                                 prompt_version=q["prompt_version"],
                                  caller="assay.regress")
                 except BudgetExceeded as e:
                     console.print(f"[yellow]stopped at the cap: {e}[/]")
@@ -2490,11 +2491,42 @@ def cost(
         console.print(f"[dim]{n}[/]")
 
 
+def _print_exact(out: dict, limit: int) -> None:
+    """*** THE THREE ANSWERS, AND NONE OF THEM IS SILENCE. ***"""
+    moved = out["moved"]
+    console.print(f"\n[bold]{len(moved):,}[/] of {out['judged']:,} judged answer(s) would be "
+                  f"computed from a DIFFERENT state today. [dim]{out['current']:,} rebuild "
+                  f"identically, {out['uncomparable']:,} cannot be compared.[/]")
+    if out["by_model"]:
+        t = Table(title="by blast radius", title_justify="left", title_style="bold",
+                  show_header=True, header_style="bold", box=None, padding=(0, 2))
+        t.add_column("model"); t.add_column("answers", justify="right")
+        t.add_column("downstream", justify="right"); t.add_column("marts", justify="right")
+        t.add_column("states", overflow="fold")
+        for e in out["by_model"][:limit]:
+            t.add_row(e["model"], f"{e['answers']:,}", f"{e['descendants']:,}",
+                      f"{e['marts']:,}", ", ".join(e["families"]))
+        console.print()
+        console.print(t)
+    if out["why_uncomparable"]:
+        console.print(f"\n[yellow]{out['uncomparable']:,} answer(s) cannot be compared[/] "
+                      f"[dim]-- counted here rather than read as unchanged:[/]")
+        for why, count in out["why_uncomparable"]:
+            console.print(f"  [dim]{count:,}: {why}[/]")
+    console.print("\n[dim]This rebuilds each state from the code through the same builder that "
+                  "produced it and compares the hash. It catches a change to a PARENT, which a "
+                  "file checksum cannot, and it makes no API calls.[/]")
+
+
 @app.command()
 def stale(
     target: str = typer.Option(None, "--target", "-t", help="path to target/"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config", help="directory holding audit.yml"),
     dialect: str = typer.Option(None, "--dialect"),
+    exact: bool = typer.Option(False, "--exact",
+                               help="rebuild each answer's state from the code and compare it to "
+                                    "what was sent. Catches parent drift. Makes no API calls."),
     quote_cost: bool = typer.Option(False, "--cost",
                                     help="also quote what re-asking these would cost"),
     limit: int = typer.Option(20, "--limit", "-n"),
@@ -2523,9 +2555,14 @@ def stale(
         console.print(f"[yellow]no store at {store_path}.[/] Nothing has been judged here yet.")
         raise typer.Exit(0)
     tdir = _find_target(target)
-    project, _digests, _f, _schema, _s = _load(tdir, dialect)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
     st = Store(store_path)
     try:
+        if exact:
+            cfg = Config.load(config_path)
+            out = stale_mod.exact(st, _state_ctx(project, digests, schema, st, cfg))
+            _print_exact(out, limit)
+            raise typer.Exit(0)
         out = stale_mod.survey(st, project)
         quoted = stale_mod.quote(st, out["moved"]) if quote_cost else None
     finally:
@@ -3121,12 +3158,15 @@ def infer(
     store = Store(store_path)
     judged, asked = {}, 0
     for uid, cand in work:
-        state = contracts.build_state(uid, project, digests, schema, cand, declared, cfg.vocab)
+        rec = states.make("grain", _state_ctx(project, digests, schema, store, cfg),
+                          key=uid, inputs={"uid": uid})
+        if rec is None:
+            continue
         try:
             # so the answer records the checksum of the SQL it was computed from
             store.use_project(project)
-            answers = decide(store, client, state, contracts.key_questions(cand),
-                             decision_key=uid, prompt_version=contracts.PROMPT_VERSION,
+            answers = decide(store, client, rec, contracts.key_questions(cand),
+                             prompt_version=contracts.PROMPT_VERSION,
                              caller="assay.infer")
         except BudgetExceeded as e:
             console.print(f"[yellow]stopped: {e}[/]")
@@ -3183,12 +3223,15 @@ def calibrate(
     exact = over = under = wrong = unsure = 0
     rows = []
     for uid, cand in work:
-        state = contracts.build_state(uid, project, digests, schema, cand, declared, cfg.vocab)
+        rec = states.make("grain", _state_ctx(project, digests, schema, store, cfg),
+                          key=uid, inputs={"uid": uid})
+        if rec is None:
+            continue
         try:
             # so the answer records the checksum of the SQL it was computed from
             store.use_project(project)
-            answers = decide(store, client, state, contracts.key_questions(cand),
-                             decision_key=uid, prompt_version=contracts.PROMPT_VERSION,
+            answers = decide(store, client, rec, contracts.key_questions(cand),
+                             prompt_version=contracts.PROMPT_VERSION,
                              caller="assay.calibrate")
         except BudgetExceeded as e:
             console.print(f"[yellow]stopped: {e}[/]")
@@ -3388,12 +3431,15 @@ def columns(
     disagreements = []
     for uid, facts, cols, grain in work:
         for chunk in columns_mod.chunks(cols):
-            st = columns_mod.build_state(uid, project, schema, facts, chunk, grain, cfg.vocab)
+            rec = states.make("columns", _state_ctx(project, digests, schema, store, cfg),
+                              key=uid, inputs={"uid": uid, "columns": list(chunk)})
+            if rec is None:
+                continue
             try:
                 # so the answer records the checksum of the SQL it was computed from
                 store.use_project(project)
-                answers = decide(store, client, st, columns_mod.questions_for(chunk, facts, with_null),
-                                 decision_key=uid,
+                answers = decide(store, client, rec,
+                                 columns_mod.questions_for(chunk, facts, with_null),
                                  prompt_version=f"{columns_mod.ROLE_VERSION}+{columns_mod.NULL_VERSION}",
                                  caller="assay.columns")
             except BudgetExceeded as e:
@@ -4318,18 +4364,23 @@ def semantics(
 
     if store is None:
         store = Store(store_path)
+    ctx = _state_ctx(project, digests, schema, store, cfg, entries=entries)
     intents, stale = {}, []
     for s in subs:
         if do_pred and s.predicates:
             for chunk in sem_mod.chunks(s.predicates):
-                st = sem_mod.build_state(s, chunk, cfg.vocab)
+                rec = states.make(
+                    "predicates", ctx,
+                    key=f"{s.uid}::pred::{states.digest_of(chunk)}",
+                    inputs={"uid": s.uid, "predicates": list(chunk)})
+                if rec is None:
+                    continue
                 try:
                     # so the answer records the checksum of the SQL it was computed from
                     store.use_project(project)
-                    ans = decide(store, client, st, sem_mod.predicate_questions(chunk),
-                             contexts={f"pred__{i}": f"{s.name}: {p}"
-                                       for i, p in enumerate(chunk)},
-                                 decision_key=f"{s.uid}::pred::{hash(tuple(chunk)) & 0xffff}",
+                    ans = decide(store, client, rec, sem_mod.predicate_questions(chunk),
+                                 contexts={f"pred__{i}": f"{s.name}: {p}"
+                                           for i, p in enumerate(chunk)},
                                  prompt_version=sem_mod.PRED_VERSION, caller="assay.semantics")
                 except BudgetExceeded as e:
                     console.print(f"[yellow]stopped: {e}[/]")
@@ -4341,12 +4392,14 @@ def semantics(
                         intents.setdefault(a["answer"], []).append(
                             (s.name, p, a.get("confidence")))
         if do_desc and s.purpose:
-            st = sem_mod.description_state(s, cfg.vocab)
+            rec = states.make("description", ctx, key=f"{s.uid}::desc",
+                              inputs={"uid": s.uid})
+            if rec is None:
+                continue
             try:
                 # so the answer records the checksum of the SQL it was computed from
                 store.use_project(project)
-                ans = decide(store, client, st, sem_mod.description_question(),
-                             decision_key=f"{s.uid}::desc",
+                ans = decide(store, client, rec, sem_mod.description_question(),
                              prompt_version=sem_mod.DESC_VERSION, caller="assay.semantics")
             except BudgetExceeded as e:
                 console.print(f"[yellow]stopped: {e}[/]")
@@ -4421,6 +4474,7 @@ def feeds(
     client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
     if store is None:
         store = Store(store_path)
+    ctx = _state_ctx(project, digests, schema, store, cfg)
     sentinels, findings = [], []
     for t in tg:
         cols = feeds_mod.columns_to_sample(schema, t.uid, t.columns)
@@ -4438,12 +4492,15 @@ def feeds(
         if not client.available:
             continue
         for chunk in feeds_mod.chunks(cols):
-            st = feeds_mod.build_state(subj, chunk, cfg.vocab)
+            rec = states.make("feed", ctx, key=f"{t.uid}::feed",
+                              inputs={"uid": t.uid, "columns": list(chunk)},
+                              state=feeds_mod.build_state(subj, chunk, cfg.vocab))
+            if rec is None:
+                continue
             try:
                 # so the answer records the checksum of the SQL it was computed from
                 store.use_project(project)
-                ans = decide(store, client, st, feeds_mod.questions_for(chunk, subj),
-                             decision_key=f"{t.uid}::feed",
+                ans = decide(store, client, rec, feeds_mod.questions_for(chunk, subj),
                              prompt_version=feeds_mod.NAME_VERSION, caller="assay.feeds")
             except BudgetExceeded as e:
                 console.print(f"[yellow]stopped: {e}[/]")
@@ -4523,12 +4580,16 @@ def align(
 
     routed, agree, checked = {}, 0, 0
     for chunk in [pairs[i:i + 10] for i in range(0, len(pairs), 10)]:
-        st = align_mod.build_state(chunk, cfg.vocab)
+        rec = states.make("align", _state_ctx(project, digests, schema, store, cfg,
+                                              entries=entries),
+                          key=f"align::{states.digest_of(p.key for p in chunk)}",
+                          inputs={"pairs": [p.key for p in chunk]})
+        if rec is None:
+            continue
         try:
             # so the answer records the checksum of the SQL it was computed from
             store.use_project(project)
-            ans = decide(store, client, st, align_mod.questions_for(chunk),
-                         decision_key=f"align::{hash(tuple(p.key for p in chunk)) & 0xffffff}",
+            ans = decide(store, client, rec, align_mod.questions_for(chunk),
                          prompt_version=align_mod.ALIGN_VERSION, caller="assay.align",
                          contexts={f"align__{i}":
                                    f"{x.model_a}.{x.column_a} ~ {x.model_b}.{x.column_b}"
@@ -4725,12 +4786,16 @@ def tests_cmd(
 
     wrong = []
     for chunk in [subs[i:i + testing_mod.CHUNK] for i in range(0, len(subs), testing_mod.CHUNK)]:
-        st = testing_mod.build_state(chunk, cfg.vocab)
+        rec = states.make("severity", _state_ctx(project, digests, None, store, cfg,
+                                                 entries=entries),
+                          key=f"sev::{states.digest_of(s.test_name for s in chunk)}",
+                          inputs={"tests": [s.test_name for s in chunk]})
+        if rec is None:
+            continue
         try:
             # so the answer records the checksum of the SQL it was computed from
             store.use_project(project)
-            ans = decide(store, client, st, testing_mod.questions_for(chunk),
-                         decision_key=f"sev::{hash(tuple(s.test_name for s in chunk)) & 0xffffff}",
+            ans = decide(store, client, rec, testing_mod.questions_for(chunk),
                          prompt_version=testing_mod.SEV_VERSION, caller="assay.tests")
         except BudgetExceeded as e:
             console.print(f"[yellow]stopped: {e}[/]")
@@ -4792,13 +4857,17 @@ def adjudicate(
 
     verdicts, incoherent = {}, []
     explanations = getattr(cfg, "explanations", None) or {}
+    ctx = _state_ctx(project, {}, None, store, cfg, entries=entries)
     for i, fr in enumerate(rows):
-        st = rows_mod.build_state(fr, cfg.vocab)
+        rec = states.make("failing_row", ctx, key=f"{fr.model_uid}::row::{i}",
+                          inputs={"model_uid": fr.model_uid, "index": i},
+                          state=rows_mod.build_state(fr, cfg.vocab))
+        if rec is None:
+            continue
         try:
             # so the answer records the checksum of the SQL it was computed from
             store.use_project(project)
-            ans = decide(store, client, st, rows_mod.questions_for(fr, explanations),
-                         decision_key=f"{fr.model_uid}::row::{i}",
+            ans = decide(store, client, rec, rows_mod.questions_for(fr, explanations),
                          prompt_version=rows_mod.EXPL_VERSION, caller="assay.adjudicate")
         except BudgetExceeded as e:
             console.print(f"[yellow]stopped: {e}[/]")
@@ -4997,13 +5066,17 @@ def practices(
         store = Store(store_path)
 
     verdicts = {}
+    ctx = _state_ctx(project, {}, None, store, cfg, entries=entries)
     for f in todo:
-        st = prac_mod.build_state(f, cfg.vocab)
+        rec = states.make("practice", ctx, key=f"practice::{f.check}::{f.model}",
+                          inputs={"check": f.check, "model": f.model},
+                          state=prac_mod.build_state(f, cfg.vocab))
+        if rec is None:
+            continue
         try:
             # so the answer records the checksum of the SQL it was computed from
             store.use_project(project)
-            ans = decide(store, client, st, prac_mod.question_for(f),
-                         decision_key=f"practice::{f.check}::{f.model}",
+            ans = decide(store, client, rec, prac_mod.question_for(f),
                          prompt_version=prac_mod.PRACTICE_VERSION, caller="assay.practices")
         except BudgetExceeded as e:
             console.print(f"[yellow]stopped: {e}[/]")
