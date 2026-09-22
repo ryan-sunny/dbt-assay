@@ -124,6 +124,47 @@ when it is merely domain-specific. Three shapes that earn their place:
 Write the sentence you would say to a new engineer on their first day, and stop there. This is
 sent with every question, so length is paid for on every call — say the non-obvious thing and
 leave out what the name already says.
+
+## Say WHERE it is true
+
+```yaml
+vocab:
+  section_id:
+    means: "the geographic join grain, and NOT always a PLSS section"
+    # no applies_to: true everywhere, which is what every term meant before this existed
+
+  water_division:
+    means: "a Colorado water court region, 1 through 7"
+    applies_to:
+      select:  "path:models/water"
+      exclude: "path:models/water/az"
+```
+
+**This is the failure mode with the widest blast radius in the whole config.** A term goes into
+EVERY question's state, which is why fifteen of them improved answers to questions nobody wrote — and why
+one that is false in part of the project is false in every answer about that part.
+
+Measured on a real warehouse: sixteen terms, six of them asserting one state's water law including
+a statute citation, sent to all 358 models. **4,997 of 19,707 judged answers — 25% of everything
+ever paid for there — were about models in a different state**, and each one was told as universal
+fact that prior appropriation decides who gets water.
+
+`applies_to` takes the same selector as `--select` and `when.select`. It also takes
+`{select:, exclude:}`, because the exception usually lives inside the rule: on that warehouse the
+Arizona models are `models/water/az`, *inside* `models/water`, so a bare `path:models/water` would
+still reach all 70 of them.
+
+**When to scope, and when not to.** A term about their DATA — a join grain, a key's uniqueness, a
+column convention — is usually true everywhere and should stay unscoped. A term that asserts
+somebody's LAW, a regulatory regime, or a regional convention needs a scope, and `assay config
+--target <dir>` will tell you which of theirs look like that. It catches a statute citation or a
+named state directly; it catches a *doctrine* — a sentence asserting a legal regime without naming
+where — by measuring which models actually use the word, and it writes the selector for you.
+
+**A state about several models gets the terms true of ALL of them.** Not the union: a batch
+pairing one jurisdiction's model with another's would otherwise be told both regimes in one call.
+Drops are counted and printed, because a vocabulary quietly thinning looks exactly like one that
+was never wired up.
 """
 
 QUESTIONS = """\

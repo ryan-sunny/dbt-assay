@@ -803,7 +803,47 @@ def onboard(
         console.print(f"   MCP: claude mcp add assay --scope project -- uvx --from 'dbt-assay[mcp]' "
                       f"assay mcp --target {tdir}", style="dim", markup=False)
 
-    console.print("\n[bold]6. next[/]")
+    # *** WHAT THEY HAVE ALREADY SPENT, AND WHAT THEIR OWN WORDS ARE DOING. ***
+    # Two things a first run could never see and both of them accrue: the ledger only means
+    # something once there is history, and a vocabulary is the one part of the config that reaches
+    # every answer -- so a term asserted outside where it is true is wrong everywhere at once. On
+    # the warehouse this was built against that was 25% of every answer ever paid for, and nothing
+    # anywhere said so.
+    console.print("\n[bold]6. their words, and what this has cost[/]")
+    cfg_now = Config.load(config_path)
+    if not cfg_now.vocab:
+        console.print("   [dim]no vocabulary yet. It is the highest-value thing in the file: a "
+                      "term written once reaches every judged question, including ones nobody "
+                      "wrote. `assay suggest --section vocab` ranks candidates by how often this "
+                      "warehouse joins on them.[/]")
+    else:
+        from .lint import lint_vocab
+        issues = lint_vocab(cfg_now.vocab, project)
+        scoped = sum(1 for b in cfg_now.vocab.values()
+                     if isinstance(b, dict) and b.get("applies_to"))
+        console.print(f"   [dim]{_n(len(cfg_now.vocab))} term(s), {_n(scoped)} of them scoped to "
+                      f"part of the project. Every unscoped one is sent with every question about "
+                      f"every model.[/]")
+        for i in issues[:6]:
+            colour = "red" if i.level == "error" else "yellow"
+            console.print(f"   [{colour}]{i.level}[/] [bold]{i.question}[/] [dim]{i.rule}[/]")
+            console.print(f"     [dim]{i.detail}[/]")
+        if len(issues) > 6:
+            console.print(f"   [dim]...and {_n(len(issues) - 6)} more. "
+                          f"`assay config --target {tdir}` shows them all.[/]")
+    if Path(store_path).exists():
+        try:
+            from . import cost as cost_mod
+            _st = Store(store_path)
+            led = cost_mod.ledger(_st)
+            _st.close()
+            if led.get("calls"):
+                console.print(f"   [dim]spent here so far: [bold]${led['usd']:.2f}[/bold] over "
+                              f"{_n(led['calls'])} call(s). `assay cost` breaks it down.[/]")
+        except Exception:                                        # noqa: BLE001,S110
+            pass
+
+    console.print("\n[bold]7. next[/]")
     steps = []
     if cov["unreadable"] or cov.get("from_stripped"):
         n_raw = cov["unreadable"] + cov.get("from_stripped", 0)
@@ -830,10 +870,36 @@ def onboard(
         # only when somebody reads SQL, and on the warehouse this was built against it sat at 0 of
         # 159 for months -- not for want of `assay review -i`, which has always existed, but
         # because ruling meant leaving the conversation you were already in.
+        # *** IT SAID "NOBODY HAS RULED ON ANY OF THEM" TO A STORE HOLDING 136 VERDICTS. ***
+        # Hardcoded prose under `if findings:`, so the one line whose whole job is to report the
+        # number a release cannot move reported it wrong, confidently, to the person who had
+        # moved it. Counted now.
+        ruled = 0
+        if Path(store_path).exists():
+            try:
+                _rs = Store(store_path)
+                _seen = _rs.ruled_subjects()
+                _rs.close()
+                ruled = len({f.subject for f in findings if f.subject in _seen})
+            except Exception:                                    # noqa: BLE001,S110
+                pass
+        models_with = len({f.subject for f in findings})
         steps.append(("assay review -i",
-                      (f"{len(findings)} finding(s) and nobody has ruled on any of them. An agent "
-                       f"with the `assay-review` skill will walk them with you and read the SQL "
-                       f"first, so each call costs you ten seconds.")))
+                      (f"{_n(len(findings))} finding(s) across {_n(models_with)} model(s), "
+                       + ("and nobody has ruled on any of them. "
+                          if not ruled else
+                          f"{_n(ruled)} of those models ruled on so far. ")
+                       + "An agent with the `assay-review` skill will walk them with you and "
+                         "read the SQL first, so each call costs you ten seconds.")))
+        # *** THE FORM IS WHERE THE CONTEXT ACCRUES, AND IT IS NOT THE SAME JOB AS THE QUEUE. ***
+        # One turn per finding is fine for ten and is a wall at two hundred. The form is one
+        # sitting, offline, at their own pace -- and every box they type into is a sentence about
+        # THEIR warehouse that no tool can produce: the reason a finding is wrong, the word that
+        # should have been in the vocabulary, the thing the description was trying to say.
+        steps.append((f"assay review --emit review.html -t {tdir}",
+                      ("more than about ten to get through: this writes a page they fill in at "
+                       "their own pace and hand back. Their reasons are the part of this store "
+                       "nothing else can generate, and they are what every gate waits on.")))
         steps.append(("assay verify",
                       "check each of those claims against what the code actually does"))
         steps.append(("assay traverse",

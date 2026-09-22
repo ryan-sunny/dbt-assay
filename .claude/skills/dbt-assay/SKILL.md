@@ -228,6 +228,7 @@ and nothing is lost:
 | `blast_radius(model)` | `assay inventory --model <model> --json` (`descendants`, `marts`) |
 | `claims(model)` | `assay claims --model <model>` then `assay verify --model <model>` |
 | `traversal(model)` | `assay traverse --model <model>` |
+| `practices(model)` | `assay practices --keys-only --model <model>` |
 | `lineage(model, column)` | `assay trace <column> --model <model>` |
 | `findings(model)` | `assay check --json` — one object with a `findings` list |
 | `changed_contracts()` | `assay diff --baseline <main target>` |
@@ -238,6 +239,9 @@ and nothing is lost:
 | `suggestions()` | `assay suggest -t target/`, or `--section vocab` |
 | `evidence()` | `assay evidence -q <question> -s <model>` |
 | `guide(topic)` | `assay guide <topic>` |
+| `spend()` | `assay cost`, or `assay cost --json` |
+| `stale(exact)` | `assay stale`, `assay stale --exact`, `assay stale --cost` |
+| `vocabulary()` | `assay config --target <target/>` |
 
 The one difference worth knowing: the MCP tools reload when the manifest moves, and a CLI run
 reads whatever `target/` holds at that moment. Run `dbt compile` first if you have edited SQL.
@@ -257,12 +261,44 @@ reads whatever `target/` holds at that moment. Run `dbt compile` first if you ha
   by whom". Deterministic, so it can be committed and diffed.
 - `assay diff --baseline <main target>` — what changed about what models MEAN, for a review.
 - `assay version-check --baseline <main target>` — whether anything owes a version bump.
-- `assay practices --keys-only` — models with no uniqueness test, and the grain a test should cover.
+- `practices(model)` / `assay practices --keys-only` — models with no uniqueness test, and the
+  grain a test should cover. A patch, not a nag.
 - `assay claims --extract` then `assay verify` — pull every claim out of this project's own prose
   and check each one against the code.
 - `assay traverse` — judge every hop in the graph for a fan-out nobody declared.
 - `assay patch tests/assay` — write the uniqueness tests assay can PROVE will pass. It counts each
   grain first and refuses to write one that would fail on its first run.
+- `assay cost` — what the judged tier has cost here, by caller and by day. Free, and it is the
+  number to put in front of somebody BEFORE proposing a judged run.
+- `assay stale` — judged answers that are about SQL which has since changed, from the sha256 dbt
+  already records. `--exact` rebuilds the state each answer was computed from and compares it,
+  which catches a change to a PARENT that a checksum by definition cannot. `--cost` quotes what
+  re-asking them would cost before you spend it. Neither makes an API call.
+- `assay config --target <dir>` — lints their **vocabulary**, which nothing used to check at all.
+
+## A vocab term is true SOMEWHERE, and it is sent EVERYWHERE unless it says otherwise
+
+This is the widest blast radius in the whole config and it is worth knowing before you touch it.
+Every term in `vocab:` goes into the state of every judged question. A term that is false in part
+of the project is therefore false in every answer about that part, at once, with no signal.
+
+Measured on a real warehouse: sixteen terms, six asserting one state's water law, sent to all 358
+models — and 4,997 of 19,707 judged answers, 25% of everything ever paid for there, were about
+models in a different state.
+
+```yaml
+vocab:
+  water_division:
+    means: "a Colorado water court region, 1 through 7"
+    applies_to:
+      select:  "path:models/water"
+      exclude: "path:models/water/az"     # the exception lives INSIDE the rule
+```
+
+**Do not write or edit a term without calling `vocabulary()` and `guide('vocab')` first.** A term
+about their DATA is usually true everywhere and should stay unscoped; one that asserts a law, a
+regulatory regime or a regional convention needs `applies_to`. The lint will tell you which of
+theirs look like the second kind, and it writes the selector for you.
 
 ## When `changed_contracts` is noisy
 

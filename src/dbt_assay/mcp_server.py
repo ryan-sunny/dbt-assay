@@ -23,9 +23,11 @@ from .store import Store
 class Backend:
     """Reloads when the manifest moves, so an agent never reads a stale contract."""
 
-    def __init__(self, target: str, store_path: str | None = None):
+    def __init__(self, target: str, store_path: str | None = None, config_path: str = "."):
         self.target = target
         self.store_path = store_path
+        # Where audit.yml lives, for the tools that read their words and their policy.
+        self.config_path = config_path
         self._state: live.LiveState | None = None
         self._stamp: float = 0.0
         self.baseline: live.Snapshot | None = None
@@ -609,6 +611,94 @@ class Backend:
             out["store"] = why
         return out
 
+    def spend(self) -> dict:
+        """What the judged tier has cost on this project, from the calls that were made.
+
+        *** AN AGENT DECIDING WHETHER TO ASK SHOULD BE ABLE TO SEE WHAT ASKING COSTS. ***
+        Every total here is one row per CALL. `model_decisions` is one row per ANSWER carrying its
+        call's token count, so summing that counts a batched call once per answer -- $4.25 on a
+        store that spent $1.32.
+        """
+        store = self._open_store()
+        if store is None:
+            return {"note": "no store here, so nothing has been asked and nothing has been spent"}
+        try:
+            from . import cost as cost_mod
+            led = cost_mod.ledger(store)
+        except Exception as e:                                   # noqa: BLE001
+            return {"note": f"no ledger in this store: {e}. Answers decided before assay recorded "
+                            f"its calls cost something unknown, which is not zero."}
+        if not led.get("calls"):
+            return {"usd": 0.0, "calls": 0,
+                    "note": "no calls recorded here. Either nothing has been asked, or every "
+                            "answer came from the cache -- which is free and is the point."}
+        return {"usd": round(led["usd"], 4), "calls": led["calls"],
+                "input_tokens": led["input_tokens"],
+                "by_caller": led["by_caller"][:8], "by_day": led["by_day"][:7],
+                "calls_without_usage": led["calls_without_usage"],
+                "note": "output tokens are counted and never priced: Jev does not bill them."}
+
+    def stale(self, exact: bool = False) -> dict:
+        """Judged answers that are about SQL which has since changed.
+
+        *** SERVING A DATED ANSWER IS FINE. NOT KNOWING IT IS DATED IS NOT. ***
+        The cheap tier compares the sha256 dbt already records for each model's source. `exact`
+        rebuilds the state each answer was computed from and compares it, which catches a change
+        to a PARENT that a file checksum by definition cannot. Neither makes an API call.
+        """
+        store = self._open_store()
+        if store is None:
+            return {"note": "no store here, so there are no judged answers to be stale"}
+        from . import stale as stale_mod
+        st = self.state()
+        if exact:
+            from . import states as states_mod
+            from .config import Config
+            cfg = Config.load(self.config_path or ".")
+            ctx = states_mod.Ctx(project=st.project, digests=st.digests, schema=st.schema,
+                                 store=store, vocab=getattr(cfg, "vocab", None) or {})
+            out = stale_mod.exact(store, ctx)
+            return {"judged": out["judged"], "would_be_computed_differently": len(out["moved"]),
+                    "rebuild_identically": out["current"],
+                    "cannot_be_compared": out["uncomparable"],
+                    "why_not": out["why_uncomparable"][:6],
+                    "by_blast_radius": out["by_model"][:10],
+                    "note": "nothing here is hidden from any other tool: a dated answer is still "
+                            "served, because hiding it leaves you with nothing."}
+        out = stale_mod.survey(store, st.project)
+        return {"judged": out["judged"], "about_sql_that_changed": len(out["moved"]),
+                "current": out["current"], "cannot_be_checked": len(out["uncheckable"]),
+                "why_not": out["why_uncheckable"][:6],
+                "by_blast_radius": out["by_model"][:10],
+                "note": "a moved checksum is necessary and not sufficient: a comment edit trips "
+                        "it and a change to a PARENT does not. Call with exact=true for that."}
+
+    def vocabulary(self) -> dict:
+        """Their words, where each one is true, and every way the list is currently wrong.
+
+        *** A TERM GOES INTO EVERY STATE, SO A TERM THAT IS FALSE HERE IS FALSE EVERYWHERE. ***
+        Measured on a real warehouse: six terms asserting one state's water law reached all 358
+        models, and 25% of every answer ever paid for there was about a model in another state.
+        """
+        from .config import Config
+        from .lint import lint_vocab
+        cfg = Config.load(self.config_path or ".")
+        st = self.state()
+        issues = lint_vocab(cfg.vocab, st.project)
+        scoped = {t: b.get("applies_to") for t, b in (cfg.vocab or {}).items()
+                  if isinstance(b, dict) and b.get("applies_to")}
+        return {
+            "terms": sorted(cfg.vocab or {}),
+            "scoped": scoped,
+            "sent_everywhere": sorted(set(cfg.vocab or {}) - set(scoped)),
+            "issues": [{"term": i.question.split(".", 1)[-1], "level": i.level, "rule": i.rule,
+                        "detail": i.detail} for i in issues],
+            "note": ("`applies_to` takes the same selector as --select, and {select:, exclude:} "
+                     "when the exception lives inside the rule. A term with no scope is sent to "
+                     "every model, which is correct for a word about their DATA and wrong for one "
+                     "that asserts somebody's law. Read guide('vocab') before writing one."),
+        }
+
     def suggestions(self, section: str = "", limit: int = 15) -> dict:
         """What this project should CONFIGURE, from what the checks found.
 
@@ -776,6 +866,21 @@ TOOLS = [
               "judgment about their data, so propose it and let them decide. An empty "
               "plan means nobody has agreed with anything yet, not that the warehouse "
               "is clean.")),
+    ("spend", ("What the judged tier has COST on this project, by caller and by day. Call it "
+               "before proposing a judged run, and after one. Every figure is one row per CALL: "
+               "a batch of eight questions about one state is one call and eight answers, so "
+               "totalling the answers counts it eight times.")),
+    ("stale", ("Judged answers that are about SQL which has since CHANGED, so you know whether "
+               "an answer you are about to rely on is still about the code in front of you. "
+               "`exact=true` rebuilds the state each answer came from and compares it, catching "
+               "a change to a PARENT that a file checksum cannot. Makes no API calls either way. "
+               "Nothing is hidden by this: a dated answer is still served, because hiding it "
+               "would leave you with nothing.")),
+    ("vocabulary", ("Their words, WHERE each one is true, and what is wrong with the list. A "
+                    "vocab term is injected into every judged question's state, so one that is "
+                    "false outside some corner of the project steers every answer wrong at once "
+                    "-- measured at 25% of one real warehouse's answers. Call this before writing "
+                    "or editing any term, and pair it with guide('vocab').")),
     ("evidence", ("The exact STATE a judged answer was computed from, as it was sent. Call it "
                   "before disagreeing with an answer: if the answer is wrong and the state is "
                   "wrong, what gets sent needs fixing; if the answer is wrong and the state is "
@@ -899,6 +1004,18 @@ def serve(target: str, store_path: str | None = None) -> None:
     @app.tool(description=_desc("suggestions"))
     def suggestions(section: str = "", limit: int = 15) -> str:
         return json.dumps(be.suggestions(section, limit), default=str)
+
+    @app.tool(description=_desc("spend"))
+    def spend() -> str:
+        return json.dumps(be.spend(), default=str)
+
+    @app.tool(description=_desc("stale"))
+    def stale(exact: bool = False) -> str:
+        return json.dumps(be.stale(exact), default=str)
+
+    @app.tool(description=_desc("vocabulary"))
+    def vocabulary() -> str:
+        return json.dumps(be.vocabulary(), default=str)
 
     @app.tool(description=_desc("evidence"))
     def evidence(decision_key: str = "", question: str = "", subject: str = "",

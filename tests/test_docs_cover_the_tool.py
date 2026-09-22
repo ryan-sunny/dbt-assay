@@ -457,3 +457,39 @@ def test_every_check_has_a_fix_shape():
     for name, (shape, how) in SHAPES.items():
         assert shape and how, name
         assert len(how) > 40, f"{name}: the `how` says nothing useful"
+
+
+def test_onboarding_flags_the_vocabulary_and_what_has_been_spent():
+    """*** A FIRST RUN THAT NEVER MENTIONS THEIR WORDS LEAVES THE WIDEST GAP UNNAMED. ***
+
+    A vocab term goes into every judged question's state, so one asserted outside where it is true
+    is wrong in every answer about that part of the project at once -- 25% of one real warehouse's
+    answers. `onboard` walks somebody through setup and had nothing to say about it.
+    """
+    import inspect
+
+    from dbt_assay import cli
+    src = inspect.getsource(cli.onboard)
+    assert "lint_vocab" in src, "onboarding does not lint their vocabulary"
+    assert "cost_mod.ledger" in src or "cost as cost_mod" in src, \
+        "onboarding does not say what has already been spent"
+    assert "review --emit" in src, (
+        "onboarding never points at the form. The queue is one turn per finding, which is a wall "
+        "at two hundred; the form is where their reasons accrue.")
+
+
+def test_every_mcp_tool_reaches_the_skill_and_the_overview():
+    """*** A TOOL AN AGENT NEVER HEARS ABOUT IS A TOOL THAT DOES NOT EXIST. ***
+
+    Three surfaces have to agree: the server registers it, the skill tells an agent when to call
+    it and what to do without the server, and the overview describes it to a person. A tool added
+    to one of the three looks exactly like coverage.
+    """
+    from dbt_assay import skilltext
+    from dbt_assay.mcp_server import TOOLS
+    skill = skilltext.SKILL_MD
+    overview = (ROOT / "docs" / "OVERVIEW.md").read_text() if (ROOT / "docs").is_dir() else None
+    missing_skill = [n for n, _d in TOOLS if f"`{n}(" not in skill and f"`{n}()" not in skill]
+    assert not missing_skill, f"MCP tools the agent skill never names: {missing_skill}"
+    if overview is None:
+        pytest.skip("no docs in a wheel install")

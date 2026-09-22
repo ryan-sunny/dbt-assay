@@ -947,7 +947,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.41.0
+- uses: ryan-sunny/dbt-assay@v0.42.0
   with:
     target: target-head
     baseline: base/target
@@ -1023,7 +1023,7 @@ a column is, what the grain is, and what would break before it writes a line. Th
 it the **obligation** — without it an agent checks when it remembers, and with it, checking is the
 procedure.
 
-Sixteen tools. Most report; four do something else:
+Nineteen tools. Most report; seven do something else:
 
 | tool | what it is for |
 |---|---|
@@ -1031,9 +1031,13 @@ Sixteen tools. Most report; four do something else:
 | `plan(limit)` | **what to change**, for the findings a person agreed with. `fix_shape` is the KIND of change, looked up from the check name; the words are not in it |
 | `suggestions(section)` | **what to put in their `audit.yml`**, derived from what the checks found, each row carrying its measurement. Every `means:` and `implies:` comes back empty and must stay empty |
 | `evidence(question, subject)` | the exact **state** a judged answer was computed from. Call it before disagreeing with one: if the answer is wrong and the state is wrong, what gets sent needs fixing; if the state is right, the question does |
+| `vocabulary()` | their words, **where each one is true**, and everything wrong with the list. A term goes into every judged question's state, so one asserted outside where it holds is wrong in every answer about that part of the project at once — measured at 25% of one real warehouse's answers. Call it before writing or editing a term |
+| `spend()` | what the judged tier has **cost** here, by caller and by day. Put it in front of somebody before proposing a judged run |
+| `stale(exact)` | judged answers about SQL that has **since changed**, so an agent knows whether an answer it is about to rely on is still about the code in front of it. `exact=true` rebuilds the state and catches a change to a *parent*; neither form makes an API call |
 
 Each has a CLI equivalent, because a skill with no MCP connection is still a procedure:
-`assay guide`, `assay plan`, `assay suggest`, `assay evidence`. The skill file carries the mapping.
+`assay guide`, `assay plan`, `assay suggest`, `assay evidence`, `assay config --target`,
+`assay cost`, `assay stale`. The skill file carries the mapping.
 
 ### What a finding hands the agent
 
