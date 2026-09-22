@@ -944,3 +944,28 @@ def test_every_css_variable_the_page_uses_is_defined():
     used = set(re.findall(r"var\(--([a-z-]+)\)", src))
     assert used, "the usage reader found nothing; it is broken"
     assert not (used - defined), sorted(used - defined)
+
+
+def test_a_whole_number_in_a_table_is_grouped():
+    """*** 45806589 IS NOT A NUMBER ANYBODY READS. ***
+
+    The prose on the page has always grouped its thousands and the TABLES never did, so a token
+    count, a row count and a model count all arrived as a run of digits you count with a finger.
+    """
+    assert "const cellText" in explorer.JS, "the table cell formatter is gone"
+    # the default path must route through it rather than through String()
+    assert "text: cellText(c.val(r))" in explorer.JS, \
+        "a table cell is being rendered with String() again, which drops the separators"
+
+
+def test_a_fraction_in_a_table_is_left_alone():
+    """*** AND GROUPING MUST NOT ROUND A PROBABILITY. ***
+
+    `toLocaleString` caps at three fraction digits by default, so running a confidence through it
+    turns 0.8712 into 0.871 -- a displayed number that is not the stored one, on the page whose
+    whole argument is that a displayed number is the stored one. Whole numbers only.
+    """
+    js = explorer.JS
+    i = js.index("const cellText")
+    decl = js[i:i + 260]
+    assert "Number.isInteger" in decl, decl

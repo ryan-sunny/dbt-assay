@@ -43,6 +43,15 @@ app = typer.Typer(add_completion=False, help="Recover the semantics your warehou
 console = Console()
 
 
+def _n(v) -> str:
+    """A whole number for a table cell, grouped. 45806589 is not a number anybody reads.
+
+    Whole numbers only, and never a bool: a confidence is 0.87 and a rate is 0.5, and grouping
+    those would round them.
+    """
+    return f"{v:,}" if isinstance(v, int) and not isinstance(v, bool) else str(v)
+
+
 def _find_target(given: str | None) -> Path:
     if given:
         p = Path(given)
@@ -134,7 +143,8 @@ def _coverage_panel(project, digests, failures, show_errors: bool = True) -> Non
     t.add_row("project", f"[bold]{project.project_name}[/]  (dbt {project.dbt_version}, "
                          f"{project.adapter_type or 'adapter unknown'} "
                          f"\u2192 {project.dialect})")
-    t.add_row("models", f"{cov['models']}   sources {cov['sources']}   tests {cov['tests']}   edges {cov['edges']}")
+    t.add_row("models", f"{_n(cov['models'])}   sources {_n(cov['sources'])}   "
+                    f"tests {_n(cov['tests'])}   edges {_n(cov['edges'])}")
     # *** "1615 read (0 from disk, 0 from manifest)" IS THREE NUMBERS THAT DO NOT ADD UP. ***
     # A stranger cannot reconcile it, and the missing term is the one that matters: those 1615
     # came from STRIPPED Jinja, which is not a compile. Every source is named, always.
@@ -142,7 +152,7 @@ def _coverage_panel(project, digests, failures, show_errors: bool = True) -> Non
             f"{cov['from_manifest']} compiled, from the manifest" if cov["from_manifest"] else "",
             f"[yellow]{cov['from_stripped']} stripped, NOT compiled[/]"
             if cov.get("from_stripped") else ""]
-    t.add_row("SQL assay read", f"{cov['readable']} of {cov['models']} model(s)  ("
+    t.add_row("SQL assay read", f"{_n(cov['readable'])} of {_n(cov['models'])} model(s)  ("
                                 + ", ".join(x for x in srcs if x) + ")")
     if cov.get("from_stripped"):
         t.add_row("", "[yellow]Stripped means the Jinja was removed and the rest parsed. It is "
@@ -155,7 +165,7 @@ def _coverage_panel(project, digests, failures, show_errors: bool = True) -> Non
         t.add_row("[yellow]not read at all[/]",
                   f"[yellow]{cov['unreadable']} model(s) have no SQL assay could reach, so they "
                   f"are absent from everything below.[/]")
-    t.add_row("parsed", f"{ok}/{len(digests)}" + (f"   [yellow]{len(failures)} failed[/]" if failures else ""))
+    t.add_row("parsed", f"{_n(ok)}/{_n(len(digests))}" + (f"   [yellow]{len(failures)} failed[/]" if failures else ""))
     console.print(t)
     if not show_errors:
         # A first run should not open with five screens of someone else's SQL. The COUNT is the
@@ -176,7 +186,7 @@ def _schema_panel(schema, stats: dict) -> None:
                                f"   [dim](derived {prov['derived']}, catalog {prov['catalog']}, "
                                f"declared {prov['declared']})[/]")
     if stats["expanded"]:
-        t.add_row("star expansion", f"{stats['expanded']} models had `select *` expanded from their parents")
+        t.add_row("star expansion", f"{_n(stats['expanded'])} models had `select *` expanded from their parents")
     if not schema.catalog_present:
         t.add_row("[dim]catalog.json[/]",
                   "[dim]absent. `dbt docs generate` adds real column lists for sources.[/]")
@@ -373,7 +383,7 @@ def check(
         summary = Table(title="\nfindings", show_header=True, header_style="bold")
         summary.add_column("check"); summary.add_column("n", justify="right")
         for k, v in sorted(by.items(), key=lambda kv: -len(kv[1])):
-            summary.add_row(k, str(len(v)))
+            summary.add_row(k, _n(len(v)))
         console.print(summary)
 
         console.print()
@@ -876,7 +886,7 @@ def _gate_progress(store_path: str, cfg) -> None:
             gate = "[green]yes[/]"
         else:
             gate = f"[yellow]{cfg.min_adjudications - n} more[/]"
-        t.add_row(b, str(n), str(labels.get(b, 0)), gate)
+        t.add_row(b, _n(n), _n(labels.get(b, 0)), gate)
     console.print(t)
     console.print("[dim]Labels come from your own tests and joins. They are evidence and never "
                   "permission: the label can be the thing that is wrong.[/]")
@@ -1104,7 +1114,7 @@ def claims(
     t = Table(show_header=False, box=None, padding=(0, 2))
     for k, n in kinds.most_common():
         mark = "[bold]" if k in claims_mod.CHECKABLE else "[dim]"
-        t.add_row(f"{mark}{n}[/]", f"{mark}{k}[/]")
+        t.add_row(f"{mark}{_n(n)}[/]", f"{mark}{k}[/]")
     console.print(t)
     keep = sum(n for k, n in kinds.items() if k in claims_mod.CHECKABLE)
     console.print(f"\n[bold]{keep}[/] checkable claim(s). "
@@ -1226,7 +1236,7 @@ def verify(
     t = Table(show_header=False, box=None, padding=(0, 2))
     for k, n in counts.most_common():
         style = "[bold red]" if k == "contradicts" else "[dim]"
-        t.add_row(f"{style}{n}[/]", f"{style}{k}[/]")
+        t.add_row(f"{style}{_n(n)}[/]", f"{style}{k}[/]")
     console.print(t)
     if not out:
         console.print("\n[green]no claim is contradicted by its code.[/]")
@@ -1314,7 +1324,7 @@ def traverse(
     t = Table(show_header=False, box=None, padding=(0, 2))
     for k, n in counts.most_common():
         style = "[bold red]" if k == "silently_multiplied" else "[dim]"
-        t.add_row(f"{style}{n}[/]", f"{style}{k}[/]")
+        t.add_row(f"{style}{_n(n)}[/]", f"{style}{k}[/]")
     console.print(t)
     if not bad:
         console.print("\n[green]no hop multiplies rows without saying so.[/]")
@@ -1687,7 +1697,7 @@ def completeness(
 
     t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
     t.add_column("what"); t.add_column("n", justify="right"); t.add_column("meaning")
-    t.add_row("models assay could not read", str(cov["models"] - cov["readable"]),
+    t.add_row("models assay could not read", _n(cov["models"] - cov["readable"]),
               "[dim]not audited, and not a pass[/]")
     for check, label in (
             ("source_reaches_nothing", "sources nothing reads"),
@@ -1697,10 +1707,10 @@ def completeness(
             ("source_freshness_stale", "sources behind their own freshness"),
             ("hop_drops_most_rows", "hops that lose most of the parent")):
         n = len(buckets.get(check, []))
-        t.add_row(label, f"[red]{n}[/]" if n else "[dim]0[/]",
+        t.add_row(label, f"[red]{_n(n)}[/]" if n else "[dim]0[/]",
                   f"[dim]{_COMPLETENESS_MEANING[check]}[/]")
     if verify:
-        t.add_row("models that are EMPTY", str(len(counted.get("empty_models", []))),
+        t.add_row("models that are EMPTY", _n(len(counted.get("empty_models", []))),
                   "[dim]a uniqueness test on one passes for the wrong reason[/]")
     console.print(t)
 
@@ -2186,7 +2196,7 @@ def ask(
         total.update(counts)
         t = Table(show_header=False, box=None, padding=(0, 2))
         for k, n in counts.most_common():
-            t.add_row(f"[bold red]{n}[/]" if k in want else f"[dim]{n}[/]",
+            t.add_row(f"[bold red]{_n(n)}[/]" if k in want else f"[dim]{_n(n)}[/]",
                       f"[bold red]{k}[/]" if k in want else f"[dim]{k}[/]")
         console.print(t)
         for sub, p_ in sorted(hits, key=lambda x: -x[1])[:10]:
@@ -2709,7 +2719,7 @@ def calibration(
             a = f"{r['agreement']:.0%}" if r["agreement"] is not None else "[dim]-[/]"
             ci = (f"[dim]{r['lo']:.0%} to {r['hi']:.0%}[/]"
                   if r["lo"] is not None else "[dim]-[/]")
-            t.add_row(r["family"], r["band"], str(r["ruled"]), a, ci)
+            t.add_row(r["family"], r["band"], _n(r["ruled"]), a, ci)
         console.print(t)
         # *** A BARE PERCENTAGE AT n=18 INVITES A CONCLUSION THE SAMPLE CANNOT CARRY. ***
         # Reported from the field about this report, on its first day: 85 / 74 / 50 / 64 reads as
@@ -3262,7 +3272,7 @@ def calibrate(
     for label, v in (("exact", exact), ("flagged uncertain", unsure),
                      ("kept too many", over), ("dropped too many", under),
                      ("disagrees", wrong)):
-        t.add_row(label, str(v), f"{100 * v // n}%")
+        t.add_row(label, _n(v), f"{100 * v // n}%")
     console.print(t)
     console.print(f"[dim]code alone was exact on {code_exact}/{len(work)}; "
                   f"with judgment {exact}/{n}[/]")
@@ -3558,7 +3568,7 @@ def review(
         t.add_column("agreement", justify="right")
         for fam, n in sorted(counts.items()):
             a = store.accuracy(fam)
-            t.add_row(fam, str(n),
+            t.add_row(fam, _n(n),
                       f"{100 * a['agreement']:.0f}%" if a["agreement"] is not None else "-")
         console.print(t)
     else:
@@ -3796,7 +3806,7 @@ def inventory(
         src = e.grain.source if e.grain else "-"
         if e.grain and e.grain.confidence is not None:
             src += f" {e.grain.confidence:.2f}"
-        t.add_row(e.name, e.layer, g[:46], src, str(len(e.columns)),
+        t.add_row(e.name, e.layer, g[:46], src, _n(len(e.columns)),
                   f"{e.descendants}/{e.marts}")
     console.print(t)
     if len(entries) > limit:
@@ -4057,7 +4067,7 @@ def backtest(
     counts.pop("skipped", None)
     for k in ("caught", "introduced", "still_firing", "silent", "no_pair", "unparseable"):
         if counts.get(k):
-            t.add_row(k, str(counts[k]), MEANS[k])
+            t.add_row(k, _n(counts[k]), MEANS[k])
     console.print(t)
     n_compiled = sum(1 for r in replays if r.via == "compiled")
     if n_compiled:
@@ -5585,7 +5595,7 @@ def _review_loop(store, limit: int, target=None, dialect: str | None = None) -> 
                                                                             justify="right")
     for fam, n in sorted(store.adjudication_counts().items()):
         a = store.accuracy(fam)
-        t.add_row(fam, str(n),
+        t.add_row(fam, _n(n),
                   f"{100 * a['agreement']:.0f}%" if a["agreement"] is not None else "-")
     console.print(t)
     console.print(f"[dim]{done} recorded this round. `assay config` shows how far each question "
@@ -5648,7 +5658,7 @@ def _record_from_labels(store, target, dialect: str) -> None:
     t.add_column("agree", justify="right"); t.add_column("rate", justify="right")
     for fam, d in sorted(per_family.items()):
         n = d["agree"] + d["disagree"]
-        t.add_row(fam, str(n), str(d["agree"]), f"{100 * d['agree'] // n}%")
+        t.add_row(fam, _n(n), str(d["agree"]), f"{100 * d['agree'] // n}%")
     console.print(t)
     human = sum(store.adjudication_counts("human").values())
     console.print(f"[dim]These are recorded as `label`, not `human`. They are evidence about a "

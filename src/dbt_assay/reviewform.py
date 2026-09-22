@@ -279,13 +279,16 @@ function numbered(sql) {
   return p;
 }
 
+/* Whole numbers grouped, the same rule the rest of the tool follows. */
+const num = n => (n == null ? '' : Number(n).toLocaleString('en-US'));
+
 function card(c) {
   const a = answers[c.key] || {};
   const box = el('div', {class: 'card' + (a.verdict ? ' done' : '')});
   box.append(el('div', {class: 'hd'}, [
     el('b', {text: c.model}),
     el('span', {class: 'tag', text: c.question}),
-    el('span', {class: 'tag', text: c.marts + ' marts'}),
+    el('span', {class: 'tag', text: num(c.marts) + ' marts'}),
     el('span', {class: 'tag', text: c.file}),
   ]));
 

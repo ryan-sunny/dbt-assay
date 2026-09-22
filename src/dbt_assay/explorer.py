@@ -211,6 +211,14 @@ const el = (t, a, kids) => { const n = document.createElement(t);
     else if (k === 'html') n.innerHTML = a[k]; else if (a[k] != null) n.setAttribute(k, a[k]); }
   for (const c of (kids || [])) n.append(c); return n; };
 const num = n => (n == null ? '' : Number(n).toLocaleString('en-US'));
+/* *** 45806589 IS NOT A NUMBER ANYBODY READS. ***
+   The prose on this page has always grouped its thousands and the TABLES never did, so a token
+   count, a row count and a model count all arrived as a run of digits you have to count with a
+   finger. Whole numbers only: a confidence is 0.87 and a weight is 12.5, and grouping those would
+   round them -- `toLocaleString` caps at three fraction digits by default, which would quietly
+   change a displayed probability. */
+const cellText = v => (v == null ? ''
+  : (typeof v === 'number' && Number.isInteger(v) ? num(v) : String(v)));
 const pct = x => (x == null ? '' : Math.round(x * 100) + '%');
 
 /* A Fact with its provenance. A value with no source is a rumour, so the pill is never dropped. */
@@ -262,7 +270,7 @@ function grid(rows, cols, opts) {
     body.replaceChildren(...shown.map(r => {
       const tr = el('tr', {class: opts.pick ? 'pick' : ''},
         cols.map(c => el('td', {class: (c.n ? 'n ' : '') + (c.mono ? 'mono' : '')},
-          [c.cell ? c.cell(r) : el('span', {text: c.val(r) == null ? '' : String(c.val(r))})])));
+          [c.cell ? c.cell(r) : el('span', {text: cellText(c.val(r))})])));
       if (opts.pick) tr.onclick = () => { body.querySelectorAll('tr.on').forEach(x => x.classList.remove('on'));
         tr.classList.add('on'); opts.pick(r); };
       return tr;
@@ -719,7 +727,7 @@ function modelsTab(host) {
     {key: 'marts', label: 'marts', n: 1, val: m => m.marts},
     {key: 'findings', label: 'find', n: 1, val: m => m.findings.length,
      cell: m => el('span', {class: m.findings.length ? 'bad' : 'tot',
-                            text: String(m.findings.length || 0)})},
+                            text: num(m.findings.length || 0)})},
   ], {placeholder: 'filter models, paths, descriptions...', scroll: 1, pick: m => show(m),
       where: m => mine(m), controls: [packageFilter(() => list.redraw())].filter(Boolean),
       text: m => [m.name, m.path, m.layer, m.description].join(' ')});
@@ -775,7 +783,7 @@ function modelsTab(host) {
         {key: 'edge', label: 'edge', val: e => edgeNote(e)},
         {key: 'dropped', label: 'dropped', n: 1, val: e => e.dropped,
          cell: e => { if (!e.dropped) return el('span', {class: 'tot', text: '0'});
-           const t = el('details'); t.append(el('summary', {text: String(e.dropped)}));
+           const t = el('details'); t.append(el('summary', {text: num(e.dropped)}));
            t.append(el('pre', {text: (e.dropped_cols || []).join('\n')})); return t; }},
       ], {placeholder: 'filter hops...', cap: 200,
           emptyText: 'no edges: a leaf that nothing reads'})])));
@@ -873,7 +881,7 @@ function chainTab(host) {
     {key: 'in', label: 'reads', n: 1, val: m => (EDGES_IN[m.uid] || []).length},
     {key: 'out', label: 'read by', n: 1, val: m => (EDGES_OUT[m.uid] || []).length},
     {key: 'note', label: 'notable', n: 1, val: m => nOf(m),
-     cell: m => el('span', {class: nOf(m) ? 'low' : 'tot', text: nOf(m) ? String(nOf(m)) : ''})},
+     cell: m => el('span', {class: nOf(m) ? 'low' : 'tot', text: nOf(m) ? num(nOf(m)) : ''})},
   ], {placeholder: 'filter models...', scroll: 1, pick: m => show(m), sort: 'name',
       where: m => mine(m) && (!onlyNotable || nOf(m)),
       controls: [toggle, packageFilter(() => list.redraw())].filter(Boolean),
@@ -907,7 +915,7 @@ function chainTab(host) {
       {key: 'edge', label: 'edge', val: e => edgeNote(e)},
       {key: 'dropped', label: 'dropped', n: 1, val: e => e.dropped,
        cell: e => { if (!e.dropped) return el('span', {class: 'tot', text: '0'});
-         const t = el('details'); t.append(el('summary', {text: String(e.dropped)}));
+         const t = el('details'); t.append(el('summary', {text: num(e.dropped)}));
          t.append(el('pre', {text: (e.dropped_cols || []).join('\n')})); return t; }},
     ], {placeholder: 'filter hops...', cap: 200, emptyText: 'no edges'})));
   }
@@ -984,7 +992,7 @@ function claimsTab(host) {
          : el('span', {class: 'tot', text: 'no description'})},
       {key: 'n', label: 'claims', n: 1, val: g => g.rows.length},
       {key: 'bad', label: 'contradicted', n: 1, val: g => g.bad,
-       cell: g => el('span', {class: g.bad ? 'bad' : 'tot', text: String(g.bad)})},
+       cell: g => el('span', {class: g.bad ? 'bad' : 'tot', text: num(g.bad)})},
     ],
     rowsOf: g => g.rows, rowCols: rowCols, rowSort: 'v', rowDir: -1,
     rowText: c => [c.text, c.source_ref, c.kind].join(' '),
@@ -1092,7 +1100,7 @@ function answersTab(host) {
       {key: 'mean', label: 'mean conf', n: 1, val: g => g.n ? g.sum / g.n : null,
        cell: g => conf(g.n ? g.sum / g.n : null)},
       {key: 'low', label: 'under 0.60', n: 1, val: g => g.low,
-       cell: g => el('span', {class: g.low ? 'low' : 'tot', text: String(g.low)})},
+       cell: g => el('span', {class: g.low ? 'low' : 'tot', text: num(g.low)})},
       {key: 'v', label: 'versions', mono: 1, val: g => Object.keys(g.versions).sort().join(', ')},
     ],
     rowsOf: g => g.rows,
@@ -1159,7 +1167,7 @@ function questionsTab(host) {
     {key: 'asked', label: 'asked', n: 1, val: q => asked[q.id_prefix] || 0},
     {key: 'human', label: 'human', n: 1, val: q => (byFam[q.name] || {}).human || 0,
      cell: q => { const n = (byFam[q.name] || {}).human || 0;
-       return el('span', {class: n ? 'ok' : 'tot', text: String(n)}); }},
+       return el('span', {class: n ? 'ok' : 'tot', text: num(n)}); }},
   ], {placeholder: 'filter questions...', scroll: 1, sort: 'name', pick: q => show(q),
       text: q => [q.name, q.id_prefix, q.prompt_version, JSON.stringify(q.instructions)].join(' ')});
 
@@ -1284,7 +1292,7 @@ function configTab(host) {
       {key: 'm', label: 'models', n: 1, val: r => r.models},
       {key: 'ok', label: 'readable', n: 1, val: r => r.readable},
       {key: 'no', label: 'unreadable', n: 1, val: r => r.unreadable,
-       cell: r => el('span', {class: r.unreadable ? 'bad' : 'tot', text: String(r.unreadable)})},
+       cell: r => el('span', {class: r.unreadable ? 'bad' : 'tot', text: num(r.unreadable)})},
     ], {placeholder: 'filter runs...', sort: 'when', dir: -1})));
 
   if (DATA.unreadable.length) {

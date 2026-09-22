@@ -205,9 +205,18 @@ def _pct(x) -> str:
     return "&mdash;" if x is None else f"{x:.0%}"
 
 
+def _n(v) -> str:
+    """A whole number in a table, grouped. 45806589 is not a number anybody reads.
+
+    Whole numbers only: an agreement rate is 0.87 and grouping it would round it.
+    """
+    return f"{v:,}" if isinstance(v, int) and not isinstance(v, bool) else ("" if v is None
+                                                                            else str(v))
+
+
 def _red(n) -> str:
     """A zero is not news and must not look like one. A non-zero is."""
-    return f'<b style="color:#9e2b20">{n}</b>' if n else ""
+    return f'<b style="color:#9e2b20">{_n(n)}</b>' if n else ""
 
 
 def _tag(level: str, text: str) -> str:
@@ -233,17 +242,17 @@ def page_html(data: dict) -> str:
     eff = "".join(
         f"<tr><td class='mono'>{e(r['family'])}</td>"
         f"<td class='mono' style='color:#6b7a80'>{e(r['prompt_version'])}</td>"
-        f"<td class='n'>{r['n']}</td>"
+        f"<td class='n'>{_n(r['n'])}</td>"
         f"<td class='n'>{_bar(r['agreement']) if r['agreement'] is not None else ''} "
         f"{_pct(r['agreement'])}</td>"
-        f"<td class='n'>{r['unclear'] or ''}</td>"
+        f"<td class='n'>{_n(r['unclear']) if r['unclear'] else ''}</td>"
         f"<td class='n'>{_red(r['open_disagreements'])}</td>"
         f"</tr>" for r in data["effectiveness"])
 
     by_check = "".join(
-        f"<tr><td class='mono'>{e(c)}</td><td class='n'>{n}</td>"
-        f"<td class='n'>{m}</td>"
-        f"<td>{_tag('bad', f'0 of {n}') if not r else _tag('ok', f'{r} of {n}')}</td>"
+        f"<tr><td class='mono'>{e(c)}</td><td class='n'>{_n(n)}</td>"
+        f"<td class='n'>{_n(m)}</td>"
+        f"<td>{_tag('bad', f'0 of {_n(n)}') if not r else _tag('ok', f'{_n(r)} of {_n(n)}')}</td>"
         f"</tr>" for c, n, m, r in data["by_check"])
 
     comp = "".join(
@@ -256,7 +265,7 @@ def page_html(data: dict) -> str:
         f"<tr><td class='mono'>{e(f['check'])}</td>"
         f"<td class='mono'>{e(f['model'])}</td>"
         f"<td>{e(f['summary'][:130])}</td>"
-        f"<td class='n'>{f['marts'] or ''}</td></tr>" for f in data["top_findings"])
+        f"<td class='n'>{_n(f['marts']) if f['marts'] else ''}</td></tr>" for f in data["top_findings"])
 
     cl = data.get("claims") or {}
     claims_html = (
