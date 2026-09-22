@@ -228,21 +228,23 @@ class Store:
         self._add_missing_columns()
         self._rename_moved_question_ids()
         self._backfill_model_calls()
+        self.verdict_versions_filled = self._backfill_verdict_versions()
         # *** THE ONE TABLE RECORDING A MEASUREMENT OF THE DATA WAS THE ONE THAT FORGOT. ***
         # `observed_keys` keyed on (relation, column) with `insert or replace`, so each probe
         # overwrote the last and assay could never say a key that held last week has stopped.
+        from . import probe as _probe
         try:
-            from . import probe as _probe
             self.observations_kept = _probe.migrate(self)
-            # *** THE WAREHOUSE LEDGER BEGINS WHERE THE STORE DOES. ***
-            # Every statement assay sends goes through `probe.run_sql` or `probe.run_via_dbt`, and
-            # both write a `warehouse_calls` row while a ledger is attached. Attaching here means
-            # a command records what it spent without having to remember to ask.
-            _probe.attach(self)
         except Exception:                                        # noqa: BLE001
             # A store that cannot be migrated still opens; the probe will report it on use rather
             # than every command failing to start.
             self.observations_kept = 0
+        # *** THE WAREHOUSE LEDGER BEGINS WHERE THE STORE DOES, MIGRATION OR NOT. ***
+        # Every statement assay sends goes through `probe.run_sql` or `probe.run_via_dbt`, and
+        # both write a `warehouse_calls` row while a ledger is attached. Attaching here means a
+        # command records what it spent without having to remember to ask -- and attaching OUTSIDE
+        # the try means a store that failed to migrate still records what it spends.
+        _probe.attach(self)
 
     def _add_missing_columns(self) -> None:
         for table, columns in self.ADDED_COLUMNS.items():
@@ -522,6 +524,61 @@ class Store:
             from adjudications a""")
         self.con.execute("drop table adjudications")
         self.con.execute("alter table _adj_reshaped rename to adjudications")
+
+    def _backfill_verdict_versions(self) -> int:
+        """Give an already-reshaped store's unversioned verdicts their version back.
+
+        *** THE RESHAPE ABOVE RUNS ONCE, AND THE BUG WROTE ROWS AFTER IT. ***
+        `_load_verdicts` wrote the per-finding rows through a second `adjudicate` call that passed
+        no version, so every store that had already been reshaped kept collecting empty ones. On
+        the production store that is 70 of 136 human verdicts -- and all 70 are `::finding::`
+        subjects, which are precisely the rows that measure whether a fix removed the thing
+        somebody agreed was real.
+
+        The version is resolved the same way the reshape resolves it: the assay that was running
+        when the verdict was made, from `runs`. A lookup, not a guess, and a verdict made before
+        any recorded run stays empty rather than being given the nearest number.
+
+        Idempotent, and it never overwrites a version that is already there.
+        """
+        try:
+            have = {c[0] for c in self.con.execute(
+                "select column_name from information_schema.columns "
+                "where table_name = 'adjudications'").fetchall()}
+        except Exception:                                        # noqa: BLE001
+            return 0
+        if "prompt_version" not in have:
+            return 0
+        try:
+            n = self.con.execute(
+                "select count(*) from adjudications where coalesce(prompt_version, '') = ''"
+            ).fetchone()[0]
+            if not n:
+                return 0
+            # `prompt_version` is part of the primary key, so a row whose resolved version already
+            # exists under the same (subject, question) would collide. Those are left alone and
+            # counted, because losing a verdict to a migration is worse than one staying unversioned.
+            self.con.execute("""
+                update adjudications as a
+                set prompt_version = coalesce(
+                        (select 'assay.' || r.assay_version from runs r
+                         where r.started_at <= a.decided_at
+                         order by r.started_at desc limit 1), '')
+                where coalesce(a.prompt_version, '') = ''
+                  and exists (select 1 from runs r where r.started_at <= a.decided_at)
+                  and not exists (
+                      select 1 from adjudications b
+                      where b.subject = a.subject and b.question = a.question
+                        and b.prompt_version = coalesce(
+                            (select 'assay.' || r.assay_version from runs r
+                             where r.started_at <= a.decided_at
+                             order by r.started_at desc limit 1), ''))""")
+            after = self.con.execute(
+                "select count(*) from adjudications where coalesce(prompt_version, '') = ''"
+            ).fetchone()[0]
+            return n - after
+        except Exception:                                        # noqa: BLE001
+            return 0
 
     def close(self) -> None:
         try:

@@ -70,6 +70,21 @@ jobs:
       - name: every script the page ships is valid javascript
         run: uv run pytest tests/test_the_page_is_executable.py -q
 
+  # *** AND PARSING IS NOT RUNNING. ***
+  # A page can parse, load, and throw on the first click -- which is what a list where a dict was
+  # expected did to the chain tab: 573 hops rendering as a blank pane with nothing failing. This
+  # opens the real file in a real browser, clicks every tab, and asserts no page error and no
+  # empty pane.
+  page-runs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+      - run: uv run playwright install --with-deps chromium
+      - name: the page loads, every tab fills, and nothing throws
+        run: uv run pytest tests/test_the_page_runs_in_a_browser.py -q
+
   lint:
     runs-on: ubuntu-latest
     steps:

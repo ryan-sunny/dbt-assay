@@ -49,7 +49,11 @@ Homepage = "https://github.com/ryanchristensen/dbt-assay"
 assay = "dbt_assay.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = [
+    "playwright>=1.63.0",
+    "pytest>=8",
+    "ruff>=0.6",
+]
 
 [build-system]
 requires = ["hatchling"]

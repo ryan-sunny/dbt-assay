@@ -247,3 +247,69 @@ def test_two_runs_over_one_store_print_the_same_dollar_total(tmp_path):
 def test_the_warehouse_ledger_is_never_pruned():
     assert "warehouse_calls" in NEVER_PRUNED
     assert "warehouse_calls" not in PRUNABLE
+
+
+# ------------------------------------------------- a verdict that cannot say which assay it ruled on
+
+def test_a_finding_scoped_verdict_carries_the_same_version_as_the_model_level_one(tmp_path):
+    """*** 70 OF 136 HUMAN VERDICTS READ `(unversioned)` FOREVER. ***
+
+    One keypress in the review form writes two adjudication rows 1.5ms apart, and only one of
+    them got a version: the `::finding::` row went through a second `adjudicate` call that passed
+    no `prompt_version`. `_record_one_verdict`'s own docstring warned that a second spelling of
+    this write would drift, and it did.
+
+    The finding-scoped rows are the ones that measure the LOOP -- whether a fix removed the thing
+    somebody agreed was real -- so they are exactly the ones that must be comparable across
+    releases.
+    """
+    from dbt_assay.cli import _record_one_verdict
+
+    s = Store(str(tmp_path / "s.duckdb"))
+    _record_one_verdict(s, "model.p.orders", "grain__is_it", "agree", "", "read it", "ryan",
+                        findings=["abc123", "def456"])
+    rows = dict(s.con.execute(
+        "select subject, prompt_version from adjudications").fetchall())
+    assert len(rows) == 3
+    versions = set(rows.values())
+    assert len(versions) == 1, f"one keypress produced two versions: {rows}"
+    assert "" not in versions, "a verdict with no version can never take part in a comparison"
+    s.close()
+
+
+def test_the_backfill_gives_already_written_verdicts_their_version(tmp_path):
+    """A store that was already reshaped kept collecting empty ones, so the fix has to reach
+    backwards. The version comes from `runs` -- a lookup, not a guess."""
+    import datetime as dt
+
+    path = str(tmp_path / "s.duckdb")
+    s = Store(path)
+    s.con.execute(
+        "insert into runs (run_id, started_at, project, assay_version) values (?,?,?,?)",
+        ["r1", dt.datetime(2026, 9, 20, 10, 0, tzinfo=dt.timezone.utc), "p", "0.11.0"])
+    s.adjudicate("model.p.orders::finding::abc", "grain__is_it", "grain", "", "agree",
+                 "", "", "ryan")
+    s.con.execute("update adjudications set prompt_version = '', "
+                  "decided_at = timestamp '2026-09-20 19:48:00'")
+    s.close()
+
+    again = Store(path)                      # reopening runs the migration
+    assert again.verdict_versions_filled == 1
+    got, = again.con.execute("select prompt_version from adjudications").fetchone()
+    assert got == "assay.0.11.0", "the version ruled under, resolved from `runs`"
+    again.close()
+
+
+def test_a_verdict_made_before_any_recorded_run_stays_unversioned(tmp_path):
+    """None is the honest answer. Giving it the nearest number would invent the one fact the
+    column exists to record."""
+    path = str(tmp_path / "s.duckdb")
+    s = Store(path)
+    s.adjudicate("model.p.orders::finding::abc", "q", "f", "", "agree", "", "", "ryan")
+    s.con.execute("update adjudications set prompt_version = ''")
+    s.close()
+    again = Store(path)
+    assert again.verdict_versions_filled == 0
+    got, = again.con.execute("select prompt_version from adjudications").fetchone()
+    assert got == ""
+    again.close()

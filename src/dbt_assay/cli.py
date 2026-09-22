@@ -4436,28 +4436,27 @@ def _load_verdicts(store, path: str, who: str) -> None:
     by = who or (payload.get("by") if isinstance(payload, dict) else "") or "unknown"
     fams, dismissed, agreed = Counter(), 0, 0
     for r in rows:
-        fams[_record_one_verdict(store, r["subject"], r["question"], r["verdict"],
-                                 r["correction"], r["note"], by)] += 1
         # *** AND A `disagree` HAS TO ACTUALLY REMOVE THE THING. ***
-        # The verdict above is the measurement -- it is what `calibration` and `effectiveness`
-        # read. It does not dismiss, because it is recorded per (subject, question) and one model
-        # carries several findings of one check. The card knows which findings it showed, so the
-        # dismissal is written against those, and `apply_policy` drops exactly them.
+        # The model-level verdict is the measurement -- it is what `calibration` and
+        # `effectiveness` read. It does not dismiss, because it is recorded per (subject,
+        # question) and one model carries several findings of one check. The card knows which
+        # findings it showed, so the dismissal is written against those, and `apply_policy` drops
+        # exactly them.
         # *** AND AN `agree` IS RECORDED PER FINDING TOO, WHICH IS WHAT CLOSES THE LOOP. ***
         # It dismisses nothing -- the finding is REAL. It is the record that a person read this
         # exact one and said so, and without it "of the findings somebody agreed with, how many
         # are now gone" cannot be asked: a verdict filed against (model, check) does not say
         # which of that model's findings was the real one.
-        if r["verdict"] in ("disagree", "agree"):
-            for fid in r.get("findings") or []:
-                store.adjudicate(f"{r['subject']}::finding::{fid}", r["question"],
-                                 r["question"].split("__")[0], "", r["verdict"], "",
-                                 r["note"] or f"read and called {r['verdict']} in the review form",
-                                 by)
-                if r["verdict"] == "disagree":
-                    dismissed += 1
-                else:
-                    agreed += 1
+        #
+        # Both writes go through ONE function, so they cannot disagree about the version again.
+        fids = list(r.get("findings") or []) if r["verdict"] in ("disagree", "agree") else []
+        fams[_record_one_verdict(store, r["subject"], r["question"], r["verdict"],
+                                 r["correction"], r["note"], by, findings=fids)] += 1
+        for _fid in fids:
+            if r["verdict"] == "disagree":
+                dismissed += 1
+            else:
+                agreed += 1
     console.print(f"recorded [bold]{len(rows)}[/] verdict(s) as `{by}`.")
     if agreed:
         console.print(f"   [bold]{agreed} finding(s) confirmed real[/] [dim]-- they stay, and "
@@ -4484,7 +4483,7 @@ def _load_verdicts(store, path: str, who: str) -> None:
 
 
 def _record_one_verdict(store, subject: str, question: str, verdict: str, correction: str,
-                        note: str, who: str, row=None) -> str:
+                        note: str, who: str, row=None, findings: list | None = None) -> str:
     """Write ONE human verdict, and return the family it landed in.
 
     *** `--verdict` AND `--load` MUST NOT BE TWO SPELLINGS OF THIS. ***
@@ -4492,6 +4491,18 @@ def _record_one_verdict(store, subject: str, question: str, verdict: str, correc
     drifted twice in this file. A second copy of it -- written so a form could post a hundred
     verdicts at once -- would drift a third time, and the failure is silent: the rows land under
     a family that does not exist, count toward nothing, and appear in no report.
+
+    *** AND IT DID DRIFT, IN EXACTLY THE WAY THIS DOCSTRING WARNED ABOUT. ***
+    The per-finding rows -- `<subject>::finding::<id>` -- were written by a second `adjudicate`
+    call in `_load_verdicts`, which passed no `prompt_version`. Measured on the production store:
+    136 human rows, 70 of them empty, and all 70 are `::finding::` subjects. `prompt_version`
+    exists so a release can be compared before and after, so those 70 verdicts -- the ones
+    attached to a specific finding rather than to a model, which are the ones that measure the
+    LOOP -- could never take part in that comparison. They read `(unversioned)` forever.
+
+    So `findings` lives here. One resolution of the version, one spelling of the write, and the
+    per-finding rows carry the same version as the model-level row they came from, because they
+    are the same keypress.
     """
     if row is None:
         row = store.con.execute(
@@ -4501,10 +4512,17 @@ def _record_one_verdict(store, subject: str, question: str, verdict: str, correc
     fam = question.split("__")[0]
     fam = {"role": "column_role", "null": "null_meaning",
            "key": "column_is_part_of_the_key"}.get(fam, fam)
+    # A structural finding was decided by a parser: there is no judged answer and no prompt behind
+    # it, so the version of record is the assay that was RUNNING when the person read it.
+    version = (row[1] if row and row[1] else f"assay.{_pkg_version()}")
+    model_version = row[2] if row else ""
     store.adjudicate(subject, question, fam, row[0] if row else "",
                      verdict, correction, note, who,
-                     prompt_version=(row[1] if row else f"assay.{_pkg_version()}"),
-                     model_version=row[2] if row else "")
+                     prompt_version=version, model_version=model_version)
+    for fid in findings or []:
+        store.adjudicate(f"{subject}::finding::{fid}", question, fam, "",
+                         verdict, "", note or f"read and called {verdict} in the review form",
+                         who, prompt_version=version, model_version=model_version)
     return fam
 
 

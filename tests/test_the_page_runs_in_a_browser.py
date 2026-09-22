@@ -1,0 +1,146 @@
+"""*** EVERY OTHER CHECK INSPECTS THE ARTIFACT. THIS ONE RUNS IT. ***
+
+File size, exit code, determinism, valid HTML, correct payload and 734 assertions all passed on a
+page that was 81 KB of syntactically invalid JavaScript. Every tab rendered, with correct counts,
+and did nothing when clicked.
+
+`node --check` catches a parse error in ten seconds and is already a test. It cannot catch the
+next layer: a page that PARSES, loads, and throws on the first click -- which is what a list where
+a dict was expected did to the chain tab, 573 hops rendering as an empty pane with no error
+anywhere a test could see.
+
+So this opens the real file in a real browser, clicks every tab, and asserts two things nothing
+else here can: no page error was raised, and no pane is empty.
+"""
+from __future__ import annotations
+
+import pytest
+from typer.testing import CliRunner
+
+from dbt_assay.cli import app
+
+pytest.importorskip("playwright.sync_api",
+                    reason="playwright is a dev dependency; CI installs it")
+
+# Every tab the page ships. A new one is covered by adding it here, and a tab that stops existing
+# fails this test rather than quietly losing its coverage.
+TABS = ["models", "chain", "claims", "findings", "suggest", "answers", "spend", "questions",
+        "config", "understood"]
+
+
+@pytest.fixture
+def page_file(tmp_path, project_dir):
+    """The real page, written by the real commands, against the fixture project.
+
+    `check` first: the edges, findings and runs the page draws live in the store, and a page built
+    against an empty one renders every tab as "nothing matches" -- which would pass a test asking
+    only whether the tabs are there.
+    """
+    store = tmp_path / "s.duckdb"
+    r = CliRunner().invoke(app, ["check", "--target", str(project_dir), "--store", str(store)])
+    assert r.exit_code in (0, 1), r.output        # 1 is "findings were raised", which is normal
+    out = tmp_path / "assay.html"
+    r = CliRunner().invoke(app, ["page", str(out), "--target", str(project_dir),
+                                 "--store", str(store)])
+    assert r.exit_code == 0, r.output
+    assert out.exists() and out.stat().st_size > 20_000, "the page is suspiciously small"
+    return out
+
+
+def test_the_page_loads_without_raising_and_every_tab_fills(page_file):
+    """*** ZERO PAGE ERRORS, AND NO EMPTY PANE. ***
+
+    A pane that renders nothing is the symptom of a handler that threw partway through: the HTML
+    is fine, the tab is there, the content is gone. Both halves are needed -- a page can throw and
+    still look full, and it can be silent and still be blank.
+    """
+    from playwright.sync_api import sync_playwright
+
+    errors: list[str] = []
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+            page.goto(page_file.as_uri())
+            page.wait_for_load_state("domcontentloaded")
+            assert not errors, "the page threw on load:\n" + "\n".join(errors[:5])
+
+            for tab in TABS:
+                button = page.query_selector(f'nav button[data-tab="{tab}"]')
+                assert button is not None, f"the page has no `{tab}` tab any more"
+                button.click()
+                page.wait_for_timeout(60)
+                panel = page.query_selector(f"#p-{tab}")
+                assert panel is not None, f"`{tab}` has no panel"
+                text = (panel.inner_text() or "").strip()
+                assert text, (
+                    f"the `{tab}` pane is EMPTY. The tab exists, the HTML is fine, and whatever "
+                    f"builds it threw partway through -- which is exactly how 573 hops rendered "
+                    f"as a blank chain tab with nothing failing.")
+                assert not errors, f"`{tab}` threw:\n" + "\n".join(errors[:5])
+        finally:
+            browser.close()
+
+
+def test_clicking_a_node_on_the_chain_opens_its_card(page_file):
+    """*** THE NODES WERE CLICKABLE, AND THEN THEY WERE NOT, AND NOTHING NOTICED. ***
+
+    Capturing the pointer on `pointerdown` retargets every later event to the SVG root, so the
+    click landed on the canvas and never on the node. The handlers were still attached and still
+    correct. Only driving it can tell.
+    """
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page()
+            errors: list[str] = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(page_file.as_uri())
+            page.click('nav button[data-tab="chain"]')
+            page.wait_for_timeout(120)
+            # The tab opens on the model list; the drawing is one click in.
+            row = page.query_selector("#p-chain tbody tr")
+            assert row is not None, "the chain tab lists no model with edges"
+            row.click()
+            page.wait_for_timeout(150)
+            node = page.query_selector("#p-chain g.box.clk")
+            assert node is not None, (
+                "no clickable node is drawn. Every parent, child and the focus model itself "
+                "carries a handler, so finding none means the drawing did not happen.")
+            node.click()
+            page.wait_for_timeout(120)
+            assert page.query_selector(".pop") is not None, (
+                "clicking a node opened no card. A pan gesture that captures the pointer on "
+                "press eats the click, and a tap has to stay a tap.")
+            assert not errors, "\n".join(errors[:5])
+        finally:
+            browser.close()
+
+
+def test_the_review_form_loads_without_raising(tmp_path, project_dir):
+    """The form is the other shipped script, and it owns every box a person types into."""
+    from playwright.sync_api import sync_playwright
+
+    out = tmp_path / "review.html"
+    r = CliRunner().invoke(app, ["review", "--emit", str(out), "--target", str(project_dir),
+                                 "--store", str(tmp_path / "s.duckdb")])
+    assert r.exit_code == 0, r.output
+
+    errors: list[str] = []
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(out.as_uri())
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_timeout(120)
+            assert not errors, "the form threw on load:\n" + "\n".join(errors[:5])
+            body = (page.inner_text("body") or "").strip()
+            assert body, "the form rendered nothing at all"
+        finally:
+            browser.close()

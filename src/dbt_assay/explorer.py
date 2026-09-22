@@ -140,6 +140,15 @@ align-items:center}
 .rrow{display:contents}
 .rrow.clk{cursor:pointer}
 .rlab{font-size:12px;color:var(--ink);white-space:nowrap;text-align:right}
+.rsub{display:block;font-size:10.5px;color:var(--dim);font-weight:400}
+.days{display:flex;align-items:flex-end;gap:3px;height:92px;margin:6px 0 14px;overflow-x:auto}
+.day{display:flex;flex-direction:column;justify-content:flex-end;align-items:center;
+     min-width:22px;flex:1 1 22px;height:100%}
+.daytrack{width:100%;height:68px;display:flex;align-items:flex-end;
+          background:var(--line);border-radius:2px}
+.dayfill{width:100%;background:#2a78d6;border-radius:2px}
+.day.zero .dayfill{background:var(--faint)}
+.daylab{font-size:9.5px;color:var(--dim);margin-top:4px;white-space:nowrap}
 .rtrack{height:13px;display:block}
 .rfill{display:block;height:13px;border-radius:3px}
 .rrow.clk:hover .rfill{opacity:.82}
@@ -232,6 +241,17 @@ const el = (t, a, kids) => { const n = document.createElement(t);
     else if (k === 'html') n.innerHTML = a[k]; else if (a[k] != null) n.setAttribute(k, a[k]); }
   for (const c of (kids || [])) n.append(c); return n; };
 const num = n => (n == null ? '' : Number(n).toLocaleString('en-US'));
+/* Bytes a person reads. `null` is "not estimated" and never a zero: a zero would read as "this
+   query scanned nothing", which is a claim, and an absent estimate is not one. */
+const bytes = n => {
+  if (n == null) return 'not estimated';
+  let v = Number(n);
+  for (const u of ['B', 'KB', 'MB', 'GB', 'TB']) {
+    if (v < 1024 || u === 'TB') return (u === 'B' ? v.toFixed(0) : v.toFixed(1)) + ' ' + u;
+    v /= 1024;
+  }
+  return v.toFixed(1) + ' TB';
+};
 /* *** 45806589 IS NOT A NUMBER ANYBODY READS. ***
    The prose on this page has always grouped its thousands and the TABLES never did, so a token
    count, a row count and a model count all arrived as a run of digits you have to count with a
@@ -726,21 +746,41 @@ function panZoom(wrap, s, W, H) {
          {x: (ev.clientX - r.left) / r.width, y: (ev.clientY - r.top) / r.height});
   }, {passive: false});
 
-  let from = null;
+  /* *** A TAP HAS TO STAY A TAP. ***
+     Capturing the pointer on `pointerdown` retargets every later event for that pointer to the
+     SVG ROOT, so the `click` lands on the canvas and never on the node `<g>`. The node handlers
+     were still attached and still correct; they simply could not fire, and every node on the
+     chain tab stopped being clickable without anything about them changing.
+
+     So the press only ARMS a pan. Capture is taken on the first move past a few pixels, which is
+     the point where the gesture is unambiguously a drag rather than a click. */
+  const DRAG_PX = 4;
+  let from = null, dragging = false;
   s.addEventListener('pointerdown', ev => {
-    from = {x: ev.clientX, y: ev.clientY, vx: vb.x, vy: vb.y};
-    s.classList.add('drag');
-    s.setPointerCapture(ev.pointerId);
+    from = {x: ev.clientX, y: ev.clientY, vx: vb.x, vy: vb.y, id: ev.pointerId};
+    dragging = false;
   });
   s.addEventListener('pointermove', ev => {
     if (!from) return;
+    const dx = ev.clientX - from.x, dy = ev.clientY - from.y;
+    if (!dragging) {
+      if (Math.abs(dx) < DRAG_PX && Math.abs(dy) < DRAG_PX) return;
+      dragging = true;
+      s.classList.add('drag');
+      try { s.setPointerCapture(from.id); } catch (e) { /* the pointer is already gone */ }
+    }
     const r = s.getBoundingClientRect();
-    vb.x = from.vx - (ev.clientX - from.x) * (vb.w / r.width);
-    vb.y = from.vy - (ev.clientY - from.y) * (vb.h / r.height);
+    vb.x = from.vx - dx * (vb.w / r.width);
+    vb.y = from.vy - dy * (vb.h / r.height);
     apply();
   });
   for (const done of ['pointerup', 'pointercancel', 'pointerleave'])
-    s.addEventListener(done, () => { from = null; s.classList.remove('drag'); });
+    s.addEventListener(done, ev => {
+      if (dragging) {
+        try { s.releasePointerCapture(from ? from.id : ev.pointerId); } catch (e) { /* gone */ }
+      }
+      from = null; dragging = false; s.classList.remove('drag');
+    });
   apply();
 }
 
@@ -788,7 +828,10 @@ function lineage(m) {
                    nodeCard(ev.currentTarget, e.child_name, e); }));
   });
   const g = m.grain ? (Array.isArray(m.grain.value) ? m.grain.value.join(', ') : String(m.grain.value)) : 'grain not settled';
-  s.append(box(fx, fy, m.name, g, 'foc'));
+  /* *** THE MODEL THE PICTURE IS ABOUT WAS THE ONE BOX YOU COULD NOT CLICK. ***
+     Every parent and child opened a card and the focus node was drawn with no handler at all. */
+  s.append(box(fx, fy, m.name, g, 'foc',
+               ev => { ev.stopPropagation(); nodeCard(ev.currentTarget, m.name, null); }));
 
   if (!drawIn && ins.length)
     host.append(bandList(ins.length + ' parents, too many to draw. The same facts as a list:',
@@ -1448,13 +1491,20 @@ function rankedBars(rows) {
   for (const r of rows) {
     const line = el('div', {class: 'rrow' + (r.onclick ? ' clk' : ''),
                             title: r.tip || `${r.label}: ${num(r.n)}`});
-    line.append(el('span', {class: 'rlab mono', text: r.label}));
+    const lab = el('span', {class: 'rlab mono', text: r.label});
+    /* A qualifier belongs under the name, not inside it: `arbitrary_pick assay.0.11.0` on one
+       line reads as a single identifier and the version looks like part of the check. */
+    if (r.sub) lab.append(el('span', {class: 'rsub', text: r.sub}));
+    line.append(lab);
     const track = el('span', {class: 'rtrack'});
     track.append(el('span', {class: 'rfill',
                              style: `width:${Math.max(1.5, (r.n / max) * 100)}%;`
                                     + `background:${r.color || '#2a78d6'}`}));
     line.append(track);
-    line.append(el('span', {class: 'rval', text: num(r.n) + (r.note ? '  ' + r.note : '')}));
+    /* *** `114` AND `6 read` RENDERED AS `114 6 read`, WHICH READS AS 1,146. ***
+       Two numbers separated by whitespace are one number to a reader. The check dropdown already
+       uses this separator; a second spelling of the same idea is how they drift apart. */
+    line.append(el('span', {class: 'rval', text: num(r.n) + (r.note ? ' · ' + r.note : '')}));
     if (r.onclick) line.onclick = r.onclick;
     host.append(line);
   }
@@ -1670,8 +1720,14 @@ function understoodTab(host) {
         ? 'human \u00b7 the only kind that gates anything'
         : src === 'label' ? 'label \u00b7 derived from your own tests, evidence not truth'
         : 'agent \u00b7 triage, counted toward nothing'}));
+      /* *** THE VERSION IS THE ONE THAT WAS RULED UNDER, AND THE BAR DID NOT SAY SO. ***
+         `arbitrary_pick assay.0.11.0` reads as "assay is running something old". It is not: it
+         is the assay that was live when that verdict was made, which is exactly what a
+         before-and-after comparison needs. The data was right and the label was the lie, so the
+         version moves out of the bar label and into the note that explains it. */
       wrap.append(rankedBars(bySrc[src].map(r => ({
-        label: r.family + '  ' + (r.prompt_version || ''),
+        label: r.family,
+        sub: r.prompt_version ? 'ruled under ' + r.prompt_version : 'unversioned',
         n: r.n,
         color: r.agreement == null ? '#b8c2c6'
              : r.agreement >= 0.8 ? RAMP.declared
@@ -1679,7 +1735,8 @@ function understoodTab(host) {
         note: (r.agreement == null ? '' : Math.round(r.agreement * 100) + '% agreed')
               + (r.unclear ? '  \u00b7 ' + r.unclear + ' unclear' : '')
               + (r.open_disagreements ? '  \u00b7 ' + r.open_disagreements + ' open' : ''),
-        tip: `${r.family} ${r.prompt_version}: ${r.n} ruled, `
+        tip: `${r.family}, ruled under ${r.prompt_version || 'no recorded version'}: `
+             + `${r.n} ruled, `
              + `${r.agreement == null ? 'no rate' : Math.round(r.agreement * 100) + '% agreed'}, `
              + `${r.unclear} unclear, ${r.open_disagreements} open disagreement(s)`,
       }))));
@@ -1717,10 +1774,32 @@ function understoodTab(host) {
    `model_calls`: a batch of eight questions about one state is ONE call and eight answers, so
    totalling the answer rows counts it eight times -- $4.25 on a store that spent $1.32.
 */
+/* *** A DAY WITH RUNS AND NO SPEND IS A ZERO, NOT AN ABSENCE. ***
+   The tab used to render `by_day` straight, so a day nothing was spent on simply was not there --
+   indistinguishable from broken recording. Every day that RAN gets a column, and a zero column
+   carries the reason it is zero. */
+function daySeries(days, pick, fmt) {
+  const max = Math.max(...days.map(d => pick(d) || 0), 0);
+  const host = el('div', {class: 'days'});
+  for (const d of days.slice(0, 30).slice().reverse()) {
+    const v = pick(d) || 0;
+    const col = el('div', {class: 'day' + (v ? '' : ' zero'),
+                           title: d.day + ' · ' + fmt(d)
+                                  + (d.why ? '\n' + d.why : '')});
+    const track = el('div', {class: 'daytrack'});
+    track.append(el('div', {class: 'dayfill',
+                            style: `height:${max ? Math.max(2, (v / max) * 100) : 2}%`}));
+    col.append(track);
+    col.append(el('div', {class: 'daylab', text: d.day.slice(5)}));
+    host.append(col);
+  }
+  return host;
+}
+
 function spendTab(host) {
   const c = DATA.cost || {};
   const bits = [];
-  if (!c.calls) {
+  if (!c.calls && !((c.warehouse || {}).calls)) {
     /* An absent ledger is not a free project. This store predates `model_calls`, or nothing has
        been asked here -- two different facts, and neither of them is a zero. */
     bits.push(block('No ledger in this store',
@@ -1732,22 +1811,68 @@ function spendTab(host) {
     host.replaceChildren(...bits);
     return;
   }
-  const money = n => '$' + (n < 1 ? n.toFixed(4) : n.toFixed(2));
-  bits.push(block('What the judged tier has cost', null, kv([
-    ['lifetime', el('span', {class: 'big', text: money(c.usd)})],
-    ['calls', num(c.calls)],
-    ['input tokens', num(c.input_tokens)],
-    ['output tokens', num(c.output_tokens) + ' -- shown, never priced: Jev does not bill output'],
+  const money = n => '$' + (n == null ? '--' : n < 1 ? n.toFixed(4) : n.toFixed(2));
+  const wh = c.warehouse || {};
+  bits.push(block('What this project has cost', null, el('div', {class: 'tiles'}, [
+    tile(money(c.usd || 0), 'thinking', num(c.calls || 0) + ' model call(s)'),
+    tile(wh.calls ? money(wh.usd) : '--', 'the warehouse',
+         wh.calls ? num(wh.calls) + ' statement(s), ' + bytes(wh.bytes_estimated)
+                  : 'no statement recorded'),
+    tile(num(c.input_tokens || 0), 'input tokens', 'output is shown and never priced'),
   ])));
+
+  const days = c.days || [];
+  if (days.length) {
+    const spice = el('div');
+    spice.append(el('p', {class: 'srclab', text: 'model spend per day'}));
+    spice.append(daySeries(days, d => d.usd, d => money(d.usd) + ' · '
+                                                 + num(d.calls) + ' call(s)'));
+    if (wh.calls) {
+      spice.append(el('p', {class: 'srclab', text: 'warehouse statements per day'}));
+      spice.append(daySeries(days, d => d.warehouse_calls,
+                             d => num(d.warehouse_calls) + ' statement(s), '
+                                  + bytes(d.warehouse_bytes)));
+    }
+    bits.push(block('Per day', 'A day that ran and spent nothing is a ZERO with the reason '
+      + 'beside it, never a missing column.',
+      el('div', {}, [spice, grid(days, [
+        {key: 'day', label: 'day', mono: 1, val: d => d.day},
+        {key: 'runs', label: 'runs', n: 1, val: d => d.runs},
+        {key: 'calls', label: 'calls', n: 1, val: d => d.calls},
+        {key: 'usd', label: 'usd', n: 1, val: d => d.usd,
+         cell: d => el('span', {text: money(d.usd)})},
+        {key: 'wh', label: 'statements', n: 1, val: d => d.warehouse_calls},
+        {key: 'why', label: 'why', val: d => d.why},
+      ], {sort: 'day'})])));
+  }
+
   const cols = [
     {key: 'k', label: '', mono: 1, val: r => r[0]},
     {key: 'calls', label: 'calls', n: 1, val: r => r[1]},
     {key: 'tok', label: 'input tokens', n: 1, val: r => r[2]},
     {key: 'usd', label: 'usd', n: 1, val: r => r[3], cell: r => el('span', {text: money(r[3])})},
   ];
-  for (const [title, rows] of [['by caller', c.by_caller], ['by question family', c.by_family],
-                               ['by day', c.by_day]]) {
+  for (const [title, rows] of [['by caller', c.by_caller], ['by question family', c.by_family]]) {
     if (rows && rows.length) bits.push(block(title, null, grid(rows, cols, {sort: 'usd'})));
+  }
+  if (wh.calls) {
+    /* One table for what assay spent on thinking, one for what it spent on the warehouse. They
+       are priced by different people in different units, and a merged number would be two
+       facts sharing one name. */
+    const wcols = [
+      {key: 'k', label: '', mono: 1, val: r => r[0]},
+      {key: 'n', label: 'statements', n: 1, val: r => r[1]},
+      {key: 'by', label: 'scanned', n: 1, val: r => r[2],
+       cell: r => el('span', {text: bytes(r[2])})},
+      {key: 'usd', label: 'usd', n: 1, val: r => r[3], cell: r => el('span', {text: money(r[3])})},
+      {key: 'ms', label: 'time', n: 1, val: r => r[4],
+       cell: r => el('span', {text: (r[4] / 1000).toFixed(1) + 's'})},
+      {key: 'bad', label: 'failed', n: 1, val: r => r[5]},
+    ];
+    bits.push(block('The warehouse, by caller',
+      'Every statement assay sends goes out through YOUR dbt, so this is what it asked your '
+      + 'warehouse to do. A failed statement is counted and kept out of the money.',
+      grid(wh.by_caller || [], wcols, {sort: 'by'})));
   }
   /* *** WHAT THIS TOTAL DOES NOT COVER, ON THE PAGE AND NOT ONLY IN THE TERMINAL. *** */
   const notes = [];
@@ -1762,6 +1887,20 @@ function spendTab(host) {
   if (!c.output_calls)
     notes.push('No call has ever returned an output token count. Jev does not bill output, so '
       + 'nothing is missing from the dollars -- only from the counts.');
+  if (wh.failed)
+    notes.push(num(wh.failed) + ' warehouse statement(s) FAILED and are not in the money. A '
+      + 'failed statement and an empty result are different facts here.');
+  if (wh.unestimated)
+    notes.push(num(wh.unestimated) + ' warehouse statement(s) could not be estimated and are not '
+      + 'in the bytes. `dbt docs generate` gives assay the column types; `assay probe` gives it '
+      + 'the row counts.');
+  if (wh.calls && !wh.bytes_measured_calls)
+    notes.push('Every byte figure here is an ESTIMATE from declared types and a known row count, '
+      + 'never a number an adapter returned.');
+  if (wh.calls && (!wh.rate_cards || !wh.rate_cards.length
+                   || (wh.rate_cards.length === 1 && wh.rate_cards[0] === 'duckdb.local')))
+    notes.push('The warehouse is priced as local DuckDB, which bills nothing. Set `cost.engine` '
+      + 'and a rate in audit.yml if this warehouse charges.');
   if (notes.length)
     bits.push(block('What this does not cover', null,
       el('ul', {}, notes.map(t => el('li', {text: t})))));

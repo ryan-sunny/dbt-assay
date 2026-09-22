@@ -211,7 +211,72 @@ def _cost(store) -> dict:
         return {}
     keep = ("usd", "input_tokens", "calls", "output_tokens", "output_calls",
             "calls_without_usage", "id_source", "by_caller", "by_family", "by_day")
-    return {k: led[k] for k in keep}
+    out = {k: led[k] for k in keep}
+    out["days"] = _spend_days(store, led)
+    try:
+        wh = cost_mod.warehouse_ledger(store)
+        out["warehouse"] = {k: wh[k] for k in
+                            ("calls", "bytes_estimated", "usd", "wall_ms", "failed",
+                             "unestimated", "bytes_measured_calls", "rate_cards",
+                             "by_caller", "by_kind", "by_day")}
+    except Exception:                                            # noqa: BLE001
+        out["warehouse"] = {}
+    return out
+
+
+def _spend_days(store, led: dict) -> list:
+    """One row per day this project RAN, whether or not it spent anything.
+
+    *** A DAY WITH RUNS AND NO CALLS WAS SIMPLY ABSENT, AND THAT READS AS BROKEN RECORDING. ***
+    Reported from the field: seven runs on 2026-09-22, zero `model_calls` rows on 2026-09-22, and
+    the Spend tab silently skipped the day. The truth was that every judged state was cached and
+    nothing needed asking -- a good story the tab could not tell, because an omitted row and a
+    zero row look the same once the day is gone.
+
+    So the days come from `runs` UNION the days anything was spent, and a zero is rendered as a
+    zero with the reason beside it.
+    """
+    if store is None:
+        return []
+    spent = {str(d): {"usd": usd, "calls": calls, "tokens": tok}
+             for d, calls, tok, usd in (led.get("by_day") or [])}
+    runs_by_day: dict = {}
+    try:
+        for day, n in store.con.execute(
+                "select cast(started_at as date) as d, count(*) from runs "
+                "where started_at is not null group by 1").fetchall():
+            runs_by_day[str(day)] = int(n)
+    except Exception:                                            # noqa: BLE001
+        runs_by_day = {}
+    wh_by_day: dict = {}
+    try:
+        from . import cost as cost_mod
+        for day, calls, by, usd, ms, bad in (
+                cost_mod.warehouse_ledger(store).get("by_day") or []):
+            wh_by_day[str(day)] = {"calls": calls, "bytes": by, "usd": usd,
+                                   "wall_ms": ms, "failed": bad}
+    except Exception:                                            # noqa: BLE001
+        wh_by_day = {}
+
+    out = []
+    for day in sorted(set(spent) | set(runs_by_day) | set(wh_by_day), reverse=True):
+        s = spent.get(day) or {"usd": 0.0, "calls": 0, "tokens": 0}
+        w = wh_by_day.get(day) or {}
+        runs = runs_by_day.get(day, 0)
+        # The reason a day is zero, said rather than left to be assumed. Only one of these is
+        # "nothing happened"; the other two are the interesting ones.
+        if s["calls"]:
+            why = ""
+        elif runs:
+            why = ("ran, asked nothing: every judged state was already answered and served from "
+                   "the cache")
+        else:
+            why = "no run recorded on this day"
+        out.append({"day": day, "usd": s["usd"], "calls": s["calls"], "tokens": s["tokens"],
+                    "runs": runs, "why": why,
+                    "warehouse_calls": w.get("calls", 0), "warehouse_usd": w.get("usd", 0.0),
+                    "warehouse_bytes": w.get("bytes", 0), "warehouse_ms": w.get("wall_ms", 0)})
+    return out
 
 
 def _latest_run(store, table: str) -> str | None:
