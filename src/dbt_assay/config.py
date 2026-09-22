@@ -265,6 +265,8 @@ class Config:
     # It never measures volume or freshness itself: that would make it a second monitoring tool
     # with a second opinion, which is the problem this whole area exists to avoid.
     monitoring: dict = field(default_factory=dict)
+    # What assay asks the router not to do with your SQL. None means the shipped policy.
+    jev_provider: dict | None = None
     provider: str = "auto"
     model: str = "jev-latest"
     max_spend_usd: float = 1.0
@@ -318,6 +320,12 @@ class Config:
         # the same validator -- which refuses syntax it does not understand rather than matching
         # everything, because a selector silently ignored scopes nothing while looking as though
         # it did.
+        # *** `jev.provider` ALREADY MEANS WHICH PROVIDER, NOT HOW TO ROUTE. ***
+        # Reading the routing policy off that key returned the string "auto" as a policy dict.
+        # One word, two meanings, in the same block -- caught by printing the parsed value.
+        jev_block = data.get("jev") or {}
+        if "routing" in jev_block:
+            cfg.jev_provider = jev_block.get("routing") or {}
         cfg.elementary = data.get("elementary") or {}
         cfg.monitoring = data.get("monitoring") or {}
         cfg.vocab = data.get("vocab") or {}
@@ -447,6 +455,20 @@ jev:
   provider: auto
   model: jev-latest
   max_spend_usd: 1.0      # hard cap per invocation. ~80 full sweeps of a 300-model project.
+
+  # WHO MAY SEE YOUR SQL, when the provider is a router. A judged call sends a digest of compiled
+  # SQL and the prose your project wrote about itself; this is the request that they not keep it.
+  # Omit the block for the shipped policy below; `routing: {}` sends none.
+  #
+  # NOTE: OpenRouter documents the `provider` object for chat completions, and assay posts to
+  # their decisions endpoint. assay SENDS it and cannot confirm it was applied -- `assay config`
+  # says so rather than reporting it as a protection. For a guarantee, use TYPESAFE_API_KEY and
+  # talk to TypeSafe directly.
+  #  routing:
+  #    data_collection: deny      # only endpoints that do not collect prompts
+  #    zdr: true                  # stricter: zero-retention endpoints only
+  #    require_parameters: true   # never a provider that would silently drop what was sent
+  #    allow_fallbacks: false     # fail rather than route somewhere you did not choose
 
 gating:
   # `fail` is refused for a question with fewer recorded human verdicts than this, and downgraded

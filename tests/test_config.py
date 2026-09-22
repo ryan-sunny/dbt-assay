@@ -217,3 +217,60 @@ def test_an_unconfigured_check_falls_back_to_severity_and_can_never_fail():
     assert got["key_stopped_holding"] == ("queue", "default by severity")
     assert got["seed_reaches_nothing"] == ("annotate", "default by severity")
     assert all(act != "fail" for act, _ in got.values()), "an unconfigured check gated a build"
+
+
+# ------------------------------------------------------- what assay asks the router not to do
+
+def test_the_routing_policy_is_not_the_provider_name(tmp_path):
+    """*** `jev.provider` ALREADY MEANT WHICH PROVIDER, AND THE POLICY SWALLOWED IT. ***
+
+    Reading the routing policy off `jev.provider` returned the string "auto" as a policy dict --
+    one word, two meanings, in the same config block. Caught by printing the parsed value rather
+    than by reading the code.
+    """
+    from dbt_assay.config import Config
+    (tmp_path / "audit.yml").write_text("jev:\n  provider: openrouter\n  routing:\n    zdr: true\n")
+    cfg = Config.load(tmp_path)
+    assert cfg.provider == "openrouter", "the provider NAME was overwritten by the policy"
+    assert cfg.jev_provider == {"zdr": True}
+
+
+def test_no_routing_block_means_the_shipped_policy_and_an_empty_one_means_none(tmp_path):
+    """None and {} are different answers: 'use the default' and 'send nothing'."""
+    from dbt_assay.config import Config
+    (tmp_path / "audit.yml").write_text("jev:\n  provider: auto\n")
+    assert Config.load(tmp_path).jev_provider is None
+    (tmp_path / "audit.yml").write_text("jev:\n  routing: {}\n")
+    assert Config.load(tmp_path).jev_provider == {}
+
+
+def test_the_shipped_policy_denies_collection_and_refuses_a_silent_fallback():
+    """*** A JUDGED CALL SENDS A DIGEST OF YOUR SQL AND YOUR PROSE. ***
+    The default should be the careful one, because the default is what almost everybody runs."""
+    from dbt_assay.jev import PROVIDER_POLICY
+    assert PROVIDER_POLICY["data_collection"] == "deny"
+    assert PROVIDER_POLICY["allow_fallbacks"] is False
+    assert PROVIDER_POLICY["require_parameters"] is True
+
+
+def test_the_policy_is_only_sent_where_there_is_a_router_to_read_it():
+    """TypeSafe direct is one provider, so there is no routing decision to state."""
+    from dbt_assay.jev import PROVIDERS
+    assert PROVIDERS["openrouter"].get("takes_provider") is True
+    assert not PROVIDERS["typesafe"].get("takes_provider")
+
+
+def test_a_rejected_policy_is_recorded_rather_than_silently_dropped():
+    """*** assay MUST NOT GO ON BELIEVING IT ASKED FOR SOMETHING IT NEVER SENT. ***
+
+    The `provider` object is documented for chat completions and assay posts to a different
+    endpoint. If it is rejected the request still has to work -- but the fact that the policy was
+    NOT applied has to survive, or the privacy claim outlives the thing that was supposed to
+    deliver it.
+    """
+    import inspect
+
+    from dbt_assay.jev import Client
+    src = inspect.getsource(Client.ask)
+    assert "provider_rejected" in src, "a rejected policy leaves no trace"
+    assert 'body.pop("provider")' in src, "a rejected policy would fail the call forever"

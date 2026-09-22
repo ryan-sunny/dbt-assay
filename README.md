@@ -715,6 +715,35 @@ Nothing, until you turn the judgment tier on.
 - `--print-state` on any command renders exactly what would be sent, without sending it.
 - The warehouse connection is opened read-only.
 
+**And who may keep it.** When the provider is a router, assay sends a routing policy with every
+judged call — `data_collection: deny`, `require_parameters: true`, `allow_fallbacks: false`. Deny
+restricts routing to endpoints that do not collect prompts; `require_parameters` keeps the request
+away from a provider that would silently drop what it was sent, which for a typed decision changes
+the answer rather than failing; and refusing fallbacks means a request fails instead of routing
+somewhere you did not choose, so a 503 is the policy working rather than an outage. Add
+`zdr: true` for zero-retention endpoints only. It is `jev.routing` in `audit.yml`, and
+`routing: {}` sends none.
+
+**assay sends it and does not claim it.** OpenRouter documents the `provider` object for *chat
+completions*, and assay posts to their decisions endpoint. Nothing says it is honoured there, so
+`assay config` prints it as **not confirmed** rather than as a protection assay has — and if the
+endpoint ever rejects it, the policy is dropped for that call and the rejection is recorded, so
+assay cannot go on believing it asked for something it never sent. For a guarantee rather than a
+request, use `TYPESAFE_API_KEY` and talk to TypeSafe directly.
+
+**What the key has left, from the key.** `assay cost` reads the calls assay made; it cannot see a
+key shared with something else, a credit limit, or a balance near the floor. `assay config` asks
+the provider:
+
+```
+this key: $49.45 of $50.00 left, $2.00 used all time
+```
+
+A key with **no** limit is called out, because a limit per key is the blast radius — a runaway run
+exhausts its own budget and gets a 402 while everything else keeps serving. So is a balance under
+$10: OpenRouter runs extra billing checks and expires caches faster below that, so calls get
+slower before they stop, and their documented working floor is $10–20.
+
 ## Contract diff
 
 ```bash

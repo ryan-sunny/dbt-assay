@@ -1071,6 +1071,45 @@ def config(
                          "your environment, or put it in a .env here or above.[/]")
     console.print(t)
 
+    # *** WHO MAY SEE YOUR SQL, AND WHAT THIS KEY HAS LEFT. ***
+    # Two different kinds of fact, and they are printed differently on purpose: one is what assay
+    # ASKS FOR and cannot verify on this endpoint, the other is what the provider SAYS about the
+    # key. Printing them the same way is how a request becomes a guarantee in somebody's head.
+    from .jev import PROVIDER_POLICY, key_headroom
+    policy = getattr(cfg, "jev_provider", None)
+    policy = PROVIDER_POLICY if policy is None else policy
+    if client.available and name == "openrouter":
+        if policy:
+            terms = ", ".join(f"{k}={v}" for k, v in sorted(policy.items()))
+            console.print(f"\n[dim]routing policy assay SENDS: {terms}[/]")
+            console.print("[yellow]  not confirmed by this endpoint.[/] [dim]OpenRouter documents "
+                          "the `provider` object for chat completions; assay posts to "
+                          "`/api/alpha/decisions`. It is sent because it costs nothing and helps "
+                          "if it is read, and it is not a protection assay can claim. For a "
+                          "guarantee, use TYPESAFE_API_KEY and talk to TypeSafe directly.[/]")
+        else:
+            console.print("\n[yellow]no routing policy is sent[/] [dim](`jev.routing: {}` in "
+                          "audit.yml). Any endpoint the router picks may serve and may keep "
+                          "what is sent.[/]")
+        head = key_headroom(cfg.provider)
+        left, lim = head.get("limit_remaining"), head.get("limit")
+        if lim is not None or left is not None:
+            console.print("[dim]this key: "
+                          + (f"${left:.2f} of ${lim:.2f} left" if left is not None
+                             and lim is not None else "no credit limit set")
+                          + (f", ${head['usage']:.2f} used all time" if head.get("usage")
+                             is not None else "") + "[/]")
+            if lim is None:
+                console.print("[yellow]  this key has no credit limit.[/] [dim]A limit per key is "
+                              "the blast radius: a runaway run exhausts its own budget and 402s "
+                              "while everything else keeps serving.[/]")
+            elif left is not None and left < 10:
+                console.print("[yellow]  under $10 left.[/] [dim]OpenRouter runs extra billing "
+                              "checks and expires caches faster below that, so calls get slower "
+                              "before they stop. Their documented working floor is $10-20.[/]")
+        elif head.get("note"):
+            console.print(f"[dim]key limits: {head['note']}[/]")
+
     bad = 0
     if cfg.vocab:
         scoped = sum(1 for b in cfg.vocab.values()

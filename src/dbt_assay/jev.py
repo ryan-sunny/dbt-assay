@@ -38,6 +38,24 @@ from dotenv import find_dotenv, load_dotenv
 # about 1.2 cents, and nothing at all once the cache is warm.
 USD_PER_INPUT_TOKEN = 0.042 / 1_000_000
 
+# *** WHAT assay ASKS THE ROUTER NOT TO DO WITH YOUR SQL. ***
+# A judged call sends a digest of compiled SQL and the prose your project wrote about itself. Who
+# may serve that, and whether they may keep it, is a decision somebody should be able to make and
+# see -- and until now assay made it by default and said nothing.
+#
+# `data_collection: deny` restricts routing to endpoints that do not collect prompts.
+# `zdr: true` restricts it further, to zero-retention endpoints.
+# `require_parameters: true` keeps the request away from a provider that would silently drop the
+# parameters it was sent, which for a typed-decision call would change the answer rather than
+# fail.
+# `allow_fallbacks: false` makes a request FAIL rather than route somewhere you did not choose --
+# a 503 is then the policy working, not an outage.
+PROVIDER_POLICY = {
+    "data_collection": "deny",
+    "require_parameters": True,
+    "allow_fallbacks": False,
+}
+
 PROVIDERS = {
     "typesafe": {
         "url": "https://api.typesafe.ai/v1/systemone",
@@ -48,6 +66,10 @@ PROVIDERS = {
         "url": "https://openrouter.ai/api/alpha/decisions",
         "env": "OPENROUTER_API_KEY",
         "model": "typesafe/jev-1.13",
+        # The router in front of many providers, so routing policy is a thing to state here.
+        "takes_provider": True,
+        # Real headroom, which pairs with the ledger: what a key has left, from the key itself.
+        "key_url": "https://openrouter.ai/api/v1/key",
     },
 }
 
@@ -227,6 +249,10 @@ class Client:
     spent_usd: float = 0.0
     calls: int = 0
     input_tokens: int = 0
+    # None means the shipped policy; {} means send none. `jev.provider` in audit.yml sets it.
+    provider_policy: dict | None = None
+    # Whether the endpoint ever rejected the policy -- measured, not assumed.
+    provider_rejected: str = ""
     _resolved: tuple | None = field(default=None, repr=False)
 
     def _conn(self) -> tuple[str, dict, str]:
@@ -254,6 +280,16 @@ class Client:
         _name, spec, key = self._conn()
         model = self.model or spec["model"]
         body = {"model": model, "state": state, "questions": questions}
+        # *** SENT, AND NOT CLAIMED. ***
+        # OpenRouter documents the `provider` object for CHAT COMPLETIONS. assay posts to
+        # `/api/alpha/decisions`, a different endpoint that proxies TypeSafe's wire format, and
+        # nothing says the object is honoured there. So it is sent -- it costs nothing and helps
+        # if it is read -- and `assay config` reports it as UNCONFIRMED rather than as a
+        # protection assay has. A guard that cannot see is worse than no guard, and a privacy
+        # claim nobody verified is that guard.
+        policy = self.provider_policy if self.provider_policy is not None else PROVIDER_POLICY
+        if policy and spec.get("takes_provider"):
+            body["provider"] = dict(policy)
 
         # Estimated BEFORE the call, because a cap that only fires after the spend is not a cap.
         est = len(json.dumps(body, default=str)) / 4 * USD_PER_INPUT_TOKEN
@@ -270,6 +306,17 @@ class Client:
                                         "Content-Type": "application/json"})
                 out = r.json()
                 if "answers" not in out:
+                    # *** A REJECTED POLICY IS DROPPED ONCE, LOUDLY, NOT SILENTLY FOREVER. ***
+                    # The `provider` object is documented for chat completions and this is a
+                    # different endpoint. If it turns out to be rejected, the request must still
+                    # work -- but the fact that the routing policy was NOT applied has to survive,
+                    # or assay would go on believing it asked for something it never sent.
+                    if "provider" in body and r.status_code in (400, 422):
+                        self.provider_rejected = (
+                            f"HTTP {r.status_code}: this endpoint rejected the `provider` routing "
+                            f"policy, so it was NOT applied. {json.dumps(out)[:160]}")
+                        body.pop("provider")
+                        continue
                     # A 4xx here is a malformed QUESTION, not a transient fault, and the message
                     # names the field. Surfacing it beats retrying what cannot succeed.
                     raise RuntimeError(f"HTTP {r.status_code}: {json.dumps(out)[:300]}")
@@ -287,6 +334,42 @@ class Client:
                 if attempt < self.retries - 1:
                     time.sleep(1.5 * (attempt + 1))
         raise RuntimeError(f"jev failed after {self.retries} attempts: {last}")
+
+
+def key_headroom(provider: str = "auto") -> dict:
+    """What the key itself says is left, from the provider that knows.
+
+    *** THE LEDGER SAYS WHAT WAS SPENT. THIS SAYS WHAT IS LEFT. ***
+    `assay cost` reads the calls assay made, which cannot see a key shared with anything else, a
+    credit limit set on it, or a balance nearing the floor where a router starts adding billing
+    checks and expiring caches. One request, before a run, turns "will this finish" from a guess
+    into a number.
+
+    Unlike the routing policy, every figure here is the provider's own answer about the key, so
+    it is reported as fact rather than as something assay asked for.
+    """
+    try:
+        import httpx
+    except ImportError:
+        return {"note": "the judgment tier needs httpx: `uv add dbt-assay[jev]`"}
+    try:
+        name, spec, key = resolve_provider(provider)
+    except NoProvider as e:
+        return {"note": str(e)}
+    url = spec.get("key_url")
+    if not url:
+        return {"provider": name,
+                "note": f"{name} does not publish a key endpoint, so assay cannot say what this "
+                        f"key has left. That is not the same as it having plenty."}
+    try:
+        r = httpx.get(url, timeout=15, headers={"Authorization": f"Bearer {key}"})
+        d = (r.json() or {}).get("data") or {}
+    except Exception as e:                                       # noqa: BLE001
+        return {"provider": name, "note": f"could not read the key's limits: {e}"}
+    return {"provider": name, "label": d.get("label"), "limit": d.get("limit"),
+            "limit_remaining": d.get("limit_remaining"), "limit_reset": d.get("limit_reset"),
+            "usage": d.get("usage"), "usage_daily": d.get("usage_daily"),
+            "is_free_tier": d.get("is_free_tier")}
 
 
 def unpack(ans: dict) -> tuple:
