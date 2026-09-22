@@ -140,7 +140,9 @@ def test_no_measured_agreement_says_so_instead_of_falling_back(tmp_path):
     out = [i for i in suggest.build(s, Config(), set(), "r1")
            if i.section == "questions" and i.key == "some_family"]
     assert out, "a family with only unclear verdicts produced nothing"
-    assert "no agreement rate" in out[0].headline
+    # The headline names the edit somebody has to make. It used to read "has no agreement rate to
+    # gate on", which states the machinery and leaves the reader to work out the consequence.
+    assert "unclear" in out[0].headline and "QUESTION" in out[0].headline, out[0].headline
     assert "unclear" in " ".join(out[0].measured).lower()
     assert "QUESTION" in " ".join(out[0].measured), "an unclear points at the question, not the config"
     assert not out[0].draft.strip().startswith("questions:"), "it proposed an action anyway"
@@ -158,7 +160,14 @@ def test_unclear_never_enters_the_agreement_denominator(tmp_path):
     out = [i for i in suggest.build(s, Config(), set(), "r1")
            if i.section == "questions" and i.key == "fam"]
     assert out
-    assert "9/10" in out[0].headline, out[0].headline
+    # Ten rulings, not forty: the thirty `unclear` are excluded from the denominator. The
+    # headline leads with the fact that decides what to do -- ten is under the floor of twenty,
+    # so the rate is not yet worth gating on -- rather than with the untrustworthy rate itself.
+    head = out[0].headline
+    assert "10 ruling" in head, head
+    assert "40" not in head, f"unclear entered the denominator: {head}"
+    assert "under the floor" in head, head
+    assert "10 ruling" in " ".join(out[0].measured)
 
 
 # ----------------------------------------------------------------- ranking and ordering

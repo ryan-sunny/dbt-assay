@@ -365,7 +365,8 @@ def _waivers_from_disagreements(store, cfg) -> list[Suggestion]:
         out.append(Suggestion(
             section="waivers", key=f"{name}:{q}", rank=1.0,
             basis="a disagree ruling, whose reason is already written",
-            headline=f"`{q}` was ruled wrong on {name}, and nothing waives it",
+            headline=f"{name} needs a waiver for `{q}` -- somebody ruled this check wrong "
+                     f"here and wrote why, and nothing records that decision",
             measured=[f"ruled by {src or 'unrecorded'}"
                       + (f" on {str(when)[:10]}" if when else ""),
                       f"reason as given: {str(note)[:300]}"],
@@ -401,7 +402,8 @@ def _questions_unconfigured(cfg, firing: set) -> list[Suggestion]:
         out.append(Suggestion(
             section="questions", key=name, rank=2.0,
             basis="fired, and the config does not name it",
-            headline=f"`{name}` is firing and audit.yml says nothing about it",
+            headline=f"`{name}` is firing and audit.yml does not say what to do about it, "
+                     f"so it warns and cannot fail a build",
             measured=[f"shipped opinion: {act or 'none'}"
                       + ("" if act in ACTIONS or not act else " (a threshold, not a flat action)")],
             decide=("With no `questions:` entry the check falls back to severity, so a release "
@@ -486,7 +488,11 @@ def _questions_from_agreement(store, cfg) -> list[Suggestion]:
             out.append(Suggestion(
                 section="questions", key=fam, rank=0.5,
                 basis="no measured agreement, and why",
-                headline=f"`{fam}` has no agreement rate to gate on",
+                headline=(f"`{fam}` has never been ruled on, so nothing measures whether it "
+                          f"is right"
+                          if not u else
+                          f"`{fam}` was ruled `unclear` {u} time(s) and never answered, so the "
+                          f"fix is to the QUESTION and not to the config"),
                 measured=[why, f"current action: {cur or 'shipped default'}"],
                 draft=f"# no measurement for `{fam}`. Not proposing an action from the shipped\n"
                       f"# default alone -- that would read as measured and is not."))
@@ -502,8 +508,12 @@ def _questions_from_agreement(store, cfg) -> list[Suggestion]:
         out.append(Suggestion(
             section="questions", key=fam, rank=float(ruled) * (1.0 if thin else 2.0),
             basis="measured agreement per family",
-            headline=f"`{fam}` agrees {a}/{ruled} ({rate:.0%})"
-                     + (f", and is set to `{cur}`" if cur else ", and has no action set"),
+            headline=(
+                f"`{fam}` has only {ruled} ruling(s), under the floor of {floor}, so its "
+                f"{rate:.0%} agreement is not a number to gate on yet"
+                if thin else
+                f"`{fam}` agrees {rate:.0%} of the time over {ruled} rulings, which supports "
+                f"`{want}`" + (f" rather than the `{cur}` it is set to" if cur else "")),
             measured=[note, f"{u} unclear, excluded from the denominator",
                       f"current action: {cur or 'shipped default'}"],
             draft=(f"questions:\n  {fam}:\n    action: {want}\n"

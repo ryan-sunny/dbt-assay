@@ -87,7 +87,30 @@ tr.on td{background:#eef5f8}
 .wrap2{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,2.1fr);gap:16px;
 align-items:stretch;height:100%}
 .wrap2 > *{min-height:0}
-.list{height:100%;overflow:auto;border:1px solid var(--line);border-radius:8px}
+/* *** THE FILTERS WERE NOT PART OF THE HEIGHT, SO THE WHOLE PAGE SCROLLED. ***
+   The left column is a search box, some dropdowns and a list, and only the LIST was bound to the
+   window. Bar plus list therefore came to more than the column, the column grew, and the document
+   scrolled underneath a header that was supposed to be fixed -- "the screen jankily scrolls down
+   when it shouldn't". A column is a flex stack now: the controls take what they need and the list
+   takes the rest, so the pane is exactly the window on every tab. */
+.md > :first-child{margin-top:0}
+.md > :last-child{margin-bottom:0}
+.mdh{margin:14px 0 5px;font-size:13.5px;font-weight:650}
+.mdlist{margin:6px 0;padding-left:20px;font-size:13px;color:var(--ink)}
+.mdlist li{margin:2px 0}
+.mdpre{white-space:pre-wrap;font-size:12px;background:var(--bg);border:1px solid var(--line);
+  border-radius:4px;padding:8px 10px;margin:8px 0;overflow-x:auto}
+.md code{font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:3px;
+  padding:0 3px}
+.gridhost{display:flex;flex-direction:column;height:100%;min-height:0}
+.gridhost > .bar{flex:0 0 auto}
+.gridhost > .list{flex:1 1 auto}
+.pane{display:flex;flex-direction:column;height:100%;min-height:0}
+.pane > .panehead{flex:0 0 auto}
+.pane > .gridhost{flex:1 1 auto;min-height:0}
+.panebody{flex:1 1 auto;min-height:0;display:flex}
+.panebody > .gridhost{flex:1 1 auto;min-height:0;width:100%}
+.list{height:100%;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:8px}
 .detail{border:1px solid var(--line);border-radius:8px;background:var(--card);padding:16px 18px;
 height:100%;overflow:auto}
 .detail h2{margin:0 0 2px;font-size:17px}
@@ -290,7 +313,10 @@ function grid(rows, cols, opts) {
   }));
   const body = el('tbody');
   const table = el('table', {}, [el('thead', {}, [head]), body]);
-  const host = el('div', {}, [bar, el('div', {class: opts.scroll ? 'list' : '', }, [table])]);
+  /* A scrolling grid is a flex column: the bar is what it needs, the list is everything left.
+     Without this the bar sits OUTSIDE the height budget and the column overflows its pane. */
+  const host = el('div', {class: opts.scroll ? 'gridhost' : ''},
+                  [bar, el('div', {class: opts.scroll ? 'list' : '', }, [table])]);
 
   function draw() {
     let view = rows;
@@ -322,6 +348,90 @@ function grid(rows, cols, opts) {
   search.oninput = () => { q = search.value; draw(); };
   draw();
   host.redraw = draw;
+  return host;
+}
+
+/* *** SOME OF THESE PANES ARE DOCUMENTS, NOT INTERFACES. ***
+   A model's description and a finding's detail are prose with backticks, blank-line paragraphs
+   and the occasional list, written by people who write Markdown -- and they were rendered as one
+   `<p>` with the asterisks and hashes still in it. "all the attempted markdown that doesnt
+   render."
+
+   Sixty lines, inline, no dependency: the page stays one file that opens off a disk with no
+   network. It builds NODES and never HTML, so a description containing a script tag is a
+   description containing a script tag. A link is rendered as a link only when it is http(s);
+   anything else stays text, because `javascript:` in somebody's schema.yml is not a link. */
+function mdInline(text) {
+  const out = [];
+  const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*)|(\[[^\]\n]+\]\([^)\s]+\))/g;
+  let last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(document.createTextNode(text.slice(last, m.index)));
+    const s = m[0];
+    if (s[0] === '`') out.push(el('code', {text: s.slice(1, -1)}));
+    else if (s.slice(0, 2) === '**') out.push(el('b', {text: s.slice(2, -2)}));
+    else if (s[0] === '*') out.push(el('i', {text: s.slice(1, -1)}));
+    else {
+      const cut = s.indexOf(']');
+      const label = s.slice(1, cut), href = s.slice(cut + 2, -1);
+      out.push(/^https?:\/\//.test(href)
+        ? el('a', {class: 'lk', href: href, target: '_blank', rel: 'noreferrer', text: label})
+        : document.createTextNode(label));
+    }
+    last = m.index + s.length;
+  }
+  if (last < text.length) out.push(document.createTextNode(text.slice(last)));
+  return out;
+}
+
+function md(text) {
+  const host = el('div', {class: 'md'});
+  const lines = String(text == null ? '' : text).split('\n');
+  let i = 0, list = null, listTag = null;
+  const endList = () => { list = null; listTag = null; };
+  while (i < lines.length) {
+    const ln = lines[i];
+    if (/^\s*```/.test(ln)) {
+      endList();
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) { buf.push(lines[i]); i++; }
+      i++;                                       // the closing fence, or the end of the text
+      host.append(el('pre', {class: 'mdpre', text: buf.join('\n')}));
+      continue;
+    }
+    if (/^\s*$/.test(ln)) { endList(); i++; continue; }
+    const h = ln.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      endList();
+      /* h4 whatever the depth: these sit INSIDE a pane that already has an h2 and an h3, and a
+         description opening with `# Overview` must not outrank the thing it describes. */
+      host.append(el('h4', {class: 'mdh'}, mdInline(h[2])));
+      i++;
+      continue;
+    }
+    const bullet = ln.match(/^\s*[-*+]\s+(.*)$/);
+    const number = ln.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (bullet || number) {
+      const want = bullet ? 'ul' : 'ol';
+      if (listTag !== want) { endList(); list = el(want, {class: 'mdlist'}); host.append(list); }
+      listTag = want;
+      list.append(el('li', {}, mdInline((bullet || number)[1])));
+      i++;
+      continue;
+    }
+    endList();
+    /* A paragraph is consecutive prose lines joined, so a description hard-wrapped at 100 columns
+       reads as a paragraph rather than as eight short ones. */
+    const para = [];
+    while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^\s*```/.test(lines[i])
+           && !/^#{1,6}\s/.test(lines[i]) && !/^\s*[-*+]\s+/.test(lines[i])
+           && !/^\s*\d+[.)]\s+/.test(lines[i])) {
+      para.push(lines[i].trim());
+      i++;
+    }
+    if (para.length) host.append(el('p', {class: 'prose'}, mdInline(para.join(' '))));
+  }
   return host;
 }
 
@@ -501,11 +611,23 @@ function link(name, where) {
    the first screen tells you nothing about the shape of what is there and gives you nowhere
    obvious to click. So the summary is the view, and the rows are one click in, already filtered. */
 function drill(opts) {
-  const host = el('div');
-  const head = el('div');
-  const body = el('div');
+  /* *** ONE LAYOUT, USED BY EVERY TAB. ***
+     This was a full-width stack: a blurb, then a table, then -- once you drilled -- another
+     table. Nothing was height-bound, so the page scrolled as a whole, and a row you clicked told
+     you nothing until you went looking for it somewhere else. It is the same two-pane shell the
+     Findings tab already had: list on the left, bound to the window, and what you picked on the
+     right. */
+  const host = el('div', {class: 'wrap2'});
+  const left = el('div', {class: 'pane'});
+  const detail = el('div', {class: 'detail'});
+  const head = el('div', {class: 'panehead'});
+  const body = el('div', {class: 'panebody'});
   const back = el('button', {class: 'back', text: '\u2190 all ' + opts.noun});
   back.onclick = () => showGroups();
+
+  function blank(text) {
+    detail.replaceChildren(el('p', {class: 'empty', text: text}));
+  }
 
   /* *** ONE BAR, IN THE SAME PLACE, WHICHEVER VIEW YOU ARE IN. ***
      The first version put the view switch in the group bar and a breadcrumb above the rows, so
@@ -519,8 +641,10 @@ function drill(opts) {
     head.replaceChildren(el('p', {class: 'note', text: opts.blurb}));
     body.replaceChildren(grid(opts.groups, opts.groupCols, {
       placeholder: opts.groupFilter || 'filter...', pick: g => showRows(g, true),
-      sort: opts.groupSort, dir: opts.groupDir || -1, cap: 800,
+      sort: opts.groupSort, dir: opts.groupDir || -1, cap: 800, scroll: 1,
       controls: opts.controls || [], text: opts.groupText}));
+    blank('Pick a ' + (opts.groupNoun || opts.noun.replace(/s$/, ''))
+          + ' on the left to see what is in it.');
   }
   function showRows(g, drilled) {
     /* *** WHAT YOU ARE LOOKING AT IS A HEADING, NOT A CONTROL. ***
@@ -528,17 +652,26 @@ function drill(opts) {
        the one piece of text that says what this table IS read as another widget. It gets its own
        line as a small title, with the way back immediately to its left where a person looks for
        it. The filter bar below it goes back to holding only things you operate. */
-    const bits = [el('p', {class: 'note', text: opts.blurb})];
+    const bits = [];
     if (drilled) {
       bits.push(el('div', {class: 'titlerow'},
                    [back, el('h3', {class: 'crumb', text: opts.label(g)})]));
+    } else {
+      bits.push(el('p', {class: 'note', text: opts.blurb}));
     }
     head.replaceChildren(...bits);
     body.replaceChildren(grid(opts.rowsOf(g), opts.rowCols, {
       placeholder: 'filter...', cap: 2000, sort: opts.rowSort, dir: opts.rowDir || 1,
+      scroll: 1, pick: opts.detailOf ? r => showOne(r, g) : null,
       controls: opts.controls || [], text: opts.rowText, emptyText: 'nothing here'}));
+    blank(opts.detailOf ? 'Pick a row to read it in full.'
+                        : opts.label(g));
   }
-  host.append(head, body);
+  function showOne(row, g) {
+    detail.replaceChildren(...[].concat(opts.detailOf(row, g)));
+  }
+  left.append(head, body);
+  host.append(left, detail);
   showGroups();
   host.showGroups = showGroups;
   host.showRows = showRows;
@@ -869,7 +1002,7 @@ function modelsTab(host) {
     d.append(el('div', {class: 'path mono', text: m.path}));
     if (m.unreadable) d.append(el('p', {class: 'pill bad',
       text: 'assay could not read this model, so it is absent from everything below. That is not a pass.'}));
-    if (m.description) d.append(el('p', {class: 'prose', text: m.description}));
+    if (m.description) d.append(md(m.description));
 
     d.append(section('what one row is', kv([
       ['grain', fact(m.grain)],
@@ -1127,6 +1260,21 @@ function claimsTab(host) {
     ],
     rowsOf: g => g.rows, rowCols: rowCols, rowSort: 'v', rowDir: -1,
     rowText: c => [c.text, c.source_ref, c.kind].join(' '),
+    groupNoun: 'model',
+    /* The claim itself is a SENTENCE, and a sentence in a table cell is a sentence you skim.
+       The right pane is where it gets read. */
+    detailOf: c => [
+      el('h2', {text: c.kind || 'unclassified'}),
+      el('div', {class: 'path mono', text: c.subject_name + '  ·  ' + (c.source_ref || '')}),
+      section('what it says', el('p', {class: 'quote', text: c.text})),
+      section('has the code contradicted it',
+        c.contradicted == null
+          ? el('p', {class: 'note', text: 'Never asked. Not the same as supported: no question '
+              + 'about this claim has been put to a model, so there is no answer to trust.'})
+          : el('p', {class: 'note'}, [
+              el('span', {class: 'pill bad', text: 'contradicts @' + c.contradicted.toFixed(2)}),
+              el('span', {text: ' The SQL was read against this sentence and they disagree.'})])),
+    ],
   });
   host.replaceChildren(d);
 }
@@ -1172,7 +1320,7 @@ function findingsTab(host) {
       el('div', {class: 'path'}, [link(f.model), el('span', {class: 'mono tot',
         text: '  ·  ' + (f.file || '')})]),
       el('p', {class: 'prose', text: f.summary}),
-      section('what it means', el('p', {class: 'prose', text: f.detail || ''})),
+      section('what it means', md(f.detail || '')),
       section('severity', kv([
         ['weight', String(f.weight)],
         ['marts downstream', String(f.marts)],
@@ -1250,6 +1398,34 @@ function answersTab(host) {
     ],
     rowSort: 'c', rowDir: 1,
     rowText: a => [a.question, a.key, a.context, a.answer, a.prompt_version].join(' '),
+    groupNoun: 'question family',
+    /* *** THE QUESTION TEXT ABOVE ITS ANSWERS, WHICH IS THE THING BEING MEASURED. ***
+       A row read `column_role__what_is_it = dimension, 0.62` and the question it answered was
+       somewhere else entirely -- another tab. An answer without its question is a value with no
+       unit. */
+    detailOf: a => {
+      const q = (DATA.questions || []).find(x => a.question.startsWith(x.id_prefix + '__')
+                                                 || x.id_prefix === a.question.split('__')[0]);
+      const bits = [
+        el('h2', {text: a.answer || '(no answer)'}),
+        el('div', {class: 'path mono', text: a.question}),
+      ];
+      if (q && (q.instructions || {}).question)
+        bits.push(section('the question it answered',
+                          el('p', {class: 'quote', text: q.instructions.question})));
+      bits.push(section('about', el('p', {class: 'prose', text: a.context || a.key})));
+      bits.push(section('how sure', kv([
+        ['confidence', conf(a.confidence)],
+        ['next best', a.runner_up ? a.runner_up[0] + ' at ' + a.runner_up[1].toFixed(2)
+                                  : 'nothing else scored'],
+        ['ruled under', a.prompt_version || 'no recorded version'],
+      ])));
+      if (a.confidence != null && a.confidence < 0.6)
+        bits.push(el('p', {class: 'note', text: 'Under 0.60, so nothing is reported as a finding '
+          + 'from this. It is the model saying it cannot tell, which usually means the state it '
+          + 'was given does not carry what the question asks for.'}));
+      return bits;
+    },
   }));
 }
 
@@ -1544,61 +1720,86 @@ function block(title, note, node) {
    plausible definition written here would look exactly like a definition somebody decided on,
    and would then travel with every judged question from that point on. */
 function suggestTab(host) {
-  const S = DATA.suggestions || [], bits = [];
-  bits.push(el('p', {class: 'note', text: 'assay measured these and cannot know what they mean. '
-    + 'Every means: and implies: below is blank for you to fill in.'}));
+  const S = DATA.suggestions || [];
 
   if (!S.length) {
     /* An empty list is not a complete config, and the two must not read alike. */
-    bits.push(section('nothing to suggest', el('p', {class: 'note', text:
+    host.replaceChildren(section('nothing to suggest', el('p', {class: 'note', text:
       'No rule found a candidate. That is not the same as the config being complete: each rule '
       + 'needs its own evidence, and most of it is written during `assay check` and `assay probe`. '
       + 'A store with no rulings in it cannot propose a waiver, and says so rather than implying '
       + 'there is nothing to waive.'})));
-    host.replaceChildren(...bits);
     return;
   }
 
+  /* *** 113 CARDS OF EQUAL WEIGHT IN ONE COLUMN IS NOT A REPORT. ***
+     "i gotta scroll for 100 fucking years because of how badly made that UI is." Forty-four of
+     them read `X is 99.68% unique in Y and is named like a key` with an identical empty YAML
+     block underneath, which is repetition doing no work: the rows are the same shape, so they
+     are a TABLE, and what differs between groups is the REASON they fired.
+
+     So the left pane lists the reasons with a count each, and picking one lists its rows. The
+     draft YAML -- the thing you came to copy -- is in the right pane, once, for the row you
+     picked, rather than a hundred times down the page. */
   const LABEL = {open: 'Decide first', vocab: 'Vocabulary', questions: 'Per-check policy',
                  waivers: 'Waivers', explanations: 'Row explanations'};
   const SECT = ['open', 'vocab', 'questions', 'waivers', 'explanations'];
-  for (const sec of SECT) {
-    const rows = S.filter(x => x.section === sec);
-    if (!rows.length) continue;
-    const body = el('div', {});
-    let lastBasis = null, lastDecide = null;
-    for (const r of rows) {
-      /* Each RULE is its own list. Two rules measure different things in different units, so a
-         single ranking across them would declare one more important by an accident of scale. */
-      if (r.basis !== lastBasis) {
-        body.append(el('div', {class: 'rule', text: r.basis}));
-        lastBasis = r.basis;
-        lastDecide = null;
-      }
-      /* *** THE REFUSAL IS A PROPERTY OF THE RULE, NOT OF THE ROW. ***
-         Printed per card it was eight identical paragraphs, and eight copies of one sentence
-         read as noise rather than as the instruction it is -- so the eye skips it, which is the
-         opposite of what a block headed "assay will not pick between them" is for. */
-      if (r.decide && r.decide !== lastDecide) {
-        body.append(el('div', {class: 'sug-d', text: r.decide}));
-        lastDecide = r.decide;
-      }
-      const card = el('div', {class: 'sug'});
-      card.append(el('div', {class: 'sug-h', text: r.headline}));
-      if (r.measured && r.measured.length) {
-        const ul = el('ul', {class: 'sug-m'});
-        for (const m of r.measured) ul.append(el('li', {text: m}));
-        card.append(ul);
-      }
-      if (r.draft) card.append(el('pre', {class: 'sug-y', text: r.draft}));
-      body.append(card);
-    }
-    bits.push(section(LABEL[sec] + ' (' + rows.length + ')', body));
+  const byBasis = {};
+  for (const r of S) {
+    const k = (r.section || '') + '|' + (r.basis || '');
+    const g = byBasis[k] = byBasis[k] || {section: r.section, basis: r.basis || '(no rule)',
+                                          rows: [], decide: r.decide || ''};
+    g.rows.push(r);
+    if (r.decide && !g.decide) g.decide = r.decide;
   }
-  bits.push(el('p', {class: 'note', text: 'A suggestion is worth taking if accepting it moves a '
-    + 'number. A vocabulary term that changes no judgment is paid for on every call and bought '
-    + 'nothing, and the next run of this page will still be listing it.'}));
-  host.replaceChildren(...bits);
+  const groups = Object.values(byBasis).sort((a, b) =>
+    (SECT.indexOf(a.section) - SECT.indexOf(b.section)) || b.rows.length - a.rows.length);
+
+  host.replaceChildren(drill({
+    noun: 'reasons', groupNoun: 'reason', groups: groups, groupSort: 'n',
+    groupFilter: 'filter reasons...',
+    blurb: 'assay measured these and cannot know what they mean. Every means: and implies: in a '
+      + 'draft is blank for you to fill in. Grouped by the reason each one fired, because forty '
+      + 'rows of one reason are one decision.',
+    groupText: g => g.basis + ' ' + LABEL[g.section],
+    label: g => g.basis,
+    groupCols: [
+      {key: 'sec', label: 'what you would edit', val: g => LABEL[g.section] || g.section,
+       cell: g => el('span', {class: 'pill', text: LABEL[g.section] || g.section})},
+      {key: 'basis', label: 'why it fired', val: g => g.basis},
+      {key: 'n', label: 'items', n: 1, val: g => g.rows.length},
+      {key: 'open', label: '', val: g => (g.decide ? 1 : 0),
+       cell: g => g.decide ? el('span', {class: 'pill bad', text: 'needs a decision'})
+                           : el('span')},
+    ],
+    rowsOf: g => g.rows.slice().sort((a, b) => (b.rank || 0) - (a.rank || 0)),
+    rowCols: [
+      {key: 'h', label: 'candidate', val: r => r.headline},
+      {key: 'n', label: 'measured', n: 1, val: r => (r.measured || []).length},
+      {key: 'rank', label: 'rank', n: 1, val: r => r.rank},
+    ],
+    rowSort: 'rank', rowDir: -1,
+    rowText: r => [r.headline, r.key, (r.measured || []).join(' ')].join(' '),
+    detailOf: (r, g) => {
+      const bits = [el('h2', {text: r.key || r.headline})];
+      bits.push(el('div', {class: 'path mono', text: (LABEL[r.section] || r.section)
+                                                     + '  \u00b7  ' + (r.basis || '')}));
+      bits.push(el('p', {class: 'prose', text: r.headline}));
+      if (r.measured && r.measured.length)
+        bits.push(section('what was measured',
+          el('ul', {class: 'sug-m'}, r.measured.map(m => el('li', {text: m})))));
+      /* The refusal is a property of the RULE, so it is shown with the rule and not repeated on
+         every one of its rows. Eight copies of one sentence read as noise. */
+      if ((g && g.decide) || r.decide)
+        bits.push(section('assay will not pick between these',
+          el('div', {class: 'sug-d', text: (g && g.decide) || r.decide})));
+      if (r.draft) bits.push(section('paste this into audit.yml',
+        el('pre', {class: 'sug-y', text: r.draft})));
+      else bits.push(el('p', {class: 'note', text: 'No draft: there is nothing to paste until '
+        + 'the question above is answered.'}));
+      return bits;
+    },
+  }));
 }
 
 function goTab(name, label) {

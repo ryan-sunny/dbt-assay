@@ -13,7 +13,7 @@
       "usd": 0.0,
       "warehouse_bytes": 0,
       "warehouse_calls": 2,
-      "warehouse_ms": 7,
+      "warehouse_ms": 12,
       "warehouse_usd": 0.0,
       "why": "ran, asked nothing: every judged state was already answered and served from the cache"
     }
@@ -30,7 +30,7 @@
         1,
         0,
         0.0,
-        5,
+        8,
         1
       ],
       [
@@ -38,7 +38,7 @@
         1,
         0,
         0.0,
-        2,
+        4,
         1
       ]
     ],
@@ -48,7 +48,7 @@
         2,
         0,
         0.0,
-        7,
+        12,
         2
       ]
     ],
@@ -58,7 +58,7 @@
         1,
         0,
         0.0,
-        5,
+        8,
         1
       ],
       [
@@ -66,7 +66,7 @@
         1,
         0,
         0.0,
-        2,
+        4,
         1
       ]
     ],
@@ -79,6 +79,6 @@
     ],
     "unestimated": 2,
     "usd": null,
-    "wall_ms": 7
+    "wall_ms": 12
   }
 }

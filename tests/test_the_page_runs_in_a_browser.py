@@ -144,3 +144,107 @@ def test_the_review_form_loads_without_raising(tmp_path, project_dir):
             assert body, "the form rendered nothing at all"
         finally:
             browser.close()
+
+
+MD_SAMPLE = """# What this model is
+
+One row per **customer** and `order_date`. See [the spec](https://example.com/spec).
+
+- canceled rows are filtered out
+- amount is in cents
+
+```sql
+select 1
+```
+"""
+
+
+def test_markdown_in_a_description_renders_instead_of_showing_its_syntax(tmp_path, project_dir):
+    """*** THE PANES THAT ARE DOCUMENTS WERE RENDERED AS ONE FLAT PARAGRAPH. ***
+
+    Descriptions are written by people who write Markdown, so the hashes, asterisks and fences
+    came through as literal characters. Sixty lines, inline, no dependency.
+    """
+    import json
+
+    from playwright.sync_api import sync_playwright
+
+    man = project_dir / "manifest.json"
+    raw = json.loads(man.read_text())
+    uid = next(iter(raw["nodes"]))
+    raw["nodes"][uid]["description"] = MD_SAMPLE
+    man.write_text(json.dumps(raw))
+
+    out = tmp_path / "md.html"
+    r = CliRunner().invoke(app, ["page", str(out), "--target", str(project_dir),
+                                 "--store", str(tmp_path / "none.duckdb")])
+    assert r.exit_code == 0, r.output
+
+    name = raw["nodes"][uid]["name"]
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page()
+            errors: list[str] = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(out.as_uri())
+            page.click('nav button[data-tab="models"]')
+            page.wait_for_timeout(100)
+            page.fill('#p-models input[type=search]', name)
+            page.wait_for_timeout(100)
+            row = page.query_selector("#p-models tbody tr")
+            assert row is not None, f"no row for {name}"
+            row.click()
+            page.wait_for_timeout(150)
+            pane = page.query_selector("#p-models .detail")
+            html = pane.inner_html()
+            text = pane.inner_text()
+            assert "<h4" in html, "the heading is still a hash in a paragraph"
+            assert "<li" in html, "the bullets are still hyphens in a paragraph"
+            assert "<code" in html and "<b" in html
+            assert "<pre" in html, "the fenced block is still three backticks"
+            assert "# What this model is" not in text, "the syntax is on the screen"
+            assert "**customer**" not in text
+            assert not errors, "\n".join(errors[:5])
+        finally:
+            browser.close()
+
+
+def test_a_description_cannot_inject_anything(tmp_path, project_dir):
+    """It builds NODES and never HTML. A description is a warehouse's own content, and some
+    warehouses have `<script>` in a comment."""
+    import json
+
+    from playwright.sync_api import sync_playwright
+
+    man = project_dir / "manifest.json"
+    raw = json.loads(man.read_text())
+    uid = next(iter(raw["nodes"]))
+    raw["nodes"][uid]["description"] = (
+        "<img src=x onerror=alert(1)> and [click](javascript:alert(2)) and <b>not bold</b>")
+    man.write_text(json.dumps(raw))
+    name = raw["nodes"][uid]["name"]
+
+    out = tmp_path / "xss.html"
+    assert CliRunner().invoke(app, ["page", str(out), "--target", str(project_dir),
+                                    "--store", str(tmp_path / "n.duckdb")]).exit_code == 0
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page()
+            fired = []
+            page.on("dialog", lambda d: (fired.append(d.message), d.dismiss()))
+            page.goto(out.as_uri())
+            page.click('nav button[data-tab="models"]')
+            page.fill('#p-models input[type=search]', name)
+            page.wait_for_timeout(100)
+            page.query_selector("#p-models tbody tr").click()
+            page.wait_for_timeout(200)
+            pane = page.query_selector("#p-models .detail")
+            assert "<img" not in pane.inner_html(), "a description built an element"
+            assert "javascript:" not in pane.inner_html(), "a javascript: url became a link"
+            assert "<b>not bold</b>" in pane.inner_text(), "the tag should read as text"
+            assert not fired, f"a description executed: {fired}"
+        finally:
+            browser.close()
