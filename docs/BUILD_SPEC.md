@@ -104,6 +104,16 @@ name**. The total is derivable and never shown:
   assay.traverse  1,629 answers   $0.16
 ```
 
+Two days later the same store holds **19,707 decisions over 101M tokens**, so the ledger's first
+honest answer is roughly **$4.24 lifetime** — and the day axis is already there:
+
+```
+2026-09-21   9,762 answers   55,356,762 tok
+2026-09-20   9,945 answers   45,806,589 tok
+```
+
+That is the sanity anchor to check the first implementation against.
+
 ## Build
 
 **Schema.** Three columns on `model_decisions`, added by the existing `_add_missing_columns` path:
@@ -139,6 +149,10 @@ two runs over one store produce one total.
 - [ ] `model_decisions` has `output_tokens`, `usd`, `model_name`; existing stores migrate without
       losing rows (the `_add_missing_columns` path, called twice — see the `_reshape_adjudications`
       scar)
+- [ ] **no second timestamp.** `decided_at` already exists, is populated on every row (19,707 of
+      19,707 on the field store, 0 null) and already buckets by day. A `created_at` or
+      `charged_at` beside it is two spellings of one fact, and this project has paid for that
+      three times tonight alone. `--since` reads `decided_at`.
 - [ ] `usd` is written at decide time from the rate then in force, never derived on read
 - [ ] `assay cost` totals by caller, by family, by day; `--since`; `--json`
 - [ ] a call the provider returned no usage for records NULL and the report says how many
