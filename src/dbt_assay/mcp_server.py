@@ -785,7 +785,7 @@ class Backend:
             row = store.con.execute(
                 "select run_id from runs order by started_at desc, run_id desc limit 1").fetchone()
             run_id = row[0] if row else None
-        items = sug.build(store, cfg, firing, run_id, live)
+        items = sug.build(store, cfg, firing, run_id, live, self.state().project)
         if section:
             items = [i for i in items if i.section == section]
         out = {

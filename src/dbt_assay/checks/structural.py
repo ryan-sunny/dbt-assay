@@ -544,6 +544,11 @@ def run_all(project, digests: dict[str, Digest], schema=None) -> list[Finding]:
     for fn in SOURCE_CHECKS:
         out.extend(fn(project))
     out.extend(source_freshness_stale(project))
+    # What a COLUMN is, according to the person who wrote it down. Pure manifest, free, and in
+    # the same stream, so it reaches `check`, MCP, the store and the ruling loop by one path.
+    from .columns import COLUMN_CHECKS
+    for fn in COLUMN_CHECKS:
+        out.extend(fn(project, digests, schema))
     for f in out:
         b = project.blast_radius(f.subject)
         f.descendants, f.marts = b["descendants"], b["marts"]

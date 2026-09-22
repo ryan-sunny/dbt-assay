@@ -161,6 +161,9 @@ Anything that needs the warehouse goes **through your own dbt**, so assay never 
 | `seed_reaches_nothing` | a file you maintain, loaded on every build, that no model and no test reads |
 | `key_stopped_holding` | a column that WAS unique in an earlier observation and is not now. The failure that corrupts a warehouse, and it needs two probes to exist |
 | `key_column_started_mattering` | a column that used to be determined by the others and now adds identifying power, so the minimal key has grown |
+| `column_has_no_description` | columns nobody wrote a sentence for, loudest in an ingestion model where there is no upstream to ask. One finding per model, because it is one decision |
+| `models_disagree_about_a_column` | one column name described two different ways in two models. The `section_id` problem, generalised: invisible to every check that reads one model at a time |
+| `description_promises_what_the_column_cannot_keep` | a description saying "always populated" over a COALESCE default. The column is never NULL because a literal was substituted, so the sentence is true of the column and false of the data |
 
 The last one needs `--verify` and it ships with its refusals, because most edges drop rows on
 purpose. On a 357-model warehouse that is 45 candidate hops out of 358 models, and two findings.

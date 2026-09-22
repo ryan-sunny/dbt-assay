@@ -424,7 +424,7 @@ def context(store, project, cfg, findings=None, volume_json: dict | None = None)
     # every answer. Candidates are ranked by how often this warehouse joins on them, and the top
     # twenty is a sitting; the rest are still in `assay suggest --section vocab`.
     more = 0
-    for row in _candidates(store, cfg, findings or []):
+    for row in _candidates(store, cfg, findings or [], project):
         if row.key in have:
             continue
         have.add(row.key)
@@ -446,14 +446,14 @@ def context(store, project, cfg, findings=None, volume_json: dict | None = None)
     }
 
 
-def _candidates(store, cfg, findings) -> list:
+def _candidates(store, cfg, findings, project=None) -> list:
     """Vocabulary candidates `suggest` already ranks, with `means:` empty as it always returns."""
     from . import suggest as sug
     if store is None:
         return []
     try:
         firing = {f.check for f in findings}
-        return [r for r in sug.build(store, cfg, firing, None, sug.live_pairs(findings))
+        return [r for r in sug.build(store, cfg, firing, None, sug.live_pairs(findings), project)
                 if r.section == "vocab"]
     except Exception:                                            # noqa: BLE001
         return []

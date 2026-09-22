@@ -145,6 +145,23 @@ def _edges(project, digests, schema) -> list[Subject]:
     return out
 
 
+def described(m) -> dict:
+    """{column_lower: description} from this model's schema.yml. The one thing a person wrote.
+
+    *** THE COLUMN STATE WAS BUILT FROM THE NAME AND THE SQL AND NEVER FROM THE SENTENCE. ***
+    A role was judged from a column's name, its expression, its roots and its sibling names --
+    while `schema.yml` sat there saying what the column IS, in a sentence somebody chose. On a
+    real warehouse `decreed_use_codes` came back at 0.52 confidence, which is a model saying it
+    cannot tell, next to a description that says exactly.
+    """
+    out = {}
+    for name, body in (getattr(m, "columns", None) or {}).items():
+        text = (body or {}).get("description") if isinstance(body, dict) else None
+        if text and str(text).strip():
+            out[str(name).lower()] = str(text).strip()
+    return out
+
+
 def _columns(project, digests, schema) -> list[Subject]:
     out = []
     for uid, m in project.models.items():
@@ -152,11 +169,15 @@ def _columns(project, digests, schema) -> list[Subject]:
         if d is None:
             continue
         roots = {**(d.output_roots or {}), **(d.resolved_roots or {})}
+        docs = described(m)
         for c in list(schema.columns(uid).names)[:80]:
             expr = (d.output_exprs or {}).get(c.lower()) or (d.output_exprs or {}).get(c)
             out.append(Subject(
                 "column", f"{uid}::col::{c}", uid, f"{m.name}.{c}", file=m.path,
                 state=_prune({"model": m.name, "column": c,
+                              # The sentence goes in FIRST, because it is the only part of this
+                              # state a person wrote on purpose.
+                              "description": docs.get(c.lower()),
                               "expression": (expr or "")[:300] or None,
                               "derived_from": roots.get(c.lower()),
                               "other_columns": [x for x in schema.columns(uid).names

@@ -173,6 +173,62 @@ def _vocab_from_joins(store, cfg, run_id: str | None) -> list[Suggestion]:
     return out
 
 
+def _vocab_from_descriptions(cfg, project) -> list[Suggestion]:
+    """Terms the project has ALREADY defined, in its own column descriptions.
+
+    *** ASSAY WILL NOT WRITE A DEFINITION, AND THIS IS NOT ASSAY WRITING ONE. ***
+    Every other vocab rule returns `means:` empty and says so in capitals, because a plausible
+    sentence written from a model name looks exactly like a sentence somebody chose and then
+    rides along with every judged question forever.
+
+    A column description is different in the one way that matters: a person wrote it, about this
+    warehouse, on purpose. Carrying it across is quoting them, not guessing -- and it is quoted
+    verbatim with the file it came from, so the draft can be checked against its source in one
+    look. "pulling from column descriptions first would be ideal obvi."
+
+    *** A WORD DESCRIBED THE SAME WAY EVERYWHERE IS THE ONLY SAFE ONE TO LIFT. ***
+    Where two models describe a column differently, the disagreement is the finding
+    (`models_disagree_about_a_column`) and there is no single sentence to propose. Those are
+    skipped here rather than resolved by picking one, which would be an arbitrary pick in the
+    tool that checks other people's SQL for arbitrary picks.
+    """
+    from .subjects import described
+    known = {str(k).lower() for k in (cfg.vocab or {})}
+    by_col: dict = {}
+    for uid, m in (getattr(project, "models", None) or {}).items():
+        for col, text in described(m).items():
+            by_col.setdefault(col, {}).setdefault(" ".join(str(text).lower().split()),
+                                                  []).append((uid, m, str(text).strip()))
+    out = []
+    for col in sorted(by_col):
+        if col in known:
+            continue
+        variants = by_col[col]
+        if len(variants) != 1:
+            continue                   # described two ways: that is a finding, not a definition
+        uses = next(iter(variants.values()))
+        if len(uses) < 2:
+            continue                   # described once, in one model, is a comment, not a term
+        # The earliest by name, so two runs over one project propose the same sentence.
+        _uid, m, text = min(uses, key=lambda r: r[1].name)
+        out.append(Suggestion(
+            section="vocab", key=col,
+            # Ranked below the join rule's scale on purpose: this proposes WORDS somebody already
+            # wrote, and the join rule proposes the ones the warehouse actually turns on.
+            rank=float(len(uses)),
+            basis="already defined in this project's own column descriptions",
+            headline=f"`{col}` is described identically in {len(uses)} model(s) and the vocab "
+                     f"does not carry it",
+            measured=[f"described in {len(uses)} model(s), all the same sentence",
+                      f"first written in {m.name} ({m.path})"],
+            decide="",
+            # The ONE draft in this module that arrives with `means:` filled in, because the
+            # sentence is theirs and is quoted rather than composed.
+            draft=f"vocab:\n  {col}:\n    means: \"{text[:220]}\"\n    implies: \"\"\n"
+                  f"    # quoted verbatim from {m.name}'s schema.yml, not written by assay"))
+    return out
+
+
 def _vocab_from_contradicted_names(store) -> list:
     """A column whose OBSERVED uniqueness contradicts what its name promises.
 
@@ -578,7 +634,8 @@ def resolved_clusters(store, cfg, live: set) -> list:
     return sorted(out, key=lambda r: (-r["n"], r["reason"]))
 
 
-def build(store, cfg, firing: set, run_id: str | None = None, live: set | None = None) -> list:
+def build(store, cfg, firing: set, run_id: str | None = None, live: set | None = None,
+          project=None) -> list:
     """Every suggestion the store supports, ordered so the best-evidenced is first.
 
     Ordering is (section, -rank, key) with a fixed section order, so two runs over one store
@@ -619,6 +676,8 @@ def build(store, cfg, firing: set, run_id: str | None = None, live: set | None =
         out += _questions_from_agreement(store, cfg)
         out += _explanations(store)
     out += _questions_unconfigured(cfg, firing)
+    if project is not None:
+        out += _vocab_from_descriptions(cfg, project)
     order = {"open": 0, "vocab": 1, "questions": 2, "waivers": 3, "explanations": 4}
     # *** RANK WITHIN A RULE, NEVER ACROSS RULES. ***
     # `section_id` scores 65 hops x 24 models = 1560 and `incident_id` scores 99.68% unique. Both

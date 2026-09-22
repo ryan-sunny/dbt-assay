@@ -174,6 +174,19 @@ SHAPES: dict[str, tuple[str, str]] = {
         "declare freshness",
         ("Nothing says how current this source should be, so nothing can notice it going quiet. "
          "A source going silent is invisible to every check that describes the present.")),
+    "column_has_no_description": (
+        "write the sentence",
+        ("A column's description is where the meaning of its values is written down, and assay "
+         "sends it with every judged question about that column. Without one, the column is "
+         "judged from its name and its SQL alone.")),
+    "models_disagree_about_a_column": (
+        "settle what the name means",
+        ("One column name, two different sentences in two models. Either one has drifted, or the "
+         "name is doing two jobs and a reader downstream cannot tell which one they have.")),
+    "description_promises_what_the_column_cannot_keep": (
+        "fix the sentence or drop the default",
+        ("The description says the column is always populated and the SQL fills a literal in "
+         "when the value is missing. Both are true and they do not mean the same thing.")),
     "seniority_ordered_by_the_wrong_date": (
         "order by the right date",
         (        "Seniority is ordered by a date that does not establish it.")),

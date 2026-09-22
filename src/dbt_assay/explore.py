@@ -180,7 +180,7 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         # it: a suggestion that appears is a candidate that arrived, and one that disappears was
         # either configured or stopped being true, which is the "did accepting it move a number"
         # question the work order asks for.
-        "suggestions": _suggestions(store, cfg, find_rows),
+        "suggestions": _suggestions(store, cfg, find_rows, project),
         "runs": _runs(store),
         # *** THE TWO THINGS THE RECORD SAID THAT NOTHING ELSE DID. ***
         # Everything else on the record duplicates a section the Overview now renders natively, so
@@ -482,7 +482,7 @@ def _config(cfg) -> dict:
     return out
 
 
-def _suggestions(store, cfg, find_rows: list) -> list:
+def _suggestions(store, cfg, find_rows: list, project=None) -> list:
     """What this project should configure, derived from what was found. Never a meaning."""
     try:
         from . import suggest as _sug
@@ -493,7 +493,7 @@ def _suggestions(store, cfg, find_rows: list) -> list:
             row = store.con.execute(
                 "select run_id from runs order by started_at desc, run_id desc limit 1").fetchone()
             run_id = row[0] if row else None
-        return [s.as_dict() for s in _sug.build(store, cfg, firing, run_id, live)]
+        return [s.as_dict() for s in _sug.build(store, cfg, firing, run_id, live, project)]
     except Exception:                                            # noqa: BLE001
         # A store too old to carry a signal still renders every other section. An empty list here
         # reads as "no candidates", which is why the page prints the rule that found nothing
