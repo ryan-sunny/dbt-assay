@@ -517,10 +517,15 @@ elementary: {}
 
 # monitoring: assay asserts that a monitor EXISTS, is CURRENT and COVERS what matters. It never
 # measures volume or freshness itself -- that would be a second monitoring tool with a second
-# opinion. Leave max_staleness_days out and assay DERIVES it from how often this project actually
-# runs dbt; `assay volume` prints the cadence it used.
+# opinion. Runs inside `assay check --verify`, because it needs your warehouse; without the flag
+# it does not run and `check` says so rather than staying quiet.
+#
+# Leave max_staleness_days out and assay derives one PER RELATION from that relation's own write
+# history -- late is longer than it has normally gone -- falling back to how often this project
+# builds. `assay volume` prints every threshold and where it came from.
 monitoring: {}
-#  source_freshness: {max_staleness_days: 7}
+#  enabled: false                          # turn the monitoring checks off deliberately
+#  source_freshness: {max_staleness_days: 7}   # one number, overriding every derived one
 #  min_marts: 1     # a model with fewer marts downstream is not reported as unwatched
 
 # practices: override how a standard dbt-project-evaluator check is treated.

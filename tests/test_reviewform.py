@@ -297,3 +297,36 @@ def test_a_handback_with_no_config_still_loads_its_verdicts():
         {"subject": "model.p.a", "question": "q", "verdict": "agree"}]})
     assert len(rows) == 1 and not bad
     assert reviewform.load_config({"verdicts": []}) == ([], [])
+
+
+def test_the_pagination_belongs_to_the_pane_you_are_looking_at():
+    """*** `page 1 of 12 · 2 of 235 answered` SAT OVER THE WORDS TAB. ***
+
+    That bar was the FINDINGS pagination, rendered above a pane showing all 36 of its rows in one
+    scroll. Two wrong things at once: the controls did nothing where they were, and the counts
+    described something the reader was not looking at.
+    """
+    from dbt_assay import reviewform
+    js = reviewform._JS
+    assert "const PAGES" in js, "paging state is not per pane"
+    assert "function pageOf(" in js and "paneItems(" in js
+    # every pane slices its own items
+    for pane in ("'words'", "'explanations'", "'waivers'", "'findings'"):
+        assert f"pageOf({pane})" in js, f"{pane} does not page itself"
+    # and the single global page is gone
+    for gone in ("let page = 0", "page * PER", "page++", "page--"):
+        assert gone not in js, f"the global pager survived: {gone}"
+
+
+def test_a_pane_that_fits_on_one_page_hides_the_controls():
+    """Disabled controls over a ten-row pane still say "there is more"; hidden ones do not."""
+    from dbt_assay import reviewform
+    js = reviewform._JS
+    assert "single ? 'none'" in js, "a one-page pane still shows the pager"
+
+
+def test_the_counter_counts_what_the_pane_holds():
+    from dbt_assay import reviewform
+    js = reviewform._JS
+    assert "pane === 'findings'" in js, "the counter does not switch with the pane"
+    assert "box(es) filled" in js, "a non-findings pane still reports verdicts"

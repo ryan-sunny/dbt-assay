@@ -61,6 +61,8 @@ class Reading:
     newest: datetime | None = None
     age_days: float | None = None
     detail: str = ""
+    cadence: object = None            # what THIS relation's own write history says
+    threshold_days: int | None = None  # the number that decided `abandoned`, and where it came from
 
     @property
     def usable(self) -> bool:
@@ -87,9 +89,11 @@ class Reading:
             return (f"`{self.relation}` holds one observation per table. An anomaly needs two, so "
                     f"there is nothing to compare yet.")
         if self.state == ABANDONED:
+            how = f" It was {self.cadence.explain()}." if self.cadence else ""
             return (f"`{self.relation}` holds {self.rows:,} row(s) and nothing has written to it "
-                    f"for {self.age_days:.0f} days (newest {self.newest:%Y-%m-%d}). A monitor "
-                    f"that stopped reads exactly like one that finds nothing.")
+                    f"for {self.age_days:.0f} days (newest {self.newest:%Y-%m-%d}), against a "
+                    f"threshold of {self.threshold_days}.{how} A monitor that stopped reads "
+                    f"exactly like one that finds nothing.")
         return f"`{self.relation}`: {self.rows:,} row(s), newest {self.newest:%Y-%m-%d}."
 
 
@@ -253,7 +257,7 @@ def _age(at: datetime | None, now: datetime | None = None) -> float | None:
 
 
 def read(runner, schema: str, *, stale_after_days: int = STALE_AFTER_DAYS,
-         now: datetime | None = None, limit: int = 20000) -> Report:
+         now: datetime | None = None, limit: int = 20000, fallback=None) -> Report:
     """Every Elementary relation assay reads, and what each one could say.
 
     `runner(sql, limit) -> list[dict]` is the caller's connection -- `probe.run_sql` bound to their
@@ -305,11 +309,23 @@ def read(runner, schema: str, *, stale_after_days: int = STALE_AFTER_DAYS,
                              or r.get("updated_at") or r.get("bucket_end")) for r in rows),
                      default=None)
         age = _age(newest, now)
+        # *** EACH MONITOR GETS ITS OWN THRESHOLD, FROM ITS OWN HISTORY. ***
+        # A source refreshed hourly and one refreshed monthly cannot share a number, and the first
+        # version gave them one. What is late for this relation is longer than this relation has
+        # normally gone between writes; the project's build cadence is only the fallback for one
+        # without enough history of its own.
+        own = _cadence_of(write_history(runner, schema, rel), f"`{rel}`'s own write history")
+        limit_days = own.derived_staleness_days
+        if limit_days is None and fallback is not None:
+            limit_days = fallback.derived_staleness_days
+        if limit_days is None:
+            limit_days = stale_after_days
         state = LIVE
-        if age is not None and age > stale_after_days:
+        if age is not None and age > limit_days:
             state = ABANDONED
         rep.readings.append(Reading(
-            rel, state, rows=n, newest=newest, age_days=age,
+            rel, state, rows=n, newest=newest, age_days=age, cadence=own,
+            threshold_days=limit_days,
             detail=(f"read {len(rows):,} of {n:,} row(s): the limit was reached, so this is "
                     f"part of the table" if truncated else "")))
         if rel == METRICS:
@@ -495,54 +511,98 @@ MONITORING_CHECKS = (
 
 @dataclass
 class Cadence:
-    """How often this project actually runs dbt, measured rather than assumed."""
-    runs: int = 0
-    days_spanned: float = 0.0
-    median_gap_days: float | None = None
+    """How often something actually gets written, measured from its own history.
+
+    *** "LATE" IS LONGER THAN IT NORMALLY GOES, AND NOTHING HERE MULTIPLIES BY A NUMBER. ***
+    The first version took the median gap and multiplied it by three. Three was invented -- the
+    same failure as a guessed ledger ceiling, one layer up, because a made-up multiplier is a made-
+    up threshold however it is dressed. What "late" means is answerable from the data: the 90th
+    percentile of the gaps this thing has actually gone between writes. It has been quiet that
+    long before and carried on; longer than that has not happened while it was healthy.
+
+    p90 rather than the maximum, because one historical outage should not license another.
+    """
+    writes: int = 0
+    gaps: list = field(default_factory=list)          # days between consecutive writes
     newest: datetime | None = None
+    source: str = ""                                  # where the history came from
+
+    @property
+    def days_spanned(self) -> float:
+        return sum(self.gaps)
+
+    @property
+    def normal_gap_days(self) -> float | None:
+        """The 90th percentile gap. None when there is not enough history to have one."""
+        if len(self.gaps) < 3:
+            return None
+        import math
+        ordered = sorted(self.gaps)
+        # *** THE RANK ROUNDS UP, AND ON A SHORT HISTORY THAT MATTERS MORE THAN THE PERCENTILE. ***
+        # Nearest-rank p90 over eight gaps of [1,1,1,1,1,1,1,6] returns 1, so a relation that has
+        # quietly gone six days before would be called late at two -- crying wolf, which is half
+        # the failure a guessed number has. Rounding the rank up returns 6 there, and on a long
+        # history still steps below a single outage: 18 gaps of one day and one of seventy-three
+        # returns one day, so an outage does not license another.
+        i = min(len(ordered) - 1, math.ceil(0.9 * (len(ordered) - 1)))
+        return ordered[i]
 
     @property
     def derived_staleness_days(self) -> int | None:
-        """A threshold nobody had to pick.
+        """The threshold, in whole days, or None when it cannot be derived.
 
-        *** A NUMBER SOMEBODY GUESSES IS THE SAME FAILURE AS A LEDGER CEILING SOMEBODY GUESSES. ***
-        `max_staleness_days` decides whether a monitor is reported as stopped, so a wrong one
-        either cries wolf every week or stays quiet for a quarter. It is derived from how often
-        dbt ACTUALLY runs here -- three missed runs, rounded up to a day, floor of two -- and a
-        person can see the number and the cadence it came from and override it.
-
-        None when there is not enough history to derive one, which is the honest answer and not a
-        default: the freshness table on the field warehouse was written on exactly ONE day, so
-        nothing about its own history could say what "late" means for it.
+        None is the honest answer and not a default: the field warehouse's freshness table was
+        written on exactly ONE day -- it did not decay, it ran once -- so nothing about its own
+        history can say what late means for it.
         """
-        if self.median_gap_days is None or self.runs < 3:
+        p90 = self.normal_gap_days
+        if p90 is None:
             return None
-        return max(2, round(self.median_gap_days * 3))
+        import math
+        return max(1, math.ceil(p90))
+
+    def explain(self) -> str:
+        p90 = self.normal_gap_days
+        if p90 is None:
+            return (f"only {self.writes} write(s) recorded, which is not enough to say what a "
+                    f"normal gap is")
+        return (f"written {self.writes:,} time(s) over {self.days_spanned:.0f} days; 9 gaps in 10 "
+                f"are under {p90:.1f} day(s), from {self.source}")
 
 
-def cadence(runner, schema: str, now: datetime | None = None, limit: int = 5000) -> Cadence:
-    """How often dbt runs here, from Elementary's own record of invocations."""
-    rows = runner(f"select run_started_at from {schema}.{INVOCATIONS} "
-                  f"where run_started_at is not null", limit) or []
-    seen = sorted({d for d in (_as_dt(r.get("run_started_at")) for r in rows) if d})
-    # *** ONE PIPELINE RUN ISSUES MANY dbt INVOCATIONS, AND THE MEDIAN GAP BETWEEN THEM IS
-    #     MINUTES. ***
-    # Measured: 1,592 invocations over 79 days, sixteen of them on one day -- so the median
-    # inter-invocation gap is 0.0 and the derived threshold came out as "two days", which is a
-    # statement about how fast dbt runs back-to-back rather than about how often this project
-    # builds. Invocations closer together than SESSION_HOURS are one run.
-    stamps = []
-    for d in seen:
-        if not stamps or (d - stamps[-1]) > timedelta(hours=SESSION_HOURS):
-            stamps.append(d)
-    if len(stamps) < 2:
-        return Cadence(runs=len(stamps), newest=stamps[-1] if stamps else None)
-    gaps = sorted((stamps[i + 1] - stamps[i]) / timedelta(days=1)
-                  for i in range(len(stamps) - 1))
-    mid = len(gaps) // 2
-    median = gaps[mid] if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2
-    return Cadence(runs=len(stamps), days_spanned=(stamps[-1] - stamps[0]) / timedelta(days=1),
-                   median_gap_days=median, newest=stamps[-1])
+def _cadence_of(stamps: list, source: str) -> Cadence:
+    stamps = sorted({d for d in stamps if d})
+    gaps = [(stamps[i + 1] - stamps[i]) / timedelta(days=1) for i in range(len(stamps) - 1)]
+    return Cadence(writes=len(stamps), gaps=gaps,
+                   newest=stamps[-1] if stamps else None, source=source)
+
+
+def write_history(runner, schema: str, rel: str, limit: int = 5000) -> list:
+    """The distinct DAYS this relation was written on.
+
+    Days rather than timestamps: one build writes a table several times within minutes, and gaps
+    between those describe how fast a job runs rather than how often it runs. Cheap -- one grouped
+    statement, a few hundred rows at most.
+    """
+    col = {TEST_RESULTS: "detected_at", METRICS: "created_at",
+           FRESHNESS: "created_at"}.get(rel, "created_at")
+    rows = runner(f"select distinct cast({col} as date) as assay_day from {schema}.{rel} "
+                  f"where {col} is not null", limit) or []
+    return [d for d in (_as_dt(r.get("assay_day")) for r in rows) if d]
+
+
+def build_cadence(runner, schema: str, limit: int = 5000) -> Cadence:
+    """How often this project runs dbt at all, as the fallback for a monitor with no history.
+
+    *** ONE PIPELINE RUN ISSUES MANY INVOCATIONS. ***
+    Measured: 1,592 invocations over 79 days, sixteen on one day, so the gap between invocations
+    describes how fast dbt runs back-to-back rather than how often this project builds. Days,
+    for the same reason `write_history` uses them.
+    """
+    rows = runner(f"select distinct cast(run_started_at as date) as assay_day "
+                  f"from {schema}.{INVOCATIONS} where run_started_at is not null", limit) or []
+    return _cadence_of([d for d in (_as_dt(r.get("assay_day")) for r in rows) if d],
+                       "this project's build cadence")
 
 
 def test_coverage(runner, schema: str, limit: int = 40000) -> dict:
@@ -571,8 +631,7 @@ def test_coverage(runner, schema: str, limit: int = 40000) -> dict:
 
 
 def monitoring_findings(rep: Report, project, cad: Cadence | None = None,
-                        coverage: dict | None = None, min_marts: int = 1,
-                        max_staleness_days: int | None = None) -> list:
+                        coverage: dict | None = None, min_marts: int = 1) -> list:
     """What is wrong with the MONITORING, which is assay's to say.
 
     Never what is wrong with the data -- that is Elementary's, and ingesting its results as assay
@@ -580,8 +639,6 @@ def monitoring_findings(rep: Report, project, cad: Cadence | None = None,
     """
     from .checks.structural import Finding
     out = []
-    limit = max_staleness_days or (cad.derived_staleness_days if cad else None) \
-        or rep.stale_after_days
 
     for r in rep.readings:
         if r.state == NEVER_RUN:
@@ -600,13 +657,14 @@ def monitoring_findings(rep: Report, project, cad: Cadence | None = None,
                 summary=f"`{r.relation}` has not been written to for {r.age_days:.0f} days, and "
                         f"a stopped monitor reads exactly like one that finds nothing",
                 detail=(f"Newest row {r.newest:%Y-%m-%d}, {r.rows:,} row(s) in the table. "
-                        f"Reported at {limit} day(s)"
-                        + (f", derived from this project running dbt every "
-                           f"{cad.median_gap_days:.1f} day(s) across {cad.runs:,} run(s)"
-                           if cad and cad.derived_staleness_days else "")
-                        + "."),
+                        f"Late after {r.threshold_days} day(s)"
+                        + (f" -- {r.cadence.explain()}" if r.cadence else "")
+                        + ". Nothing here is multiplied by an invented number: late is longer "
+                          "than this relation has normally gone between writes."),
                 base=3, evidence={"relation": r.relation, "age_days": round(r.age_days or 0, 1),
-                                  "newest": str(r.newest), "threshold_days": limit}))
+                                  "newest": str(r.newest),
+                                  "threshold_days": r.threshold_days,
+                                  "derived_from": (r.cadence.source if r.cadence else "")}))
 
     # *** ONE FINDING WITH A COUNT, NOT ONE PER MODEL. ***
     # The first version emitted a finding per unwatched model: 232 rows on a real warehouse, which

@@ -320,6 +320,12 @@ def check(
                                  _cfg_pre.row_loss_threshold, store=_st_pre)
     if _st_pre is not None:
         _st_pre.close()
+    # *** IS THE PROJECT BEING WATCHED, AND IS THE WATCHER ALIVE? ***
+    # Counted, like every other `--verify` check: it needs the warehouse the way `probe` does.
+    # WITHOUT the flag it does not run, and that is ANNOUNCED rather than left as silence -- a
+    # deferral nobody is told about is a check that stopped looking, which is the 0.38.1 rule.
+    findings += _monitoring_findings(project, _cfg_pre, verify, project_dir, profiles_dir,
+                                     dbt_bin, json_out)
     # *** 7,656 DROPPED DECISIONS PRINTED AS "246 resolved". ***
     # The count existed and was read in exactly one place, inside an MCP tool. `check` is where
     # somebody watches a number move, so it is where a number moving for a reason that is not
@@ -2888,26 +2894,24 @@ def volume(
                       f"`elementary-data` does, and it is a dbt package.[/]")
         raise typer.Exit(0)
 
-    if cad.runs >= 2:
-        derived = cad.derived_staleness_days
-        say(f"[dim]this project runs dbt every {cad.median_gap_days:.1f} day(s) "
-                      f"({_n(cad.runs)} run(s) over {cad.days_spanned:.0f} days). "
-                      + (f"A monitor unwritten for [bold]{limit_days}[/bold] day(s) is reported "
-                         f"as stopped"
-                         + (" -- derived from that cadence, not chosen. "
-                            "`monitoring.source_freshness.max_staleness_days` overrides it."
-                            if not configured else " -- set in audit.yml.")
-                         if limit_days else
-                         "Not enough history to derive a staleness threshold, so none is "
-                         "assumed.") + "[/]")
-        if derived and configured and int(configured) != derived:
-            say(f"[dim]   audit.yml says {configured}; the measured cadence suggests "
-                          f"{derived}.[/]")
+    # *** EVERY THRESHOLD, AND WHERE IT CAME FROM. ***
+    # "Late" is longer than this relation has normally gone between writes -- the 90th percentile
+    # of its own gaps. Nothing is multiplied by an invented number, and a relation with too little
+    # history of its own falls back to how often the project builds, which is also measured.
+    say()
+    for r in rep.readings:
+        if r.state in (elem.ABSENT, elem.NEVER_RUN, elem.UNREACHABLE):
+            continue
+        c = getattr(r, "cadence", None)
+        if configured:
+            say(f"[dim]{r.relation}: late after {configured} day(s), set in audit.yml[/]")
+        elif r.threshold_days is not None:
+            say(f"[dim]{r.relation}: late after {r.threshold_days} day(s) -- "
+                f"{c.explain() if c else 'derived'}[/]")
 
     # ---- what is wrong with the MONITORING, which is assay's to say
     mfs = elem.monitoring_findings(rep, project, cad, cov,
-                                   min_marts=int(mon.get("min_marts") or 1),
-                                   max_staleness_days=limit_days)
+                                   min_marts=int(mon.get("min_marts") or 1))
     if mfs:
         say(f"\n[bold]{_n(len(mfs))}[/] monitoring finding(s) "
                       f"[dim](about the monitoring, never about your data)[/]")
@@ -2972,9 +2976,13 @@ def volume(
             "stale_failures": [{"table": x.table, "kind": x.kind, "sub_type": x.sub_type,
                                 "age_days": x.age_days} for x in stale],
             "unwatched": [{"model": n, "descendants": d, "marts": m} for _u, n, d, m in unwatched],
-            "cadence": {"runs": cad.runs, "median_gap_days": cad.median_gap_days,
+            "cadence": {"runs": cad.writes, "normal_gap_days": cad.normal_gap_days,
                         "derived_staleness_days": cad.derived_staleness_days,
-                        "in_use_days": limit_days, "configured": bool(configured)},
+                        "explain": cad.explain(), "configured": bool(configured),
+                        "per_relation": {r.relation: {"threshold_days": r.threshold_days,
+                                                      "explain": (r.cadence.explain()
+                                                                  if r.cadence else "")}
+                                         for r in rep.readings}},
             "test_coverage": cov,
             "monitoring": [{"check": f.check, "summary": f.summary, "marts": f.marts,
                             "evidence": f.evidence} for f in mfs],
@@ -2990,6 +2998,68 @@ def volume(
 
     _judge_volume(project, digests, schema, store, store_path, cfg, rep, threshold, limit,
                   dry_run)
+
+
+def _monitoring_findings(project, cfg, verify: bool, project_dir: str, profiles_dir: str | None,
+                         dbt_bin: str, json_out: bool) -> list:
+    """The monitoring checks, when there is a connection to run them through.
+
+    *** assay ASSERTS THE MONITOR EXISTS, IS CURRENT AND COVERS WHAT MATTERS. ***
+    It never measures volume or freshness itself: that is a second monitoring tool with a second
+    opinion, and the two-inboxes problem this whole area exists to avoid.
+
+    Without `--verify` these do not run, and `check` says so. An absent measurement is not a pass,
+    and a check that quietly did not happen is indistinguishable from one that found nothing.
+    """
+    from . import elementary as elem
+    from .checks import sources as src_mod
+    opts = getattr(cfg, "elementary", None) or {}
+    mon = getattr(cfg, "monitoring", None) or {}
+    if mon.get("enabled") is False:
+        return []
+    if not verify:
+        src_mod.DEFERRED.append((
+            "monitoring",
+            ("whether anything watches this project's volume and freshness was NOT checked: it "
+             "needs your warehouse, the way `probe` does. `assay check --verify` runs it, and "
+             "`assay volume` is the full report. Nothing here says the monitoring is fine.")))
+        return []
+    schema_name = opts.get("schema") or _default_elementary_schema(project)
+
+    def runner(sql: str, n: int):
+        return probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=n)
+
+    try:
+        cad = elem.build_cadence(runner, schema_name)
+        rep = elem.read(runner, schema_name, fallback=cad,
+                        stale_after_days=int(opts.get("stale_after_days")
+                                             or elem.STALE_AFTER_DAYS))
+        cov = elem.test_coverage(runner, schema_name)
+    except Exception as e:                                       # noqa: BLE001
+        src_mod.DEFERRED.append(("monitoring", f"the monitoring checks could not run: {e}"))
+        return []
+    if not rep.reachable:
+        src_mod.DEFERRED.append((
+            "monitoring",
+            (f"assay could not reach the warehouse, so nothing about the monitoring was measured. "
+             f"It ran `dbt show` as `{dbt_bin}` in `{project_dir}`.")))
+        return []
+    if not rep.installed:
+        gaps = len(elem.unwatched(rep, project))
+        src_mod.DEFERRED.append((
+            "monitoring",
+            (f"no volume monitoring is installed here, so {gaps} model(s) with a mart downstream "
+             f"are watched by nothing. assay does not measure volume and does not intend to; "
+             f"`elementary-data` does, and it is a dbt package.")))
+        return []
+    configured = (mon.get("source_freshness") or {}).get("max_staleness_days")
+    if configured:
+        for r in rep.readings:
+            r.threshold_days = int(configured)
+            if r.age_days is not None and r.state in (elem.LIVE, elem.ABANDONED):
+                r.state = elem.ABANDONED if r.age_days > int(configured) else elem.LIVE
+    return elem.monitoring_findings(rep, project, cad, cov,
+                                    min_marts=int(mon.get("min_marts") or 1))
 
 
 def _default_elementary_schema(project) -> str:

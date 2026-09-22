@@ -213,40 +213,100 @@ def test_the_state_carries_the_claim_the_movement_and_the_reach():
 
 # --------------------------------------------------------------- monitoring as a contract
 
-def test_the_staleness_threshold_is_derived_from_how_often_dbt_actually_runs():
-    """*** A NUMBER SOMEBODY GUESSES CRIES WOLF OR STAYS QUIET FOR A QUARTER. ***
+def test_late_is_longer_than_this_relation_has_NORMALLY_gone_between_writes():
+    """*** THE FIRST VERSION MULTIPLIED THE MEDIAN GAP BY THREE, AND THREE WAS INVENTED. ***
 
-    `max_staleness_days` decides whether a monitor reads as stopped. Derived from the measured
-    cadence, three missed builds, floor of two.
+    A made-up multiplier is a made-up threshold however it is dressed -- the same failure as a
+    guessed ledger ceiling, one layer up. What "late" means is answerable from the data: the 90th
+    percentile of the gaps this thing has actually gone between writes. It has been quiet that
+    long before and carried on. p90 rather than the maximum, because one historical outage should
+    not license another.
     """
-    runs = [{"run_started_at": f"2026-09-{d:02d} 08:00:00"} for d in (1, 3, 5, 7, 9, 11)]
-    cad = E.cadence(lambda sql, n: runs, "elem")
-    assert cad.runs == 6
-    assert cad.median_gap_days == pytest.approx(2.0)
+    days = [{"assay_day": f"2026-09-{d:02d}"} for d in (1, 2, 3, 4, 5, 6, 7, 8, 14)]
+    cad = E._cadence_of(E.write_history(lambda sql, n: days, "elem", E.METRICS), "x")
+    assert cad.writes == 9
+    assert cad.gaps[:3] == [1.0, 1.0, 1.0]
+    assert cad.normal_gap_days == pytest.approx(6.0), "p90 of [1,1,1,1,1,1,1,6]"
     assert cad.derived_staleness_days == 6
+    assert "9 gaps in 10" in cad.explain()
 
 
-def test_one_pipeline_run_issuing_many_invocations_is_one_run():
-    """*** MEASURED: 1,592 INVOCATIONS OVER 79 DAYS, SIXTEEN ON ONE DAY. ***
-
-    The median gap between invocations was 0.0, so the first version derived a threshold of two
-    days -- a statement about how fast dbt runs back-to-back, not about how often this project
-    builds. A `dbt run` and the `dbt test` twenty minutes later are one build.
-    """
-    burst = [{"run_started_at": f"2026-09-01 {h:02d}:00:00"} for h in range(9, 14)]
-    burst += [{"run_started_at": f"2026-09-05 {h:02d}:00:00"} for h in range(9, 14)]
-    burst += [{"run_started_at": "2026-09-09 09:00:00"}]
-    cad = E.cadence(lambda sql, n: burst, "elem")
-    assert cad.runs == 3, "a burst of invocations is one build"
-    assert cad.median_gap_days == pytest.approx(4.0)
+def test_one_outage_does_not_license_another():
+    """The maximum would make a month of silence normal for ever after. p90 does not."""
+    days = [{"assay_day": f"2026-09-{d:02d}"} for d in range(1, 20)] + \
+           [{"assay_day": "2026-12-01"}]
+    cad = E._cadence_of(E.write_history(lambda sql, n: days, "elem", E.METRICS), "x")
+    assert max(cad.gaps) > 70, "the outage is in the history"
+    assert cad.derived_staleness_days is not None
+    assert cad.derived_staleness_days < 10, "one outage must not become the new normal"
 
 
-def test_too_little_history_derives_nothing_rather_than_a_default():
+def test_each_relation_gets_its_own_threshold_from_its_own_history():
+    """*** A SOURCE REFRESHED HOURLY AND ONE REFRESHED MONTHLY CANNOT SHARE A NUMBER. ***
+    The first version gave them one."""
+    daily = [{"assay_day": f"2026-09-{d:02d}"} for d in range(1, 21)]
+    weekly = [{"assay_day": f"2026-0{m}-01"} for m in (5, 6, 7, 8, 9)]
+
+    def runner(sql, n):
+        low = sql.lower()
+        if "assay_reachable" in low:
+            return [{"assay_reachable": 1}]
+        rel = next((r for r in E.RELATIONS if r in low), None)
+        if rel is None:
+            return []
+        if low.strip().startswith("select count(*) as n from"):
+            return [{"n": 5}]
+        if "assay_day" in low:
+            return daily if rel == E.METRICS else weekly
+        return [{"created_at": "2026-09-20 00:00:00", "detected_at": "2026-09-20 00:00:00"}]
+
+    rep = E.read(runner, "elem", now=NOW)
+    per = {r.relation: r.threshold_days for r in rep.readings}
+    assert per[E.METRICS] == 1, "written daily: late after a day"
+    assert per[E.FRESHNESS] > 20, "written monthly: a day is not late"
+
+
+def test_a_relation_with_too_little_history_falls_back_to_the_build_cadence():
+    days = [{"assay_day": f"2026-09-{d:02d}"} for d in (1, 4, 7, 10, 13)]
+    fallback = E._cadence_of(E.write_history(lambda sql, n: days, "elem", E.INVOCATIONS),
+                             "this project's build cadence")
+    assert fallback.derived_staleness_days == 3
+
+    def runner(sql, n):
+        low = sql.lower()
+        if "assay_reachable" in low:
+            return [{"assay_reachable": 1}]
+        if E.FRESHNESS not in low:
+            return []
+        if low.strip().startswith("select count(*) as n from"):
+            return [{"n": 3}]
+        if "assay_day" in low:
+            return [{"assay_day": "2026-07-08"}]          # written on exactly ONE day
+        return [{"created_at": "2026-07-08 13:08:14"}]
+
+    rep = E.read(runner, "elem", now=NOW, fallback=fallback)
+    r = rep.reading(E.FRESHNESS)
+    assert r.state == E.ABANDONED
+    assert r.threshold_days == 3, "its own history cannot say; the project's cadence can"
+
+
+def test_too_little_history_anywhere_derives_nothing_rather_than_a_default():
     """*** THE FRESHNESS TABLE WAS WRITTEN ON EXACTLY ONE DAY. ***
     It did not decay, it ran once -- so nothing about its own history can say what late means."""
-    cad = E.cadence(lambda sql, n: [{"run_started_at": "2026-09-01 08:00:00"}], "elem")
-    assert cad.runs == 1
+    cad = E._cadence_of([datetime(2026, 9, 1)], "x")   # noqa: DTZ001
+    assert cad.writes == 1
+    assert cad.normal_gap_days is None
     assert cad.derived_staleness_days is None, "a guess is not better than saying you cannot tell"
+    assert "not enough" in cad.explain()
+
+
+def test_one_build_issuing_many_invocations_is_one_day():
+    """*** MEASURED: 1,592 INVOCATIONS OVER 79 DAYS, SIXTEEN ON ONE DAY. ***
+    The gap between invocations describes how fast dbt runs back-to-back, not how often this
+    project builds. The query asks for distinct DAYS, so a burst is one."""
+    sqls = []
+    E.build_cadence(lambda sql, n: sqls.append(sql) or [], "elem")
+    assert "distinct cast(run_started_at as date)" in sqls[0]
 
 
 def test_coverage_is_one_finding_with_a_count_not_one_per_model():

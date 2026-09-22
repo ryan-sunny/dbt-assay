@@ -511,17 +511,22 @@ _JS = r"""
 const D = JSON.parse(document.getElementById('assay-form').textContent);
 const PER = 20;
 const KEY = 'assay-review:' + D.project;
-let answers = {}, page = 0;
+let answers = {};
 try { answers = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { answers = {}; }
-try { page = Math.max(0, parseInt(localStorage.getItem(KEY + ':page') || '0', 10) || 0); }
-catch (e) { page = 0; }
+/* Where you were, per pane and which pane. Restoring one number put you on page 6 of a tab that
+   has two, which is how the single-bar version behaved when you came back to it. */
+let SAVED_PAGES = {}, SAVED_PANE = '';
+try { SAVED_PAGES = JSON.parse(localStorage.getItem(KEY + ':pages') || '{}') || {}; }
+catch (e) { SAVED_PAGES = {}; }
+try { SAVED_PANE = localStorage.getItem(KEY + ':pane') || ''; } catch (e) { SAVED_PANE = ''; }
 
 /* Browser storage is a per-viewer convenience and it can throw or come back empty -- a private
    window, cleared site data, a preview. Every read and write is wrapped, and the page renders
    correctly with none of it: you lose your place, not your ability to answer. */
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(answers)); } catch (e) { /* ignore */ }
-  try { localStorage.setItem(KEY + ':page', String(page)); } catch (e) { /* ignore */ }
+  try { localStorage.setItem(KEY + ':pages', JSON.stringify(PAGES)); } catch (e) { /* ignore */ }
+  try { localStorage.setItem(KEY + ':pane', pane); } catch (e) { /* ignore */ }
 }
 function el(t, a, kids) {
   const n = document.createElement(t);
@@ -629,20 +634,65 @@ function card(c) {
   return box;
 }
 
-function tick() {
-  const n = answered(), tot = D.cards.length;
-  document.getElementById('count').textContent =
-    n + ' of ' + tot + ' answered' + (n ? '' : ' — nothing is recorded until you download');
-  document.getElementById('dl').disabled = n === 0;
-  const pages = Math.max(1, Math.ceil(tot / PER));
-  document.getElementById('where').textContent = 'page ' + (page + 1) + ' of ' + pages;
-  document.getElementById('prev').disabled = page === 0;
-  document.getElementById('next').disabled = page >= pages - 1;
+/* *** THE BAR BELONGED TO ONE PANE AND SAT OVER ALL OF THEM. ***
+   `page 1 of 12 · 2 of 235 answered` was the FINDINGS pagination, rendered above the Words tab
+   while Words showed all 36 of its rows in one scroll. Two lies at once: the controls did nothing
+   where they were, and the counts described something you were not looking at. Paging is per
+   pane now, and a pane that fits on one page says so by hiding the controls rather than by
+   showing disabled ones. */
+const PAGES = Object.assign({words: 0, explanations: 0, waivers: 0, monitoring: 0, findings: 0},
+                           SAVED_PAGES);
+let pane = 'findings';
+
+function paneItems(name) {
+  if (name === 'findings') return D.cards;
+  if (name === 'words') return CTX.words || [];
+  if (name === 'explanations') return CTX.explanations || [];
+  if (name === 'waivers') return CTX.waivers || [];
+  if (name === 'monitoring') return ((CTX.monitoring || {}).findings) || [];
+  return [];
 }
 
+function pageOf(name) {
+  const tot = paneItems(name).length;
+  const pages = Math.max(1, Math.ceil(tot / PER));
+  const at = Math.min(Math.max(0, PAGES[name] || 0), pages - 1);
+  PAGES[name] = at;
+  return {at, pages, tot, from: at * PER, to: at * PER + PER};
+}
+
+function tick() {
+  const n = answered(), tot = D.cards.length;
+  const edits = Object.keys(edits_() || {}).length;
+  const p = pageOf(pane);
+  /* The count describes the pane you are on. On Findings that is verdicts; everywhere else it is
+     boxes you have filled, because nothing on those panes is a verdict. */
+  document.getElementById('count').textContent = pane === 'findings'
+    ? n + ' of ' + tot + ' answered' + (n ? '' : ' — nothing is recorded until you download')
+    : (edits ? edits + ' box(es) filled across the form' : 'nothing filled yet');
+  document.getElementById('dl').disabled = n === 0 && edits === 0;
+  const single = p.pages <= 1;
+  for (const id of ['prev', 'next', 'where']) {
+    const el_ = document.getElementById(id);
+    el_.style.display = single ? 'none' : '';
+  }
+  if (!single) {
+    document.getElementById('where').textContent =
+      'page ' + (p.at + 1) + ' of ' + p.pages + ' · ' + p.tot + ' ' + PANE_NOUN[pane];
+    document.getElementById('prev').disabled = p.at === 0;
+    document.getElementById('next').disabled = p.at >= p.pages - 1;
+  }
+}
+
+const PANE_NOUN = {findings: 'to rule on', words: 'words', explanations: 'marts',
+                   waivers: 'proposed', monitoring: 'findings'};
+
+function edits_() { return (typeof edits === 'undefined') ? {} : edits; }
+
 function render() {
+  const p = pageOf('findings');
   const host = document.getElementById('cards');
-  host.replaceChildren(...D.cards.slice(page * PER, page * PER + PER).map(card));
+  host.replaceChildren(...D.cards.slice(p.from, p.to).map(card));
   window.scrollTo(0, 0);
   tick();
 }
@@ -709,7 +759,8 @@ function wordsTab(host) {
     'A word here is sent with EVERY judged question about every model it applies to, which is why '
     + 'one that is false in part of the project is false in every answer about that part. assay '
     + 'filled in what it measured; the sentence is yours.'}));
-  for (const w of CTX.words) {
+  const _p = pageOf('words');
+  for (const w of CTX.words.slice(_p.from, _p.to)) {
     const row = el('div', {class: 'wrow'});
     const head = el('h3', {text: w.term});
     row.append(head);
@@ -749,7 +800,8 @@ function explanationsTab(host) {
     'Options for the failing-row family, per mart. These ARE the domain knowledge: the generic '
     + 'set is always available and these are added to it. One line each, saying what that kind of '
     + 'failing row actually is here.'})];
-  for (const x of CTX.explanations) {
+  const _p = pageOf('explanations');
+  for (const x of CTX.explanations.slice(_p.from, _p.to)) {
     const row = el('div', {class: 'wrow'});
     row.append(el('h3', {text: x.mart}));
     for (const o of (x.options || []))
@@ -767,7 +819,8 @@ function waiversTab(host) {
   const bits = [el('p', {class: 'measured', text:
     'Findings somebody already said were fine, with the reason THEY gave. A waiver needs a reason '
     + 'and an expiry is worth having; nothing here is written until you apply it.'})];
-  for (const w of CTX.waivers) {
+  const _p = pageOf('waivers');
+  for (const w of CTX.waivers.slice(_p.from, _p.to)) {
     const row = el('div', {class: 'wrow'});
     row.append(el('h3', {text: w.model + '  ' + w.check}));
     row.append(el('div', {class: 'measured', text: 'they said: ' + w.reason}));
@@ -836,33 +889,46 @@ function block2(title, text) {
 
 const PANES = {words: wordsTab, explanations: explanationsTab, waivers: waiversTab,
                monitoring: monitoringTab, findings: null};
-const drawn = {};
+function drawPane(name) {
+  if (PANES[name]) PANES[name](document.getElementById('p-' + name));
+  else render();
+}
+
 function openPane(name) {
+  pane = name;
   document.querySelectorAll('.tabs button').forEach(b =>
     b.classList.toggle('on', b.dataset.pane === name));
   document.querySelectorAll('.pane').forEach(p => { p.hidden = p.id !== 'p-' + name; });
-  if (PANES[name] && !drawn[name]) { drawn[name] = 1; PANES[name](document.getElementById('p-' + name)); }
+  drawPane(name);
+  tick();
 }
 document.querySelectorAll('.tabs button').forEach(b => {
   b.onclick = () => openPane(b.dataset.pane);
 });
 
-document.getElementById('prev').onclick = () => { page--; save(); render(); };
-document.getElementById('next').onclick = () => { page++; save(); render(); };
+function step(by) {
+  PAGES[pane] = (PAGES[pane] || 0) + by;
+  pageOf(pane);                       // clamps
+  save();
+  drawPane(pane);
+  window.scrollTo(0, 0);
+  tick();
+}
+document.getElementById('prev').onclick = () => step(-1);
+document.getElementById('next').onclick = () => step(1);
 document.getElementById('dl').onclick = download;
 document.getElementById('clear').onclick = () => {
   if (!confirm('Clear every answer on this form? This cannot be undone.')) return;
   answers = {}; save(); render();
 };
-const pages = Math.max(1, Math.ceil(D.cards.length / PER));
-if (page >= pages) page = 0;
+pageOf('findings');
 document.getElementById('n-words').textContent = CTX.words.length || '';
 document.getElementById('n-expl').textContent = CTX.explanations.length || '';
 document.getElementById('n-waiv').textContent = CTX.waivers.length || '';
 document.getElementById('n-mon').textContent = ((CTX.monitoring || {}).findings || []).length || '';
 document.getElementById('n-find').textContent = D.cards.length || '';
-render();
-openPane(CTX.words.length ? 'words' : 'findings');
+openPane(SAVED_PANE && (SAVED_PANE in PANES) ? SAVED_PANE
+         : (CTX.words.length ? 'words' : 'findings'));
 """
 
 
@@ -895,7 +961,7 @@ assay {e(version)} &middot; manifest {e(str(generated_at))}</span></h1>
 <div class="bar">
   <button id="prev">&larr; previous</button>
   <span id="where"></span>
-  <button id="next">next twenty &rarr;</button>
+  <button id="next">next &rarr;</button>
   <span class="count" id="count"></span>
   <input type="text" id="by" placeholder="your name" style="width:160px">
   <button class="go" id="dl">download handback.json</button>
