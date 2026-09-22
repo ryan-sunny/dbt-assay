@@ -272,9 +272,11 @@ uncertain answer is a question for a person, not a number to round off.
 # A RAW literal: the worked example quotes real SQL, and `\d` in a normal string is a
 # SyntaxWarning that ships a mangled regex to whoever reads the skill.
 REVIEW_SKILL_MD = r'''---
-name: assay-review description: >- Walk assay's findings with a person, one at a time, and record
-their verdicts. Use when they say review findings, rule on findings, go through assay, or
-/assay-review. Do the SQL reading FOR them so their call is cheap; never rule on their behalf.
+name: assay-review
+description: >-
+  Walk assay's findings with a person, one at a time, and record their verdicts. Use when they
+  say review findings, rule on findings, go through assay, or /assay-review. Do the SQL reading
+  FOR them so their call is cheap; never rule on their behalf.
 ---
 
 # Reviewing assay findings with a person

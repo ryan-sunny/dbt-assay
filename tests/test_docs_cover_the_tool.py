@@ -328,11 +328,34 @@ def test_the_shipped_skills_are_still_shaped_like_documents():
 
     Nothing structural was checked, because the file was only ever eyeballed.
     """
+    import yaml
+
     from dbt_assay import skilltext
     for name in ("SKILL_MD", "REVIEW_SKILL_MD"):
         body = getattr(skilltext, name)
         lines = body.splitlines()
-        assert lines[0] == "---" and "name: " in body[:200], f"{name} has no frontmatter"
+        assert lines[0] == "---", f"{name} has no frontmatter"
+
+        # *** AND IT HAS TO PARSE, NOT MERELY BE PRESENT. ***
+        # This asserted `"name: " in body[:200]` and passed on a file whose frontmatter was one
+        # flattened line -- `name: assay-review description: >- Walk assay's findings...` -- which
+        # YAML reads as a scanner error, so the skill did not load at all. The reflow that set the
+        # column limit treated the two keys as one paragraph and rewrapped across the newline
+        # between them.
+        #
+        # A substring check cannot see that. It is the same defect this file keeps finding: a
+        # guard that matches something other than the thing it is checking.
+        fm = body.split("---", 2)[1]
+        try:
+            meta = yaml.safe_load(fm)
+        except yaml.YAMLError as e:
+            raise AssertionError(f"{name} frontmatter is not YAML: {e}") from e
+        assert isinstance(meta, dict), f"{name} frontmatter is not a mapping: {type(meta).__name__}"
+        for key in ("name", "description"):
+            assert key in meta, f"{name} frontmatter has no `{key}` key: got {sorted(meta)}"
+            assert str(meta[key]).strip(), f"{name} frontmatter `{key}` is empty"
+        assert "description" not in str(meta["name"]), \
+            f"{name}: `name` swallowed the next key, so the lines were joined"
         assert body.count("```") % 2 == 0, f"{name} has an unclosed code fence"
         assert sum(1 for ln in lines if ln.startswith("- ")) >= 4, f"{name} lost its bullets"
         # A list item never continues a line that already holds one.
@@ -382,3 +405,37 @@ def test_the_mcp_tool_count_in_the_docs_is_the_real_one():
     assert said, "the tool count sentence is gone; keep it or drop this test deliberately"
     assert said.group(1) == words.get(len(TOOLS)), \
         f"docs say {said.group(1)} tools, the code ships {len(TOOLS)}"
+
+
+def test_the_frontmatter_guard_catches_the_flattening_that_produced_it():
+    """*** A GUARD NOBODY HAS SEEN FAIL IS A GUARD NOBODY HAS TESTED. ***
+
+    The previous version asserted `"name: " in body[:200]`, which passes on the exact file that
+    broke: two keys rewrapped onto one line by a 100-column reflow, which YAML reads as a scanner
+    error. So the skill did not load at all and the guard said it was fine.
+
+    This pins the regression by feeding the guard the real broken text.
+    """
+    import yaml
+
+    broken = ("---\n"
+              "name: assay-review description: >- Walk assay's findings with a person, one at a\n"
+              "time, and record their verdicts. Use when they say review findings.\n"
+              "---\n\n# body\n")
+    # the check that used to be here would pass
+    assert "name: " in broken[:200], "the fixture no longer reproduces the old false pass"
+    with pytest.raises(yaml.YAMLError):
+        yaml.safe_load(broken.split("---", 2)[1])
+
+
+def test_a_name_that_swallowed_the_next_key_is_caught_even_when_it_parses():
+    """*** AND SOME FLATTENINGS ARE VALID YAML. ***
+
+    `name: assay-review description: foo` raises. But `name: assay-review description foo` -- no
+    colon in the tail -- parses cleanly as one string, and the skill then has a name nobody meant
+    and no description at all. Parsing is necessary and not sufficient.
+    """
+    import yaml
+    meta = yaml.safe_load("name: assay-review description is the rest of the line\n")
+    assert isinstance(meta, dict) and "description" not in meta
+    assert "description" in str(meta["name"]), "the fixture does not reproduce the shape"

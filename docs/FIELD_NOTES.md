@@ -3332,3 +3332,38 @@ which is the same defect it was reporting in `hop_multiplies_rows`.
 
 Nothing on this warehouse has earned its keep yet. That is consistent with the number the review
 form exists to move — 0 of 159 models ruled on by a person — and it is the honest starting line.
+
+### 0.36.1: the review skill did not load at all
+
+`assay skill review` emitted frontmatter with both keys on one physical line:
+
+```
+---
+name: assay-review description: >- Walk assay's findings with a person, one at a time, and record
+their verdicts. Use when they say review findings, rule on findings, go through assay, or
+---
+```
+
+`yaml.scanner.ScannerError: mapping values are not allowed here`. YAML reads `name` as the whole
+string, there is no `description` key, and the skill does not load. It shipped that way in 0.33.2
+and every release since.
+
+The cause was the 100-column reflow written the same day: it treated the frontmatter as prose and
+rewrapped across the newline separating the two keys. `dbt-assay/SKILL.md` escaped only because
+its frontmatter happened to wrap differently.
+
+**The guard added in that very commit asserted `lines[0] == "---"` and `"name: " in body[:200]`.**
+Both are true of the broken file. So a guard written to protect the skill's structure passed on a
+skill that would not parse — the same substring-instead-of-the-thing defect as the docs guard
+matching a command's bare name in prose, in a test added to prevent exactly this class.
+
+It parses now, and so does the checked-in copy, which was broken identically and is why the
+"checked-in equals what the package writes" guard also passed: both sides were equally wrong.
+
+Two things pin it. The guard `yaml.safe_load`s the block and requires `name` and `description` as
+keys. And a test feeds it the real broken text, because a guard nobody has watched fail is a guard
+nobody has tested — that one confirms the old substring check passes on it and the new one raises.
+
+There is a second shape worth naming, which parsing alone does not catch: `name: x description is
+the rest` has no colon in the tail, parses cleanly as one string, and leaves a skill with a name
+nobody meant and no description. So the guard also asserts `name` did not swallow the next key.
