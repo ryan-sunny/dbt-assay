@@ -21,9 +21,7 @@ silently prunable.
 
 ## The tables
 
-![the store's tables](store-schema.png)
-
-*(The picture predates `model_calls`; the Mermaid below is the one a test checks against the DDL.)*
+![the store's ten tables](store-schema.png)
 
 <details>
 <summary>the same thing as Mermaid source</summary>

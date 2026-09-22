@@ -75,6 +75,46 @@ is decides whether the line gets deleted next quarter or guarded forever.
 
 That is the question `assay` exists to answer, and it is why Jev is not an add-on.
 
+## What it remembers, and what happens when the code moves
+
+A linter re-derives its opinion from scratch on every run, so nothing you ever concluded survives
+the next one. `assay` is built the other way round: what you and your project already know goes
+into a store, and every later run is checked against it.
+
+Six kinds of thing accrue, and five of them cost something to produce:
+
+| what | where | on a real 358-model warehouse |
+|---|---|---|
+| **your verdicts** — a finding you read and called real, wrong, or unclear | `adjudications` | 136 human, 105 from an agent, 82 derived from assertions already in the project |
+| **your vocabulary** — the words this project uses for its own concepts, sent with every question | `audit.yml` | the difference between a right answer and a confidently wrong one |
+| **your own questions** — families you wrote, in YAML, no code change | `assay_questions/*.yml` | asked, stored, and (since 0.38.0) able to produce findings like any shipped one |
+| **what the project claims about itself**, as data rather than prose | `claims` | 5,794 atomic claims, each with an id that survives a paragraph being reflowed |
+| **what was actually counted**, as a series rather than a snapshot | `observed_keys` | 224 observations over 48 relations — a key that held last week and does not now |
+| **every answer ever given, and what it was computed from** | `model_decisions`, `states` | 19,707 answers over 7,797 subjects, $1.32 all-in |
+
+**A verdict is about a version of a question, not about the question forever.** `prompt_version` is
+in the primary key, so rewording a question after people disagreed with it does not silently
+inherit their verdicts — and whether the rewrite worked becomes a measurement instead of a guess.
+
+**A dismissal sticks across runs and lapses by itself.** A finding's identity is a hash of its
+check, subject, summary and non-measured evidence; probabilities and counts are excluded on
+purpose. A number moving by 0.01 does not mint a new finding, and a model edited into a genuinely
+different defect no longer carries your old dismissal.
+
+**And when the SQL moves, it says so.** dbt already records a sha256 of every model's source file,
+and `assay` stores that hash on the answer:
+
+```bash
+assay stale            # judged answers about SQL that has since changed
+assay stale --cost     # ...and what re-asking them would cost, before you spend it
+```
+
+No API call, no warehouse connection, one dict lookup per answer. It is necessary and not
+sufficient and says so — a comment edit trips it, a change to a *parent* does not — and a stale
+answer is still served everywhere it was served before, because hiding it leaves you with nothing,
+which is strictly worse than serving it dated. An answer `assay` cannot check at all reports as
+**cannot be checked**, in its own column, never folded into the ones that are current.
+
 ## Read next
 
 - **[Full overview](docs/OVERVIEW.md)** — every command, every question, every config block, and
