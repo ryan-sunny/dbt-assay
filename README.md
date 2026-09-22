@@ -1,8 +1,6 @@
 # assay
 
-<img src="docs/foghorn.jpg" align="right" width="210" alt="">
-
-*I say, I say — assay.*
+<img src="docs/assay-mark.svg" align="right" width="116" alt="">
 
 **Recover the semantics your warehouse never wrote down.**
 
