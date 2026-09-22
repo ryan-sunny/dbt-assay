@@ -3295,3 +3295,40 @@ it leaves the caller with nothing, which is strictly worse than serving it dated
 Worth writing down as a known gap: `stale_decisions` compares the BASE version and the suffix
 records the state SHAPE, so changing what gets sent — which is what happened here — is not counted
 by anything. Serving dated is right; not being able to tell that the inputs moved is not.
+
+### 0.36.0 addendum: the advice pooled versions and sources, and every rate it printed was wrong
+
+`suggest` reported `hop_multiplies_rows` at **1/11, 9%**, and the advice that followed was to stop
+queueing it. Pushed on, because a check wrong ten times out of eleven is a broken check and not a
+config problem.
+
+All ten disagreements were recorded under `assay.0.11.0`. The check was fixed structurally in
+0.15.0 and 0.21.1, and the one verdict given after the fix agrees. The seven findings it raises
+today have never been ruled on at all. The rate belonged to a version that stopped existing
+twenty-five releases ago.
+
+`apply_policy` was never fooled: it reads `accuracy_by_family`, which counts the shipping version
+only and is human-only. The rule written for `suggest` queried `adjudications` directly and
+filtered by neither. So the SURFACE THAT ADVISES was wrong while the surface that gates was right
+— and that is the worse way round, because gating fails closed and advice tells a person to switch
+off a check that had already been repaired.
+
+It pooled sources too, which means an AGENT ruling was counting toward a recommendation about what
+may gate a build, against this project's own rule that agent verdicts never authorize one.
+
+Both halves read `accuracy_by_family` now, and the unclear count is filtered the same way.
+
+**And the correction that matters more than the fix.** With versions and sources separated, the
+warehouse holds:
+
+    agent   105
+    label    82
+    human     8      <- all on one family, all at a stale version
+
+`test_cannot_fail` "38 verdicts, 100%" is 38 AGENT rulings at 0.11.0 and 0.1.0. `arbitrary_pick`
+"24, 100%" is 24 agent rulings at 0.11.0. Neither has a single human verdict. A table calling
+those two "earned their keep" was reading agent rulings as measurement, three times in one table,
+which is the same defect it was reporting in `hop_multiplies_rows`.
+
+Nothing on this warehouse has earned its keep yet. That is consistent with the number the review
+form exists to move — 0 of 159 models ruled on by a person — and it is the honest starting line.

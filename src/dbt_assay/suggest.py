@@ -417,6 +417,22 @@ def _questions_unconfigured(cfg, firing: set) -> list[Suggestion]:
 def _questions_from_agreement(store, cfg) -> list[Suggestion]:
     """Per-family agreement, and what it says about gating that family.
 
+    *** A VERDICT ABOUT v1 SAYS NOTHING ABOUT v4, AND THE FIRST VERSION OF THIS POOLED THEM. ***
+    Reported from the field, on a rule written the same day. `hop_multiplies_rows` came back
+    "agrees 1/11 (9%)", which reads as a check that is wrong ten times out of eleven -- and on
+    the strength of it the advice was to stop queueing it.
+
+    Every one of those ten disagreements was recorded under `assay.0.11.0`. The check was fixed
+    structurally in 0.15.0 and 0.21.1, and the single verdict given AFTER the fix, at 0.17.0,
+    agrees. The seven findings it raises today have never been ruled on at all. The rate was not
+    the check's; it belonged to a version that stopped existing twenty-five releases ago.
+
+    `apply_policy` was never fooled -- it reads `accuracy_by_family`, which counts only the
+    shipping version, so a stale rate could not authorize anything. Only the ADVICE was fooled,
+    which is worse in one respect: gating fails closed, and advice tells a person to switch off a
+    check that had already been repaired. So this reads the same function, and a family with no
+    verdicts at the shipping version has no rate rather than an old one.
+
     *** AND WHERE THERE IS NO MEASUREMENT, THIS SAYS SO RATHER THAN FALLING BACK. ***
     A rule that quietly defers to the shipped default when the numbers are thin produces a
     recommendation indistinguishable from a measured one. Silence has causes -- nobody ruled on
@@ -426,16 +442,41 @@ def _questions_from_agreement(store, cfg) -> list[Suggestion]:
     `unclear` never enters the denominator. Disagreement means the criteria are wrong; unclear
     means the state does not carry what the question asks. Different edits.
     """
+    from . import __version__
+    from .contracts import QUESTIONS
+    shipping = {n: (q or {}).get("prompt_version", "") for n, q in QUESTIONS.items()}
+    # Only verdicts given against the question that ships NOW. A structural check carries assay's
+    # own version, because that is what moved when the check moved.
+    current = store.accuracy_by_family(shipping, default=f"assay.{__version__}")
+
+    # `unclear` is still counted, and still outside the denominator: it is evidence the question
+    # cannot be answered from the state it was given, which is a different repair from a wrong
+    # criterion. Counted at the shipping version too, or a family whose question was rewritten
+    # carries forward unclears about the old one.
+    # *** HUMAN ONLY, ON BOTH HALVES. ***
+    # The old query filtered by neither version nor source, so an AGENT's ruling counted toward a
+    # recommendation about what may gate a build -- against this project's own rule that agent
+    # verdicts never authorize one. `accuracy_by_family` has always been human-only; this half
+    # had to be told.
     rows = store.con.execute(
-        "select family, count(*) filter (where verdict = 'agree') a, "
-        "count(*) filter (where verdict = 'disagree') d, "
+        "select family, coalesce(nullif(prompt_version, ''), '') pv, "
         "count(*) filter (where verdict = 'unclear') u "
         "from adjudications where family is not null and family <> '' "
-        "group by family order by family").fetchall()
+        "and source = 'human' group by 1, 2 order by 1, 2").fetchall()
+    unclear: dict = {}
+    for fam, pv, u in rows:
+        want = shipping.get(fam) or (f"assay.{__version__}" if str(pv).startswith("assay.") else "")
+        if want and pv != want:
+            continue
+        unclear[fam] = unclear.get(fam, 0) + int(u)
+
     floor = int(getattr(cfg, "min_adjudications", 20) or 20)
     out = []
-    for fam, a, d, u in rows:
-        ruled = a + d
+    for fam in sorted(set(current) | set(unclear)):
+        rate_n = current.get(fam)
+        a = round(rate_n[0] * rate_n[1]) if rate_n else 0
+        ruled = rate_n[1] if rate_n else 0
+        u = unclear.get(fam, 0)
         cur = (cfg.questions.get(fam).action if fam in cfg.questions else None) or ""
         if ruled == 0:
             why = (f"{u} ruling(s), all `unclear`. Nobody could answer this from the state it "

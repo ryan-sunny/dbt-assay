@@ -28,7 +28,9 @@ def _edge(s, parent, child, cols):
         [f"model.p.{parent}", f"model.p.{child}", parent, child, json.dumps(cols)])
 
 
-def _rule(s, subject, question, verdict, note, source="agent", family=None):
+# Human by default: only a person's verdict may authorize an action, and these rules are
+# about what to configure. The agreement rule counted AGENT rulings until this said so.
+def _rule(s, subject, question, verdict, note, source="human", family=None):
     s.con.execute(
         "insert into adjudications (subject, question, family, verdict, note, source, "
         "decided_by, decided_at) values (?, ?, ?, ?, ?, ?, ?, current_timestamp)",
@@ -368,3 +370,44 @@ def test_the_vocab_list_is_sorted_by_the_number_the_headline_leads_with(tmp_path
     leading = [int(re.match(r"(\d+) models", r.headline).group(1)) for r in rows]
     assert leading == sorted(leading, reverse=True), rows[0].headline + " | " + rows[1].headline
     assert "wide_col" in rows[0].headline, "a term joined inside ONE model outranked a shared one"
+
+
+def test_a_verdict_about_an_old_version_does_not_become_this_version_s_rate(tmp_path):
+    """*** A CHECK THAT WAS ALREADY FIXED READ AS WRONG TEN TIMES OUT OF ELEVEN. ***
+
+    Reported from the field. `hop_multiplies_rows` came back "agrees 1/11 (9%)" and the advice
+    that followed was to stop queueing it. Every one of those ten disagreements was recorded
+    under `assay.0.11.0`; the check was fixed structurally in 0.15.0 and 0.21.1, and the single
+    verdict given after the fix agrees. The seven findings it raises today had never been ruled
+    on at all.
+
+    `apply_policy` was never fooled -- it reads `accuracy_by_family`, which counts the shipping
+    version only, so a stale rate could not authorize anything. The ADVICE was, which is worse in
+    one respect: gating fails closed, and advice tells a person to switch off a check that had
+    already been repaired.
+    """
+    from dbt_assay import __version__
+    store = _store(tmp_path)
+    fam = "some_structural_check"
+    for i in range(10):
+        store.adjudicate(f"model.p.old{i}", fam, fam, "", "disagree", "", "wrong then", "R",
+                         prompt_version="assay.0.11.0")
+    store.adjudicate("model.p.new", fam, fam, "", "agree", "", "right now", "R",
+                     prompt_version=f"assay.{__version__}")
+    got = [i for i in suggest.build(store, Config(), set(), "r1")
+           if i.section == "questions" and i.key == fam]
+    assert got, "the family vanished entirely"
+    head = got[0].headline
+    assert "1/11" not in head and "9%" not in head, head
+    assert "1/1" in head or "100%" in head, head
+
+
+def test_an_agents_ruling_never_becomes_a_recommendation(tmp_path):
+    """Agent verdicts do not authorize a gate, so they must not authorize advice about one."""
+    store = _store(tmp_path)
+    for i in range(30):
+        store.adjudicate(f"model.p.m{i}", "fam", "fam", "", "disagree", "", "agent read it",
+                         "agent", source="agent")
+    got = [i for i in suggest.build(store, Config(), set(), "r1")
+           if i.section == "questions" and i.key == "fam"]
+    assert not got or "no agreement rate" in got[0].headline, got[0].headline if got else None
