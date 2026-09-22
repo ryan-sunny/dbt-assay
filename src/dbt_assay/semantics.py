@@ -19,7 +19,12 @@ from .jev import choice, noul
 PRED_Q = QUESTIONS["predicate_intent"]
 DESC_Q = QUESTIONS["description_contradicts_the_code"]
 PRED_VERSION = PRED_Q["prompt_version"] + "+scoped"
-DESC_VERSION = DESC_Q["prompt_version"] + "+comments+scoped"
+# *** THE VERSION MOVES WHEN WHAT IS SENT MOVES. ***
+# A verdict is evidence about a question AND the state it was given. Dropping the comment block
+# changes the second, so every verdict recorded under `+comments` is about a different question
+# from this one -- which is exactly what `effectiveness` reports per version and exactly what it
+# would get wrong if the string stayed put.
+DESC_VERSION = DESC_Q["prompt_version"] + "+scoped+description_only"
 
 # Each choice carries its own criteria, so predicates are chunked for the same reason columns are.
 CHUNK = 6
@@ -170,14 +175,39 @@ def predicate_questions(preds: list) -> dict:
     }
 
 
+# *** A DESCRIPTION TOO SHORT TO SAY ANYTHING CANNOT BE CONTRADICTED. ***
+# Measured on a 358-model warehouse: the project's descriptions run to a median of 26 words and a
+# 25th percentile of 11, and NINE of the eighteen models this check flagged carry fewer than ten
+# -- "Staging: Tempe AZ commercial permits." at p=0.77, "Staging: Gilbert AZ commercial building
+# permits." at p=0.82. There is nothing in four words for SQL to contradict, and asking anyway
+# produces a confident answer to a question that was never asked.
+#
+# Ten words is where the finding count stops falling: twelve removes no further findings and takes
+# 24 more models out of scope. 279 of 344 described models are still judged.
+MIN_DESCRIPTION_WORDS = 10
+
+
 def description_state(s: Subject, vocab: dict | None = None) -> dict | None:
-    """None where there is no prose to judge. A placeholder is not evidence."""
-    if not s.purpose and not s.header:
+    """None where there is no prose to judge. A placeholder is not evidence.
+
+    *** THE COMMENT BLOCK IS NOT THE DESCRIPTION, AND SENDING BOTH MADE THE FINDING UNREADABLE. ***
+    This used to send `documentation_in_the_file` beside the description and then file the result
+    as "the description contradicts the code". The finding's own evidence had to say "the
+    contradiction is in one of these", because the check genuinely could not tell you which -- and
+    on 72% of the models it fired on, `code_contradicts_a_claim` was already firing too, quoting
+    the exact sentence. A check that cannot name what it is about is a check that gets muted.
+
+    So this judges the DESCRIPTION. The comment block is prose too, and it is handled where it can
+    be handled properly: `assay claims --extract` splits it into atomic claims and judges each one
+    against the code, one sentence at a time, with the sentence quoted in the finding.
+    """
+    if not s.purpose:
+        return None
+    if len(s.purpose.split()) < MIN_DESCRIPTION_WORDS:
         return None
     state = {
         "model": s.name,
         "description": s.purpose,
-        "documentation_in_the_file": s.comments or s.header,
         "contract": {k: v for k, v in s.contract.items() if v},
         "filters_this_model_applies": s.predicates[:12],
         "filters_inside_its_subqueries": s.nested[:10],

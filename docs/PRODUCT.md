@@ -97,6 +97,7 @@ No API key, no network, no spend. `assay check`.
 
 | check | what it catches |
 |---|---|
+| `description_contradicts_the_code` | the schema.yml description says something the SQL does not do. The description ONLY -- the comment block is judged per-sentence by `code_contradicts_a_claim` -- and a description under ten words is not judged at all, because there is nothing in four words for SQL to contradict |
 | `test_cannot_fail` | a `not_null` on `COALESCE(x, 0)`, an `accepted_values` on a hardcoded literal. The test passes on every row and asserts nothing |
 | `arbitrary_pick` | one value taken from a multi-valued field, non-deterministically |
 | `first_match_pick` | the same class, different spelling |

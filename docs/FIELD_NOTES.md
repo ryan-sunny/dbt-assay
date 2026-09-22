@@ -3253,3 +3253,45 @@ Four refusals, each of which would have been a real hazard:
 `calibration` and `effectiveness` read, and the dismissal against the exact finding ids the card
 showed. Verified end to end on the field warehouse: emit 210 cards, answer four, load, and the
 findings go 255 to 254.
+
+## 0.36.0: the description check was not judging the description
+
+18 findings, `queue`, and the finding's own evidence said:
+
+> the contradiction is in one of these. Both the schema.yml description and the model's own
+> comment block were sent.
+
+It could not tell you which, because both were sent and the result was filed against the
+description. Two measurements say what that cost:
+
+- **72% of its findings** were on models already carrying a `code_contradicts_a_claim` finding,
+  which quotes the exact sentence. The same defect, named worse.
+- The descriptions it fired on were **stubs**. Project median 26 words, 25th percentile 11, and
+  nine of eighteen findings were on descriptions under ten: `Staging: Tempe AZ commercial
+  permits.` at p=0.77, `Staging: Gilbert AZ commercial building permits.` at p=0.82. There is
+  nothing in four words for SQL to contradict, and asking anyway gets a confident answer to a
+  question nobody asked.
+
+Both fixed. The state sends the description and not the comment block, and a description under ten
+words is not judged at all. Ten is where the finding count stops falling — twelve removes no
+further findings and takes 24 more models out of scope. 279 of 344 described models are still
+judged; 65 are skipped, which is also 65 calls not made.
+
+The comment block is still judged, where it can be done properly: `assay claims --extract` splits
+it into atomic claims and `code_contradicts_a_claim` judges each one with the sentence quoted.
+That check reads 1 of 8 and needs work, but it is at least answering a question it can name.
+
+### What a version suffix is for, and what it does not do
+
+`DESC_VERSION` moved from `+comments+scoped` to `+scoped+description_only`, because a verdict is
+evidence about a question AND the state it was given — pooling the two across a state change is
+exactly what `effectiveness` exists to prevent.
+
+The 18 findings do not disappear on the next `assay check`, and that is deliberate.
+`live_decisions` serves the latest stored answer and counts it stale rather than hiding it: "hiding
+it leaves the caller with nothing, which is strictly worse than serving it dated." They clear when
+`assay semantics` re-asks.
+
+Worth writing down as a known gap: `stale_decisions` compares the BASE version and the suffix
+records the state SHAPE, so changing what gets sent — which is what happened here — is not counted
+by anything. Serving dated is right; not being able to tell that the inputs moved is not.

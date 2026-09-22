@@ -204,11 +204,10 @@ def description_contradicts_the_code(project, entries) -> list[Finding]:
             evidence={"probability": f.confidence, "downstream": e.descendants,
                       "marts": e.marts,
                       "it_judged": _prose_judged(e),
-                      "where_to_look": ("the contradiction is in one of these. Both the "
-                                        "schema.yml description and the model's own comment block "
-                                        "were sent. `assay claims --extract` splits prose into "
-                                        "atomic claims and `assay verify` names the one that "
-                                        "fails.")},
+                      "where_to_look": ("the schema.yml description above, against this "
+                                        "model's SQL. The comment block is NOT part of this "
+                                        "finding -- `code_contradicts_a_claim` judges those one "
+                                        "atomic claim at a time and quotes the sentence.")},
         ))
     return out
 
@@ -262,13 +261,14 @@ def code_contradicts_a_claim(project, entries) -> list[Finding]:
 
 
 def _prose_judged(entry) -> dict:
-    """What prose this model actually has, so a reader knows where to look."""
-    out: dict = {}
+    """The prose this was judged against -- the description, and only the description.
+
+    It used to name the comment block here too, because the comment block was being sent. It is
+    not any more: `code_contradicts_a_claim` judges the comments one atomic claim at a time and
+    quotes the sentence, which is what this could never do.
+    """
     desc = (getattr(entry, "description", "") or "").strip()
-    if desc:
-        out["schema_yml_description"] = desc[:300]
-    out["and_the_models_own_comment_block"] = "sent too; see the top of " + (entry.path or "the file")
-    return out
+    return {"schema_yml_description": desc[:300]} if desc else {}
 
 
 def _collapse_note(entry, hop: str) -> str:
