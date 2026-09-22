@@ -1,0 +1,10 @@
+[
+  {
+    "check": "ranks_by_degrees",
+    "shipped": ""
+  },
+  {
+    "check": "test_cannot_fail",
+    "shipped": ""
+  }
+]

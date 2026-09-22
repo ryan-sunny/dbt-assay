@@ -1,0 +1,140 @@
+# assay configuration. Every field is optional.
+#
+# *** WITHOUT THIS FILE, A CHECK FALLS BACK TO ITS SEVERITY, NOT TO WHAT IS WRITTEN BELOW. ***
+# This line used to say "the defaults below are what runs without this file", and that was false:
+# nothing parses this template, `assay init` only WRITES it. An unconfigured check gets `queue` if
+# its severity is high and `annotate` otherwise, and it can never `fail` -- which is deliberate,
+# because a release that adds a gating check must not turn a green build red on upgrade.
+#
+# So the actions below are an OPINION you adopt by editing this file, not a default you inherit.
+# `assay check` names every check that is firing and is not in here, with the action assay would
+# suggest for it, because "it reported nothing" and "it is not configured" read identically from
+# the outside.
+
+jev:
+  # THE KEY IS NEVER IN THIS FILE, because this file belongs in git. assay reads
+  # TYPESAFE_API_KEY or OPENROUTER_API_KEY from the environment, or from a .env here or in any
+  # parent directory. An exported variable always beats the file.
+  #   `assay config`          shows what was resolved and where the key came from
+  #   `assay config --check`  makes one real call to prove it works (about $0.00001)
+  #
+  # auto prefers TypeSafe direct and falls back to OpenRouter, so direct is used the moment
+  # a TYPESAFE_API_KEY is present. Pin one explicitly with `typesafe` or `openrouter`.
+  provider: auto
+  model: jev-latest
+  max_spend_usd: 1.0      # hard cap per invocation. ~80 full sweeps of a 300-model project.
+
+gating:
+  # `fail` is refused for a question with fewer recorded human verdicts than this, and downgraded
+  # to `queue`. A threshold set before anything was measured is a guess wearing a number.
+  min_adjudications: 20
+
+  # And the other half: how often those people had to AGREE. A count of wrong answers is still a
+  # count, so a question twenty-five people read and disagreed with twelve times satisfies the
+  # line above and has earned nothing. Measured only on verdicts given against the version of the
+  # question shipping now, and `unclear` is never in the denominator.
+  #
+  # 0 is off. Run `assay effectiveness` and pick a number from the rates you actually have.
+  min_agreement: 0.0
+
+completeness:
+  # The share of a parent a hop may LOSE before it is reported. Counted only under `--verify`,
+  # and only for a child that declares no filter, no group by and no union -- a hop that drops
+  # rows on purpose is not a finding. 0.8 means "kept less than a fifth".
+  row_loss_threshold: 0.8
+
+questions:
+  # An EXACT check has no probability to threshold, so it takes a plain action and may gate
+  # immediately: a parser decided it, and there is no error rate to measure first.
+  duckdb_full_match:
+    action: queue
+
+  # *** COMPLETENESS: COVERAGE OF WHAT THIS PROJECT ITSELF DECLARES. ***
+  # Named here so `assay config` shows them and you can see what to change. All annotate: they
+  # are true and cheap, and none is worth failing a build over until somebody has read a few and
+  # said which ones matter here.
+  source_reaches_nothing:      {action: annotate}
+  seed_reaches_nothing:        {action: annotate}
+  # *** WHAT CHANGED, WHICH NEEDS TWO `assay probe` RUNS TO EXIST AT ALL. ***
+  # A key that held last week and does not now is the failure that corrupts a warehouse: every
+  # count past the join inflates, nothing errors, and the tests pass because they were written
+  # while it was true. Counted, not judged, so it may gate immediately.
+  key_stopped_holding:         {action: fail}
+  key_column_started_mattering: {action: queue}
+  key_started_holding:         {action: annotate}
+  key_column_stopped_mattering: {action: annotate}
+  source_only_a_test_reads:    {action: annotate}
+  source_freshness_undeclared: {action: annotate}
+  source_freshness_stale:      {action: annotate}
+  # Needs `--verify`: it counts parent and child rows through your own dbt. An uncounted hop
+  # produces nothing at all, which is correct -- an absent measurement is not a pass.
+  hop_drops_most_rows:         {action: annotate}
+  # `when.select` scopes a question. assay errors on syntax it does not understand rather than
+  # silently matching everything.
+  #  when:
+  #    select: "path:models/water+"
+
+  # Keyed by the CHECK a finding carries, which is NOT the question family a verdict is filed
+  # under. `assay check --json` prints every check name; `assay config` warns about a key here
+  # that matches none of them. This example said `column_is_part_of_the_key` for months, which is
+  # a question family, so it configured nothing at all.
+  grain_unresolved:
+    # A threshold is an EXPRESSION, so its direction is readable at a glance, and per ACTION,
+    # because the cost of being wrong differs between annotating and failing a build.
+    act:
+      annotate: "p > 0.50"
+      queue:    "p > 0.75"
+
+# elementary: where Elementary built its tables, for `assay volume`. assay READS what it measured
+# and rebuilds none of it. Defaults to `<your schema>_elementary`.
+#   schema: analytics_elementary
+#   stale_after_days: 14   # a monitor unwritten for longer is reported as stopped, not as clean
+elementary: {}
+
+# monitoring: assay asserts that a monitor EXISTS, is CURRENT and COVERS what matters. It never
+# measures volume or freshness itself -- that would be a second monitoring tool with a second
+# opinion. Runs inside `assay check --verify`, because it needs your warehouse; without the flag
+# it does not run and `check` says so rather than staying quiet.
+#
+# Leave max_staleness_days out and assay derives one PER RELATION from that relation's own write
+# history -- late is longer than it has normally gone -- falling back to how often this project
+# builds. `assay volume` prints every threshold and where it came from.
+monitoring: {}
+#  enabled: false                          # turn the monitoring checks off deliberately
+#  source_freshness: {max_staleness_days: 7}   # one number, overriding every derived one
+#  min_marts: 1     # a model with fewer marts downstream is not reported as unwatched
+
+# practices: override how a standard dbt-project-evaluator check is treated.
+#   enforce (exact, may gate) | recommend (informational) | adjudicate (ask) | off
+practices: {}
+#  fct_model_fanout: recommend
+
+# explanations: options for the row-adjudication family, per model. The generic set is always
+# available; these are added to it, and they are where the domain knowledge lives.
+explanations: {}
+#  water_rights:
+#    conditional_right: >-
+#      a claim on water not yet diverted, so its structure legitimately does not exist yet
+
+# vocab: what the words mean here. Injected into state for EVERY question, which is why it improves
+# answers to questions you never wrote.
+vocab: {}
+#  division:
+#    means: "a Colorado water court region, 1 through 7"
+#    implies: "a case number is unique only within one division"
+#    # WHERE IT IS TRUE. A selector, exactly like `when.select` on a question. Omit it and the
+#    # term is sent to every model, which is what you want for a term about YOUR data and not
+#    # what you want for one that asserts somebody's law. `assay config` warns about a term that
+#    # cites a jurisdiction and declares no scope.
+#    applies_to: "path:models/water"
+#    # ...or, when the exception lives inside the rule:
+#    applies_to:
+#      select:  "path:models/water"
+#      exclude: "path:models/water/az"
+
+# waivers: reason required, expiry optional but recommended.
+waivers: {}
+#  int_water_conditional:
+#    - question: description_contradicts_the_code   # a CHECK name, as in `questions:` above
+#      reason: "the summary is deliberately short; the file comment carries the detail"
+#      until: 2027-01-01

@@ -1,0 +1,1 @@
+{"available":2,"carried":0,"child":"model.p.int_bad_unique","child_name":"int_bad_unique","driving":false,"dropped":2,"dropped_cols":["amount","id"],"joined_on":[],"kind":"","parent":"model.p.stg_bad_notnull","parent_name":"stg_bad_notnull","row_loss":[],"union_arm":false,"unique_key":false}

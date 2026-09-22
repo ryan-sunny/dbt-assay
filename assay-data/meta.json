@@ -1,0 +1,21 @@
+{
+  "coverage": {
+    "conflicting_copies": 0,
+    "edges": 1,
+    "from_disk": 11,
+    "from_manifest": 0,
+    "from_stripped": 0,
+    "models": 11,
+    "readable": 11,
+    "sources": 0,
+    "tests": 5,
+    "unreadable": 0
+  },
+  "generated_at": "unknown",
+  "models": 11,
+  "packaged": 0,
+  "project": "p",
+  "sources": 0,
+  "version": "0.46.0",
+  "yours": 11
+}

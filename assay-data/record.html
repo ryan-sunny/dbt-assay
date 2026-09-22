@@ -1,0 +1,141 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>p &middot; assay</title>
+<style>
+:root{--deep:#ffffff; --blue:#ffffff; --sky:#5c6670;
+  --gold:#1a1a1a; --amber:#8a6d1f; --ink:#1a1a1a;
+  --barn:#8c1d18; --maroon:#8c1d18; --cream:#ffffff; --sage:#3f6b3f;}
+*{box-sizing:border-box}
+body{margin:0;color:#1a1a1a;background:#fff;
+font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:36px 24px 60px}
+h1{margin:0;font-size:24px;font-weight:700;letter-spacing:-.3px;color:#1a1a1a}
+h1 .small{display:block;font-size:14px;font-weight:400;color:#5c6670;margin-top:4px}
+h2{font-size:11px;letter-spacing:1.3px;text-transform:uppercase;color:#5c6670;
+  margin:32px 0 10px;font-weight:700;border-bottom:1px solid #d8dcdf;padding-bottom:6px}
+.sub{color:#5c6670;margin-top:6px;font-size:13px}
+.hero{display:flex;gap:16px;flex-wrap:wrap;margin:18px 0 4px}
+.big{flex:1 1 300px;background:#fff;color:#1a1a1a;border:1px solid #d8dcdf;border-radius:4px;
+  padding:16px 18px;box-shadow:none}
+.big .n{font-size:40px;line-height:1;font-weight:700;color:#1a1a1a;letter-spacing:-1px}
+.big .of{font-size:15px;color:#5c6670;font-weight:400}
+.big .lab{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:#5c6670;
+  font-weight:700;margin-bottom:6px}
+.big p{margin:10px 0 0;font-size:12.5px;color:#41494f;line-height:1.5}
+.card{background:#fff;color:#1a1a1a;border:1px solid #d8dcdf;border-radius:4px;padding:12px 14px;
+  box-shadow:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.stat{background:#fff;color:#1a1a1a;border:1px solid #d8dcdf;border-radius:4px;padding:11px 13px;
+  box-shadow:none}
+.stat b{display:block;font-size:22px;line-height:1.2;color:#1a1a1a;font-weight:700}
+.stat span{font-size:12px;color:#5c6670}
+.stat em{display:block;font-style:normal;font-size:11.5px;color:#7a838a;margin-top:4px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{text-align:left;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#5c6670;
+  padding:0 10px 6px 0;border-bottom:1px solid #b9c0c5}
+td{padding:6px 10px 6px 0;border-bottom:1px solid #edeff1;vertical-align:top}
+td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.bar{display:inline-block;height:8px;border-radius:2px;background:#8c1d18;vertical-align:middle}
+.bar.ok{background:#3f6b3f} .bar.mid{background:#8a6d1f}
+.tag{display:inline-block;padding:1px 7px;border-radius:3px;font-size:11px;font-weight:600;
+  border:1px solid #b9c0c5;background:#f4f5f6;color:#41494f;white-space:nowrap}
+.t-bad{background:#fdf0ef;color:#8c1d18;border-color:#e5c3c0}
+.t-mid{background:#fdf7e8;color:#7a6415;border-color:#e6d9ae}
+.t-ok{background:#f0f5f0;color:#2f5730;border-color:#c3d6c4}
+.note{color:#5c6670;font-size:12.5px;margin:8px 0 0;max-width:80ch}
+footer{color:#7a838a;font-size:11.5px;margin-top:34px;max-width:82ch;line-height:1.6;
+  border-top:1px solid #d8dcdf;padding-top:14px}
+footer b{color:#41494f}
+a{color:#1a5fa8}
+.empty{color:#7a838a;font-style:italic}
+</style></head><body>
+<div class="wrap">
+<h1>Is this warehouse understood?<span class="small">and by whom</span></h1>
+<div class="sub">p &middot; 11 models &middot;
+manifest generated unknown</div>
+
+<div class="hero">
+  <div class="big">
+    <div class="lab">findings a person has ruled on</div>
+    <div><span class="n">0</span> <span class="of">of 5</span></div>
+    <p>The only number here a release cannot improve. A sharper check finds more, a fuller
+    state raises a confidence, the DAG moves the blast radius &mdash; none of that moves this,
+    because it moves when somebody reads SQL and at no other time.
+    <b>A good release makes it look worse.</b> That is the design working.</p>
+  </div>
+  <div class="big" style="flex:1 1 230px">
+    <div class="lab">and by whom</div>
+    <div><span class="n" style="color:#5a6a2f">0</span></div>
+    <p>agent rulings, kept apart. They triage what a person should read first. They gate nothing,
+    satisfy no verdict floor, anchor no regression check, and cannot move the number on the left.
+    An agent able to raise it would destroy the property that makes it worth printing.</p>
+  </div>
+</div>
+<p class="note">0% of what assay currently sees has been read by a
+person.</p>
+
+<h2>Did the questions get better?</h2>
+<div class="card">
+<table><thead><tr><th>family</th><th>version</th><th class="n">ruled</th>
+<th class="n">agreed</th><th class="n">unclear</th><th class="n">open</th></tr></thead>
+<tbody><tr><td colspan="6" class="empty">No verdicts recorded yet, so nothing here can be measured. assay review -i is one keypress each, and until somebody presses one no question may fail a build.</td></tr></tbody></table>
+</div>
+<p class="note">A verdict is about a <em>version</em> of a question, so agreement is per version.
+Unclear is never in the denominator: disagreement means the criteria are wrong, unclear means the
+state does not carry what the question asks. Reword an option to fix one, add a field to fix the
+other.</p>
+
+<h2>What is wrong, and how far it reaches</h2>
+<div class="card">
+<table><thead><tr><th>check</th><th class="n">findings</th><th class="n">deepest reach</th>
+<th>read by a person</th></tr></thead><tbody><tr><td class='mono'>test_cannot_fail</td><td class='n'>3</td><td class='n'>0</td><td><span class="tag t-bad">0 of 3</span></td></tr><tr><td class='mono'>ranks_by_degrees</td><td class='n'>1</td><td class='n'>0</td><td><span class="tag t-bad">0 of 1</span></td></tr><tr><td class='mono'>duckdb_full_match</td><td class='n'>1</td><td class='n'>0</td><td><span class="tag t-bad">0 of 1</span></td></tr></tbody></table>
+</div>
+
+<h2>What is one row of this?</h2>
+<div class="grid">
+  <div class="stat"><b>2</b><span>declared by a test</span>
+  <em>a person wrote it down; the strongest kind</em></div>
+  <div class="stat"><b>0</b><span>worked out from the SQL</span>
+  <em>code settled it from a group by or a dedup</em></div>
+  <div class="stat"><b>0</b><span>judged</span>
+  <em>a model answered where code could not</em></div>
+  <div class="stat"><b><b style="color:#9e2b20">9</b></b>
+  <span>nothing settles it</span>
+  <em>nobody knows what one row of these is</em></div>
+</div>
+<p class="note">Responsibility number one, and the one every other answer rests on. A grain a
+person declared and one a judgment reached at 0.53 are not the same fact, so they are not counted
+together. <b>0</b> model(s) have no uniqueness test at all.</p>
+
+<h2>The findings themselves</h2>
+<div class="card">
+<table><thead><tr><th>check</th><th>model</th><th>what</th><th class="n">marts</th></tr></thead>
+<tbody><tr><td class='mono'>ranks_by_degrees</td><td class='mono'>int_bad_degrees</td><td>window ranks by ST_DISTANCE, which returns degrees</td><td class='n'></td></tr><tr><td class='mono'>duckdb_full_match</td><td class='mono'>stg_bad_tilde</td><td>full-match regex against a literal pattern &#x27;Denver&#x27;</td><td class='n'></td></tr><tr><td class='mono'>test_cannot_fail</td><td class='mono'>stg_bad_notnull</td><td>not_null test on `amount` cannot fail</td><td class='n'></td></tr><tr><td class='mono'>test_cannot_fail</td><td class='mono'>int_bad_unique</td><td>unique test on `section_id` cannot fail</td><td class='n'></td></tr><tr><td class='mono'>test_cannot_fail</td><td class='mono'>stg_bad_accepted</td><td>accepted_values test on `cls` cannot fail</td><td class='n'></td></tr></tbody></table>
+</div>
+<p class="note">The 5 with the widest reach, of 5. Severity is
+arithmetic: the same defect on a leaf and on a model nine marts read are not the same finding.</p>
+
+<h2>What this project claims about itself</h2>
+<div class='card empty'>No claims extracted yet. <span class='mono'>assay claims --extract</span> turns this project's own prose into claims, and <span class='mono'>assay verify</span> checks each one against the code. Nothing here is a pass &mdash; it has not been asked.</div>
+
+<h2>Do we have all of it?</h2>
+<div class="card">
+<table><thead><tr><th>coverage</th><th class="n">n</th><th>meaning</th></tr></thead>
+<tbody><tr><td>models assay could not read</td><td class='n'><span style="color:#6b7a80">0</span></td><td style='color:#4a5b63'>not audited, and an absent audit is not a pass</td></tr><tr><td>sources nothing reads</td><td class='n'><span style="color:#6b7a80">0</span></td><td style='color:#4a5b63'>declared, loaded every run, no model and no test refers to it</td></tr><tr><td>sources only a test reads</td><td class='n'><span style="color:#6b7a80">0</span></td><td style='color:#4a5b63'>you are paying to test data nothing consumes</td></tr><tr><td>sources declaring no freshness</td><td class='n'><span style="color:#6b7a80">0</span></td><td style='color:#4a5b63'>silent when dbt_project_evaluator is installed</td></tr><tr><td>sources behind their own freshness</td><td class='n'><span style="color:#6b7a80">0</span></td><td style='color:#4a5b63'>the project states how current it should be and it is not</td></tr><tr><td>hops that lose most of the parent</td><td class='n'><span style="color:#6b7a80">0</span></td><td style='color:#4a5b63'>needs --verify; no filter, no group by, no collapse</td></tr></tbody></table>
+</div>
+<p class="note"><b>Row loss and empty models were not counted.</b> Run <span class="mono">assay completeness --verify</span> to count them through this project's own dbt. Their absence above is not a pass.</p>
+<p class="note">Coverage of what this project itself declares. assay can say a column is 99% its
+default; it cannot say whether that is bad. The first is a fact about code and rows, the second is
+a ruling.</p>
+
+<h2>What moved</h2>
+<div class='card'>Only one run is recorded, so nothing can have moved yet. Run <span class='mono'>assay check</span> again after your next change.</div>
+
+<footer>
+This file is self-contained and deterministic: it carries the manifest's own
+<b>generated_at</b> and never a wall clock, so a rerun that changes nothing produces an identical
+file. Commit it. A file that diffs accrues; a server shows you today and forgets.<br><br>
+Written by <b>assay 0.46.0</b>.
+</footer>
+</div></body></html>

@@ -2846,17 +2846,19 @@ def volume(
     # parse. The human output is suppressed rather than the JSON being printed somewhere else.
     say = (lambda *a, **k: None) if as_json else console.print
     with console.status(f"reading {schema_name}..."):
-        rep = elem.read(runner, schema_name, stale_after_days=stale_days)
-        cad = elem.cadence(runner, schema_name) if rep.reachable else elem.Cadence()
+        cad = elem.build_cadence(runner, schema_name)
+        rep = elem.read(runner, schema_name, stale_after_days=stale_days, fallback=cad)
         cov = elem.test_coverage(runner, schema_name) if rep.reachable else {}
-    # *** A THRESHOLD NOBODY HAD TO PICK. ***
-    # `max_staleness_days` decides whether a monitor reads as stopped, so a guessed one either
-    # cries wolf weekly or stays quiet for a quarter. Derived from how often dbt actually runs
-    # here; configured only when somebody has looked at that number and disagreed.
+    # *** ONE NUMBER, DELIBERATELY CHOSEN, OVERRIDING EVERY DERIVED ONE. ***
+    # Without it each relation carries a threshold derived from its own write history, which is
+    # what `read` already did above.
     configured = (mon.get("source_freshness") or {}).get("max_staleness_days")
-    limit_days = int(configured) if configured else cad.derived_staleness_days
-    if limit_days:
-        rep.stale_after_days = limit_days
+    if configured:
+        for r in rep.readings:
+            r.threshold_days = int(configured)
+            if r.age_days is not None and r.state in (elem.LIVE, elem.ABANDONED):
+                r.state = elem.ABANDONED if r.age_days > int(configured) else elem.LIVE
+        rep.stale_after_days = int(configured)
 
     # ---- what could be read, and what could not
     t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))

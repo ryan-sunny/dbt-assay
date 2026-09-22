@@ -25,4 +25,22 @@ jobs:
       - run: uv run pytest -q
       - run: uv run ruff check src tests
       - run: uv build
+      # *** THE RELEASE SMOKE TEST IMPORTED THE PACKAGE AND RAN `assay version`. ***
+      # 0.46.0 shipped with `assay volume` unable to start -- a rename landed at one call site
+      # and not the other -- and that check passed, because importing a package does not enter a
+      # command. It installs the built WHEEL now, into a clean environment, and runs every
+      # command's `--help`, which constructs every option and imports every module the command
+      # touches. A command that cannot be entered fails here, before anything reaches PyPI.
+      - name: every command in the built wheel can be entered
+        run: |
+          uv venv /tmp/smoke
+          VIRTUAL_ENV=/tmp/smoke uv pip install --quiet dist/*.whl
+          VIRTUAL_ENV=/tmp/smoke /tmp/smoke/bin/assay version
+          for cmd in $(/tmp/smoke/bin/python -c "
+          from dbt_assay.cli import app
+          print(' '.join(sorted((c.name or c.callback.__name__.removesuffix('_cmd').replace('_','-'))
+                                for c in app.registered_commands)))"); do
+            /tmp/smoke/bin/assay "$cmd" --help >/dev/null || { echo "::error::assay $cmd --help failed"; exit 1; }
+          done
+          echo "every command entered"
       - uses: pypa/gh-action-pypi-publish@release/v1
