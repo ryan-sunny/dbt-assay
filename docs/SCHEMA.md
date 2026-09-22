@@ -1,6 +1,6 @@
 # The store
 
-One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Ten
+One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Eleven
 tables. The whole design turns on one split, so it is worth stating before the diagram:
 
 **Some of these cost nothing and some of them cost money or somebody's afternoon.** A table
@@ -11,7 +11,7 @@ prune` deletes only the first kind, and the split is declared in code rather tha
 ```python
 PRUNABLE     = ("findings", "edge_facts", "unreadable")
 NEVER_PRUNED = ("model_calls", "model_decisions", "claims", "adjudications", "observed_keys",
-                "runs", "states")
+                "runs", "states", "warehouse_calls")
 ```
 
 A new table belongs to one list or the other and a test fails until it does, so nothing becomes
@@ -151,9 +151,41 @@ erDiagram
         varchar minimality
         varchar detail
     }
+    WAREHOUSE_CALLS {
+        varchar call_id "sha1 of the STATEMENT, so a rerun is identifiable"
+        varchar run_id "empty when the command minted no run"
+        varchar caller "assay.probe.keys, assay.practices.collect, ..."
+        varchar relation "empty when the statement spans several"
+        varchar statement_kind "key_scan / profile / sample / count / metadata"
+        varchar dialect
+        int columns_touched
+        varchar column_names "json array"
+        bigint rows_returned
+        bigint rows_scanned "the relation's KNOWN row count, not a measurement"
+        bigint bytes_estimated
+        bigint bytes_measured "null unless an adapter gave a real number"
+        varchar estimate_basis "declared_types / adapter / unknown. Never optional"
+        boolean sampled
+        bigint sample_rows
+        int wall_ms
+        double usd_estimated "null when no configured rate can justify a number"
+        varchar rate_card "WHICH rate produced usd_estimated"
+        boolean failed "a failed statement is not an empty one"
+        varchar detail
+        timestamp called_at
+    }
 ```
 </details>
 
+
+`WAREHOUSE_CALLS` joins to `RUNS` by `run_id` when the command that issued the statement minted
+one, and to nothing when it did not — `assay probe` opens a store and is not part of a check, and
+stamping its cost with the newest `run_id` would credit it to a run that did not cause it.
+
+It is the only table here with **no primary key at all**, and that is deliberate. `call_id` is a
+hash of the statement rather than of the call, so the same statement issued twice carries one id;
+a key would mean `insert or replace`, and two identical statements in one pass would collapse into
+one row — money spent, silently unrecorded. An append-only ledger cannot lose a row that way.
 
 `OBSERVED_KEYS` joins to nothing. It is keyed on `(relation, column_name, observed_at)` because it
 is a **series**: a key that held last week and does not now is the failure that corrupts a
@@ -205,6 +237,7 @@ rulings were structural, so a calibration report has to exclude them by construc
 | `adjudications` | what a person or agent concluded | **somebody's afternoon** |
 | `claims` | what this project asserts, as data | **a model call** |
 | `observed_keys` | what a count actually found, over time | **a warehouse query** |
+| `warehouse_calls` | what each statement cost the warehouse | **the money itself** |
 
 ---
 

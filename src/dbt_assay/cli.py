@@ -16,6 +16,7 @@ from . import align as align_mod
 from . import backtest as backtest_mod
 from . import claims as claims_mod
 from . import columns as columns_mod
+from . import cost as cost_mod
 from . import diff as diff_mod
 from . import export as export_mod
 from . import feeds as feeds_mod
@@ -50,6 +51,39 @@ def _n(v) -> str:
     those would round them.
     """
     return f"{v:,}" if isinstance(v, int) and not isinstance(v, bool) else str(v)
+
+
+def _bytes(n) -> str:
+    """Bytes a person reads, or the reason there is no number. Never a bare 0 for 'unknown'."""
+    if n is None:
+        return "not estimated"
+    step = 1024.0
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < step or unit == "TB":
+            return f"{size:,.0f} {unit}" if unit == "B" else f"{size:,.1f} {unit}"
+        size /= step
+    return f"{size:,.1f} TB"
+
+
+def _usd(v) -> str:
+    """A dollar figure, or nothing at all. An unpriced statement prints no price."""
+    if v is None:
+        return ""
+    return f", ${v:,.4f}" if v < 1 else f", ${v:,.2f}"
+
+
+def _estimate_line(est: dict, rate) -> str:
+    """The total, what produced it, and how much of it could not be estimated."""
+    if est["bytes"] is None:
+        return (f"[yellow]nothing could be estimated[/] [dim]on {est['engine']}: no declared "
+                f"column types, or no observed row counts. `dbt docs generate` gives assay the "
+                f"types; `assay probe` gives it the row counts.[/]")
+    card = est["rate_card"] or "no rate configured"
+    tail = (f" [yellow]{est['unpriced']} statement(s) could not be estimated[/] and are not in "
+            f"this total." if est["unpriced"] else "")
+    return (f"[bold]{_bytes(est['bytes'])}[/] scanned{_usd(est['usd'])} "
+            f"[dim]({est['engine']}, {card})[/].{tail}")
 
 
 def _find_target(given: str | None) -> Path:
@@ -2635,16 +2669,25 @@ def cost(
     st = Store(store_path)
     try:
         led = cost_mod.ledger(st, since or None)
+        # *** ONE TABLE FOR THINKING, ONE FOR THE WAREHOUSE, AND THE SAME COMMAND SHOWS BOTH. ***
+        # DuckDB is free and says so. On BigQuery every statement assay issues is a line item, and
+        # for that reader this half is the one that matters.
+        wh = cost_mod.warehouse_ledger(st, since or None)
     finally:
         st.close()
 
     if as_json:
-        console.print_json(_json.dumps(led))
+        console.print_json(_json.dumps({**led, "warehouse": wh}))
         raise typer.Exit(0)
 
+    if not led["calls"] and not wh["calls"]:
+        console.print("[yellow]no calls recorded[/] [dim]-- neither the judged tier nor a "
+                      "warehouse statement has run against this store.[/]")
+        raise typer.Exit(0)
     if not led["calls"]:
-        console.print("[yellow]no calls recorded[/] [dim]-- the judged tier has not run against "
-                      "this store, or every answer came from the cache.[/]")
+        console.print("[yellow]no model calls recorded[/] [dim]-- the judged tier has not run "
+                      "against this store, or every answer came from the cache.[/]")
+        _print_warehouse_spend(wh)
         raise typer.Exit(0)
 
     window = f" since {led['since']}" if led["since"] else " lifetime"
@@ -2688,6 +2731,49 @@ def cost(
                          f"reconstruction disagreed with the provider's own ids on this store, so "
                          f"it was refused rather than guessed. They are not in this total.")
     console.print()
+    for n in notes:
+        console.print(f"[dim]{n}[/]")
+    _print_warehouse_spend(wh)
+
+
+def _print_warehouse_spend(wh: dict) -> None:
+    """The other half of the bill: what assay spent on somebody's warehouse.
+
+    Separate from the model ledger because they are priced by different people in different units,
+    and a single merged number would be two facts sharing one name.
+    """
+    if not wh["calls"]:
+        console.print("\n[dim]no warehouse statement has been recorded on this store. `assay "
+                      "probe` and `assay check --verify` are what issue them.[/]")
+        return
+    console.print(f"\n[bold]the warehouse[/] -- {wh['calls']:,} statement(s), "
+                  f"{_bytes(wh['bytes_estimated'])} scanned{_usd(wh['usd'])}, "
+                  f"{wh['wall_ms'] / 1000:.1f}s.")
+    t = Table(title="by caller", title_justify="left", title_style="bold", show_header=True,
+              header_style="bold", box=None, padding=(0, 2))
+    t.add_column(""); t.add_column("statements", justify="right")
+    t.add_column("scanned", justify="right"); t.add_column("usd", justify="right")
+    t.add_column("time", justify="right"); t.add_column("failed", justify="right")
+    for name, calls, by, usd, ms, bad in wh["by_caller"]:
+        t.add_row(str(name), f"{calls:,}", _bytes(by or None), f"${usd:.4f}",
+                  f"{ms / 1000:.1f}s", f"{bad:,}" if bad else "")
+    console.print()
+    console.print(t)
+    notes = []
+    if wh["failed"]:
+        notes.append(f"{wh['failed']:,} statement(s) FAILED and are not in the money. A failed "
+                     f"statement and an empty result are different facts here.")
+    if wh["unestimated"]:
+        notes.append(f"{wh['unestimated']:,} statement(s) could not be estimated and are not in "
+                     f"the bytes. `dbt docs generate` gives assay the column types; `assay probe` "
+                     f"gives it the row counts.")
+    if not wh["bytes_measured_calls"]:
+        notes.append("every byte figure here is an ESTIMATE from declared types and a known row "
+                     "count, never a number an adapter returned. `estimate_basis` on each row "
+                     "says which it is.")
+    if wh["rate_cards"] in ([], ["duckdb.local"]):
+        notes.append("priced as local DuckDB, which bills nothing. Set `cost.engine` and a rate "
+                     "in audit.yml if this warehouse charges.")
     for n in notes:
         console.print(f"[dim]{n}[/]")
 
@@ -2886,7 +2972,8 @@ def volume(
     stale_days = int(opts.get("stale_after_days") or elem.STALE_AFTER_DAYS)
 
     def runner(sql: str, n: int):
-        return probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=n)
+        return probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=n,
+                                 caller="assay.elementary", kind="metadata")
 
     mon = getattr(cfg, "monitoring", None) or {}
     # *** `--json` IS FOR A MACHINE AND A TABLE IN THE MIDDLE OF IT IS NOT JSON. ***
@@ -2949,6 +3036,11 @@ def volume(
     # of its own gaps. Nothing is multiplied by an invented number, and a relation with too little
     # history of its own falls back to how often the project builds, which is also measured.
     say()
+    if cad.unreadable:
+        # Reported from the field as "only 0 writes recorded" against a table holding 27 days of
+        # them. The statement had failed; the reader could not tell and neither could the output.
+        say(f"[yellow]the build-cadence statement did not run[/], so nothing here falls back to "
+            f"how often this project builds. [dim]{cad.detail[:160]}[/]")
     for r in rep.readings:
         if r.state in (elem.ABSENT, elem.NEVER_RUN, elem.UNREACHABLE):
             continue
@@ -3032,6 +3124,8 @@ def volume(
             "unwatched": [{"model": n, "descendants": d, "marts": m} for _u, n, d, m in unwatched],
             "cadence": {"runs": cad.writes, "normal_gap_days": cad.normal_gap_days,
                         "derived_staleness_days": cad.derived_staleness_days,
+                        # *** `runs: 0` MEANT BOTH "NOTHING BUILT" AND "THE QUERY FAILED". ***
+                        "unreadable": cad.unreadable, "why": cad.detail,
                         "explain": cad.explain(), "configured": bool(configured),
                         "per_relation": {r.relation: {"threshold_days": r.threshold_days,
                                                       "explain": (r.cadence.explain()
@@ -3081,7 +3175,8 @@ def _monitoring_findings(project, cfg, verify: bool, project_dir: str, profiles_
     schema_name = opts.get("schema") or _default_elementary_schema(project)
 
     def runner(sql: str, n: int):
-        return probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=n)
+        return probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=n,
+                                 caller="assay.elementary", kind="metadata")
 
     try:
         cad = elem.build_cadence(runner, schema_name)
@@ -3720,6 +3815,21 @@ def _grain_setup(target: str | None, store_path: str | None = None,
     return tdir, project, digests, schema, declared, proposed
 
 
+def _price(project, schema, cfg=None, run_id: str = "") -> object:
+    """Tell the open store's warehouse ledger what the manifest and `audit.yml` know.
+
+    `Store.__init__` attaches the ledger, so statements are recorded either way; this is what
+    turns a recorded statement into an estimated one. Returns the rate card, for a caller that
+    wants to print it.
+    """
+    from . import cost as cost_mod
+    dialect = getattr(project, "dialect", "duckdb") or "duckdb"
+    rate = cost_mod.RateCard.from_config(getattr(cfg, "cost", None) or {}, dialect)
+    probe_mod.enrich(dialect=rate.engine, types=cost_mod.declared_types(project, schema),
+                     rate=rate, run_id=run_id)
+    return rate
+
+
 @app.command()
 def infer(
     target: str = typer.Option(None, "--target", "-t"),
@@ -3896,14 +4006,17 @@ def probe(
     load: str = typer.Option(None, "--load", help="a JSON file of results from --emit"),
     limit: int = typer.Option(0, "--limit", "-n"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
 ):
     """Count what the SQL cannot settle. Runs through YOUR dbt; assay never sees a credential."""
+    cfg = Config.load(config_path)
     _tdir, project, digests, schema, declared, proposed = _grain_setup(target, store_path)
     known = {uid: [c.lower() for c in c_.columns] for uid, c_ in proposed.items()}
     tg = probe_mod.targets(project, digests, schema, declared, known)
     n_all = len(tg)
     # Opened here rather than below, because the ORDER depends on what is already in it.
     store = Store(store_path)
+    rate = _price(project, schema, cfg)
     # *** LEAST RECENTLY OBSERVED FIRST, OR `-n` READS THE SAME FRONT OF THE LIST FOREVER. ***
     # Not a flag: the previous order was whatever the manifest yielded, which is arbitrary, and
     # nothing can depend on it. This is what lets a bounded probe walk a project over several
@@ -3929,10 +4042,19 @@ def probe(
         raise typer.Exit(0)
 
     if dry_run:
-        for t_ in tg[:8]:
-            console.print(f"\n[bold]{t_.relation}[/]  [dim]{t_.why}[/]")
-            console.print(f"  [dim]{probe_mod.build_sql(t_, dialect)[:220]}[/]")
-        console.print(f"\n[dim]{len(tg)} statements, one scan each. Nothing was run.[/]")
+        # *** WHAT WILL THIS COST ME, ANSWERED BEFORE ANYTHING RUNS. ***
+        # No credential and no warehouse: assay builds the SQL, so it knows the exact column list,
+        # the manifest declares the types and `observed_keys` holds the row counts. That is every
+        # input BigQuery's own pricing formula takes.
+        est = probe_mod.dry_run(tg, store, dialect=dialect, rate=rate,
+                                types=cost_mod.declared_types(project, schema))
+        for line in est["statements"][:8]:
+            console.print(f"\n[bold]{line['relation']}[/]  [dim]{line['why']}[/]")
+            console.print(f"  [dim]{line['sql'][:220]}[/]")
+            console.print(f"  [dim]{line['columns']} column(s), {_bytes(line['bytes'])}"
+                          f"{_usd(line['usd'])} -- {line['basis']}[/]")
+        console.print(f"\n[bold]{len(tg)}[/] statements, one scan each. Nothing was run.")
+        console.print(_estimate_line(est, rate))
         store.close()
         raise typer.Exit(0)
 
@@ -3952,7 +4074,7 @@ def probe(
     found = []
     for t_ in tg:
         obs, _sql = probe_mod.run_via_dbt(t_, project_dir, profiles_dir, dialect,
-                                          dbt_bin=dbt_bin)
+                                          dbt_bin=dbt_bin, caller="assay.probe.keys")
         probe_mod.write(store, obs)
         for o in obs:
             if o.status == "unknown":
@@ -3963,6 +4085,11 @@ def probe(
                 found.append(o)
     console.print(f"observed [bold]{ok}[/] columns, [yellow]{unknown} unknown[/] "
                   f"(a failure is recorded as unknown, never as 'not unique')")
+    spent = cost_mod.warehouse_ledger(store, caller="assay.probe.keys")
+    if spent["calls"]:
+        console.print(f"[dim]{spent['calls']} statement(s), {_bytes(spent['bytes_estimated'])}"
+                      f"{_usd(spent['usd'])}, {spent['wall_ms'] / 1000:.1f}s of warehouse time. "
+                      f"`assay spend` has the whole ledger.[/]")
     for o in found[:15]:
         console.print(f"  [green]unique[/] {o.relation}.{o.column}  [dim]{o.detail}[/]")
     store.close()
@@ -5162,13 +5289,18 @@ def feeds(
     for t in tg:
         cols = feeds_mod.columns_to_sample(schema, t.uid, t.columns)
         prof_rows = probe_mod.run_sql(probe_mod.profile_sql(t.relation, cols, project.dialect),
-                                      project_dir, profiles_dir, dbt_bin, limit=1)
-        profile = prof_rows[0] if prof_rows else {}
+                                      project_dir, profiles_dir, dbt_bin, limit=1,
+                                      caller="assay.feeds.profile", kind="profile",
+                                      relation=t.relation, columns=cols)
+        profile = prof_rows.rows[0] if prof_rows.rows else {}
         sent = probe_mod.sentinel_findings(t.relation, cols, profile)
         sentinels += [(t.relation, c, v, w) for c, v, w in sent]
-        rows = probe_mod.run_sql(probe_mod.sample_sql(t.relation, cols, sample, project.dialect),
-                                 project_dir, profiles_dir, dbt_bin, limit=sample)
-        if not rows:
+        got = probe_mod.run_sql(probe_mod.sample_sql(t.relation, cols, sample, project.dialect),
+                                project_dir, profiles_dir, dbt_bin, limit=sample,
+                                caller="assay.feeds.sample", kind="sample",
+                                relation=t.relation, columns=cols, sample_rows=sample)
+        rows = got.rows
+        if got.failed or not rows:
             continue
         subj = feeds_mod.FeedSubject(relation=t.relation, uid=t.uid, columns=cols,
                                      sample=rows, profile=profile, sentinels=sent)
@@ -5337,11 +5469,17 @@ def _count_defaults(project, digests, schema, probe, project_dir, profiles_dir, 
         return True
 
     console.print(f"[bold]{len(rows)}[/] defaulted column(s) to count, in one query")
-    got = probe.run_sql(default_share_sql(rows), project_dir, profiles_dir, dbt_bin,
-                        limit=len(rows) + 1)
-    if not got:
+    res = probe.run_sql(default_share_sql(rows), project_dir, profiles_dir, dbt_bin,
+                        limit=len(rows) + 1, caller="assay.defaults.share", kind="count")
+    got = res.rows
+    if res.failed:
         console.print("[yellow]could not count them.[/] [dim]The models may not be built, or "
-                      "--dbt / --project-dir may be wrong. Nothing here is a pass.[/]")
+                      "--dbt / --project-dir may be wrong. Nothing here is a pass. "
+                      f"{res.why[:160]}[/]")
+        return False
+    if not got:
+        console.print("[yellow]the count returned no rows[/], which nothing here can read as a "
+                      "pass either.")
         return False
     counts = {}
     for r in got:

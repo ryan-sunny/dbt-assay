@@ -14,6 +14,7 @@ from dbt_assay.checks.structural import (
     default_share_sql,
 )
 from dbt_assay.parse import digest
+from dbt_assay.probe import Result
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -158,7 +159,7 @@ def test_verify_grains_counts_a_model_in_a_custom_schema():
         @staticmethod
         def run_sql(sql, *_a, **_k):
             seen.append(sql)
-            return [{"m": "stg_water", "n": 149, "d": 1}]
+            return Result(rows=[{"m": "stg_water", "n": 149, "d": 1}])
 
     proj = SimpleNamespace(models={"model.p.stg_water": SimpleNamespace(name="stg_water")})
     sch = SimpleNamespace(relation={"model.p.stg_water": '"db"."main_water"."stg_water"'})
@@ -517,7 +518,7 @@ def test_a_key_that_counts_unique_retires_the_hop_and_one_that_cannot_be_counted
     class _Unique:
         @staticmethod
         def run_sql(*_a, **_k):
-            return [{"m": "lookup", "n": 2387, "d": 2387}]
+            return Result(rows=[{"m": "lookup", "n": 2387, "d": 2387}])
 
     e = _entry()
     assert prac.verify_join_keys([e], proj, _Unique, ".", None, "dbt") == 1
@@ -526,7 +527,7 @@ def test_a_key_that_counts_unique_retires_the_hop_and_one_that_cannot_be_counted
     class _NotUnique:
         @staticmethod
         def run_sql(*_a, **_k):
-            return [{"m": "lookup", "n": 2387, "d": 40}]
+            return Result(rows=[{"m": "lookup", "n": 2387, "d": 40}])
 
     e2 = _entry()
     assert prac.verify_join_keys([e2], proj, _NotUnique, ".", None, "dbt") == 0
@@ -535,7 +536,7 @@ def test_a_key_that_counts_unique_retires_the_hop_and_one_that_cannot_be_counted
     class _Dead:
         @staticmethod
         def run_sql(*_a, **_k):
-            return []
+            return Result(failed=True, why="could not reach the warehouse")
 
     e3 = _entry()
     assert prac.verify_join_keys([e3], proj, _Dead, ".", None, "dbt") == 0
@@ -1723,9 +1724,9 @@ def test_hop_drops_most_rows_fires_on_a_join_that_really_fails_to_match(tmp_path
 
     class _Probe:
         @staticmethod
-        def run_sql(q, _project_dir, _profiles_dir, _dbt_bin, limit=100):
-            return [dict(zip([c[0] for c in db.description], r, strict=True))
-                    for r in db.execute(q).fetchall()]
+        def run_sql(q, _project_dir, _profiles_dir, _dbt_bin, limit=100, **_k):
+            return Result(rows=[dict(zip([c[0] for c in db.description], r, strict=True))
+                                for r in db.execute(q).fetchall()])
 
     try:
         n = practices.verify_row_loss(st.entries, st.project, _Probe, str(tmp_path), None,

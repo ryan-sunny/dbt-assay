@@ -119,10 +119,11 @@ def which_have_failures(relations: list[str], probe_mod, project_dir: str,
     def ask(chunk: list[str]) -> bool:
         sql = " union all ".join(
             f"select '{r}' as rel, count(*) as n from {r}" for r in chunk)
-        got = probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=len(chunk) + 1)
-        if not got:
+        got = probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=len(chunk) + 1,
+                                caller="assay.rows.which_have_failures", kind="count")
+        if got.failed:
             return False
-        for row in got:
+        for row in got.rows:
             vals = list(row.values())
             rel = row.get("rel", vals[0] if vals else None)
             n = row.get("n", vals[1] if len(vals) > 1 else 0)
@@ -178,12 +179,16 @@ def collect(project, entries, probe_mod, project_dir: str, profiles_dir: str | N
             skipped.append((t.name, "the audit table is empty: this test stored no failures"))
             continue
         got = probe_mod.run_sql(f"select * from {rel}", project_dir, profiles_dir, dbt_bin,
-                                limit=limit_per_test)
-        if not got:
-            skipped.append((t.name, "counted rows but could not read them"))
+                                limit=limit_per_test, caller="assay.rows.collect",
+                                kind="metadata", relation=rel)
+        if got.failed or not got.rows:
+            # The count above said this table holds rows, so either reading them failed or they
+            # went away between the two statements. Both are "not read", and neither is clean.
+            skipped.append((t.name, got.why[:120] if got.failed
+                            else "counted rows but could not read them"))
             continue
         e = by_uid.get(t.tests_model)
-        for r in got[:limit_per_test]:
+        for r in got.rows[:limit_per_test]:
             rows.append(FailingRow(
                 test_name=t.name, model=project.models[t.tests_model].name,
                 model_uid=t.tests_model, relation=rel, row=r,

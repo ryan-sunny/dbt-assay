@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from dbt_assay.probe import Result
+
 
 def test_adjudicate_narrows_in_one_query_instead_of_one_per_test():
     """*** 1,288 TESTS x A COLD `dbt show` = FIVE AND A HALF HOURS. ***
@@ -24,7 +26,8 @@ def test_adjudicate_narrows_in_one_query_instead_of_one_per_test():
         @staticmethod
         def run_sql(sql, *_a, **_k):
             calls.append(sql)
-            return [{"rel": "db.aud.t_one", "n": 3}, {"rel": "db.aud.t_two", "n": 0}]
+            return Result(rows=[{"rel": "db.aud.t_one", "n": 3},
+                                {"rel": "db.aud.t_two", "n": 0}])
 
     rels = [f"db.aud.t_{i}" for i in range(400)] + ["db.aud.t_one", "db.aud.t_two"]
     have, unknown = rows.which_have_failures(rels, _Probe, ".", None, "dbt")
@@ -43,7 +46,10 @@ def test_a_relation_it_cannot_read_is_unknown_and_never_counted_clean():
     class _Probe:
         @staticmethod
         def run_sql(sql, *_a, **_k):
-            return [] if "bad" in sql else [{"rel": "ok", "n": 1}]
+            # A statement that FAILED. An empty result would now mean the batch ran and the
+            # relations are empty, which is the distinction this halving exists to find.
+            return (Result(failed=True, why="relation does not exist") if "bad" in sql
+                    else Result(rows=[{"rel": "ok", "n": 1}]))
 
     have, unknown = rows.which_have_failures(["good.a", "bad.b"], _Probe, ".", None, "dbt")
     assert "bad.b" in unknown
@@ -524,7 +530,8 @@ def test_a_proposed_grain_is_counted_before_it_is_recommended():
         @staticmethod
         def run_sql(sql, *_a, **_k):
             sqls.append(sql)
-            return [{"m": "water_rights", "n": 1045, "d": 7}, {"m": "ok", "n": 500, "d": 500}]
+            return Result(rows=[{"m": "water_rights", "n": 1045, "d": 7},
+                                {"m": "ok", "n": 500, "d": 500}])
 
     proj = SimpleNamespace(models={"a": SimpleNamespace(name="water_rights"),
                                    "b": SimpleNamespace(name="ok")})
@@ -545,7 +552,7 @@ def test_a_grain_that_cannot_be_counted_is_absent_rather_than_holding():
     class _Dead:
         @staticmethod
         def run_sql(*_a, **_k):
-            return []
+            return Result(failed=True, why="could not reach the warehouse")
 
     proj = SimpleNamespace(models={"a": SimpleNamespace(name="m")})
     held = prac.verify_grains([("m", ["k"], "derived", 1, [])], proj, _Dead, ".", None, "dbt")

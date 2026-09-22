@@ -16,6 +16,7 @@ import time
 import duckdb
 
 from dbt_assay import probe
+from dbt_assay.probe import Result
 from dbt_assay.store import Store
 
 
@@ -165,8 +166,8 @@ def test_minimality_is_counted_and_equality_is_the_whole_test():
     class _P:
         @staticmethod
         def run_sql(sql, *a, **k):
-            return [dict(zip([c[0] for c in d.description], r, strict=True))
-                    for r in d.execute(sql).fetchall()]
+            return Result(rows=[dict(zip([c[0] for c in d.description], r, strict=True))
+                                for r in d.execute(sql).fetchall()])
 
     got = verify_minimality({"main_t": ["section_id", "party_ordinal", "county"]},
                             _P, ".", None, "dbt")
@@ -179,7 +180,7 @@ def test_minimality_is_counted_and_equality_is_the_whole_test():
     class _Dead:
         @staticmethod
         def run_sql(*a, **k):
-            return []
+            return Result(failed=True, why="could not reach the warehouse")
 
     assert verify_minimality({"main_t": ["a", "b"]}, _Dead, ".", None, "dbt") == {}
 

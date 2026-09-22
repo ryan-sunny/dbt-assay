@@ -14,10 +14,25 @@ from datetime import datetime
 import pytest
 
 from dbt_assay import elementary as E
+from dbt_assay.probe import Result
 
 # Naive, matching what Elementary writes: an aware value here raises on every
 # subtraction in `_age` rather than comparing.
 NOW = datetime(2026, 9, 22, 12, 0, 0)   # noqa: DTZ001
+
+
+def ok(rows):
+    """A statement that RAN and returned these rows -- possibly none of them."""
+    return Result(rows=list(rows))
+
+
+def broke(why: str = "relation does not exist"):
+    """A statement that did not run. *** NOT THE SAME THING AS ONE THAT FOUND NOTHING. ***
+
+    `dbt show` reports both as no output, which is why the runner contract returns a `Result`
+    and why a fixture that cannot express the difference cannot test this module.
+    """
+    return Result(failed=True, why=why)
 
 
 def fake(tables: dict):
@@ -25,17 +40,17 @@ def fake(tables: dict):
     def run(sql: str, limit: int):
         low = sql.lower()
         if "assay_reachable" in low:
-            return [{"assay_reachable": 1}]
+            return ok([{"assay_reachable": 1}])
         rel = next((r for r in E.RELATIONS if r in low), None)
         if rel is None or tables.get(rel) is None:
-            return []
+            return broke()
         rows = tables[rel]
         # The COUNT PROBE, not any count: `_LATEST_VOLUME` contains `count(*) over (...)`, and a
         # fake that matches on `count(*)` answers the data query with a row count. Caught by
         # writing it wrong -- the tests went red and the reader was fine.
         if low.strip().startswith("select count(*) as n from"):
-            return [{"n": len(rows)}]
-        return rows[:limit]
+            return ok([{"n": len(rows)}])
+        return ok(rows[:limit])
     return run
 
 
@@ -76,7 +91,7 @@ def test_an_unreachable_warehouse_is_never_reported_as_an_absent_package():
     monitors volume -- on a warehouse where Elementary had run an hour earlier. A tool that cannot
     reach the warehouse and says the warehouse is empty is the exact defect this module is about.
     """
-    rep = E.read(lambda sql, n: [], "elem", now=NOW)
+    rep = E.read(lambda sql, n: broke("dbt: command not found"), "elem", now=NOW)
     assert {r.state for r in rep.readings} == {E.UNREACHABLE}
     assert not rep.reachable
     assert not rep.installed, "unreachable must not read as installed; nothing was measured"
@@ -223,7 +238,7 @@ def test_late_is_longer_than_this_relation_has_NORMALLY_gone_between_writes():
     not license another.
     """
     days = [{"assay_day": f"2026-09-{d:02d}"} for d in (1, 2, 3, 4, 5, 6, 7, 8, 14)]
-    cad = E._cadence_of(E.write_history(lambda sql, n: days, "elem", E.METRICS), "x")
+    cad = E.write_history(lambda sql, n: ok(days), "elem", E.METRICS)
     assert cad.writes == 9
     assert cad.gaps[:3] == [1.0, 1.0, 1.0]
     assert cad.normal_gap_days == pytest.approx(6.0), "p90 of [1,1,1,1,1,1,1,6]"
@@ -235,7 +250,7 @@ def test_one_outage_does_not_license_another():
     """The maximum would make a month of silence normal for ever after. p90 does not."""
     days = [{"assay_day": f"2026-09-{d:02d}"} for d in range(1, 20)] + \
            [{"assay_day": "2026-12-01"}]
-    cad = E._cadence_of(E.write_history(lambda sql, n: days, "elem", E.METRICS), "x")
+    cad = E.write_history(lambda sql, n: ok(days), "elem", E.METRICS)
     assert max(cad.gaps) > 70, "the outage is in the history"
     assert cad.derived_staleness_days is not None
     assert cad.derived_staleness_days < 10, "one outage must not become the new normal"
@@ -250,15 +265,16 @@ def test_each_relation_gets_its_own_threshold_from_its_own_history():
     def runner(sql, n):
         low = sql.lower()
         if "assay_reachable" in low:
-            return [{"assay_reachable": 1}]
+            return ok([{"assay_reachable": 1}])
         rel = next((r for r in E.RELATIONS if r in low), None)
         if rel is None:
-            return []
+            return broke()
         if low.strip().startswith("select count(*) as n from"):
-            return [{"n": 5}]
+            return ok([{"n": 5}])
         if "assay_day" in low:
-            return daily if rel == E.METRICS else weekly
-        return [{"created_at": "2026-09-20 00:00:00", "detected_at": "2026-09-20 00:00:00"}]
+            return ok(daily if rel == E.METRICS else weekly)
+        return ok([{"created_at": "2026-09-20 00:00:00",
+                    "detected_at": "2026-09-20 00:00:00"}])
 
     rep = E.read(runner, "elem", now=NOW)
     per = {r.relation: r.threshold_days for r in rep.readings}
@@ -268,21 +284,20 @@ def test_each_relation_gets_its_own_threshold_from_its_own_history():
 
 def test_a_relation_with_too_little_history_falls_back_to_the_build_cadence():
     days = [{"assay_day": f"2026-09-{d:02d}"} for d in (1, 4, 7, 10, 13)]
-    fallback = E._cadence_of(E.write_history(lambda sql, n: days, "elem", E.INVOCATIONS),
-                             "this project's build cadence")
+    fallback = E.write_history(lambda sql, n: ok(days), "elem", E.INVOCATIONS)
     assert fallback.derived_staleness_days == 3
 
     def runner(sql, n):
         low = sql.lower()
         if "assay_reachable" in low:
-            return [{"assay_reachable": 1}]
+            return ok([{"assay_reachable": 1}])
         if E.FRESHNESS not in low:
-            return []
+            return broke()
         if low.strip().startswith("select count(*) as n from"):
-            return [{"n": 3}]
+            return ok([{"n": 3}])
         if "assay_day" in low:
-            return [{"assay_day": "2026-07-08"}]          # written on exactly ONE day
-        return [{"created_at": "2026-07-08 13:08:14"}]
+            return ok([{"assay_day": "2026-07-08"}])      # written on exactly ONE day
+        return ok([{"created_at": "2026-07-08 13:08:14"}])
 
     rep = E.read(runner, "elem", now=NOW, fallback=fallback)
     r = rep.reading(E.FRESHNESS)
@@ -305,7 +320,7 @@ def test_one_build_issuing_many_invocations_is_one_day():
     The gap between invocations describes how fast dbt runs back-to-back, not how often this
     project builds. The query asks for distinct DAYS, so a burst is one."""
     sqls = []
-    E.build_cadence(lambda sql, n: sqls.append(sql) or [], "elem")
+    E.build_cadence(lambda sql, n: sqls.append(sql) or ok([]), "elem")
     assert "distinct cast(run_started_at as date)" in sqls[0]
 
 
@@ -374,14 +389,14 @@ def test_the_threshold_says_where_it_actually_came_from():
     def runner(sql, n):
         low = sql.lower()
         if "assay_reachable" in low:
-            return [{"assay_reachable": 1}]
+            return ok([{"assay_reachable": 1}])
         if E.FRESHNESS not in low:
-            return []
+            return broke()
         if low.strip().startswith("select count(*) as n from"):
-            return [{"n": 3}]
+            return ok([{"n": 3}])
         if "assay_day" in low:
-            return [{"assay_day": "2026-07-08"}]          # one write, ever
-        return [{"created_at": "2026-07-08 13:08:14"}]
+            return ok([{"assay_day": "2026-07-08"}])      # one write, ever
+        return ok([{"created_at": "2026-07-08 13:08:14"}])
 
     r = E.read(runner, "elem", now=NOW, fallback=fallback).reading(E.FRESHNESS)
     assert r.threshold_days == 3

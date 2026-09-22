@@ -117,9 +117,15 @@ def _fake_warehouse(monkeypatch, rows_for):
     A guard nobody has watched fail is a guard nobody has tested, so this one was watched.
     """
     from dbt_assay import probe as probe_mod
+    from dbt_assay.probe import Result
 
-    def run_sql(sql, project_dir, profiles_dir=None, dbt_bin="dbt", limit=50, timeout=300):
-        return rows_for(sql, limit)
+    def run_sql(sql, project_dir, profiles_dir=None, dbt_bin="dbt", limit=50, timeout=300,
+                **_kw):
+        got = rows_for(sql, limit)
+        # A fixture that cannot express "this statement did not run" cannot test the readers
+        # that now depend on the difference, so an empty answer here means a failure -- the same
+        # thing `dbt show` reports when a relation is not there.
+        return Result(rows=got) if got else Result(failed=True, why="no such relation")
     monkeypatch.setattr(probe_mod, "run_sql", run_sql)
 
 

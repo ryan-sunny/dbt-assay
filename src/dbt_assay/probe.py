@@ -30,9 +30,12 @@ schema, silently read as a duplicate key, is a guard that cannot see with the si
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -74,6 +77,55 @@ create table if not exists observed_keys (
     -- errors, and the tests still pass because they were written while it was true.
     primary key (relation, column_name, observed_at)
 );
+-- *** WHAT assay SPENT ON THE WAREHOUSE, MIRRORING WHAT `model_calls` RECORDS ABOUT THINKING. ***
+-- DuckDB is free. BigQuery bills the bytes of the columns a statement touches and Snowflake bills
+-- the warehouse being awake, and assay is about to be shown to people who run both. The first
+-- question a BigQuery user asks is what a sweep will cost, and without this table there is no
+-- answer to give -- not even afterwards.
+--
+-- Every row here is written by `_record`, which only two functions call: `run_via_dbt` and
+-- `run_sql` are the ONLY places a statement reaches a warehouse (`probe.py` docstring: assay
+-- never holds a credential, so every read goes out through the project's own dbt). That is what
+-- makes this ledger complete by construction rather than by everybody remembering to log.
+--
+-- NEVER_PRUNED: it is the record of what was spent.
+create table if not exists warehouse_calls (
+    -- *** THE STATEMENT'S IDENTITY, NOT THE CALL'S, AND THAT IS THE DIFFERENCE FROM `model_calls`. ***
+    -- A content hash of the SQL, so the same statement issued on Monday and on Friday carries one
+    -- id and a rerun is identifiable. `model_calls.call_id` is unique per call and is its primary
+    -- key; this one repeats by design, which is why this table has NO key at all. A key would
+    -- mean `insert or replace`, and two identical statements in one pass would collapse into one
+    -- row -- money spent, silently unrecorded. An append-only ledger cannot lose a row that way.
+    call_id        varchar,
+    -- '' when the command minted no run. `assay probe` opens a store and is not part of a check,
+    -- and stamping it with the newest run_id would credit a cost to a run that did not cause it.
+    run_id         varchar,
+    caller         varchar,     -- 'assay.probe.keys', 'assay.practices.collect', ...
+    relation       varchar,     -- '' when the statement spans several, as a union-all batch does
+    statement_kind varchar,     -- key_scan | profile | sample | count | metadata
+    dialect        varchar,
+    columns_touched integer,
+    column_names   varchar,     -- json array, so a cost can be attributed to a column later
+    rows_returned  bigint,
+    rows_scanned   bigint,      -- the relation's KNOWN row count, never a measurement of this run
+    bytes_estimated bigint,
+    -- *** NULL UNLESS AN ADAPTER GAVE A REAL NUMBER. *** Never the estimate copied across.
+    -- A column mixing measured and guessed numbers is the varchar-declared-INTEGER-stored defect
+    -- again: two different facts sharing one name, and no reader able to tell which they have.
+    bytes_measured bigint,
+    estimate_basis varchar,     -- declared_types | adapter | unknown. NOT optional, same reason.
+    sampled        boolean,
+    sample_rows    bigint,
+    wall_ms        integer,
+    usd_estimated  double,      -- NULL when nothing configured can justify a number
+    rate_card      varchar,     -- WHICH rate produced usd_estimated, stored, never derived later
+    -- *** A FAILED STATEMENT AND AN EMPTY ONE ARE NOT THE SAME ROW. ***
+    -- `dbt show` returns both as no output, which is how a monitoring cadence query that FAILED
+    -- was read as "0 writes recorded" against a table holding 27 days of them.
+    failed         boolean,
+    detail         varchar,     -- why it failed, when it did
+    called_at      timestamp
+);
 """
 
 
@@ -101,6 +153,221 @@ class Observation:
     @property
     def is_unique_key(self) -> bool:
         return self.status == "unique"
+
+
+@dataclass
+class Result:
+    """What one statement did. *** `[]` USED TO MEAN BOTH "IT FAILED" AND "NO ROWS". ***
+
+    `dbt show` reports a broken connection, a missing relation, a syntax error and an empty table
+    identically: nothing on stdout. Every caller here read that as an empty result, so a cadence
+    query that FAILED was reported as "only 0 writes recorded" against a table holding 27 days of
+    them, and a partial dbt-project-evaluator build read as a clean project.
+
+    `elementary.read` already fixed the top-level case with a reachability probe. That probe passes
+    and then an individual statement fails silently, which is the same defect one layer down, and
+    it exists at every call site rather than in one of them.
+    """
+    rows: list[dict] = field(default_factory=list)
+    failed: bool = False
+    why: str = ""
+    wall_ms: int = 0
+
+    def __bool__(self):
+        """*** DELIBERATELY UNUSABLE, BECAUSE `if not got:` IS THE BUG. ***
+
+        An object is truthy, so a call site left as `if not runner(...)` would silently stop
+        firing and the failure path would quietly disappear. Raising here turns every one of them
+        into a test failure instead of into a wrong answer delivered with confidence.
+        """
+        raise TypeError(
+            "a probe Result is not a truth value: a failed statement and an empty one are "
+            "different facts. Read `.rows` for the data and `.failed` for whether the warehouse "
+            "answered at all.")
+
+
+# *** THE STORE IS AMBIENT, THE CALLER AND THE KIND ARE NOT. ***
+# A command installs this once; the two doors below then write a ledger row per statement without
+# `practices`, `rows` and `elementary` -- which are handed `probe_mod` and have no store, no config
+# and no run -- growing a store argument apiece. What must NOT be ambient is who issued the
+# statement and what kind it is: inferring either from the call stack or from the SQL would put a
+# heuristic inside a recorded fact, and a heuristic is allowed in targeting and never in a verdict.
+_RECORDING: _Ledger | None = None
+
+
+@dataclass
+class _Ledger:
+    store: object
+    run_id: str = ""
+    dialect: str = "duckdb"
+    # {relation_lower: {column_lower: declared type}}, from `cost.declared_types`. Empty means no
+    # bytes are estimated at all, which is the honest outcome for a project with no catalog.
+    types: dict = field(default_factory=dict)
+    rate: object = None
+    written: int = 0
+    unrecorded: int = 0            # ledger writes that themselves failed, reported, never silent
+    _rows: dict | None = None
+
+    def row_count(self, relation: str) -> int | None:
+        """The relation's last observed row count, or None. Never a measurement of this run.
+
+        Read once per command from `observed_keys`: the LATEST observation of each column, then
+        the largest count among them. A batch shares a timestamp so the columns agree, and taking
+        a max rather than whichever row came back first keeps two runs over one store identical.
+        """
+        if self._rows is None:
+            self._rows = {}
+            try:
+                self.store.con.execute(DDL)
+                for rel, n in self.store.con.execute(
+                        """select relation, max(row_count) from
+                             (select relation, column_name, row_count,
+                                     row_number() over (partition by relation, column_name
+                                                        order by observed_at desc) rn
+                              from observed_keys) where rn = 1 group by relation""").fetchall():
+                    if rel is not None and n is not None:
+                        self._rows[str(rel).lower()] = int(n)
+            except Exception:                                    # noqa: BLE001
+                self._rows = {}
+        return self._rows.get((relation or "").lower())
+
+
+@contextmanager
+def recording(store, run_id: str = "", dialect: str = "duckdb",
+              types: dict | None = None, rate=None):
+    """Record every warehouse statement issued inside this block to `warehouse_calls`.
+
+    Nesting restores the outer ledger rather than clearing it, so a command that opens one around
+    a sub-step does not silently stop recording the rest of itself.
+    """
+    global _RECORDING
+    previous = _RECORDING
+    _RECORDING = _Ledger(store=store, run_id=run_id or "", dialect=dialect,
+                         types=types or {}, rate=rate)
+    try:
+        yield _RECORDING
+    finally:
+        _RECORDING = previous
+
+
+def attach(store) -> None:
+    """Start recording, for the lifetime of this store. Called by `Store.__init__`.
+
+    *** COMPLETE BY CONSTRUCTION, NOT BY EVERY COMMAND REMEMBERING TO OPT IN. ***
+    Eleven commands can reach a warehouse and more will exist. Wrapping each one is a list that
+    goes stale the first time somebody adds the twelfth, and the symptom would be money quietly
+    missing from the ledger rather than an error. A statement can only be issued by a process that
+    opened a store, so the store is where recording begins.
+
+    What it cannot know yet is the dialect, the column types or the rate: those come from the
+    manifest and `audit.yml`, which are loaded later. `enrich` fills them in, and until it does a
+    row still records the statement, the caller, the timing and the outcome.
+    """
+    global _RECORDING
+    _RECORDING = _Ledger(store=store)
+
+
+def detach(store) -> None:
+    """Stop recording, if the live ledger is this store's. Called by `Store.close`."""
+    global _RECORDING
+    if _RECORDING is not None and _RECORDING.store is store:
+        _RECORDING = None
+
+
+def enrich(dialect: str | None = None, types: dict | None = None, rate=None,
+           run_id: str | None = None) -> None:
+    """Give the live ledger what the manifest and the config know. A no-op with no ledger."""
+    led = _RECORDING
+    if led is None:
+        return
+    if dialect:
+        led.dialect = dialect
+    if types:
+        led.types = types
+    if rate is not None:
+        led.rate = rate
+    if run_id is not None:
+        led.run_id = run_id
+
+
+def ledger():
+    """The live ledger, or None. For a command that wants to report what it recorded."""
+    return _RECORDING
+
+
+def _record(sql: str, res: Result, *, caller: str, kind: str, relation: str = "",
+            columns: list[str] | None = None, sampled: bool = False,
+            sample_rows: int | None = None) -> None:
+    """One ledger row. A failure to record is counted and never raised.
+
+    *** THE LEDGER MUST NOT BE ABLE TO BREAK THE THING IT IS MEASURING. ***
+    A locked store or an older schema would otherwise turn cost accounting into an outage of
+    `assay check`. It is counted on the ledger instead, so `unrecorded > 0` is visible rather than
+    being a quiet gap in the money.
+    """
+    led = _RECORDING
+    if led is None:
+        return
+    try:
+        from . import cost as cost_mod
+        rate = led.rate if led.rate is not None else cost_mod.RateCard.from_config({}, led.dialect)
+        scanned = led.row_count(relation) if relation else None
+        cols = [str(c).lower() for c in (columns or [])]
+        if cols and relation:
+            est, basis = cost_mod.estimate(cols, led.types.get(relation.lower(), {}),
+                                           scanned, rate)
+        else:
+            # A statement whose column list assay did not build -- `select *`, a union-all batch
+            # over many relations -- cannot be sized from the schema, and a number built from the
+            # columns it happened to recognise would understate the scan with nothing saying so.
+            est, basis = None, "unknown"
+        led.store.con.execute(DDL)
+        led.store.con.execute(
+            """insert into warehouse_calls
+               (call_id, run_id, caller, relation, statement_kind, dialect, columns_touched,
+                column_names, rows_returned, rows_scanned, bytes_estimated, bytes_measured,
+                estimate_basis, sampled, sample_rows, wall_ms, usd_estimated, rate_card,
+                failed, detail, called_at)
+               values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            [hashlib.sha1(sql.encode("utf-8")).hexdigest()[:16],
+             led.run_id, caller, relation, kind, rate.engine,
+             len(cols) or None, json.dumps(cols) if cols else None,
+             len(res.rows), scanned, est, None, basis, bool(sampled), sample_rows,
+             res.wall_ms, rate.price(est, res.wall_ms), rate.name,
+             bool(res.failed), (res.why or "")[:300],
+             datetime.now(timezone.utc)])
+        led.written += 1
+    except Exception:                                            # noqa: BLE001
+        led.unrecorded += 1
+
+
+def _execute(sql: str, project_dir: str, profiles_dir: str | None = None,
+             dbt_bin: str = "dbt", limit: int = 50, timeout: int = 300) -> Result:
+    """`dbt show --inline`, timed, with failure separated from emptiness.
+
+    `dbt_bin` may carry arguments ("uv run dbt", "poetry run dbt", a venv path), because plenty of
+    projects have no bare `dbt` on PATH and failing on that would be a pointless wall.
+    """
+    cmd = [*dbt_bin.split(), "show", "--inline", sql, "--output", "json", "--limit", str(limit)]
+    if profiles_dir:
+        cmd += ["--profiles-dir", profiles_dir]
+    started = time.monotonic()
+
+    def elapsed() -> int:
+        return int((time.monotonic() - started) * 1000)
+
+    try:
+        p = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True,
+                           timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return Result(failed=True, why=str(e)[:300], wall_ms=elapsed())
+    ms = elapsed()
+    data = parse_dbt_show(p.stdout or "")
+    if p.returncode != 0 or data is None:
+        return Result(failed=True, wall_ms=ms,
+                      why=(p.stderr or p.stdout or "no output")[-300:].strip())
+    # dbt answered. An empty `show` is now an EMPTY TABLE and says so, which is the whole point.
+    return Result(rows=list(data.get("show") or []), wall_ms=ms)
 
 
 def targets(project, digests, schema, declared, known_grain: dict) -> list[Target]:
@@ -205,30 +472,24 @@ def interpret(target: Target, row: dict) -> list[Observation]:
 
 def run_via_dbt(target: Target, project_dir: str, profiles_dir: str | None = None,
                 dialect: str = "duckdb", timeout: int = 300,
-                dbt_bin: str = "dbt") -> tuple[list[Observation], str]:
+                dbt_bin: str = "dbt",
+                caller: str = "assay.probe.keys") -> tuple[list[Observation], str]:
     """Returns (observations, raw_sql). A failure yields `unknown` rows, never `not unique`.
 
-    `dbt_bin` may carry arguments ("uv run dbt", "poetry run dbt", a venv path), because plenty of
-    projects have no bare `dbt` on PATH and failing on that would be a pointless wall.
+    One of the two places a statement reaches a warehouse, so one of the two places that records
+    what it cost.
     """
     sql = build_sql(target, dialect)
-    cmd = [*dbt_bin.split(), "show", "--inline", sql, "--output", "json", "--limit", "1"]
-    if profiles_dir:
-        cmd += ["--profiles-dir", profiles_dir]
-    try:
-        p = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True,
-                           timeout=timeout, check=False)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return ([Observation(target.relation, c, status="unknown", detail=str(e)[:200])
-                 for c in target.columns], sql)
-
-    data = parse_dbt_show(p.stdout or "")
-    rows = (data or {}).get("show") or []
-    if not rows:
-        why = (p.stderr or p.stdout or "no output")[-300:].strip()
+    res = _execute(sql, project_dir, profiles_dir, dbt_bin, limit=1, timeout=timeout)
+    _record(sql, res, caller=caller, kind="key_scan", relation=target.relation,
+            columns=target.columns)
+    if res.failed or not res.rows:
+        # An aggregate over any table returns exactly one row, so no rows here is a failure and
+        # not an empty table -- but the detail now says WHICH, instead of both reading the same.
+        why = res.why or "the query returned no row"
         return ([Observation(target.relation, c, status="unknown", detail=why)
                  for c in target.columns], sql)
-    return interpret(target, rows[0]), sql
+    return interpret(target, res.rows[0]), sql
 
 
 def migrate(store) -> int:
@@ -373,17 +634,25 @@ def profile_sql(relation: str, columns: list[str], dialect: str = "duckdb") -> s
 
 
 def run_sql(sql: str, project_dir: str, profiles_dir: str | None = None,
-            dbt_bin: str = "dbt", limit: int = 50, timeout: int = 300) -> list[dict]:
-    """Any read-only statement, through the project's own dbt. assay never holds a credential."""
-    cmd = [*dbt_bin.split(), "show", "--inline", sql, "--output", "json", "--limit", str(limit)]
-    if profiles_dir:
-        cmd += ["--profiles-dir", profiles_dir]
-    try:
-        p = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True,
-                           timeout=timeout, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    return ((parse_dbt_show(p.stdout or "") or {}).get("show") or [])
+            dbt_bin: str = "dbt", limit: int = 50, timeout: int = 300, *,
+            caller: str = "assay.unattributed", kind: str = "metadata",
+            relation: str = "", columns: list[str] | None = None,
+            sampled: bool = False, sample_rows: int | None = None) -> Result:
+    """Any read-only statement, through the project's own dbt. assay never holds a credential.
+
+    *** RETURNS A `Result`, NOT A LIST, AND THAT IS THE POINT. ***
+    It used to return `[]` for a failed statement and `[]` for an empty table. Callers cannot be
+    trusted to remember the difference -- none of the thirteen did -- so the return type carries
+    it and refuses to be used as a truth value.
+
+    `caller` and `kind` are written into the ledger and have no defaults worth relying on: the
+    fallbacks exist so an outside caller records SOMETHING rather than nothing, and every call
+    site inside assay passes both.
+    """
+    res = _execute(sql, project_dir, profiles_dir, dbt_bin, limit=limit, timeout=timeout)
+    _record(sql, res, caller=caller, kind=kind, relation=relation, columns=columns,
+            sampled=sampled, sample_rows=sample_rows)
+    return res
 
 
 # Far-future or far-past dates, and the numeric placeholders feeds reach for instead of NULL.
@@ -407,6 +676,43 @@ def sentinel_findings(relation: str, columns: list[str], profile: dict) -> list[
                        "never clamped")
                 out.append((c, fv, why))
     return out
+
+
+def dry_run(targets_: list[Target], store=None, dialect: str = "duckdb",
+            rate=None, types: dict | None = None) -> dict:
+    """Every statement a probe would issue, and what it would cost. Executes nothing.
+
+    *** THE ARGUMENT FOR assay TO SOMEBODY WHO PAYS PER QUERY. ***
+    A BigQuery user's first question is what this will cost them, and until now assay could not
+    answer it at all -- not before the run and not after. It needs no credential and no warehouse,
+    which also makes it testable.
+
+    `unpriced` is the count it could not estimate and it is reported rather than dropped: a total
+    over the statements assay happened to understand, printed as though it were the total, is the
+    partial-estimate failure this module refuses everywhere else.
+    """
+    from . import cost as cost_mod
+    rate = rate or cost_mod.RateCard.from_config({}, dialect)
+    types = types or {}
+    led = _Ledger(store=store, dialect=dialect) if store is not None else None
+    out: list[dict] = []
+    total_bytes, total_usd, unpriced = 0, 0.0, 0
+    for t in targets_:
+        rows = led.row_count(t.relation) if led is not None else None
+        est, basis = cost_mod.estimate([c.lower() for c in t.columns],
+                                       types.get(t.relation.lower(), {}), rows, rate)
+        usd = rate.price(est, None)
+        if est is None:
+            unpriced += 1
+        else:
+            total_bytes += est
+            total_usd += usd or 0.0
+        out.append({"relation": t.relation, "why": t.why, "sql": build_sql(t, dialect),
+                    "columns": len(t.columns), "column_names": list(t.columns),
+                    "rows": rows, "bytes": est, "usd": usd, "basis": basis})
+    return {"statements": out, "bytes": total_bytes if total_bytes else None,
+            "usd": total_usd if total_bytes else None, "unpriced": unpriced,
+            "rate_card": rate.name, "engine": rate.engine}
 
 
 def emit(targets_: list[Target], dialect: str = "duckdb") -> str:

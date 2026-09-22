@@ -281,8 +281,11 @@ def read(runner, schema: str, *, stale_after_days: int = STALE_AFTER_DAYS,
          now: datetime | None = None, limit: int = 20000, fallback=None) -> Report:
     """Every Elementary relation assay reads, and what each one could say.
 
-    `runner(sql, limit) -> list[dict]` is the caller's connection -- `probe.run_sql` bound to their
-    project, so assay never holds a credential. The same shape `practices` uses.
+    `runner(sql, limit) -> probe.Result` is the caller's connection -- `probe.run_sql` bound to
+    their project, so assay never holds a credential. The same shape `practices` uses.
+
+    It returns a `Result` and not a list because every reader here has to tell a statement that
+    FAILED from one that found nothing, and `dbt show` reports both as no output.
     """
     rep = Report(schema=schema, stale_after_days=stale_after_days)
     # *** CAN assay REACH THE WAREHOUSE AT ALL? ***
@@ -290,8 +293,9 @@ def read(runner, schema: str, *, stale_after_days: int = STALE_AFTER_DAYS,
     # indistinguishable from a package that is not installed -- and the report would announce
     # that nothing watches volume while Elementary ran happily an hour ago. One trivial statement
     # settles it before anything is concluded from an empty result.
-    if not runner("select 1 as assay_reachable", 1):
-        rep.readings = [Reading(rel, UNREACHABLE) for rel in RELATIONS]
+    reach = runner("select 1 as assay_reachable", 1)
+    if reach.failed or not reach.rows:
+        rep.readings = [Reading(rel, UNREACHABLE, detail=reach.why) for rel in RELATIONS]
         return rep
     for rel in RELATIONS:
         # *** AN ABSENT TABLE AND AN EMPTY ONE ARE NOT THE SAME FACT, AND `dbt show` HIDES IT. ***
@@ -304,17 +308,25 @@ def read(runner, schema: str, *, stale_after_days: int = STALE_AFTER_DAYS,
         # relation does not exist. One cheap statement, and the distinction is exact rather than
         # inferred.
         counted = runner(f"select count(*) as n from {schema}.{rel}", 1)
-        if not counted:
-            rep.readings.append(Reading(rel, ABSENT))
+        if counted.failed or not counted.rows:
+            rep.readings.append(Reading(rel, ABSENT, detail=counted.why))
             continue
         try:
-            n = int(next(iter(counted[0].values())))
+            n = int(next(iter(counted.rows[0].values())))
         except (TypeError, ValueError, IndexError, AttributeError):
             n = 0
         if n == 0:
             rep.readings.append(Reading(rel, NEVER_RUN))
             continue
-        rows = runner(_query(schema, rel), limit) or []
+        got = runner(_query(schema, rel), limit)
+        rows = got.rows
+        if got.failed:
+            # *** COUNTED, THEN UNREADABLE. THAT IS NOT "NEVER RUN". ***
+            # The count above proves the relation exists and holds rows, so a failure here is a
+            # failure to READ them -- a permission, a type, a timeout. Reporting it as an empty
+            # Elementary would name the wrong fix.
+            rep.readings.append(Reading(rel, UNREACHABLE, rows=n, detail=got.why))
+            continue
         if not rows:
             rep.readings.append(Reading(rel, NEVER_RUN, rows=0,
                                         detail=f"{n:,} row(s) counted and none readable"))
@@ -335,7 +347,7 @@ def read(runner, schema: str, *, stale_after_days: int = STALE_AFTER_DAYS,
         # version gave them one. What is late for this relation is longer than this relation has
         # normally gone between writes; the project's build cadence is only the fallback for one
         # without enough history of its own.
-        own = _cadence_of(write_history(runner, schema, rel), f"`{rel}`'s own write history")
+        own = write_history(runner, schema, rel)
         limit_days, from_ = own.derived_staleness_days, own
         if limit_days is None and fallback is not None:
             limit_days, from_ = fallback.derived_staleness_days, fallback
@@ -547,6 +559,13 @@ class Cadence:
     gaps: list = field(default_factory=list)          # days between consecutive writes
     newest: datetime | None = None
     source: str = ""                                  # where the history came from
+    # *** ZERO WRITES AND A STATEMENT THAT NEVER RAN ARE DIFFERENT FACTS. ***
+    # Reported from the field: "only 0 writes recorded" against a `data_monitoring_metrics` table
+    # holding 27 distinct days of them. The statement had FAILED, `run_sql` returned `[]`, and an
+    # empty list was read as an empty history. Nothing downstream could tell, because nothing
+    # carried the difference -- so it is carried here, on the measurement itself.
+    unreadable: bool = False
+    detail: str = ""
 
     @property
     def days_spanned(self) -> float:
@@ -583,6 +602,9 @@ class Cadence:
         return max(1, math.ceil(p90))
 
     def explain(self) -> str:
+        if self.unreadable:
+            return (f"not derivable: the statement behind {self.source} did not run"
+                    + (f" ({self.detail})" if self.detail else ""))
         p90 = self.normal_gap_days
         if p90 is None:
             return (f"not derivable from {self.source}: only {_plural(self.writes, 'write')} "
@@ -591,25 +613,36 @@ class Cadence:
                 f"{self.days_spanned:.0f} days, 9 gaps in 10 under {p90:.1f}")
 
 
-def _cadence_of(stamps: list, source: str) -> Cadence:
+def _cadence_of(stamps: list, source: str, unreadable: bool = False,
+                detail: str = "") -> Cadence:
     stamps = sorted({d for d in stamps if d})
     gaps = [(stamps[i + 1] - stamps[i]) / timedelta(days=1) for i in range(len(stamps) - 1)]
     return Cadence(writes=len(stamps), gaps=gaps,
-                   newest=stamps[-1] if stamps else None, source=source)
+                   newest=stamps[-1] if stamps else None, source=source,
+                   unreadable=unreadable, detail=detail)
 
 
-def write_history(runner, schema: str, rel: str, limit: int = 5000) -> list:
-    """The distinct DAYS this relation was written on.
+def _days(res, key: str = "assay_day") -> list:
+    """The dates in a `Result`'s rows. Callers check `.failed` themselves; this only parses."""
+    return [d for d in (_as_dt(r.get(key)) for r in res.rows) if d]
+
+
+def write_history(runner, schema: str, rel: str, limit: int = 5000) -> Cadence:
+    """How often this relation is written, measured from the distinct DAYS it was written on.
 
     Days rather than timestamps: one build writes a table several times within minutes, and gaps
     between those describe how fast a job runs rather than how often it runs. Cheap -- one grouped
     statement, a few hundred rows at most.
+
+    Returns the Cadence rather than the raw days, because a FAILED statement and a table with no
+    history produce the same empty list and only the Cadence can carry which one happened.
     """
     col = {TEST_RESULTS: "detected_at", METRICS: "created_at",
            FRESHNESS: "created_at"}.get(rel, "created_at")
-    rows = runner(f"select distinct cast({col} as date) as assay_day from {schema}.{rel} "
-                  f"where {col} is not null", limit) or []
-    return [d for d in (_as_dt(r.get("assay_day")) for r in rows) if d]
+    res = runner(f"select distinct cast({col} as date) as assay_day from {schema}.{rel} "
+                 f"where {col} is not null", limit)
+    return _cadence_of(_days(res), f"`{rel}`'s own write history",
+                       unreadable=res.failed, detail=res.why)
 
 
 def build_cadence(runner, schema: str, limit: int = 5000) -> Cadence:
@@ -620,10 +653,10 @@ def build_cadence(runner, schema: str, limit: int = 5000) -> Cadence:
     describes how fast dbt runs back-to-back rather than how often this project builds. Days,
     for the same reason `write_history` uses them.
     """
-    rows = runner(f"select distinct cast(run_started_at as date) as assay_day "
-                  f"from {schema}.{INVOCATIONS} where run_started_at is not null", limit) or []
-    return _cadence_of([d for d in (_as_dt(r.get("assay_day")) for r in rows) if d],
-                       "this project's build cadence")
+    res = runner(f"select distinct cast(run_started_at as date) as assay_day "
+                 f"from {schema}.{INVOCATIONS} where run_started_at is not null", limit)
+    return _cadence_of(_days(res), "this project's build cadence",
+                       unreadable=res.failed, detail=res.why)
 
 
 def test_coverage(runner, schema: str, limit: int = 40000) -> dict:
@@ -641,14 +674,19 @@ def test_coverage(runner, schema: str, limit: int = 40000) -> dict:
     skipped = runner(f"select count(*) as n from {schema}.{TEST_RESULTS} "
                      f"where test_type = 'dbt_test' and status = 'skipped'", 1)
 
-    def one(rows):
+    def one(res):
+        """None when the statement did not run. A coverage figure built from a failed count
+        would read as "no tests declared" on a project with 1,317 of them."""
+        if res.failed:
+            return None
         try:
-            return int(next(iter(rows[0].values())))
+            return int(next(iter(res.rows[0].values())))
         except (IndexError, TypeError, ValueError, AttributeError):
             return None
-    return {"declared": one(declared) if declared else None,
-            "ever_ran": one(ran) if ran else None,
-            "skipped_results": one(skipped) if skipped else None}
+    return {"declared": one(declared), "ever_ran": one(ran),
+            "skipped_results": one(skipped),
+            "unreadable": [name for name, res in (("declared", declared), ("ever_ran", ran),
+                                                  ("skipped_results", skipped)) if res.failed]}
 
 
 def monitoring_findings(rep: Report, project, cad: Cadence | None = None,

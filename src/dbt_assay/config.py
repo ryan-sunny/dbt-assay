@@ -265,6 +265,11 @@ class Config:
     # It never measures volume or freshness itself: that would make it a second monitoring tool
     # with a second opinion, which is the problem this whole area exists to avoid.
     monitoring: dict = field(default_factory=dict)
+    # *** WHAT THE WAREHOUSE CHARGES, WHICH IS NEVER A CONSTANT IN THE CODE. ***
+    # Published rates move, and a dollar figure assay cannot point at a source for is worse than
+    # no dollar figure. `engine` defaults to the project's dialect; with no rate configured the
+    # bytes are still estimated and `usd_estimated` stays NULL rather than becoming a guess.
+    cost: dict = field(default_factory=dict)
     # What assay asks the router not to do with your SQL. None means the shipped policy.
     jev_provider: dict | None = None
     provider: str = "auto"
@@ -328,6 +333,18 @@ class Config:
             cfg.jev_provider = jev_block.get("routing") or {}
         cfg.elementary = data.get("elementary") or {}
         cfg.monitoring = data.get("monitoring") or {}
+        cfg.cost = data.get("cost") or {}
+        for key in ("usd_per_tb_scanned", "usd_per_credit", "credits_per_hour"):
+            if cfg.cost.get(key) is None:
+                continue
+            try:
+                rate = float(cfg.cost[key])
+            except (TypeError, ValueError):
+                raise ValueError(f"cost.{key} must be a number, got {cfg.cost[key]!r}") from None
+            # A negative rate is a typo that would print a warehouse paying you.
+            if rate < 0:
+                raise ValueError(f"cost.{key} must not be negative, got {rate}")
+            cfg.cost[key] = rate
         cfg.vocab = data.get("vocab") or {}
         for term, body in cfg.vocab.items():
             sel = (body or {}).get("applies_to") if isinstance(body, dict) else None
@@ -549,6 +566,23 @@ monitoring: {}
 #  enabled: false                          # turn the monitoring checks off deliberately
 #  source_freshness: {max_staleness_days: 7}   # one number, overriding every derived one
 #  min_marts: 1     # a model with fewer marts downstream is not reported as unwatched
+
+# cost: what your warehouse charges, so `assay spend` can price the statements assay issues.
+# DuckDB is free and says so. BigQuery bills the bytes of the columns a statement touches, which
+# assay can estimate before running anything -- it builds the SQL, so it knows the exact column
+# list, and the manifest declares the types. Snowflake bills the warehouse being awake, so there
+# the wall clock is the measurement.
+#
+# The rate is HERE and never in the code: published prices move, and `rate_card` is stored on
+# every row it priced so a change cannot rewrite what was already spent. With no rate set the
+# bytes are still estimated and the dollar column stays empty.
+cost: {}
+#  engine: bigquery                  # default: the dialect in your manifest
+#  rate_card: bigquery.on_demand.2026   # the name stored on every row this rate prices
+#  usd_per_tb_scanned: 6.25
+#  usd_per_credit: 3.00              # snowflake, with credits_per_hour for your warehouse size
+#  credits_per_hour: 1
+#  nominal_string_bytes: 32   # a VARCHAR has no width until you read it; this is the assumption
 
 # practices: override how a standard dbt-project-evaluator check is treated.
 #   enforce (exact, may gate) | recommend (informational) | adjudicate (ask) | off

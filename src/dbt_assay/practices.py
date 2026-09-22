@@ -124,16 +124,20 @@ def collect(project, entries, probe_mod, project_dir: str, profiles_dir: str | N
             continue
         rel = ".".join(p for p in (db, schema_name, check) if p)
         got = probe_mod.run_sql(f"select * from {rel}", project_dir, profiles_dir, dbt_bin,
-                                limit=per_check)
-        if not got:
+                                limit=per_check, caller="assay.practices.collect",
+                                kind="metadata", relation=rel)
+        if got.failed:
             # *** A PARTIAL EVALUATOR BUILD READ AS A CLEAN PROJECT. ***
             # Reported from the field: five fct_ models of many were built, and the categories
             # whose tables did not exist were reported as nothing at all. An absent table and an
-            # empty one are not the same fact, and only one of them is a pass. The caller is told
-            # which; `collect` cannot tell them apart from an empty result alone.
+            # empty one are not the same fact, and only one of them is a pass.
+            #
+            # This used to be `if not got`, which could not tell them apart -- so a table that
+            # existed and was clean and a table that was not there produced the same answer. The
+            # statement now says which, and only the failure is reported as unavailable.
             missing.append(check)
             continue
-        for r in got:
+        for r in got.rows:
             name = model_of(r)
             e = by_name.get(name) if name else None
             flags.append(Flag(
@@ -292,10 +296,11 @@ def verify_join_keys(entries, project, probe_mod, project_dir: str, profiles_dir
             parts.append(f"select '{pname}' as m, count(*) as n, "
                          f"count(distinct ({keys})) as d from {rel}")
         got = probe_mod.run_sql(" union all ".join(parts), project_dir, profiles_dir, dbt_bin,
-                                limit=len(chunk) + 1)
-        if not got:
+                                limit=len(chunk) + 1,
+                                caller="assay.practices.verify_join_keys", kind="count")
+        if got.failed:
             return False
-        for row in got:
+        for row in got.rows:
             vals = list(row.values())
             try:
                 m, n, d = str(row.get("m", vals[0])), int(row.get("n", vals[1])), \
@@ -381,10 +386,11 @@ def verify_grains(patches: list, project, probe_mod, project_dir: str,
             parts.append(f"select '{name}' as m, count(*) as n, "
                          f"count(distinct ({keys})) as d from {by_name[name]}")
         got = probe_mod.run_sql(" union all ".join(parts), project_dir, profiles_dir, dbt_bin,
-                                limit=len(chunk) + 1)
-        if not got:
+                                limit=len(chunk) + 1,
+                                caller="assay.practices.verify_grains", kind="count")
+        if got.failed:
             return False
-        for row in got:
+        for row in got.rows:
             vals = list(row.values())
             m = row.get("m", vals[0] if vals else None)
             try:
@@ -488,10 +494,11 @@ def verify_row_loss(entries, project, probe_mod, project_dir: str, profiles_dir:
     def ask(chunk: list) -> bool:
         parts = [f"select '{n}' as m, count(*) as n from {by_name[n]}" for n in chunk]
         got = probe_mod.run_sql(" union all ".join(parts), project_dir, profiles_dir, dbt_bin,
-                                limit=len(chunk) + 1)
-        if not got:
+                                limit=len(chunk) + 1,
+                                caller="assay.practices.verify_row_loss", kind="count")
+        if got.failed:
             return False
-        for row in got:
+        for row in got.rows:
             vals = list(row.values())
             try:
                 counts[str(row.get("m", vals[0]))] = int(row.get("n", vals[1]))
@@ -588,11 +595,12 @@ def verify_minimality(candidates: dict, probe_mod, project_dir: str, profiles_di
                              f"count(distinct ({rest})) as d from {rel}")
                 labels.append((rel, col))
         got = probe_mod.run_sql(" union all ".join(parts), project_dir, profiles_dir, dbt_bin,
-                                limit=len(parts) + 1)
-        if not got:
+                                limit=len(parts) + 1,
+                                caller="assay.practices.verify_minimality", kind="count")
+        if got.failed:
             return False
         seen: dict = {}
-        for row in got:
+        for row in got.rows:
             vals = list(row.values())
             try:
                 r = str(row.get("r", vals[0]))
