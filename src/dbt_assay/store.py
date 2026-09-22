@@ -177,6 +177,11 @@ create table if not exists unreadable (
 QUESTION_IDS_MOVED: list[tuple[str, str, str, int]] = []
 QUESTION_IDS_STUCK: list[tuple[str, str, str, int]] = []
 
+# How many calls this process reconstructed from decision rows written before assay minted its own
+# ids, and whether it refused to. Same reason as above: the store that does the work is rarely the
+# one reporting, and a silent reconstruction is the thing `assay cost` must be able to disclose.
+CALLS_RECONSTRUCTED: list[tuple[str, int]] = []
+
 
 class StoreUnwritable(RuntimeError):
     """The store cannot be opened for writing. Says which path and why, rather than a traceback."""
@@ -198,6 +203,9 @@ class Store:
         self.con.execute(DDL)
         self.renamed_question_ids: list[tuple[str, str, int]] = []
         self.unrenamable_question_ids: list[tuple[str, str, int]] = []
+        # {model unique_id: sha256 of its source file}, filled by `use_project`. Empty means a
+        # decision written now records NO checksum, which reports as "cannot be checked".
+        self.checksums: dict = {}
         self._migrate()
         self.superseded_decisions = 0
         self.stale_decisions = 0
@@ -209,7 +217,8 @@ class Store:
     ADDED_COLUMNS: ClassVar[dict] = {
         "adjudications": [("source", "varchar"), ("decision_key", "varchar")],
         "findings": [("finding_id", "varchar")],
-        "model_decisions": [("input_tokens", "integer"), ("context", "varchar")],
+        "model_decisions": [("input_tokens", "integer"), ("context", "varchar"),
+                            ("file_checksum", "varchar")],
     }
 
     def _migrate(self) -> None:
@@ -217,6 +226,7 @@ class Store:
         self._reshape_adjudications()
         self._add_missing_columns()
         self._rename_moved_question_ids()
+        self._backfill_model_calls()
         # *** THE ONE TABLE RECORDING A MEASUREMENT OF THE DATA WAS THE ONE THAT FORGOT. ***
         # `observed_keys` keyed on (relation, column) with `insert or replace`, so each probe
         # overwrote the last and assay could never say a key that held last week has stopped.
@@ -249,6 +259,103 @@ class Store:
                             "update adjudications set source = 'human' where source is null")
 
 
+
+    # *** THE PROJECT THIS STORE IS BEING WRITTEN ABOUT, SO A DECISION CAN RECORD ITS CODE. ***
+    # `decide()` gets a store and a client and never a project, and there are seventeen call sites.
+    # Threading a checksum through all seventeen is the shape that has already failed here three
+    # times -- a value that must reach every call site and reaches most of them. Registered once,
+    # read from the store, and a command that forgets produces NULL, which `assay stale` counts
+    # out loud as "cannot be checked" rather than folding into "current".
+    def use_project(self, project) -> int:
+        """Register the manifest's own file checksums. Returns how many models carry one.
+
+        Cheap to call in a loop: the same project object registers once.
+        """
+        if getattr(self, "_checksum_project", None) is project:
+            return len(self.checksums)
+        self._checksum_project = project
+        self.checksums = {uid: m.checksum for uid, m in getattr(project, "models", {}).items()
+                          if getattr(m, "checksum", "")}
+        return len(self.checksums)
+
+    # *** HALF THIS STORE COULD NOT SAY WHAT A CALL WAS. ***
+    # `call_id` was whatever the provider returned, and one provider returned nothing for a whole
+    # day: 9,762 of 19,707 decisions on the field store carry an empty one. Those rows still
+    # describe real calls -- a batch of eight answers about one state, or eight separate calls --
+    # and nothing on the row said which, so every cost total over them was a guess.
+    #
+    # The reconstruction is not a guess either. Rows written by one `decide()` share
+    # (decision_key, state_hash, prompt_version, model_version, input_tokens) and differ only by
+    # question, because that is exactly what the writer does. On the half of the field store that
+    # HAS provider ids, grouping by that tuple returns the same 4,946 calls and the same
+    # 14,567,698 tokens as grouping by the id itself, with no disagreement. So it is checked
+    # against the provider first and only runs when the check passes.
+    #
+    # Idempotent: after it runs there are no empty call ids, so the second open moves nothing.
+    _PROXY = ("decision_key || '|' || state_hash || '|' || prompt_version || '|' || "
+              "model_version || '|' || coalesce(cast(input_tokens as varchar), 'null')")
+
+    def _backfill_model_calls(self) -> None:
+        try:
+            have = {r[0] for r in self.con.execute(
+                "select column_name from information_schema.columns "
+                "where table_name = 'model_decisions'").fetchall()}
+        except Exception:                                        # noqa: BLE001
+            return
+        if not have or "call_id" not in have:
+            return
+        todo = self.con.execute(
+            "select count(*) from model_decisions d where not exists "
+            "(select 1 from model_calls c where c.call_id = d.call_id)").fetchone()[0]
+        if not todo:
+            return
+
+        # *** THE PROXY IS CHECKED AGAINST THE PROVIDER BEFORE IT IS TRUSTED. ***
+        # If the two ever disagree, the rows with no id are left alone and counted, because a
+        # wrong call boundary is a wrong total presented as measured -- worse than an absent one.
+        by_id, by_proxy = self.con.execute(
+            f"select count(distinct call_id), "
+            f"count(distinct {self._PROXY}) from model_decisions "
+            f"where call_id is not null and call_id <> ''").fetchone()
+        blind = self.con.execute(
+            "select count(*) from model_decisions where call_id is null or call_id = ''"
+        ).fetchone()[0]
+        if blind and by_id != by_proxy:
+            CALLS_RECONSTRUCTED.append(("refused", blind))
+            return
+
+        if blind:
+            # sha1 of the tuple, so the id is stable across opens and across machines: a second
+            # run must not mint a second name for the same call.
+            self.con.execute(
+                f"update model_decisions set call_id = 'assay-bf-' || substr(sha256({self._PROXY}), 1, 24) "
+                f"where call_id is null or call_id = ''")
+            CALLS_RECONSTRUCTED.append(("reconstructed", blind))
+
+        from .jev import USD_PER_INPUT_TOKEN
+        self.con.execute(
+            """insert or ignore into model_calls
+               (call_id, id_source, caller, model_name, input_tokens, output_tokens, usd,
+                usd_per_input_token, called_at)
+               select d.call_id,
+                      case when starts_with(d.call_id, 'assay-bf-') then 'reconstructed'
+                           else 'provider' end,
+                      any_value(d.caller), any_value(d.model_version),
+                      -- 0 was the old writer's spelling for "the provider returned no usage",
+                      -- because it did `or 0`. It is not a measurement of a free call and it
+                      -- does not become one by being copied across.
+                      nullif(any_value(d.input_tokens), 0),
+                      -- never recorded before this table existed, and an absent count is NULL
+                      null,
+                      nullif(any_value(d.input_tokens), 0) * ?,
+                      -- no historical rate was ever stored; these are priced at the rate shipping
+                      -- now and `assay cost` says so rather than implying it was read off the row
+                      ?,
+                      min(d.decided_at)
+               from model_decisions d
+               where d.call_id is not null and d.call_id <> ''
+                 and not exists (select 1 from model_calls c where c.call_id = d.call_id)
+               group by d.call_id""", [USD_PER_INPUT_TOKEN, USD_PER_INPUT_TOKEN])
 
     # *** A QUESTION THAT MOVES TO ITS OWN PREFIX TAKES ITS STORED ANSWERS WITH IT. ***
     # `sentence_is_a_claim` filed under `claim__N` and `claim_alignment` filed under `align`, each
@@ -832,7 +939,8 @@ class Store:
 # an answer nobody can check. Orphans -- a state no decision points at -- are reported by
 # `orphan_states()` and deleted by nothing, since a state is owned by its decision.
 PRUNABLE = ("findings", "edge_facts", "unreadable")
-NEVER_PRUNED = ("model_decisions", "claims", "adjudications", "observed_keys", "runs",
+NEVER_PRUNED = ("model_calls", "model_decisions", "claims", "adjudications", "observed_keys",
+                "runs",
                 "states")
 
 

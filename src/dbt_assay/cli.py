@@ -593,6 +593,8 @@ def _onboard_judge(project, digests, schema, findings, config_path: str, store_p
             if not st:
                 continue
             try:
+                # so the answer records the checksum of the SQL it was computed from
+                st_store.use_project(project)
                 ans = decide(st_store, client, st, sem_mod.description_question(),
                              decision_key=f"{sub.uid}::desc",
                              prompt_version=sem_mod.DESC_VERSION, caller="assay.onboard")
@@ -1063,6 +1065,8 @@ def claims(
                           for i in range(0, len(cs), claims_mod.CHUNK)]:
                 st = claims_mod.kind_state(m.name, chunk, m.description or "", cfg.vocab)
                 try:
+                    # so the answer records the checksum of the SQL it was computed from
+                    store.use_project(project)
                     ans = decide(store, client, st, claims_mod.kind_questions(chunk),
                                  contexts={f"sentence__{i}": c.text[:120]
                                            for i, c in enumerate(chunk)},
@@ -1173,6 +1177,8 @@ def verify(
             c = claims_mod.Claim(r["claim_id"], r["subject"], r["subject_name"], r["text"],
                                  r["source_kind"], r["source_ref"], citation=r["citation"] or "")
             try:
+                # so the answer records the checksum of the SQL it was computed from
+                store.use_project(project)
                 ans = decide(store, client, claims_mod.align_state(c, ev, cfg.vocab),
                              claims_mod.align_question(),
                              contexts={"claim": f"{c.subject_name}: {c.text[:120]}"},
@@ -1296,6 +1302,8 @@ def traverse(
             if cfg.vocab:
                 st["vocabulary"] = cfg.vocab
             try:
+                # so the answer records the checksum of the SQL it was computed from
+                store.use_project(project)
                 ans = decide(store, client, st,
                              {"edge": choice_q("edge_preserves_the_grain")},
                              contexts={"edge": f"{f.parent_name} -> {f.child_name}"},
@@ -2163,6 +2171,8 @@ def ask(
         with console.status(f"asking {name} about {len(subs)} subject(s)..."):
             for sub in subs:
                 try:
+                    # so the answer records the checksum of the SQL it was computed from
+                    store.use_project(project)
                     ans = decide(store, client, {**sub.state, **({"vocabulary": cfg.vocab}
                                                                 if cfg.vocab else {})},
                                  {q["id_prefix"]: choice_q(name)},
@@ -2260,6 +2270,8 @@ def regress(
                     skipped.append((r, "that subject no longer exists in this project"))
                     continue
                 try:
+                    # so the answer records the checksum of the SQL it was computed from
+                    store.use_project(project)
                     got = decide(store, client,
                                  {**sub.state, **({"vocabulary": cfg.vocab} if cfg.vocab else {})},
                                  {q["id_prefix"]: choice_q(fam)},
@@ -2388,6 +2400,195 @@ def patch(
         console.print(f"  [yellow]left alone:[/] {x.path.name} [dim]-- {x.skipped}[/]")
     console.print(f"[dim]Run them: dbt test --select path:{Path(out_dir).name}. Each one passes "
                   f"today; it is there to catch the day it stops.[/]")
+
+
+@app.command()
+def cost(
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    since: str = typer.Option("", "--since", help="only calls decided on or after this date"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """What the judged tier has cost, by caller, by family and by day.
+
+    *** THE CAP WAS NEVER A LEDGER. ***
+    `jev.max_spend_usd` stops a runaway mid-run and `Budget.spent_usd` accumulates it, in memory,
+    and then the process ends and the number is gone. The store held tokens and no dollars, so
+    "what does this cost me" was derivable and never shown.
+
+    *** AND THE OBVIOUS DERIVATION IS WRONG. ***
+    `model_decisions` is one row per ANSWER carrying its CALL's token count, so a batch of eight
+    questions about one state counts eight times. On the field store that reads $4.25 against a
+    real $1.32. Every figure here comes from `model_calls`, one row per call, where a total cannot
+    double count.
+
+    Nothing is estimated. A call the provider returned no usage for is excluded and counted, never
+    filled in with an average, and output tokens are shown and never priced because Jev does not
+    bill them.
+    """
+    from . import cost as cost_mod
+    from .store import CALLS_RECONSTRUCTED
+    if not Path(store_path).exists():
+        console.print(f"[yellow]no store at {store_path}.[/] Nothing has been asked here yet.")
+        raise typer.Exit(0)
+    st = Store(store_path)
+    try:
+        led = cost_mod.ledger(st, since or None)
+    finally:
+        st.close()
+
+    if as_json:
+        console.print_json(_json.dumps(led))
+        raise typer.Exit(0)
+
+    if not led["calls"]:
+        console.print("[yellow]no calls recorded[/] [dim]-- the judged tier has not run against "
+                      "this store, or every answer came from the cache.[/]")
+        raise typer.Exit(0)
+
+    window = f" since {led['since']}" if led["since"] else " lifetime"
+    console.print(f"\n[bold]${led['usd']:.2f}[/]{window}, over [bold]{led['calls']:,}[/] call(s) "
+                  f"and {led['input_tokens']:,} input token(s).")
+
+    for title, key in (("by caller", "by_caller"), ("by question family", "by_family"),
+                       ("by day", "by_day")):
+        t = Table(title=title, title_justify="left", title_style="bold", show_header=True,
+                  header_style="bold", box=None, padding=(0, 2))
+        t.add_column(""); t.add_column("calls", justify="right")
+        t.add_column("input tokens", justify="right"); t.add_column("usd", justify="right")
+        for name, calls, tok, usd in led[key]:
+            t.add_row(str(name), f"{calls:,}", f"{tok:,}", f"${usd:.4f}")
+        console.print()
+        console.print(t)
+
+    # *** WHAT THIS TOTAL DOES NOT COVER, SAID RATHER THAN LEFT TO BE ASSUMED. ***
+    notes = []
+    if led["calls_without_usage"]:
+        notes.append(f"{led['calls_without_usage']:,} call(s) returned no usage and are not in "
+                     f"this total. Not estimated: an absent measurement is not a zero.")
+    recon = led["id_source"].get("reconstructed", 0)
+    if recon:
+        notes.append(f"{recon:,} call(s) were reconstructed from the decision rows, because the "
+                     f"provider returned no call id before assay minted its own. They are priced "
+                     f"at the rate shipping now; no rate was recorded at the time.")
+    if led["output_calls"]:
+        notes.append(f"{led['output_tokens']:,} output token(s) across {led['output_calls']:,} "
+                     f"call(s). Jev does not bill output, so no dollar figure here includes them.")
+    else:
+        notes.append("no call has ever returned an output token count. Jev does not bill output, "
+                     "so nothing is missing from the dollars -- only from the counts.")
+    if len(led["rates"]) > 1:
+        notes.append(f"{len(led['rates'])} different rates are in force across these calls. Each "
+                     f"call is priced at the rate stored on it, so a rate change does not rewrite "
+                     f"what was already spent.")
+    for r in CALLS_RECONSTRUCTED:
+        if r[0] == "refused":
+            notes.append(f"{r[1]:,} decision(s) could not be grouped into calls: the "
+                         f"reconstruction disagreed with the provider's own ids on this store, so "
+                         f"it was refused rather than guessed. They are not in this total.")
+    console.print()
+    for n in notes:
+        console.print(f"[dim]{n}[/]")
+
+
+@app.command()
+def stale(
+    target: str = typer.Option(None, "--target", "-t", help="path to target/"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    dialect: str = typer.Option(None, "--dialect"),
+    quote_cost: bool = typer.Option(False, "--cost",
+                                    help="also quote what re-asking these would cost"),
+    limit: int = typer.Option(20, "--limit", "-n"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Judged answers that are about SQL which has since changed.
+
+    *** NOTHING KNEW WHEN ITS OWN KNOWLEDGE WENT STALE AGAINST THE CODE. ***
+    `live_decisions` counts an answer stale by `prompt_version` -- whether the QUESTION changed.
+    A model edited after being judged served its old answer with no signal, and the only way to
+    find out was to pay to re-ask.
+
+    dbt already hashes every model's source file. This reads that hash, and it costs nothing: no
+    call, no warehouse connection, one dict lookup per answer.
+
+    *** IT IS NECESSARY AND NOT SUFFICIENT. ***
+    A comment edit moves the checksum and changes no meaning; a change to a PARENT moves nothing
+    and can change everything. Both are said here rather than implied.
+
+    *** AND NOTHING IS HIDDEN. ***
+    A stale answer is still served everywhere it was served before. Hiding it leaves the caller
+    with nothing, which is strictly worse than serving it dated.
+    """
+    from . import stale as stale_mod
+    if not Path(store_path).exists():
+        console.print(f"[yellow]no store at {store_path}.[/] Nothing has been judged here yet.")
+        raise typer.Exit(0)
+    tdir = _find_target(target)
+    project, _digests, _f, _schema, _s = _load(tdir, dialect)
+    st = Store(store_path)
+    try:
+        out = stale_mod.survey(st, project)
+        quoted = stale_mod.quote(st, out["moved"]) if quote_cost else None
+    finally:
+        st.close()
+
+    if as_json:
+        payload = {k: v for k, v in out.items() if k != "moved"}
+        payload["moved"] = [{k: v for k, v in d.items() if k != "decided_at"}
+                            for d in out["moved"]]
+        payload["uncheckable"] = len(out["uncheckable"])
+        if quoted:
+            payload["quote"] = quoted
+        console.print_json(_json.dumps(payload, default=str))
+        raise typer.Exit(0)
+
+    n = len(out["moved"])
+    unchecked = len(out["uncheckable"])
+    console.print(f"\n[bold]{n:,}[/] of {out['judged']:,} judged answer(s) are about SQL that has "
+                  f"since changed. [dim]{out['current']:,} current, {unchecked:,} cannot be "
+                  f"checked.[/]")
+
+    if out["by_model"]:
+        t = Table(title="by blast radius", title_justify="left", title_style="bold",
+                  show_header=True, header_style="bold", box=None, padding=(0, 2))
+        t.add_column("model"); t.add_column("answers", justify="right")
+        t.add_column("downstream", justify="right"); t.add_column("marts", justify="right")
+        t.add_column("families", overflow="fold")
+        for e in out["by_model"][:limit]:
+            t.add_row(e["model"], f"{e['answers']:,}", f"{e['descendants']:,}",
+                      f"{e['marts']:,}", ", ".join(e["families"]))
+        console.print()
+        console.print(t)
+        if len(out["by_model"]) > limit:
+            console.print(f"[dim]{len(out['by_model']) - limit} more model(s). `--limit`.[/]")
+
+    if out["by_family"]:
+        t = Table(title="by family", title_justify="left", title_style="bold", show_header=True,
+                  header_style="bold", box=None, padding=(0, 2))
+        t.add_column("family"); t.add_column("answers", justify="right")
+        for fam, count in out["by_family"]:
+            t.add_row(fam, f"{count:,}")
+        console.print()
+        console.print(t)
+
+    if quoted:
+        console.print(f"\n[bold]${quoted['usd']:.2f}[/] to re-ask them, over "
+                      f"{quoted['calls']:,} call(s) and {quoted['input_tokens']:,} token(s).")
+        console.print("[dim]What those calls cost when they were made, at the rate stored on "
+                      "each. A re-ask sends the same questions about a changed state, so it is a "
+                      "close quote and not a promise.[/]")
+        if quoted["unpriced"]:
+            console.print(f"[dim]{quoted['unpriced']:,} of them have no recorded cost and are not "
+                          f"in that figure.[/]")
+
+    console.print()
+    if unchecked:
+        console.print(f"[yellow]{unchecked:,} answer(s) cannot be checked at all[/] [dim]-- "
+                      f"counted here rather than added to the current ones:[/]")
+        for why, count in out["why_uncheckable"]:
+            console.print(f"  [dim]{count:,}: {why}[/]")
+    console.print("[dim]A moved checksum is necessary and not sufficient: a comment edit trips "
+                  "it, and a change to a PARENT does not. Nothing above is hidden from any other "
+                  "command -- a dated answer still beats no answer.[/]")
 
 
 @app.command()
@@ -2922,6 +3123,8 @@ def infer(
     for uid, cand in work:
         state = contracts.build_state(uid, project, digests, schema, cand, declared, cfg.vocab)
         try:
+            # so the answer records the checksum of the SQL it was computed from
+            store.use_project(project)
             answers = decide(store, client, state, contracts.key_questions(cand),
                              decision_key=uid, prompt_version=contracts.PROMPT_VERSION,
                              caller="assay.infer")
@@ -2982,6 +3185,8 @@ def calibrate(
     for uid, cand in work:
         state = contracts.build_state(uid, project, digests, schema, cand, declared, cfg.vocab)
         try:
+            # so the answer records the checksum of the SQL it was computed from
+            store.use_project(project)
             answers = decide(store, client, state, contracts.key_questions(cand),
                              decision_key=uid, prompt_version=contracts.PROMPT_VERSION,
                              caller="assay.calibrate")
@@ -3185,6 +3390,8 @@ def columns(
         for chunk in columns_mod.chunks(cols):
             st = columns_mod.build_state(uid, project, schema, facts, chunk, grain, cfg.vocab)
             try:
+                # so the answer records the checksum of the SQL it was computed from
+                store.use_project(project)
                 answers = decide(store, client, st, columns_mod.questions_for(chunk, facts, with_null),
                                  decision_key=uid,
                                  prompt_version=f"{columns_mod.ROLE_VERSION}+{columns_mod.NULL_VERSION}",
@@ -4117,6 +4324,8 @@ def semantics(
             for chunk in sem_mod.chunks(s.predicates):
                 st = sem_mod.build_state(s, chunk, cfg.vocab)
                 try:
+                    # so the answer records the checksum of the SQL it was computed from
+                    store.use_project(project)
                     ans = decide(store, client, st, sem_mod.predicate_questions(chunk),
                              contexts={f"pred__{i}": f"{s.name}: {p}"
                                        for i, p in enumerate(chunk)},
@@ -4134,6 +4343,8 @@ def semantics(
         if do_desc and s.purpose:
             st = sem_mod.description_state(s, cfg.vocab)
             try:
+                # so the answer records the checksum of the SQL it was computed from
+                store.use_project(project)
                 ans = decide(store, client, st, sem_mod.description_question(),
                              decision_key=f"{s.uid}::desc",
                              prompt_version=sem_mod.DESC_VERSION, caller="assay.semantics")
@@ -4229,6 +4440,8 @@ def feeds(
         for chunk in feeds_mod.chunks(cols):
             st = feeds_mod.build_state(subj, chunk, cfg.vocab)
             try:
+                # so the answer records the checksum of the SQL it was computed from
+                store.use_project(project)
                 ans = decide(store, client, st, feeds_mod.questions_for(chunk, subj),
                              decision_key=f"{t.uid}::feed",
                              prompt_version=feeds_mod.NAME_VERSION, caller="assay.feeds")
@@ -4312,6 +4525,8 @@ def align(
     for chunk in [pairs[i:i + 10] for i in range(0, len(pairs), 10)]:
         st = align_mod.build_state(chunk, cfg.vocab)
         try:
+            # so the answer records the checksum of the SQL it was computed from
+            store.use_project(project)
             ans = decide(store, client, st, align_mod.questions_for(chunk),
                          decision_key=f"align::{hash(tuple(p.key for p in chunk)) & 0xffffff}",
                          prompt_version=align_mod.ALIGN_VERSION, caller="assay.align",
@@ -4512,6 +4727,8 @@ def tests_cmd(
     for chunk in [subs[i:i + testing_mod.CHUNK] for i in range(0, len(subs), testing_mod.CHUNK)]:
         st = testing_mod.build_state(chunk, cfg.vocab)
         try:
+            # so the answer records the checksum of the SQL it was computed from
+            store.use_project(project)
             ans = decide(store, client, st, testing_mod.questions_for(chunk),
                          decision_key=f"sev::{hash(tuple(s.test_name for s in chunk)) & 0xffffff}",
                          prompt_version=testing_mod.SEV_VERSION, caller="assay.tests")
@@ -4578,6 +4795,8 @@ def adjudicate(
     for i, fr in enumerate(rows):
         st = rows_mod.build_state(fr, cfg.vocab)
         try:
+            # so the answer records the checksum of the SQL it was computed from
+            store.use_project(project)
             ans = decide(store, client, st, rows_mod.questions_for(fr, explanations),
                          decision_key=f"{fr.model_uid}::row::{i}",
                          prompt_version=rows_mod.EXPL_VERSION, caller="assay.adjudicate")
@@ -4781,6 +5000,8 @@ def practices(
     for f in todo:
         st = prac_mod.build_state(f, cfg.vocab)
         try:
+            # so the answer records the checksum of the SQL it was computed from
+            store.use_project(project)
             ans = decide(store, client, st, prac_mod.question_for(f),
                          decision_key=f"practice::{f.check}::{f.model}",
                          prompt_version=prac_mod.PRACTICE_VERSION, caller="assay.practices")

@@ -501,7 +501,35 @@ against `(model, check)` cannot say which of that model's eight findings was the
 Agreeing and later dismissing does not count as fixed. That is a retraction, and counting it would
 make the one honest number gameable by the person it measures.
 
-The nine tables, what each answers, and how they join are in **[SCHEMA.md](SCHEMA.md)**, with an ER diagram.
+The ten tables, what each answers, and how they join are in **[SCHEMA.md](SCHEMA.md)**, with an ER diagram.
+
+**What it has cost, and what has gone stale**
+
+```bash
+assay cost                    # by caller, by question family, by day
+assay cost --since 2026-09-01
+assay cost --json
+
+assay stale                   # judged answers about SQL that has since changed
+assay stale --cost            # ...and what re-asking them would cost, before you spend it
+```
+
+`jev.max_spend_usd` caps a run and dies with the process. `assay cost` is the ledger: one row per
+CALL in `model_calls`, written at decide time with the rate that was in force, so a price change
+never rewrites what was already spent. It does not estimate -- a call the provider returned no
+usage for is excluded and counted, and output tokens are shown and never priced because Jev does
+not bill them.
+
+The obvious derivation is wrong and this is why the table exists. `model_decisions` is one row per
+ANSWER and carries its CALL's token count on each of them, so summing it counts a batched call
+once per answer: on a real store that is $4.25 against $1.32.
+
+`assay stale` reads the sha256 dbt already records for every model's source file and compares it
+to the one stored on the answer. No call, no warehouse connection. It is necessary and not
+sufficient, and says so: a comment edit trips it and a change to a PARENT does not. A stale answer
+is still served everywhere it was served before -- hiding it leaves the caller with nothing, which
+is strictly worse than serving it dated. An answer with no recorded checksum reports as **cannot
+be checked** and is counted in its own column, never added to the current ones.
 
 **Keeping the store from growing forever**
 
@@ -858,7 +886,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.38.1
+- uses: ryan-sunny/dbt-assay@v0.39.0
   with:
     target: target-head
     baseline: base/target

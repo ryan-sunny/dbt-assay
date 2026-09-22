@@ -79,7 +79,7 @@ That is the question `assay` exists to answer, and it is why Jev is not an add-o
 
 - **[Full overview](docs/OVERVIEW.md)** — every command, every question, every config block, and
   how to run this as a standing part of a warehouse rather than a one-off audit.
-- **[The store's schema](docs/SCHEMA.md)** — an ER diagram of the nine tables, what each one answers, and the string grammar the joins are made of. Also the split that decides what `assay prune` may delete: a table carrying `run_id` is one `check` rebuilds for free, and one without it holds something that cost a model call or somebody's afternoon.
+- **[The store's schema](docs/SCHEMA.md)** — an ER diagram of the ten tables, what each one answers, and the string grammar the joins are made of. Also the split that decides what `assay prune` may delete: a table carrying `run_id` is one `check` rebuilds for free, and one without it holds something that cost a model call or somebody's afternoon.
 - **[What has actually been verified](docs/VERIFICATION.md)** — per family, whether a person has
   read its findings against the real thing. Two families failed their own controls and were
   rewritten; it names the ones nobody has checked.
@@ -128,7 +128,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.38.1
+- uses: ryan-sunny/dbt-assay@v0.39.0
   with:
     target: target-head
     baseline: base/target

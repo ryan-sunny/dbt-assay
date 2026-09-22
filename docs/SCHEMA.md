@@ -1,6 +1,6 @@
 # The store
 
-One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Nine
+One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Ten
 tables. The whole design turns on one split, so it is worth stating before the diagram:
 
 **Some of these cost nothing and some of them cost money or somebody's afternoon.** A table
@@ -10,8 +10,8 @@ prune` deletes only the first kind, and the split is declared in code rather tha
 
 ```python
 PRUNABLE     = ("findings", "edge_facts", "unreadable")
-NEVER_PRUNED = ("model_decisions", "claims", "adjudications", "observed_keys", "runs",
-                "states")
+NEVER_PRUNED = ("model_calls", "model_decisions", "claims", "adjudications", "observed_keys",
+                "runs", "states")
 ```
 
 A new table belongs to one list or the other and a test fails until it does, so nothing becomes
@@ -21,7 +21,9 @@ silently prunable.
 
 ## The tables
 
-![the store's nine tables](store-schema.png)
+![the store's tables](store-schema.png)
+
+*(The picture predates `model_calls`; the Mermaid below is the one a test checks against the DDL.)*
 
 <details>
 <summary>the same thing as Mermaid source</summary>
@@ -33,6 +35,7 @@ erDiagram
     RUNS ||--o{ UNREADABLE : "one run could not read"
 
     STATES ||--o{ MODEL_DECISIONS : "one state, many answers"
+    MODEL_CALLS ||--o{ MODEL_DECISIONS : "one call, many answers"
     MODEL_DECISIONS |o--o{ ADJUDICATIONS : "decision_key, when judged"
     CLAIMS |o--o{ MODEL_DECISIONS : "subject::claim::id"
     FINDINGS |o--o{ ADJUDICATIONS : "subject::finding::id"
@@ -87,10 +90,22 @@ erDiagram
         double confidence "null for a noul"
         varchar probabilities "json"
         varchar state_hash FK
-        varchar call_id
+        varchar call_id FK "which call produced it"
         varchar caller
-        int input_tokens
+        int input_tokens "THE CALL'S count, repeated on every answer -- never SUM this"
+        varchar file_checksum "sha256 of the model's source when this was decided"
         timestamp decided_at
+    }
+    MODEL_CALLS {
+        varchar call_id PK "the provider's id, or one assay minted"
+        varchar id_source "provider / minted / reconstructed"
+        varchar caller
+        varchar model_name "what ANSWERED"
+        int input_tokens "null when the provider returned no usage"
+        int output_tokens "shown, never priced -- Jev does not bill output"
+        double usd "input only, null when usage was absent"
+        double usd_per_input_token "the rate in force, ON the row"
+        timestamp called_at
     }
     STATES {
         varchar state_hash PK
@@ -184,6 +199,7 @@ rulings were structural, so a calibration report has to exclude them by construc
 | `findings` | what is wrong right now | free |
 | `edge_facts` | what each hop carries and drops | free |
 | `unreadable` | what assay could not parse, and why | free |
+| `model_calls` | what each call to the provider cost | **the money itself** |
 | `model_decisions` | what a judged question answered | **a model call** |
 | `states` | what that answer was computed FROM | free once the call is made |
 | `adjudications` | what a person or agent concluded | **somebody's afternoon** |
@@ -192,7 +208,23 @@ rulings were structural, so a calibration report has to exclude them by construc
 
 ---
 
-## Two properties that are load-bearing
+## Three properties that are load-bearing
+
+**The thing with a price is the CALL, and `model_decisions` is one row per ANSWER.** A batch of
+eight questions about one state is one call and eight rows, and `input_tokens` is the call's
+number written onto every one of them. So `sum(model_decisions.input_tokens)` counts a batched
+call once per answer. Measured on the field store: it reads 101,163,351 tokens against 31,426,560
+actually spent, and $4.25 against $1.32. Three separate figures in one spec came from that sum,
+including the number written down as the anchor to check the first implementation against.
+
+`model_calls` holds one row per call, and every total assay prints goes through it. The column
+stays on `model_decisions` because it is a true fact about that row's call, and a test asserts
+nothing in the codebase sums it.
+
+Two things made that possible. A call now always has an id: the provider returned none for 9,762
+of 19,707 decisions, so assay mints its own and `id_source` says which happened. And dollars are
+built from integer tokens grouped by rate and multiplied once, because `sum()` over a DOUBLE
+depends on row order and the same store could print two different lifetime totals.
 
 **A finding's identity survives a rerun and changes when the substance changes.** `finding_id` is
 `sha1(check | subject | summary | evidence-minus-measured-values)`. Floats and counted values are

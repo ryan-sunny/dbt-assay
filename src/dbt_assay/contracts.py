@@ -335,9 +335,23 @@ def key_from_answers(cand: GrainCandidate, answers: dict,
 #
 # So it is checked where the question is ASKED rather than in a test that has to guess at every
 # call site. Wrong here is a programming error and it raises.
-def family_of(question_id: str) -> str | None:
+def family_index() -> dict:
+    """{id_prefix: family}, read once.
+
+    *** FOR CALLERS THAT ASK ABOUT THOUSANDS OF IDS, AND FOR NO OTHER REASON. ***
+    `family_of` re-reads every bank off disk per call, which is right for a caller resolving one
+    question and is thirty seconds for `assay cost`, which resolves 2,289. Built here and passed
+    back IN so the prefix rule stays written down exactly once -- reimplementing the split at the
+    call site is how three shipped questions came to resolve to a neighbouring family.
+    """
+    return {q["id_prefix"]: name for name, q in load_all_banks().items() if q.get("id_prefix")}
+
+
+def family_of(question_id: str, index: dict | None = None) -> str | None:
     """The bank a question id files its verdicts under, or None when nothing claims it."""
     prefix = question_id.split("__")[0]
+    if index is not None:
+        return index.get(prefix)
     for name, q in load_all_banks().items():
         if q.get("id_prefix") == prefix:
             return name

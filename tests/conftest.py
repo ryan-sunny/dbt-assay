@@ -1,6 +1,7 @@
 """A synthetic dbt project on disk, so the tests exercise the real loader rather than a mock."""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -76,6 +77,10 @@ def project_dir(tmp_path: Path) -> Path:
         path = f"models/{layer}/{name}.sql"
         uid = f"model.p.{name}"
         nodes[uid] = _model(uid, name, path, description=DESCRIPTIONS.get(name, ""))
+        # dbt records a sha256 of every model's source file, and `assay stale` reads it. A fixture
+        # without one cannot exercise the one thing that makes staleness free to detect.
+        nodes[uid]["checksum"] = {"name": "sha256",
+                                  "checksum": hashlib.sha256(sql.encode()).hexdigest()}
         parent_map[uid], child_map[uid] = [], []
         f = tmp_path / "target" / "compiled" / "p" / path
         f.parent.mkdir(parents=True, exist_ok=True)

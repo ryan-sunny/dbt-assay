@@ -82,6 +82,12 @@ class Model:
     # this is exact rather than a name heuristic.
     package: str = ""
     project: str = ""
+    # *** dbt ALREADY HASHES EVERY MODEL FILE AND assay READ NONE OF THEM. ***
+    # `checksum.checksum` is a sha256 of the model's source, present on 358 of 358 models on the
+    # field warehouse. It is what lets a judged answer say "the SQL I was computed from has moved"
+    # for free, with no call and no re-parse. Empty when dbt did not record one, which is not the
+    # same as unchanged and must never read as such.
+    checksum: str = ""
 
     @property
     def readable(self) -> bool:
@@ -159,6 +165,7 @@ class Project:
                     meta=(n.get("config") or {}).get("meta", {}) or {},
                     package=n.get("package_name", "") or "",
                     project=self.project_name,
+                    checksum=((n.get("checksum") or {}).get("checksum", "") or ""),
                 )
             elif n.get("resource_type") == "test":
                 meta = n.get("test_metadata") or {}

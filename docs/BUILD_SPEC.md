@@ -10,8 +10,8 @@ findings, 19,707 judged decisions, 617 tests.
 |---|---|---|
 | 0b | generic finding producer | **SHIPPED 0.38.0** — 42 + 21 findings appeared |
 | — | deferrals announce themselves | **SHIPPED 0.38.1** — now a constraint on item 4 |
-| 1 | cost ledger | to build |
-| 2 | stale against the code | to build |
+| 1 | cost ledger | **BUILT** — `model_calls`, `assay cost`, $1.32 lifetime measured |
+| 2 | stale against the code | **BUILT except `--exact`**, which the measurement disqualified |
 | 3 | understanding rollup | to build |
 | 4 | Elementary read + `volume_contradicts_a_claim` | to build |
 | 5 | the dbt package (macros + hook, no models) | to build, last |
@@ -104,28 +104,61 @@ name**. The total is derivable and never shown:
   assay.traverse  1,629 answers   $0.16
 ```
 
-Two days later the same store holds **19,707 decisions over 101M tokens**, so the ledger's first
-honest answer is roughly **$4.24 lifetime** — and the day axis is already there:
+**Both of those figures are wrong, and the way they are wrong is the reason for the table below.**
+`input_tokens` is a per-CALL measurement written onto every ANSWER row of that call, so a batch of
+eight questions about one state counts eight times. Measured on the field store, day 20, where the
+provider did return call ids:
 
 ```
-2026-09-21   9,762 answers   55,356,762 tok
-2026-09-20   9,945 answers   45,806,589 tok
+gen-dec-1789955340-LJwigEfZTOqHHY2hU1oj  sentence__0..7   6,573 tok on each of 8 rows
+                                                          -> 52,584 counted for 6,573 spent
 ```
 
-That is the sanity anchor to check the first implementation against.
+Summed per call instead of per row:
+
+```
+                        tokens        usd
+naive row sum       101,163,351      $4.25     <- what an earlier draft of this spec anchored on
+honest per call      31,426,560      $1.32
+```
+
+Two independent checks that the second is right. On day 20, grouping by the provider's `call_id`
+and grouping by `(decision_key, state_hash, prompt_version, model_version, input_tokens)` both
+return exactly 4,946 calls and exactly 14,567,698 tokens. And the implementation, run against a
+copy of the field store, produces 10,252 calls and **$1.3199** with no knowledge of either figure.
+
+**$1.32 lifetime is the sanity anchor.** By day:
+
+```
+2026-09-21   5,306 calls   16,858,862 tok   $0.7081
+2026-09-20   4,946 calls   14,567,698 tok   $0.6118
+```
+
+**And half the store could not say what a call was.** `call_id` was `resp.get("id") or ""`, and one
+provider returned no id for a whole day: 9,762 of 19,707 decisions carry an empty one. assay mints
+its own now, and history is reconstructed by the tuple above, which is checked against the
+provider's own ids before it is trusted and refused if they ever disagree.
 
 ## Build
 
-**Schema.** Three columns on `model_decisions`, added by the existing `_add_missing_columns` path:
+**Schema.** A table, not three columns, because the unit that has a price is the CALL and
+`model_decisions` is one row per ANSWER. Three columns on the answer row reproduce the defect
+above: written whole they sum to 8x, written as a share they are not a measurement of anything.
 
-| column | why |
-|---|---|
-| `output_tokens integer` | not stored at all today |
-| `usd double` | computed at WRITE time from the rate then in force |
-| `model_name varchar` | `model_version` is the question's, not the provider's |
+```
+model_calls(call_id pk, id_source, caller, model_name, input_tokens, output_tokens,
+            usd, usd_per_input_token, called_at)
+```
 
-`usd` is written, not derived on read. A rate change must not silently rewrite history, and this
-project already has the parallel argument for `prompt_version`.
+`NEVER_PRUNED`: it is the record of what was spent. `usd` is written, not derived on read, and the
+rate that produced it sits on the row — a rate change must not silently rewrite history, the same
+argument this project already has for `prompt_version`.
+
+`output_tokens` is recorded and **never priced**. Jev does not bill output, and multiplying it by
+anything would be inventing a rate.
+
+`model_decisions.input_tokens` stays where it is. It is a true fact about that row's call and it
+always was; a test asserts nothing in the codebase sums it.
 
 **Command.**
 
@@ -146,18 +179,19 @@ two runs over one store produce one total.
 
 ## Done when
 
-- [ ] `model_decisions` has `output_tokens`, `usd`, `model_name`; existing stores migrate without
-      losing rows (the `_add_missing_columns` path, called twice — see the `_reshape_adjudications`
-      scar)
-- [ ] **no second timestamp.** `decided_at` already exists, is populated on every row (19,707 of
+- [x] `model_calls` holds one row per call; existing stores migrate without losing rows, and the
+      calls behind 19,707 existing decisions are reconstructed and marked as reconstructed
+- [x] **no second timestamp.** `decided_at` already exists, is populated on every row (19,707 of
       19,707 on the field store, 0 null) and already buckets by day. A `created_at` or
       `charged_at` beside it is two spellings of one fact, and this project has paid for that
       three times tonight alone. `--since` reads `decided_at`.
-- [ ] `usd` is written at decide time from the rate then in force, never derived on read
-- [ ] `assay cost` totals by caller, by family, by day; `--since`; `--json`
-- [ ] a call the provider returned no usage for records NULL and the report says how many
-- [ ] two runs over one store print the same total
-- [ ] the number matches a hand-computed `sum(input_tokens) * rate` on a real store
+- [x] `usd` is written at decide time from the rate then in force, never derived on read
+- [x] `assay cost` totals by caller, by family, by day; `--since`; `--json`
+- [x] a call the provider returned no usage for records NULL and the report says how many
+- [x] two runs over one store print the same total — integer tokens grouped by rate, one multiply each, added in rate order, because `sum()` over a DOUBLE moves with row order
+- [x] the number matches a hand-computed **per-call** sum on a real store: $1.3199 over
+      31,426,560 tokens in 10,252 calls. It must NOT match `sum(model_decisions.input_tokens) *
+      rate`, which is $4.25 and is the bug this item exists to fix
 
 ---
 
@@ -205,14 +239,31 @@ Stale is reported, never suppressed.
 
 ## Done when
 
-- [ ] `model_decisions.file_checksum` is written at decide time from the manifest's own sha256
-- [ ] `assay stale` lists judged answers whose model's checksum has moved, by family and by reach
-- [ ] `assay stale --exact` rebuilds states and compares `state_hash`, catching parent drift, and
-      makes no API calls
-- [ ] `assay stale --cost` quotes what re-asking would cost, using item 1's rate
-- [ ] a stale answer is still SERVED, never hidden — `live_decisions` already argues this and is
-      right
-- [ ] on the field store, the count is non-zero and a spot-checked model really did change
+- [x] `model_decisions.file_checksum` is written at decide time from the manifest's own sha256,
+      off a map the command registers with `store.use_project(project)`. A test walks every
+      `decide()` call site and fails on one that forgets, with two declared exceptions that
+      carry their reasons (`disagreements` asks about verdict pairs, `judge_overlap` about
+      assay's own question bank — neither is a dbt model)
+- [x] `assay stale` lists judged answers whose model's checksum has moved, by family and by reach
+- [ ] `assay stale --exact` — **NOT BUILT, and the specced design does not work.** Measured:
+      rebuilding all 871 model and edge subjects of the field project through `subjects.build` and
+      hashing them reproduces **0** of the stored `state_hash` values, because the call sites add
+      to the state before sending it (`{**sub.state, "vocabulary": ...}`) and several families
+      build their state elsewhere entirely. Shipped as specced, `--exact` would report 100% of
+      judged answers as drifted on a warehouse where almost nothing changed — a wrong answer
+      presented as measured, which is the defect this tool exists to find. Needs a decision:
+      a transitive checksum over ancestors (exact about the code, no state rebuild), or making
+      the state builders the single path every caller sends through
+- [x] `assay stale --cost` quotes what re-asking would cost — the sum of those answers' OWN
+      calls at the rate stored on each, not an average applied to a count
+- [x] a stale answer is still SERVED, never hidden — this module returns counts and lists and
+      removes nothing from anybody's read path
+- [ ] on the field store, the count is non-zero — **cannot be met yet, and must not be faked.**
+      All 18,079 current answers there were decided before the column existed, so every one
+      reports `cannot be checked` (17,889 with no checksum, 190 under keys that name no model —
+      `pair::` and `bank::`, exactly as predicted). Backfilling today's checksum onto them would
+      make every one read `current`, which is the lie this whole tool is about. The count goes
+      non-zero the first time the judged tier runs again and something is then edited.
 
 ---
 
