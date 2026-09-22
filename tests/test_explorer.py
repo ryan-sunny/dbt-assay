@@ -419,8 +419,17 @@ def test_the_lineage_never_draws_the_whole_dag():
     Asserted on the source constants and the degradation branch, and exercised end to end by the
     DOM driver in `scripts/`; a warehouse with a 36-parent model is what this is sized for.
     """
+    import re
     v = explorer._VIEWS
-    assert "BAND_MAX = 9" in v, "the degradation threshold is gone"
+    # *** THE THRESHOLD IS A REAL WALL, NOT A LAYOUT LIMIT, AND IT MOVED WHEN THAT CHANGED. ***
+    # It was 9 because the SVG sized itself to the drawing and the container clipped whatever did
+    # not fit -- so ten boxes had nowhere to go. The viewBox fits the content now and pans and
+    # zooms, so the only remaining reason to stop drawing is that a picture of sixty converging
+    # lines tells you nothing. Asserted as "there is a threshold and it degrades", because
+    # pinning the number made a layout fix look like a regression.
+    n = re.search(r"BAND_MAX = (\d+)", v)
+    assert n, "the degradation threshold is gone"
+    assert 5 <= int(n.group(1)) <= 200, f"BAND_MAX is {n.group(1)}, which is not a threshold"
     assert "bandList" in v and "too many to draw" in v
     # the edge label goes ON the box, never on the line: with eight parents converging on one
     # focus, labels on the lines overlap into mush
@@ -969,3 +978,53 @@ def test_a_fraction_in_a_table_is_left_alone():
     i = js.index("const cellText")
     decl = js[i:i + 260]
     assert "Number.isInteger" in decl, decl
+
+
+def test_a_caption_says_what_a_number_means_and_then_stops():
+    """*** THE PAGE HAD STARTED EXPLAINING ITSELF. ***
+
+    "A good release makes it look worse. That is the design working." is a sentence about assay,
+    on a page about somebody's warehouse, above a number they were trying to read. Four captions
+    ran past 200 characters and argued for their own design choices -- one of them explained why
+    the bars were a single hue.
+
+    A caption earns its place by saying what the number means or how to read it. The reasoning
+    belongs in the source, where it already is, and in the docs.
+    """
+    import re
+    caps = [c.strip("'") for c in
+            re.findall(r"class: 'note', text: ('(?:[^']|\\')*')", explorer._VIEWS)]
+    assert len(caps) > 5, "the caption reader found almost nothing; it is broken"
+    long = [c for c in caps if len(c) > 140]
+    assert not long, f"captions that have started explaining themselves again: {long}"
+
+
+def test_the_lineage_can_be_moved_around():
+    """*** YOU COULD SEE WHAT FIT AND NOTHING ELSE. ***
+
+    The SVG sized itself to the drawing inside a narrower container, so a model with five parents
+    lost the fifth off the right edge and there was no way to reach it.
+    """
+    v = explorer._VIEWS
+    assert "function panZoom" in v, "the lineage cannot be moved"
+    for need in ("pointerdown", "pointermove", "wheel", "preserveAspectRatio"):
+        assert need in v, need
+    assert "setAttribute('viewBox'" in v, "zooming does not move the viewBox"
+    # and the element fills its box rather than dictating it
+    assert "width: W, height: H" not in v, "the svg is sizing itself to the drawing again"
+
+
+def test_every_tab_gets_the_same_pane_geometry():
+    """*** FOUR TABS SHARED THE TEMPLATE AND NONE WERE THE SAME SIZE. ***
+
+    Both panes were `max-height`, so each shrank to its own content: the right pane was tall on
+    one tab and short on another, and because the tall one grew the page, the left list scrolled
+    long past the end of itself into blank screen.
+    """
+    css = explorer.CSS
+    assert "--pane-h" in css, "the shared pane height is gone"
+    assert ".panel{height:var(--pane-h);overflow:auto}" in css, (
+        "the panel does not own the scroll, so the document grows behind the sticky header")
+    two = css[css.index(".wrap2{"):css.index("}", css.index(".wrap2{"))]
+    assert "align-items:stretch" in two and "height:100%" in two, (
+        "the two panes do not fill the same box")

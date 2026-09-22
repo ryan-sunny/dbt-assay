@@ -26,7 +26,7 @@ import json
 
 CSS = """
 :root{--ink:#16232a;--dim:#6b7a80;--faint:#94a3aa;--line:#dfe6e8;--bg:#fbfcfc;
---card:#fff;--red:#9e2b20;--green:#5a6a2f;--blue:#2b5c7a;--amber:#8a6412}
+--card:#fff;--red:#9e2b20;--green:#5a6a2f;--blue:#2b5c7a;--amber:#8a6412;--lin-h:460px;--pane-h:calc(100vh - 210px)}
 *{box-sizing:border-box}
 body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 color:var(--ink);background:var(--bg)}
@@ -53,7 +53,14 @@ nav button:hover{color:var(--ink);background:var(--bg)}
 nav button[aria-selected=true]{color:var(--ink);font-weight:600;background:var(--bg);
 border-color:var(--line);border-bottom:1px solid var(--bg)}
 nav button b{font-weight:500;color:var(--faint);margin-left:5px;font-size:11.5px}
-main{padding:18px 24px 60px;max-width:1500px}
+main{padding:18px 24px 24px;max-width:1500px}
+/* *** THE SCROLL BELONGS TO THE PANEL, NOT THE DOCUMENT. ***
+   Every tab is now exactly as tall as the window, so the two-pane tabs line up and the long
+   single-column ones (Overview, Config, Spend) scroll INSIDE the same box rather than growing the
+   page behind a sticky header. Putting `overflow:hidden` on the body instead would have stranded
+   those three below the fold -- caught by asking which tabs are not two-pane before shipping it. */
+.panel{height:var(--pane-h);overflow:auto}
+@media (max-height:640px){:root{--pane-h:calc(100vh - 150px);--lin-h:320px}}
 .panel[hidden]{display:none}
 .bar{display:flex;gap:9px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
 input[type=search],select{font:inherit;font-size:13px;padding:6px 9px;border:1px solid var(--line);
@@ -72,11 +79,17 @@ tr.pick:hover td{background:#f4f8f9}
 tr.on td{background:#eef5f8}
 .n{text-align:right;font-variant-numeric:tabular-nums}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+/* *** FOUR TABS SHARED THIS TEMPLATE AND NONE OF THEM WERE THE SAME SIZE. ***
+   Both panes were `max-height`, so each box shrank to its own content: the right pane was tall on
+   Models and short on Questions, the two sides never lined up, and because the tall one grew the
+   page, the left list could be scrolled long past the end of itself into blank screen. One height
+   for both, on every tab, and the page itself does not scroll -- the panes do. */
 .wrap2{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,2.1fr);gap:16px;
-align-items:start}
-.list{max-height:78vh;overflow:auto;border:1px solid var(--line);border-radius:8px}
+align-items:stretch;height:100%}
+.wrap2 > *{min-height:0}
+.list{height:100%;overflow:auto;border:1px solid var(--line);border-radius:8px}
 .detail{border:1px solid var(--line);border-radius:8px;background:var(--card);padding:16px 18px;
-max-height:78vh;overflow:auto}
+height:100%;overflow:auto}
 .detail h2{margin:0 0 2px;font-size:17px}
 .detail h3{margin:20px 0 7px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
 color:var(--faint);font-weight:600}
@@ -169,8 +182,16 @@ background:var(--card)}
 .optname{font-weight:650;color:var(--ink);font-size:12.5px;margin-bottom:3px}
 .kv.sub{margin:2px 0 6px 0;padding-left:10px;border-left:1px solid var(--line)}
 .sub{margin:3px 0}
-.linwrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--card);
-padding:10px;position:relative}
+.linwrap{overflow:hidden;border:1px solid var(--line);border-radius:8px;background:var(--card);
+padding:0;position:relative;height:var(--lin-h);touch-action:none}
+.linwrap svg.lin{width:100%;height:100%;display:block;cursor:grab}
+.linwrap svg.lin.drag{cursor:grabbing}
+.lintools{position:absolute;right:8px;top:8px;display:flex;gap:4px;z-index:2}
+.lintools button{font:inherit;font-size:12px;line-height:1;padding:5px 8px;background:var(--card);
+border:1px solid var(--line);border-radius:5px;color:var(--dim);cursor:pointer}
+.lintools button:hover{color:var(--ink);border-color:var(--blue)}
+.linhint{position:absolute;left:10px;bottom:8px;font-size:11.5px;color:var(--faint);z-index:2;
+pointer-events:none}
 .pop{position:fixed;z-index:50;width:360px;max-width:calc(100vw - 24px);max-height:70vh;
 overflow:auto;background:var(--card);border:1px solid #b9ccd6;border-radius:8px;
 box-shadow:0 6px 20px rgba(22,35,42,.16);padding:12px 14px 10px}
@@ -522,7 +543,15 @@ function conf(x) {
    Past BAND_MAX in a band it degrades to a list with one bracket, because 36 boxes with 36
    converging lines is the hairball this exists to avoid. That is 14 models of 358 on the parent
    side and 6 on the child side, and you can see it coming.                                    */
-const BAND_MAX = 9, BW = 210, BH = 66, GAPX = 16, BANDY = 152, MINW = 860;
+/* *** IT DREW NINE AND LISTED THE REST, IN A BOX THAT CLIPPED AT FIVE. ***
+   The picture was a fixed-width SVG in a narrower container, so a model with five parents lost
+   the fifth off the right edge, and one with ten got no picture at all. Both are the same bug:
+   the drawing decided how big it needed to be and the container disagreed. The viewBox is the
+   content's bounds now and the SVG fills whatever space there is, so everything is visible at
+   once however many there are -- and since it is then small, you can zoom and drag.
+   The cap is a real wall rather than a layout limit: past this a picture is a hairball whatever
+   you do with it, and the list is the better answer. */
+const BAND_MAX = 60, BW = 210, BH = 66, GAPX = 16, BANDY = 152, MINW = 860;
 /* *** A BOX 148 WIDE HOLDING 22 MONOSPACE CHARACTERS IS A BOX THAT OVERFLOWS. ***
    Reported from the field with a screenshot: `int_az_parcel_sections` painted through its own
    border and then through the right edge of the drawing. Truncating by character count guesses
@@ -660,6 +689,61 @@ function nodeCard(node, name, e) {
   return pop;
 }
 
+/* *** YOU COULD SEE WHAT FIT AND NOTHING ELSE. ***
+   Drag to move, wheel or the buttons to zoom, `fit` to get back. Nothing fancy and nothing
+   loaded: it moves the viewBox, which is four numbers, so it stays a single self-contained file
+   that opens off a disk with no network. */
+function panZoom(wrap, s, W, H) {
+  let vb = {x: 0, y: 0, w: W, h: H};
+  const home = {...vb};
+  const apply = () => s.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+
+  function zoom(by, at) {
+    /* Anchor on the pointer, so zooming goes where you are looking rather than to the middle. */
+    const k = Math.min(Math.max(vb.w * by, W / 12), W * 4) / vb.w;
+    const cx = at ? vb.x + (at.x * vb.w) : vb.x + vb.w / 2;
+    const cy = at ? vb.y + (at.y * vb.h) : vb.y + vb.h / 2;
+    vb = {x: cx - (cx - vb.x) * k, y: cy - (cy - vb.y) * k, w: vb.w * k, h: vb.h * k};
+    apply();
+  }
+
+  const tools = el('div', {class: 'lintools'});
+  for (const [label, fn, title] of [
+    ['\u2212', () => zoom(1.25), 'zoom out'],
+    ['+', () => zoom(0.8), 'zoom in'],
+    ['fit', () => { vb = {...home}; apply(); }, 'fit everything']]) {
+    const b = el('button', {text: label, title: title});
+    b.onclick = ev => { ev.stopPropagation(); fn(); };
+    tools.append(b);
+  }
+  wrap.append(tools);
+  wrap.append(el('div', {class: 'linhint', text: 'drag to move · scroll to zoom'}));
+
+  wrap.addEventListener('wheel', ev => {
+    ev.preventDefault();
+    const r = s.getBoundingClientRect();
+    zoom(ev.deltaY > 0 ? 1.12 : 0.89,
+         {x: (ev.clientX - r.left) / r.width, y: (ev.clientY - r.top) / r.height});
+  }, {passive: false});
+
+  let from = null;
+  s.addEventListener('pointerdown', ev => {
+    from = {x: ev.clientX, y: ev.clientY, vx: vb.x, vy: vb.y};
+    s.classList.add('drag');
+    s.setPointerCapture(ev.pointerId);
+  });
+  s.addEventListener('pointermove', ev => {
+    if (!from) return;
+    const r = s.getBoundingClientRect();
+    vb.x = from.vx - (ev.clientX - from.x) * (vb.w / r.width);
+    vb.y = from.vy - (ev.clientY - from.y) * (vb.h / r.height);
+    apply();
+  });
+  for (const done of ['pointerup', 'pointercancel', 'pointerleave'])
+    s.addEventListener(done, () => { from = null; s.classList.remove('drag'); });
+  apply();
+}
+
 function lineage(m) {
   const ins = (EDGES_IN[m.uid] || []).slice(), outs = (EDGES_OUT[m.uid] || []).slice();
   /* Driving parents first: the driving edge is the spine, and everything else hangs off it.
@@ -674,7 +758,10 @@ function lineage(m) {
   const cols = Math.max(nTop, nBot, 1);
   const W = Math.max(cols * (BW + GAPX) + GAPX, MINW);
   const H = BANDY * 2 + BH + 30;
-  const s = svg('svg', {class: 'lin', width: W, height: H, viewBox: `0 0 ${W} ${H}`});
+  /* The SVG fills the viewport and the viewBox is the drawing, so everything fits at any count.
+     Sizing the element to the drawing instead is what clipped the fifth parent off the edge. */
+  const s = svg('svg', {class: 'lin', viewBox: `0 0 ${W} ${H}`,
+                        preserveAspectRatio: 'xMidYMid meet'});
   s.append(svg('defs', {}, [
     svg('marker', {id: 'ah', viewBox: '0 0 8 8', refX: 7, refY: 4, markerWidth: 7,
         markerHeight: 7, orient: 'auto'}, [svg('path', {d: 'M0,0 L8,4 L0,8 z'})]),
@@ -710,6 +797,7 @@ function lineage(m) {
   /* Clicking the canvas anywhere but a node dismisses the card, which is what people expect and
      is also the only way out on a touch device. */
   wrap.onclick = () => dismissCards();
+  panZoom(wrap, s, W, H);
   host.append(wrap);
   if (!drawOut && outs.length)
     host.append(bandList(outs.length + ' children, too many to draw:', outs, e => e.child_name));
@@ -1479,8 +1567,7 @@ function understoodTab(host) {
       el('div', {class: 'lab', text: 'findings a person has ruled on'}),
       el('div', {}, [el('span', {class: 'heron', text: num(ruledN)}),
                      el('span', {class: 'heroof', text: ' of ' + num(F.length)})]),
-      el('p', {class: 'note', text: 'The only number here a release cannot improve. A sharper '
-        + 'check finds more, a fuller state raises a confidence, the DAG moves the blast radius '
+      el('p', {class: 'note', text: 'Moves only when somebody reads SQL. No release moves it.'check finds more, a fuller state raises a confidence, the DAG moves the blast radius '
         + '-- none of that moves this, because it moves when somebody reads SQL and at no other '
         + 'time. A good release makes it look worse. That is the design working.'}),
     ]),
@@ -1488,8 +1575,7 @@ function understoodTab(host) {
       el('div', {class: 'lab', text: 'and by whom'}),
       el('div', {}, [el('span', {class: 'heron small', text: num(humanN)}),
                      el('span', {class: 'heroof', text: ' human · ' + num(agentN) + ' agent'})]),
-      el('p', {class: 'note', text: 'Agent rulings are kept apart. They triage what a person '
-        + 'should read first; they gate nothing, satisfy no verdict floor, anchor no regression '
+      el('p', {class: 'note', text: 'Agent rulings triage what to read first. They gate nothing.'should read first; they gate nothing, satisfy no verdict floor, anchor no regression '
         + 'check, and cannot move the number on the left.'}),
     ]),
   ]));
@@ -1521,8 +1607,7 @@ function understoodTab(host) {
     el('span', {class: 'sw', style: 'background:' + p.color}),
     el('span', {text: p.label + ' ' + num(p.n)})])));
   bits.push(block('What is one row of this?',
-    'Responsibility number one, and the one every other answer rests on. Strongest evidence is '
-    + 'darkest. They are never added together: a grain a person declared and one a judgement '
+    'Strongest evidence is darkest. Never summed: a declared grain and a judged one are different facts.'darkest. They are never added together: a grain a person declared and one a judgement '
     + 'reached at 0.53 are not the same fact.',
     el('div', {}, [stackedBar(gparts, M_.length), glegend])));
 
@@ -1538,8 +1623,7 @@ function understoodTab(host) {
             onclick: () => { open('findings'); }};
   });
   bits.push(block('What is wrong, and how much of it',
-    'Ranked by count. One hue on purpose: these are the same KIND of thing, so coloring them '
-    + 'differently would encode rank as identity. Click any bar for the findings themselves.',
+    'Ranked by count. Click a bar for the findings.'differently would encode rank as identity. Click any bar for the findings themselves.',
     rankedBars(rows)));
 
   // ---- what would happen on a build. STATUS colors, always with their label.
@@ -1555,8 +1639,7 @@ function understoodTab(host) {
     el('span', {class: 'lgi'}, [el('span', {class: 'sw', style: 'background:' + p.color}),
                                 el('span', {text: p.label + ' ' + num(p.n)})])));
   bits.push(block('What this would do to a build',
-    'Your own audit.yml, applied. An empty "would fail" can also mean nothing has earned the '
-    + 'right to gate yet: a judged question cannot fail a build before people have ruled on it.',
+    'Your audit.yml, applied. Nothing gates before it has verdicts.'right to gate yet: a judged question cannot fail a build before people have ruled on it.',
     el('div', {}, [stackedBar(aparts.filter(p => p.n), F.length), alegend])));
 
   // ---- the configuration gap
@@ -1568,8 +1651,7 @@ function understoodTab(host) {
       color: '#b8c2c6',
       tip: `${u.check} is firing and audit.yml does not name it`}));
     bits.push(block(gap.length + ' check(s) fired that your audit.yml does not name',
-      'They fall back to their severity and can never fail a build -- deliberate, so a release '
-      + 'adding a gating check cannot turn a green build red. It also means nothing here is '
+      'Unconfigured checks fall back to their severity and cannot fail a build.'adding a gating check cannot turn a green build red. It also means nothing here is '
       + 'tuned, and "it reported nothing" and "it is not configured" read identically from the '
       + 'outside.', rankedBars(grows)));
   }
@@ -1605,8 +1687,7 @@ function understoodTab(host) {
       }))));
     }
     bits.push(block('Did the questions get better?',
-      'Agreement per family, per VERSION -- a verdict about v1 says nothing about v4. Unclear is '
-      + 'never in the denominator: disagreement means the criteria are wrong, unclear means the '
+      'Per family, per version. Unclear is excluded: wrong criteria and a thin state need different fixes.'never in the denominator: disagreement means the criteria are wrong, unclear means the '
       + 'state does not carry what the question asks, and those are fixed by different edits. '
       + 'Sources are never summed.', wrap));
   }
@@ -1615,8 +1696,7 @@ function understoodTab(host) {
   const mv = DATA.moved || {};
   if (mv.same != null) {
     bits.push(block('What moved since the previous run',
-      'Findings that appeared, went away, or stayed. A finding that went away was fixed, or the '
-      + 'check stopped seeing it, and those are not the same thing.',
+      'Appeared, went, or stayed. Gone can mean fixed, or no longer seen.'check stopped seeing it, and those are not the same thing.',
       el('div', {class: 'tiles'}, [
         tile(num(mv.n_new || 0), 'appeared', 'since the previous recorded run',
              (mv.n_new || 0) ? 'bad' : ''),
