@@ -55,6 +55,21 @@ jobs:
             exit 1
           fi
 
+  # *** 81 KB OF INVALID JAVASCRIPT SHIPPED, AND EVERY TEST PASSED. ***
+  # One eaten quote killed the whole script. The page still rendered -- correct HTML, correct
+  # counts, every tab dead on click -- because nothing in the suite RAN the thing it ships. The
+  # checks all inspected what the page contains. `node --check` finds it in ten seconds.
+  page-executes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with: {node-version: "22"}
+      - run: uv sync --all-extras
+      - name: every script the page ships is valid javascript
+        run: uv run pytest tests/test_the_page_is_executable.py -q
+
   lint:
     runs-on: ubuntu-latest
     steps:

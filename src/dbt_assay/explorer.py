@@ -1567,16 +1567,15 @@ function understoodTab(host) {
       el('div', {class: 'lab', text: 'findings a person has ruled on'}),
       el('div', {}, [el('span', {class: 'heron', text: num(ruledN)}),
                      el('span', {class: 'heroof', text: ' of ' + num(F.length)})]),
-      el('p', {class: 'note', text: 'Moves only when somebody reads SQL. No release moves it.'check finds more, a fuller state raises a confidence, the DAG moves the blast radius '
-        + '-- none of that moves this, because it moves when somebody reads SQL and at no other '
-        + 'time. A good release makes it look worse. That is the design working.'}),
+      el('p', {class: 'note',
+                text: 'Moves only when somebody reads SQL. No release moves it.'}),
     ]),
     el('div', {class: 'herobig'}, [
       el('div', {class: 'lab', text: 'and by whom'}),
       el('div', {}, [el('span', {class: 'heron small', text: num(humanN)}),
                      el('span', {class: 'heroof', text: ' human · ' + num(agentN) + ' agent'})]),
-      el('p', {class: 'note', text: 'Agent rulings triage what to read first. They gate nothing.'should read first; they gate nothing, satisfy no verdict floor, anchor no regression '
-        + 'check, and cannot move the number on the left.'}),
+      el('p', {class: 'note',
+                text: 'Agent rulings triage what to read first. They gate nothing.'}),
     ]),
   ]));
 
@@ -1607,8 +1606,8 @@ function understoodTab(host) {
     el('span', {class: 'sw', style: 'background:' + p.color}),
     el('span', {text: p.label + ' ' + num(p.n)})])));
   bits.push(block('What is one row of this?',
-    'Strongest evidence is darkest. Never summed: a declared grain and a judged one are different facts.'darkest. They are never added together: a grain a person declared and one a judgement '
-    + 'reached at 0.53 are not the same fact.',
+    'Strongest evidence is darkest. Never summed: a declared grain and a judged one are '
+    + 'different facts.',
     el('div', {}, [stackedBar(gparts, M_.length), glegend])));
 
   // ---- findings by check, ranked, one hue
@@ -1623,7 +1622,7 @@ function understoodTab(host) {
             onclick: () => { open('findings'); }};
   });
   bits.push(block('What is wrong, and how much of it',
-    'Ranked by count. Click a bar for the findings.'differently would encode rank as identity. Click any bar for the findings themselves.',
+    'Ranked by count. Click a bar for the findings.',
     rankedBars(rows)));
 
   // ---- what would happen on a build. STATUS colors, always with their label.
@@ -1639,7 +1638,7 @@ function understoodTab(host) {
     el('span', {class: 'lgi'}, [el('span', {class: 'sw', style: 'background:' + p.color}),
                                 el('span', {text: p.label + ' ' + num(p.n)})])));
   bits.push(block('What this would do to a build',
-    'Your audit.yml, applied. Nothing gates before it has verdicts.'right to gate yet: a judged question cannot fail a build before people have ruled on it.',
+    'Your audit.yml, applied. Nothing gates before it has verdicts.',
     el('div', {}, [stackedBar(aparts.filter(p => p.n), F.length), alegend])));
 
   // ---- the configuration gap
@@ -1651,9 +1650,8 @@ function understoodTab(host) {
       color: '#b8c2c6',
       tip: `${u.check} is firing and audit.yml does not name it`}));
     bits.push(block(gap.length + ' check(s) fired that your audit.yml does not name',
-      'Unconfigured checks fall back to their severity and cannot fail a build.'adding a gating check cannot turn a green build red. It also means nothing here is '
-      + 'tuned, and "it reported nothing" and "it is not configured" read identically from the '
-      + 'outside.', rankedBars(grows)));
+      'Unconfigured checks fall back to their severity and cannot fail a build.',
+      rankedBars(grows)));
   }
 
   /* ---- did the questions get better?
@@ -1687,16 +1685,15 @@ function understoodTab(host) {
       }))));
     }
     bits.push(block('Did the questions get better?',
-      'Per family, per version. Unclear is excluded: wrong criteria and a thin state need different fixes.'never in the denominator: disagreement means the criteria are wrong, unclear means the '
-      + 'state does not carry what the question asks, and those are fixed by different edits. '
-      + 'Sources are never summed.', wrap));
+      'Per family, per version. Unclear is excluded: wrong criteria and a thin state need '
+      + 'different fixes.', wrap));
   }
 
   // ---- what moved
   const mv = DATA.moved || {};
   if (mv.same != null) {
     bits.push(block('What moved since the previous run',
-      'Appeared, went, or stayed. Gone can mean fixed, or no longer seen.'check stopped seeing it, and those are not the same thing.',
+      'Appeared, went, or stayed. Gone can mean fixed, or no longer seen.',
       el('div', {class: 'tiles'}, [
         tile(num(mv.n_new || 0), 'appeared', 'since the previous recorded run',
              (mv.n_new || 0) ? 'bad' : ''),
