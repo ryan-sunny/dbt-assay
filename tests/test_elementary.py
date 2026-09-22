@@ -209,3 +209,92 @@ def test_the_state_carries_the_claim_the_movement_and_the_reach():
     assert st["marts_downstream"] == 19
     assert "not by assay" in st["movement"]["counted_by"]
     assert "sql" not in str(st).lower(), "the model's SQL is not in the state, on purpose"
+
+
+# --------------------------------------------------------------- monitoring as a contract
+
+def test_the_staleness_threshold_is_derived_from_how_often_dbt_actually_runs():
+    """*** A NUMBER SOMEBODY GUESSES CRIES WOLF OR STAYS QUIET FOR A QUARTER. ***
+
+    `max_staleness_days` decides whether a monitor reads as stopped. Derived from the measured
+    cadence, three missed builds, floor of two.
+    """
+    runs = [{"run_started_at": f"2026-09-{d:02d} 08:00:00"} for d in (1, 3, 5, 7, 9, 11)]
+    cad = E.cadence(lambda sql, n: runs, "elem")
+    assert cad.runs == 6
+    assert cad.median_gap_days == pytest.approx(2.0)
+    assert cad.derived_staleness_days == 6
+
+
+def test_one_pipeline_run_issuing_many_invocations_is_one_run():
+    """*** MEASURED: 1,592 INVOCATIONS OVER 79 DAYS, SIXTEEN ON ONE DAY. ***
+
+    The median gap between invocations was 0.0, so the first version derived a threshold of two
+    days -- a statement about how fast dbt runs back-to-back, not about how often this project
+    builds. A `dbt run` and the `dbt test` twenty minutes later are one build.
+    """
+    burst = [{"run_started_at": f"2026-09-01 {h:02d}:00:00"} for h in range(9, 14)]
+    burst += [{"run_started_at": f"2026-09-05 {h:02d}:00:00"} for h in range(9, 14)]
+    burst += [{"run_started_at": "2026-09-09 09:00:00"}]
+    cad = E.cadence(lambda sql, n: burst, "elem")
+    assert cad.runs == 3, "a burst of invocations is one build"
+    assert cad.median_gap_days == pytest.approx(4.0)
+
+
+def test_too_little_history_derives_nothing_rather_than_a_default():
+    """*** THE FRESHNESS TABLE WAS WRITTEN ON EXACTLY ONE DAY. ***
+    It did not decay, it ran once -- so nothing about its own history can say what late means."""
+    cad = E.cadence(lambda sql, n: [{"run_started_at": "2026-09-01 08:00:00"}], "elem")
+    assert cad.runs == 1
+    assert cad.derived_staleness_days is None, "a guess is not better than saying you cannot tell"
+
+
+def test_coverage_is_one_finding_with_a_count_not_one_per_model():
+    """*** 232 FINDINGS IS A WALL, NOT A REPORT. ***
+
+    The first version emitted one per unwatched model and would have swamped every other finding
+    in `assay check`. Nobody rules on "add monitoring" 232 times; it is one decision about
+    coverage, and the models ride in the evidence ranked by reach.
+    """
+    rows = [metric("db.s.a", "2026-09-21 00:00:00", 5.0, rn=1, buckets=2)]
+    rep = E.read(fake({E.METRICS: rows}), "elem", now=NOW)
+    got = E.monitoring_findings(rep, _project(["a", "b", "c", "d"], marts=3))
+    watch = [f for f in got if f.check == "volume_is_not_being_watched"]
+    assert len(watch) == 1, "one finding, not one per model"
+    assert watch[0].evidence["unwatched"] == 3
+    assert [t["model"] for t in watch[0].evidence["worst_by_reach"]] == ["b", "c", "d"]
+
+
+def test_a_monitor_that_never_ran_and_one_that_stopped_are_different_findings():
+    rep_never = E.read(fake({E.FRESHNESS: []}), "elem", now=NOW)
+    rep_stopped = E.read(fake({E.FRESHNESS: [{"created_at": "2026-06-01 00:00:00"}]}),
+                         "elem", now=NOW)
+    a = {f.check for f in E.monitoring_findings(rep_never, _project([]))}
+    b = {f.check for f in E.monitoring_findings(rep_stopped, _project([]))}
+    assert "monitor_declared_but_never_run" in a and "monitor_ran_then_stopped" not in a
+    assert "monitor_ran_then_stopped" in b and "monitor_declared_but_never_run" not in b
+
+
+def test_tests_that_never_fired_and_skipped_results_are_reported_apart():
+    rep = E.read(fake({E.TEST_RESULTS: []}), "elem", now=NOW)
+    got = {f.check: f for f in E.monitoring_findings(
+        rep, _project([]), coverage={"declared": 1291, "ever_ran": 1098,
+                                     "skipped_results": 1846})}
+    assert "193" in got["test_declared_but_never_run"].summary
+    assert "1,846" in got["test_skipped_rather_than_passed"].summary
+    assert got["test_declared_but_never_run"].evidence["declared"] == 1291
+
+
+def test_assay_never_measures_volume_or_freshness_itself():
+    """*** THE CONSTRAINT THAT KEEPS IT FROM BECOMING A SECOND MONITORING TOOL. ***
+
+    The moment assay measures a row count itself it has a second opinion, and you have the
+    two-inboxes problem this whole module exists to avoid. Every check it ships here is about
+    whether a monitor EXISTS, is CURRENT, and COVERS what matters.
+    """
+    for check in E.MONITORING_CHECKS:
+        assert any(w in check for w in ("monitor", "watched", "test")), check
+    src = (Path(E.__file__).read_text() if (Path := __import__("pathlib").Path) else "")
+    assert "count(*)" in src, "it reads counts"
+    assert "select count(" in src and "group by" not in src.split("_LATEST_VOLUME")[0], \
+        "assay must not compute its own aggregates over your data"

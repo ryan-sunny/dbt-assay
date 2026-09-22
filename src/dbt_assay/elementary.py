@@ -468,3 +468,181 @@ def unwatched(rep: Report, project, min_marts: int = 1) -> list:
         out.append((uid, m.name, radius["descendants"], radius["marts"]))
     out.sort(key=lambda r: (-r[3], -r[2], r[1]))
     return out
+
+
+# ----------------------------------------------------------------- monitoring as a contract
+
+# Invocations closer together than this are one build, not two. A `dbt run` followed by a
+# `dbt test` minutes later is one pipeline run by any reading a person would give it.
+SESSION_HOURS = 6
+
+INVOCATIONS = "dbt_invocations"
+DBT_TESTS = "dbt_tests"
+
+# *** assay ASSERTS THE CONTRACT. IT NEVER BECOMES THE MONITOR. ***
+# The moment assay measures a row count or a freshness itself, it is a second monitoring tool with
+# a second opinion, and you have the two-inboxes problem this whole module exists to avoid. What
+# it checks is that a monitor EXISTS, is CURRENT, and COVERS what matters. Everything measured
+# stays Elementary's.
+MONITORING_CHECKS = (
+    "monitor_declared_but_never_run",
+    "monitor_ran_then_stopped",
+    "volume_is_not_being_watched",
+    "test_declared_but_never_run",
+    "test_skipped_rather_than_passed",
+)
+
+
+@dataclass
+class Cadence:
+    """How often this project actually runs dbt, measured rather than assumed."""
+    runs: int = 0
+    days_spanned: float = 0.0
+    median_gap_days: float | None = None
+    newest: datetime | None = None
+
+    @property
+    def derived_staleness_days(self) -> int | None:
+        """A threshold nobody had to pick.
+
+        *** A NUMBER SOMEBODY GUESSES IS THE SAME FAILURE AS A LEDGER CEILING SOMEBODY GUESSES. ***
+        `max_staleness_days` decides whether a monitor is reported as stopped, so a wrong one
+        either cries wolf every week or stays quiet for a quarter. It is derived from how often
+        dbt ACTUALLY runs here -- three missed runs, rounded up to a day, floor of two -- and a
+        person can see the number and the cadence it came from and override it.
+
+        None when there is not enough history to derive one, which is the honest answer and not a
+        default: the freshness table on the field warehouse was written on exactly ONE day, so
+        nothing about its own history could say what "late" means for it.
+        """
+        if self.median_gap_days is None or self.runs < 3:
+            return None
+        return max(2, round(self.median_gap_days * 3))
+
+
+def cadence(runner, schema: str, now: datetime | None = None, limit: int = 5000) -> Cadence:
+    """How often dbt runs here, from Elementary's own record of invocations."""
+    rows = runner(f"select run_started_at from {schema}.{INVOCATIONS} "
+                  f"where run_started_at is not null", limit) or []
+    seen = sorted({d for d in (_as_dt(r.get("run_started_at")) for r in rows) if d})
+    # *** ONE PIPELINE RUN ISSUES MANY dbt INVOCATIONS, AND THE MEDIAN GAP BETWEEN THEM IS
+    #     MINUTES. ***
+    # Measured: 1,592 invocations over 79 days, sixteen of them on one day -- so the median
+    # inter-invocation gap is 0.0 and the derived threshold came out as "two days", which is a
+    # statement about how fast dbt runs back-to-back rather than about how often this project
+    # builds. Invocations closer together than SESSION_HOURS are one run.
+    stamps = []
+    for d in seen:
+        if not stamps or (d - stamps[-1]) > timedelta(hours=SESSION_HOURS):
+            stamps.append(d)
+    if len(stamps) < 2:
+        return Cadence(runs=len(stamps), newest=stamps[-1] if stamps else None)
+    gaps = sorted((stamps[i + 1] - stamps[i]) / timedelta(days=1)
+                  for i in range(len(stamps) - 1))
+    mid = len(gaps) // 2
+    median = gaps[mid] if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2
+    return Cadence(runs=len(stamps), days_spanned=(stamps[-1] - stamps[0]) / timedelta(days=1),
+                   median_gap_days=median, newest=stamps[-1])
+
+
+def test_coverage(runner, schema: str, limit: int = 40000) -> dict:
+    """Declared tests against tests that have ever produced a result.
+
+    *** A TEST THAT NEVER RAN AND A TEST THAT PASSED LOOK THE SAME FROM A SUMMARY. ***
+    And a SKIPPED result is neither: dbt skips a test whose model failed upstream, so a green
+    summary can contain a test that has not evaluated your data in months. Measured on a real
+    warehouse: 1,317 tests declared, 858 with any result -- 459 that have never fired -- and 1,587
+    skipped results.
+    """
+    declared = runner(f"select count(*) as n from {schema}.{DBT_TESTS}", 1)
+    ran = runner(f"select count(distinct test_unique_id) as n from {schema}.{TEST_RESULTS} "
+                 f"where test_type = 'dbt_test'", 1)
+    skipped = runner(f"select count(*) as n from {schema}.{TEST_RESULTS} "
+                     f"where test_type = 'dbt_test' and status = 'skipped'", 1)
+
+    def one(rows):
+        try:
+            return int(next(iter(rows[0].values())))
+        except (IndexError, TypeError, ValueError, AttributeError):
+            return None
+    return {"declared": one(declared) if declared else None,
+            "ever_ran": one(ran) if ran else None,
+            "skipped_results": one(skipped) if skipped else None}
+
+
+def monitoring_findings(rep: Report, project, cad: Cadence | None = None,
+                        coverage: dict | None = None, min_marts: int = 1,
+                        max_staleness_days: int | None = None) -> list:
+    """What is wrong with the MONITORING, which is assay's to say.
+
+    Never what is wrong with the data -- that is Elementary's, and ingesting its results as assay
+    findings would corrupt the one number measuring the loop.
+    """
+    from .checks.structural import Finding
+    out = []
+    limit = max_staleness_days or (cad.derived_staleness_days if cad else None) \
+        or rep.stale_after_days
+
+    for r in rep.readings:
+        if r.state == NEVER_RUN:
+            out.append(Finding(
+                check="monitor_declared_but_never_run", subject="", subject_name="", file="",
+                summary=f"`{r.relation}` exists and is empty: the monitor is configured and has "
+                        f"never produced a result",
+                detail=("Installed is not built, and both tools go quiet the same way. This is "
+                        "the `fct_sources_without_freshness` case one layer out: a check somebody "
+                        "turned on, that has never said anything, and whose silence reads as a "
+                        "clean bill."),
+                base=2, evidence={"relation": r.relation, "rows": 0}))
+        elif r.state == ABANDONED:
+            out.append(Finding(
+                check="monitor_ran_then_stopped", subject="", subject_name="", file="",
+                summary=f"`{r.relation}` has not been written to for {r.age_days:.0f} days, and "
+                        f"a stopped monitor reads exactly like one that finds nothing",
+                detail=(f"Newest row {r.newest:%Y-%m-%d}, {r.rows:,} row(s) in the table. "
+                        f"Reported at {limit} day(s)"
+                        + (f", derived from this project running dbt every "
+                           f"{cad.median_gap_days:.1f} day(s) across {cad.runs:,} run(s)"
+                           if cad and cad.derived_staleness_days else "")
+                        + "."),
+                base=3, evidence={"relation": r.relation, "age_days": round(r.age_days or 0, 1),
+                                  "newest": str(r.newest), "threshold_days": limit}))
+
+    # *** ONE FINDING WITH A COUNT, NOT ONE PER MODEL. ***
+    # The first version emitted a finding per unwatched model: 232 rows on a real warehouse, which
+    # is a wall rather than a report, and would have swamped every other finding in `assay check`.
+    # Nobody rules on "add monitoring" 232 times either -- it is one decision about coverage. The
+    # models are carried in the evidence, ranked by reach, so the ordering survives.
+    gaps = unwatched(rep, project, min_marts)
+    if gaps:
+        watched = len(rep.volumes)
+        top = [{"model": n, "marts": m, "models_downstream": d} for _u, n, d, m in gaps[:15]]
+        out.append(Finding(
+            check="volume_is_not_being_watched", subject="", subject_name="", file="",
+            summary=f"{len(gaps):,} model(s) with a mart downstream have no row-count history",
+            detail=(f"{watched:,} relation(s) are watched. assay does not measure volume and does "
+                    f"not intend to -- this says only that nobody else is either, which is a "
+                    f"coverage fact and not a data one. Worst by reach: "
+                    + ", ".join(f"{t['model']} ({t['marts']} marts)" for t in top[:5]) + "."),
+            base=2, descendants=max((d for _u, _n, d, _m in gaps), default=0),
+            marts=max((m for _u, _n, _d, m in gaps), default=0),
+            evidence={"unwatched": len(gaps), "watched": watched, "worst_by_reach": top}))
+
+    cov = coverage or {}
+    declared, ran = cov.get("declared"), cov.get("ever_ran")
+    if declared and ran is not None and declared > ran:
+        out.append(Finding(
+            check="test_declared_but_never_run", subject="", subject_name="", file="",
+            summary=f"{declared - ran:,} of {declared:,} declared test(s) have never produced a "
+                    f"result",
+            detail=("A test that never ran and a test that passed are indistinguishable in a "
+                    "summary, and only one of them has looked at your data."),
+            base=2, evidence={"declared": declared, "ever_ran": ran}))
+    if cov.get("skipped_results"):
+        out.append(Finding(
+            check="test_skipped_rather_than_passed", subject="", subject_name="", file="",
+            summary=f"{cov['skipped_results']:,} test result(s) are SKIPPED, which is not a pass",
+            detail=("dbt skips a test whose model failed upstream. A green run can contain a "
+                    "test that has not evaluated your data in months."),
+            base=1, evidence={"skipped": cov["skipped_results"]}))
+    return out

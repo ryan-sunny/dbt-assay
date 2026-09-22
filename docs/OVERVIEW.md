@@ -648,6 +648,28 @@ and the three nobody predicted are the ones that look most like success:
 | **stale failure** | a test whose last result was a *failure* and which has not run since. In any Elementary view that is indistinguishable from something failing right now |
 | **unreachable** | assay could not reach the warehouse, so nothing was measured. Found by shipping the other five and running it: `dbt` was not on the PATH, every statement failed, and the reader announced that nothing monitors volume — on a warehouse where Elementary had run an hour earlier |
 
+**Five checks, all free of judgment**, about the monitoring rather than about your data:
+
+| check | it says |
+|---|---|
+| `monitor_declared_but_never_run` | the monitor is configured and has never produced a result. Installed is not built, and both tools go quiet the same way |
+| `monitor_ran_then_stopped` | the table has rows and nothing has written to it since. The threshold is **derived** from how often this project actually runs dbt, not picked |
+| `volume_is_not_being_watched` | models that feed marts have no row-count history. One finding with the count and the worst by reach, not one per model |
+| `test_declared_but_never_run` | declared tests that have never produced a result — 193 of 1,291 on the warehouse this was built against |
+| `test_skipped_rather_than_passed` | `skipped` is not a pass. dbt skips a test whose model failed upstream, so a green run can hold a test that has not read your data in months |
+
+**The staleness threshold is derived, not chosen.** A number somebody guesses either cries wolf
+every week or stays quiet for a quarter. assay measures how often this project actually runs dbt —
+clustering invocations into builds, because one pipeline run issues many and the median gap
+between *those* is minutes — and reports a monitor as stopped after three missed builds. `assay
+volume` prints the cadence beside the number, and
+`monitoring.source_freshness.max_staleness_days` overrides it. Where there is not enough history to
+derive one, it says so and assumes nothing.
+
+Run `assay volume --json > volume.json` and emit the review form with `--monitoring volume.json`,
+and the derived number, the cadence it came from and the coverage appear as a **Monitoring** tab
+somebody can disagree with in writing.
+
 **It does not ingest Elementary's results as assay findings.** They are not assay's, and claiming
 them would corrupt the one number that measures the loop — *of the N a person agreed with, M are
 gone*. What assay does say is about the **monitoring**: a model with marts downstream that no
@@ -1011,7 +1033,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.44.0
+- uses: ryan-sunny/dbt-assay@v0.45.0
   with:
     target: target-head
     baseline: base/target

@@ -299,6 +299,15 @@ reads whatever `target/` holds at that moment. Run `dbt compile` first if you ha
   which catches a change to a PARENT that a checksum by definition cannot. `--cost` quotes what
   re-asking them would cost before you spend it. Neither makes an API call.
 - `assay config --target <dir>` — lints their **vocabulary**, which nothing used to check at all.
+- `assay volume` — what Elementary counted, joined to what the project claims, plus five checks on
+  the MONITORING itself: a monitor configured and never run, one that ran and stopped, models that
+  feed marts with no row-count history, tests that have never fired, and results that are `skipped`
+  rather than passed. Free of judgment; needs their dbt connection. `--judge` adds the one question
+  neither tool can answer alone, for a fraction of a cent.
+
+  **assay never measures volume or freshness itself.** The moment it does it is a second
+  monitoring tool with a second opinion. It asserts the monitor exists, is current, and covers what
+  matters; everything measured stays Elementary's.
 
 ## A vocab term is true SOMEWHERE, and it is sent EVERYWHERE unless it says otherwise
 

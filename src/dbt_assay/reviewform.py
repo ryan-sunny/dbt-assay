@@ -217,10 +217,11 @@ def load_config(payload) -> tuple:
         if not path:
             bad.append(f"config row {i} names no key")
             continue
-        if path[0] not in ("vocab", "explanations", "waivers"):
+        if path[0] not in ("vocab", "explanations", "waivers", "monitoring"):
             # The form writes these three. Anything else came from somewhere else, and a config
             # editor that accepts an arbitrary path from a downloaded file is a hole.
-            bad.append(f"`{'.'.join(path)}`: the form only writes vocab, explanations and waivers")
+            bad.append(f"`{'.'.join(path)}`: the form only writes vocab, explanations, waivers "
+                       f"and monitoring")
             continue
         if path[-1] == "__new":
             bad.append(f"`{'.'.join(path[:-1])}`: give the new option a name, not `__new`")
@@ -251,7 +252,35 @@ def load_config(payload) -> tuple:
 #   waivers       -- `suggest` already finds the reason sitting inside a ruling
 
 
-def context(store, project, cfg, findings=None) -> dict:
+def monitoring_rows(cfg, volume_json: dict | None) -> dict:
+    """What `assay volume` measured, so a person can see the derived threshold and disagree.
+
+    *** A NUMBER SOMEBODY GUESSES IS A NUMBER THAT CRIES WOLF OR STAYS QUIET FOR A QUARTER. ***
+    `max_staleness_days` decides whether a monitor reads as stopped. It is DERIVED from how often
+    this project actually runs dbt, and the form shows the cadence it came from beside the number,
+    so changing it is a disagreement with a measurement rather than a guess replacing a default.
+
+    Read from `assay volume --json` rather than from a live connection: emitting the form stays
+    free, the way `--reads` already works.
+    """
+    mon = getattr(cfg, "monitoring", None) or {}
+    configured = (mon.get("source_freshness") or {}).get("max_staleness_days")
+    cad = (volume_json or {}).get("cadence") or {}
+    cov = (volume_json or {}).get("test_coverage") or {}
+    return {
+        "configured": configured,
+        "derived": cad.get("derived_staleness_days"),
+        "in_use": cad.get("in_use_days") or configured,
+        "runs": cad.get("runs"),
+        "median_gap_days": cad.get("median_gap_days"),
+        "min_marts": mon.get("min_marts"),
+        "findings": (volume_json or {}).get("monitoring") or [],
+        "test_coverage": cov,
+        "measured": bool(cad),
+    }
+
+
+def context(store, project, cfg, findings=None, volume_json: dict | None = None) -> dict:
     """Everything a person could define here, with what assay measured beside it.
 
     *** ASSAY FILLS WHAT IT MEASURED AND LEAVES THE SENTENCE EMPTY. ***
@@ -298,6 +327,7 @@ def context(store, project, cfg, findings=None) -> dict:
     return {
         "words": words,
         "more_candidates": more,
+        "monitoring": monitoring_rows(cfg, volume_json),
         "explanations": _explanation_rows(cfg, findings or []),
         "waivers": _waiver_rows(store, cfg, findings or []),
     }
@@ -752,8 +782,60 @@ function waiversTab(host) {
   host.replaceChildren(...bits);
 }
 
+function monitoringTab(host) {
+  const m = CTX.monitoring || {};
+  const bits = [el('p', {class: 'measured', text:
+    'assay asserts that a monitor EXISTS, is CURRENT and COVERS what matters. It never measures '
+    + 'volume or freshness itself -- that would be a second monitoring tool with a second '
+    + 'opinion. Everything below is about the monitoring, never about your data.'})];
+  if (!m.measured) {
+    bits.push(block2('Nothing measured yet',
+      'Run `assay volume --json > volume.json` and emit the form with '
+      + '`--monitoring volume.json`, and the derived threshold and the coverage appear here.'));
+    host.replaceChildren(...bits); return;
+  }
+  const row = el('div', {class: 'wrow'});
+  row.append(el('h3', {text: 'how stale is too stale'}));
+  row.append(el('div', {class: 'measured', text:
+    'assay measured: this project runs dbt every ' + (m.median_gap_days || 0).toFixed(1)
+    + ' day(s), across ' + num(m.runs) + ' run(s). Three missed runs is '
+    + (m.derived == null ? 'not derivable from that' : m.derived + ' day(s)')
+    + (m.configured ? '; audit.yml says ' + m.configured : '; nothing is configured, so the '
+       + 'derived number is what is used') + '.'}));
+  row.append(field('max_staleness_days',
+                   ['monitoring', 'source_freshness', 'max_staleness_days'],
+                   m.configured == null ? '' : String(m.configured),
+                   m.derived == null ? '' : 'leave blank to keep using the derived ' + m.derived));
+  row.append(field('min_marts', ['monitoring', 'min_marts'],
+                   m.min_marts == null ? '' : String(m.min_marts),
+                   'a model with fewer marts downstream is not reported as unwatched'));
+  bits.push(row);
+
+  const cov = m.test_coverage || {};
+  if (cov.declared)
+    bits.push(block2('what your tests are doing',
+      num(cov.declared) + ' test(s) declared, ' + num(cov.ever_ran) + ' have ever produced a '
+      + 'result, ' + num(cov.skipped_results) + ' result(s) are SKIPPED. A test that never ran '
+      + 'and a test that passed look the same in a summary, and only one has read your data.'));
+
+  for (const f of (m.findings || [])) {
+    const b = el('div', {class: 'wrow'});
+    b.append(el('h3', {text: f.check.replace(/_/g, ' ')}));
+    b.append(el('div', {class: 'measured', text: f.summary}));
+    bits.push(b);
+  }
+  host.replaceChildren(...bits);
+}
+
+function block2(title, text) {
+  const b = el('div', {class: 'wrow'});
+  b.append(el('h3', {text: title}));
+  b.append(el('div', {class: 'measured', text: text}));
+  return b;
+}
+
 const PANES = {words: wordsTab, explanations: explanationsTab, waivers: waiversTab,
-               findings: null};
+               monitoring: monitoringTab, findings: null};
 const drawn = {};
 function openPane(name) {
   document.querySelectorAll('.tabs button').forEach(b =>
@@ -777,6 +859,7 @@ if (page >= pages) page = 0;
 document.getElementById('n-words').textContent = CTX.words.length || '';
 document.getElementById('n-expl').textContent = CTX.explanations.length || '';
 document.getElementById('n-waiv').textContent = CTX.waivers.length || '';
+document.getElementById('n-mon').textContent = ((CTX.monitoring || {}).findings || []).length || '';
 document.getElementById('n-find').textContent = D.cards.length || '';
 render();
 openPane(CTX.words.length ? 'words' : 'findings');
@@ -806,6 +889,7 @@ assay {e(version)} &middot; manifest {e(str(generated_at))}</span></h1>
   <button data-pane="words" class="on">Words<b id="n-words"></b></button>
   <button data-pane="explanations">Explanations<b id="n-expl"></b></button>
   <button data-pane="waivers">Waivers<b id="n-waiv"></b></button>
+  <button data-pane="monitoring">Monitoring<b id="n-mon"></b></button>
   <button data-pane="findings">Findings<b id="n-find"></b></button>
 </nav>
 <div class="bar">
@@ -822,6 +906,7 @@ assay {e(version)} &middot; manifest {e(str(generated_at))}</span></h1>
 <div id="p-words" class="pane"></div>
 <div id="p-explanations" class="pane" hidden></div>
 <div id="p-waivers" class="pane" hidden></div>
+<div id="p-monitoring" class="pane" hidden></div>
 <div id="p-findings" class="pane" hidden><div id="cards"></div></div>
 </main>
 <footer>

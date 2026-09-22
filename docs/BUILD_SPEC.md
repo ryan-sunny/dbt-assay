@@ -419,6 +419,33 @@ the free tier trustworthy.
       claim says nothing about volume*, 0 false contradictions. Sane, and five is not a
       verification; `docs/VERIFICATION.md` records it as unchecked
 
+## Monitoring as a contract, which was not in the spec
+
+Five checks fell out of the reader, all free of judgment and all about the MONITORING rather than
+about the data — which is the only thing assay can honestly say about somebody else's tool:
+
+```
+monitor_declared_but_never_run     configured, no result row ever
+monitor_ran_then_stopped           rows exist, nothing written since
+volume_is_not_being_watched        232 of 352 mart-feeding models, as ONE finding with a count
+test_declared_but_never_run        193 of 1,291 declared tests have never produced a result
+test_skipped_rather_than_passed    1,846 skipped results; skipped is not a pass
+```
+
+**The staleness threshold is derived rather than picked**, because a guessed one either cries wolf
+weekly or stays quiet for a quarter — the same failure as a guessed ledger ceiling. assay measures
+how often the project actually runs dbt and reports a monitor stopped after three missed builds.
+That needed one correction: 1,592 invocations over 79 days gave a median gap of 0.0, because one
+pipeline run issues many invocations, so builds closer together than six hours are clustered into
+one. 103 builds, every 0.4 days. Where there is too little history to derive one it says so and
+assumes nothing — the field warehouse's freshness table was written on exactly ONE day, so nothing
+about its own history could say what late means for it.
+
+**The hard constraint, written down:** assay must never measure volume or freshness itself. The
+moment it does it is a second monitoring tool with a second opinion, and you have the two-inboxes
+problem this whole area exists to avoid. A test asserts every shipped check here is about whether a
+monitor exists, is current, or covers what matters.
+
 ## What the measurement changed, and it was not small
 
 **Every bucket is written many times.** A real table held NINE rows for one bucket, identical but

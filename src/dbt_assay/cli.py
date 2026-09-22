@@ -2834,8 +2834,23 @@ def volume(
     def runner(sql: str, n: int):
         return probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=n)
 
+    mon = getattr(cfg, "monitoring", None) or {}
+    # *** `--json` IS FOR A MACHINE AND A TABLE IN THE MIDDLE OF IT IS NOT JSON. ***
+    # Caught by piping it to a file: the rich tables went to stdout too and the result would not
+    # parse. The human output is suppressed rather than the JSON being printed somewhere else.
+    say = (lambda *a, **k: None) if as_json else console.print
     with console.status(f"reading {schema_name}..."):
         rep = elem.read(runner, schema_name, stale_after_days=stale_days)
+        cad = elem.cadence(runner, schema_name) if rep.reachable else elem.Cadence()
+        cov = elem.test_coverage(runner, schema_name) if rep.reachable else {}
+    # *** A THRESHOLD NOBODY HAD TO PICK. ***
+    # `max_staleness_days` decides whether a monitor reads as stopped, so a guessed one either
+    # cries wolf weekly or stays quiet for a quarter. Derived from how often dbt actually runs
+    # here; configured only when somebody has looked at that number and disagreed.
+    configured = (mon.get("source_freshness") or {}).get("max_staleness_days")
+    limit_days = int(configured) if configured else cad.derived_staleness_days
+    if limit_days:
+        rep.stale_after_days = limit_days
 
     # ---- what could be read, and what could not
     t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
@@ -2846,19 +2861,19 @@ def volume(
         t.add_row(r.relation, f"[{colour}]{r.state.replace('_', ' ')}[/]",
                   _n(r.rows) if r.rows else "[dim]0[/]",
                   f"{r.newest:%Y-%m-%d}" if r.newest else "[dim]-[/]")
-    console.print()
-    console.print(t)
-    console.print()
+    say()
+    say(t)
+    say()
     for r in rep.readings:
         if r.state != "live":
-            console.print(f"[yellow]{r.says()}[/]")
+            say(f"[yellow]{r.says()}[/]")
         elif r.detail:
-            console.print(f"[yellow]{r.relation}: {r.detail}[/]")
+            say(f"[yellow]{r.relation}: {r.detail}[/]")
 
     if not rep.reachable:
-        console.print("\n[red]assay could not reach your warehouse[/], so nothing here was "
+        say("\n[red]assay could not reach your warehouse[/], so nothing here was "
                       "measured and nothing here is a statement about Elementary.")
-        console.print(f"[dim]It ran `dbt show` as `{dbt_bin}` in `{project_dir}`. If dbt lives in "
+        say(f"[dim]It ran `dbt show` as `{dbt_bin}` in `{project_dir}`. If dbt lives in "
                       f"a project environment, pass it whole: "
                       f"`--dbt \"uv run dbt\"`.[/]")
         if store:
@@ -2868,15 +2883,48 @@ def volume(
     if not rep.installed:
         # *** WITHOUT THE PACKAGE, SAY WHAT IT WOULD BUY, COMPUTED FROM WHAT assay KNOWS. ***
         n_unwatched = len(elem.unwatched(rep, project))
-        console.print(f"\n[dim]{_n(n_unwatched)} model(s) with a mart downstream have no volume "
+        say(f"\n[dim]{_n(n_unwatched)} model(s) with a mart downstream have no volume "
                       f"history here, and assay does not measure that and does not intend to. "
                       f"`elementary-data` does, and it is a dbt package.[/]")
         raise typer.Exit(0)
 
+    if cad.runs >= 2:
+        derived = cad.derived_staleness_days
+        say(f"[dim]this project runs dbt every {cad.median_gap_days:.1f} day(s) "
+                      f"({_n(cad.runs)} run(s) over {cad.days_spanned:.0f} days). "
+                      + (f"A monitor unwritten for [bold]{limit_days}[/bold] day(s) is reported "
+                         f"as stopped"
+                         + (" -- derived from that cadence, not chosen. "
+                            "`monitoring.source_freshness.max_staleness_days` overrides it."
+                            if not configured else " -- set in audit.yml.")
+                         if limit_days else
+                         "Not enough history to derive a staleness threshold, so none is "
+                         "assumed.") + "[/]")
+        if derived and configured and int(configured) != derived:
+            say(f"[dim]   audit.yml says {configured}; the measured cadence suggests "
+                          f"{derived}.[/]")
+
+    # ---- what is wrong with the MONITORING, which is assay's to say
+    mfs = elem.monitoring_findings(rep, project, cad, cov,
+                                   min_marts=int(mon.get("min_marts") or 1),
+                                   max_staleness_days=limit_days)
+    if mfs:
+        say(f"\n[bold]{_n(len(mfs))}[/] monitoring finding(s) "
+                      f"[dim](about the monitoring, never about your data)[/]")
+        mt = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        mt.add_column("check"); mt.add_column("what"); mt.add_column("marts", justify="right")
+        shown = sorted(mfs, key=lambda f: (-f.base, -f.marts))[:10]
+        for f in shown:
+            mt.add_row(f.check, f.summary[:86], _n(f.marts) if f.marts else "")
+        say(mt)
+        rest = len(mfs) - len(shown)
+        if rest:
+            say(f"[dim]...and {_n(rest)} more. `--json` has all of them.[/]")
+
     # ---- the state nobody predicted
     stale = rep.stale_failures()
     if stale:
-        console.print(f"\n[bold red]{_n(len(stale))}[/] monitor(s) last FAILED and have not run "
+        say(f"\n[bold red]{_n(len(stale))}[/] monitor(s) last FAILED and have not run "
                       f"since. [dim]A stale failure looks exactly like a live one.[/]")
         st = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
         st.add_column("table"); st.add_column("check"); st.add_column("what")
@@ -2884,7 +2932,7 @@ def volume(
         for x in sorted(stale, key=lambda t: -(t.age_days or 0))[:12]:
             st.add_row(x.table, x.kind.replace("_", " "), x.sub_type or "",
                        f"{x.age_days:.0f}d ago")
-        console.print(st)
+        say(st)
 
     # ---- movement, ranked by what rests on it
     moved = [v for v in rep.volumes if v.change is not None and abs(v.change) >= threshold]
@@ -2896,7 +2944,7 @@ def volume(
         rows.append((v, uid, radius))
     rows.sort(key=lambda r: (-r[2]["marts"], -abs(r[0].change)))
     if rows:
-        console.print(f"\n[bold]{_n(len(rows))}[/] table(s) moved by "
+        say(f"\n[bold]{_n(len(rows))}[/] table(s) moved by "
                       f"{threshold * 100:.0f}% or more, highest blast radius first")
         mt = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
         mt.add_column("table"); mt.add_column("change", justify="right")
@@ -2906,11 +2954,11 @@ def volume(
             mt.add_row(v.table, f"{v.change * 100:+.1f}%", _n(int(v.latest or 0)),
                        _n(radius["marts"]),
                        "[dim]not a model in this project[/]" if uid is None else "")
-        console.print(mt)
+        say(mt)
 
     # *** COVERAGE, BECAUSE 311 OF 358 MODELS BEING UNWATCHED IS NOT "NO VOLUME PROBLEMS". ***
     unwatched = elem.unwatched(rep, project)
-    console.print(f"\n[dim]{_n(len(rep.volumes))} relation(s) have a row-count history; "
+    say(f"\n[dim]{_n(len(rep.volumes))} relation(s) have a row-count history; "
                   f"{_n(len(unwatched))} model(s) with a mart downstream have none. "
                   f"Nothing here covers those.[/]")
 
@@ -2924,10 +2972,16 @@ def volume(
             "stale_failures": [{"table": x.table, "kind": x.kind, "sub_type": x.sub_type,
                                 "age_days": x.age_days} for x in stale],
             "unwatched": [{"model": n, "descendants": d, "marts": m} for _u, n, d, m in unwatched],
+            "cadence": {"runs": cad.runs, "median_gap_days": cad.median_gap_days,
+                        "derived_staleness_days": cad.derived_staleness_days,
+                        "in_use_days": limit_days, "configured": bool(configured)},
+            "test_coverage": cov,
+            "monitoring": [{"check": f.check, "summary": f.summary, "marts": f.marts,
+                            "evidence": f.evidence} for f in mfs],
         }, default=str))
 
     if not judge and not dry_run:
-        console.print("\n[dim]`--judge` asks whether a movement contradicts a claim this project "
+        say("\n[dim]`--judge` asks whether a movement contradicts a claim this project "
                       "makes about itself. That is the one question neither tool can answer "
                       "alone.[/]")
         if store:
@@ -3918,6 +3972,10 @@ def review(
     emit: str = typer.Option(None, "--emit",
                              help="write a form to this .html and record nothing. Needs --target"),
     load: str = typer.Option(None, "--load", help="a handback.json the form handed back"),
+    monitoring_json: str = typer.Option(None, "--monitoring",
+                                        help="an `assay volume --json` output, so the form can "
+                                             "show the DERIVED staleness threshold and the "
+                                             "monitoring coverage beside it"),
     apply_config: bool = typer.Option(False, "--apply",
                                       help="also WRITE the audit.yml changes the form proposed. "
                                            "Without it they are shown as a diff and nothing is "
@@ -3941,7 +3999,8 @@ def review(
     # The interactive loop is the right shape for a call and the wrong shape for a project. The
     # reading batches; the answering does not have to happen in a conversation at all.
     if emit:
-        _emit_review_form(store, emit, target, config_path, store_path, dialect, reads)
+        _emit_review_form(store, emit, target, config_path, store_path, dialect, reads,
+                          monitoring_json)
         store.close()
         raise typer.Exit(0)
     if load:
@@ -4001,7 +4060,8 @@ def review(
 
 
 def _emit_review_form(store, out: str, target: str, config_path: str, store_path: str,
-                      dialect: str, reads_path: str | None) -> None:
+                      dialect: str, reads_path: str | None,
+                      monitoring_json: str | None = None) -> None:
     """Write the form. It records nothing -- that is the point of it being a file."""
     from . import reviewform
     if not target:
@@ -4026,7 +4086,15 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
         return
     p = Path(out)
     p.parent.mkdir(parents=True, exist_ok=True)
-    ctx = reviewform.context(store, project, cfg, findings)
+    vol = None
+    if monitoring_json:
+        try:
+            vol = _json.loads(Path(monitoring_json).read_text())
+        except (OSError, ValueError) as e:
+            console.print(f"[yellow]could not read {monitoring_json}: {e}[/] [dim]The form is "
+                          f"emitted without the monitoring numbers rather than with wrong "
+                          f"ones.[/]")
+    ctx = reviewform.context(store, project, cfg, findings, vol)
     p.write_text(reviewform.form_html(
         cards, sql, project.project_name or "this project",
         project.raw.get("metadata", {}).get("generated_at", ""), _pkg_version(), ctx))

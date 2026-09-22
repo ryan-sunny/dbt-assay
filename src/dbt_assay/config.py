@@ -261,6 +261,10 @@ class Config:
     # Where Elementary built its tables, and how long a monitor may go unwritten before assay
     # stops treating it as current. Both have defaults; neither is warehouse-specific.
     elementary: dict = field(default_factory=dict)
+    # *** assay ASSERTS THE MONITOR EXISTS, IS CURRENT, AND COVERS WHAT MATTERS. ***
+    # It never measures volume or freshness itself: that would make it a second monitoring tool
+    # with a second opinion, which is the problem this whole area exists to avoid.
+    monitoring: dict = field(default_factory=dict)
     provider: str = "auto"
     model: str = "jev-latest"
     max_spend_usd: float = 1.0
@@ -315,6 +319,7 @@ class Config:
         # everything, because a selector silently ignored scopes nothing while looking as though
         # it did.
         cfg.elementary = data.get("elementary") or {}
+        cfg.monitoring = data.get("monitoring") or {}
         cfg.vocab = data.get("vocab") or {}
         for term, body in cfg.vocab.items():
             sel = (body or {}).get("applies_to") if isinstance(body, dict) else None
@@ -509,6 +514,14 @@ questions:
 #   schema: analytics_elementary
 #   stale_after_days: 14   # a monitor unwritten for longer is reported as stopped, not as clean
 elementary: {}
+
+# monitoring: assay asserts that a monitor EXISTS, is CURRENT and COVERS what matters. It never
+# measures volume or freshness itself -- that would be a second monitoring tool with a second
+# opinion. Leave max_staleness_days out and assay DERIVES it from how often this project actually
+# runs dbt; `assay volume` prints the cadence it used.
+monitoring: {}
+#  source_freshness: {max_staleness_days: 7}
+#  min_marts: 1     # a model with fewer marts downstream is not reported as unwatched
 
 # practices: override how a standard dbt-project-evaluator check is treated.
 #   enforce (exact, may gate) | recommend (informational) | adjudicate (ask) | off

@@ -29,6 +29,36 @@ from pathlib import Path
 # *** ONE ROW PER CHECK, AND A CHECK MISSING FROM IT IS NAMED RATHER THAN SKIPPED. ***
 # A plan that silently omits the findings it has no shape for is a plan that reads as complete.
 SHAPES: dict[str, tuple[str, str]] = {
+    # *** THE MONITORING CHECKS FIX THE MONITOR, NEVER THE DATA. ***
+    # assay asserts that a monitor exists, is current and covers what matters. Every fix here is
+    # a change to how the project is WATCHED; none of them touches a model.
+    "monitor_declared_but_never_run": (
+        "build the monitor",
+        ("The monitor is configured and has never produced a result: installed is not built. Run "
+         "the package's models, and check the job that should be running them -- both tools go "
+         "quiet the same way, and the silence reads as a clean bill.")),
+    "monitor_ran_then_stopped": (
+        "find out why it stopped",
+        ("The table has rows and nothing has written to it since. This is not a data problem and "
+         "not something to waive: something that used to run does not. The threshold that decided "
+         "`stopped` is derived from how often this project actually runs dbt; "
+         "`monitoring.source_freshness.max_staleness_days` overrides it if the cadence changed "
+         "on purpose.")),
+    "volume_is_not_being_watched": (
+        "extend the monitor's coverage",
+        ("Models that feed marts have no row-count history. assay does not measure volume and "
+         "does not intend to -- add the tables to `elementary-data`'s monitoring, or decide "
+         "deliberately that they do not need it and raise `monitoring.min_marts`.")),
+    "test_declared_but_never_run": (
+        "find out why the test never fires",
+        ("A test that never ran and a test that passed are indistinguishable in a summary. Either "
+         "the selector never reaches it, or the model it hangs off is never built. Run it once "
+         "and see.")),
+    "test_skipped_rather_than_passed": (
+        "fix what the test hangs off",
+        ("dbt skips a test whose model failed upstream, so a green run can contain a test that "
+         "has not evaluated your data in months. Fix the upstream failure; the skip is a symptom "
+         "and waiving it hides the cause.")),
     "code_contradicts_a_claim": (
         "edit the prose",
         (        "The sentence and the code disagree. Open the claim where it was written -- "
