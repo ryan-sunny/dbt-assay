@@ -524,6 +524,23 @@ class Store:
         return [dict(zip(cols, r, strict=True))
                 for r in self.con.execute(q + " order by decided_at desc", args).fetchall()]
 
+    def ruled_findings(self, verdict: str) -> dict:
+        """`{finding_id: (who, when, why)}` a PERSON ruled `verdict` on, finding by finding.
+
+        Both halves of the loop read this. `disagree` is a dismissal: the finding is wrong and
+        does not come back. `agree` is the opposite and removes nothing -- it is the record that
+        somebody read this and said it was real, which is the only thing that makes "did fixing it
+        work" a question anybody can ask.
+        """
+        self.con.execute(DDL)
+        out = {}
+        for subj, who, when, note in self.con.execute(
+                "select subject, decided_by, decided_at, note from adjudications "
+                "where source = 'human' and verdict = ? "
+                "and subject like '%::finding::%' order by decided_at", [verdict]).fetchall():
+            out[str(subj).split("::finding::")[1]] = (who or "someone", when, note or "")
+        return out
+
     def dismissed(self) -> dict:
         """`{finding_id: (who, when, why)}` a PERSON has read and called WRONG.
 
@@ -542,14 +559,7 @@ class Store:
         defect and the dismissal does not follow it -- which is the guarantee a waiver needs an
         expiry date to approximate.
         """
-        self.con.execute(DDL)
-        out = {}
-        for subj, who, when, note in self.con.execute(
-                "select subject, decided_by, decided_at, note from adjudications "
-                "where source = 'human' and verdict = 'disagree' "
-                "and subject like '%::finding::%' order by decided_at").fetchall():
-            out[str(subj).split("::finding::")[1]] = (who or "someone", when, note or "")
-        return out
+        return self.ruled_findings("disagree")
 
     def ruled_pairs(self) -> set:
         """Every `(subject, question)` a PERSON has ruled on. What a verdict actually covers.

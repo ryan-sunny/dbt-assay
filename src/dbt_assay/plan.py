@@ -1,0 +1,197 @@
+"""What to DO about the findings a person agreed with.
+
+*** THE LOOP HAD A GAP BETWEEN "THIS IS REAL" AND "IT IS FIXED". ***
+`check` finds it, `review` settles whether it is real, and then nothing. The person who agreed
+with forty findings is holding forty sentences about what is wrong and no statement of what to
+change, which is the same gap `suggest` closed on the config side: a list of problems and an essay
+about the tool, with the connection left to the reader.
+
+*** THE FIX SHAPE FALLS OUT OF THE CHECK NAME, EXACTLY, FOR FREE. ***
+It is a lookup, not a judgment. `arbitrary_pick` is always "add a tie-break column";
+`test_cannot_fail` is always "the test asserts nothing, remove or repair it". Nothing about the
+particular model changes the SHAPE of its repair, which is why this costs no calls and cannot be
+wrong in the way a judged answer can.
+
+What it deliberately does not say is the WORDS. For `code_contradicts_a_claim` the shape is "edit
+the prose at the claim's file:line" and what the sentence should say instead is a real judgment
+about a real warehouse -- the same two-tier split as everything else here. Structure decides the
+shape; a person or a judged call writes the words.
+
+*** AND IT IS A JSONL, BECAUSE THE CONSUMER IS AN AGENT. ***
+A markdown report is for a person who is going to read it once. This is read by whatever is about
+to make the edit, which wants one object per thing to do.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+# *** ONE ROW PER CHECK, AND A CHECK MISSING FROM IT IS NAMED RATHER THAN SKIPPED. ***
+# A plan that silently omits the findings it has no shape for is a plan that reads as complete.
+SHAPES: dict[str, tuple[str, str]] = {
+    "code_contradicts_a_claim": (
+        "edit the prose",
+        (        "The sentence and the code disagree. Open the claim where it was written -- "
+        "`assay claims --write claims.yml` gives the file and line -- and change whichever one is "
+        "wrong. Usually it is the sentence, because code moves and prose does not.")),
+    "description_contradicts_the_code": (
+        "edit the description",
+        (        "The schema.yml description says something the SQL does not do. Fix the description, or "
+        "the SQL if the description was the intent.")),
+    "grain_unresolved": (
+        "declare the grain",
+        (        "Nothing in the project says what one row of this model is. Add a "
+        "`unique_combination_of_columns` test, or `meta: {grain: [...]}`, naming the real key.")),
+    "identifier_outside_grain": (
+        "declare the grain",
+        (        "A column that identifies a row is not part of the declared key. Either the key is "
+        "incomplete or the column does not identify what its name suggests.")),
+    "arbitrary_pick": (
+        "add a tie-break column",
+        (        "`row_number() ... = 1` keeps one row per partition and none of the ORDER BY keys is "
+        "unique, so ties are broken by whatever the engine returned and the winner can change "
+        "between builds on identical data. Add a column that is unique per row as the LAST sort "
+        "key.")),
+    "first_match_pick": (
+        "add a tie-break column",
+        (        "The same class in a different spelling: one value taken from a multi-valued field with "
+        "nothing deciding which.")),
+    "test_cannot_fail": (
+        "remove or repair the test",
+        (        "The test passes on every row by construction and asserts nothing. Either delete it -- a "
+        "test that cannot fail is worse than no test, because it reads as coverage -- or point it "
+        "at the column the guard was meant to protect.")),
+    "test_outruns_its_source": (
+        "move or drop the assertion",
+        (        "The column can be NULL by construction, so the test asserts something the data never "
+        "promised. Assert it where the value is produced, or stop asserting it here.")),
+    "seed_reaches_nothing": (
+        "delete the seed, or wire it up",
+        (        "Nothing reads it. Either it is dead and should go, or something was meant to `ref` it "
+        "and does not.")),
+    "source_reaches_nothing": (
+        "delete the source, or wire it up",
+        (        "Declared and unread. The same choice as a dead seed.")),
+    "source_only_a_test_reads": (
+        "wire it up, or drop the test",
+        (        "The only thing reading this source is a test on it, which tests that a thing nobody "
+        "uses is well-formed.")),
+    "hop_multiplies_rows": (
+        "declare the fan-out, or collapse it",
+        (        "A join multiplies rows and nothing says so. Either the multiplication is intended and "
+        "the child's grain should say it, or the hop needs a group by.")),
+    "join_fans_out": (
+        "join on the whole key",
+        (        "The join uses part of the key the parent declares unique, so one parent row matches "
+        "several. Join on all of it, or aggregate first.")),
+    "variant_column": (
+        "pin the column type",
+        (        "dlt split one column into two by inferred type (`__v_double`), so half the values are "
+        "in a column nothing reads. Pin the type at the source.")),
+    "duckdb_full_match": (
+        "use the operator you meant",
+        (        "`~` is a FULL-string match in DuckDB, not a partial one. Use `like`/`similar to` if a "
+        "partial match was intended.")),
+    "ranks_by_degrees": (
+        "measure in a projected CRS",
+        (        "Ordering by latitude/longitude treats degrees as distance. A degree of longitude shrinks "
+        "with latitude, so the ranking is wrong by a factor that varies across the data.")),
+    "bbox_as_radius": (
+        "use a real distance",
+        (        "A bounding box is a square and a radius is a circle. If proximity is the intent, "
+        "measure it.")),
+    "window_after_where": (
+        "move the window, or the filter",
+        (        "The window function can only see rows a WHERE already removed, so its ranking is over a "
+        "subset. Use QUALIFY, or rank before filtering.")),
+    "key_started_holding": (
+        "declare the key",
+        (        "A column now holds unique where it did not before. Nothing is wrong today; this is the "
+        "moment to declare it, before something starts depending on an accident.")),
+    "key_column_stopped_mattering": (
+        "find out what changed",
+        (        "A key that held last week does not now. This is the failure that corrupts a warehouse "
+        "and no check describing the present can see it.")),
+    "narrow_read": (
+        "read the columns that carry the meaning",
+        (        "The model reads far fewer columns of its parent than it could, and the ones it skips are "
+        "where the meaning is.")),
+    "grain_contradicts_test": (
+        "reconcile the key with the test",
+        ("The declared grain and a uniqueness test on this model disagree about what one row is. "
+         "One of them is wrong and both are written down, so a reader has no way to tell which.")),
+    "measure_inside_grain": (
+        "take the measure out of the key",
+        ("A column that measures something is part of the declared key, so two rows differing "
+         "only in an amount are two entities. Usually the key is too wide.")),
+    "hop_drops_most_rows": (
+        "say why the rows go",
+        ("A counted hop keeps a small fraction of its parent. Either the filter is intended and "
+         "belongs in the model's prose, or an enrichment join is missing most of its matches.")),
+    "key_stopped_holding": (
+        "find out what changed",
+        ("A declared key no longer holds. Nothing downstream that assumed one row per key is "
+         "safe until this is understood.")),
+    "key_column_started_mattering": (
+        "declare the key",
+        ("A column began holding unique. Declare it now, while it is a choice rather than an "
+         "accident something already depends on.")),
+    "source_freshness_stale": (
+        "find out why the feed stopped",
+        ("The source has not moved within its declared freshness window. Everything derived from "
+         "it is being served as current.")),
+    "source_freshness_undeclared": (
+        "declare freshness",
+        ("Nothing says how current this source should be, so nothing can notice it going quiet. "
+         "A source going silent is invisible to every check that describes the present.")),
+    "seniority_ordered_by_the_wrong_date": (
+        "order by the right date",
+        (        "Seniority is ordered by a date that does not establish it.")),
+}
+
+
+def build(findings, store) -> list[dict]:
+    """One row per finding a PERSON agreed with and which is still here.
+
+    Only the agreed ones, because a plan built from everything is the findings list again. Only
+    the ones still present, because a fix nobody needs is worse than no plan.
+    """
+    agreed = store.ruled_findings("agree") if store is not None else {}
+    if agreed and store is not None:
+        for fid in store.ruled_findings("disagree"):
+            agreed.pop(fid, None)
+    if not agreed:
+        return []
+    out = []
+    for f in findings:
+        if f.id not in agreed:
+            continue
+        who, when, note = agreed[f.id]
+        shape, how = SHAPES.get(f.check, ("", ""))
+        row = {
+            "finding": f.id, "check": f.check, "model": f.subject_name, "file": f.file,
+            "summary": f.summary, "marts": f.marts, "descendants": f.descendants,
+            "agreed_by": who, "agreed_at": str(when)[:10] if when else "",
+            "their_reason": note,
+            "fix_shape": shape, "how": how,
+            "evidence": f.evidence,
+        }
+        if not shape:
+            # *** NAMED, NOT DROPPED. ***
+            # A check with no shape here is a gap in this table, and a plan that quietly omits it
+            # reads as a plan that covered everything.
+            row["fix_shape"] = "unknown"
+            row["how"] = (f"`{f.check}` has no fix shape in assay's table, so this one needs "
+                          f"reading. That is a gap in the tool, not a judgment about the model.")
+        out.append(row)
+    # Highest blast radius first, ties on the id so two runs agree.
+    return sorted(out, key=lambda r: (-r["marts"], -r["descendants"], r["finding"]))
+
+
+def write(rows: list[dict], path: str | Path) -> Path:
+    """One JSON object per line, sorted keys, trailing newline. Diffs one line per thing to do."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("".join(
+        json.dumps(r, sort_keys=True, separators=(",", ":"), default=str) + "\n" for r in rows))
+    return p

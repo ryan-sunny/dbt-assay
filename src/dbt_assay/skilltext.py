@@ -166,6 +166,35 @@ question does. Those are different files, and without the state you are guessing
     before ruling, to see whether a subject has already been read, and after, to see the queue you
     are building. Your ruling never clears an item from it.
 
+## When they have agreed with findings and want them fixed
+
+```bash
+assay plan -t target/       # writes assay_plan.jsonl
+```
+
+**Read that file before you edit anything.** One object per thing to do, only findings a PERSON
+agreed with, only ones still present, highest blast radius first. Each carries:
+
+- `fix_shape` — what KIND of change this is. It comes from a lookup keyed by check name, not from
+  a judgment, so it is exact: `arbitrary_pick` is always "add a tie-break column".
+- `how` — what that means, in a sentence.
+- `their_reason` — what the person said when they agreed. Read it. It is the only part of the row
+  that knows anything about this warehouse.
+- `evidence` — the construct itself: the partition and sort keys, the hop, the claim.
+
+**`fix_shape` tells you the shape. It does not tell you the words.** For a prose finding the shape
+is "edit the claim at its file:line" and what the sentence should say instead is a judgment about
+a real warehouse — ask, or propose and let them decide. Writing a replacement sentence yourself is
+the same failure as writing a vocabulary definition yourself: plausible, not knowledge, and
+permanent.
+
+A `fix_shape` of `unknown` means assay has no shape for that check. That is a gap in the tool, not
+a judgment about the model, and it says so rather than omitting the row.
+
+After the edit, run `changed_contracts` and `violations` as always, then `assay check`. It reports
+how many of the agreed findings are now gone — the only number that measures whether the loop did
+anything, and one neither a release nor an agent can move.
+
 ## Rules that are not negotiable
 
 - **Never guess a model's grain.** Ask for the contract. A wrong grain assumption is how an

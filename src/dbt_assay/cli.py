@@ -404,6 +404,18 @@ def check(
                 console.print(f"  [red]+[/] {n}: {sm}")
             for c, n, sm in d["gone"][:5]:
                 console.print(f"  [green]-[/] {n}: {sm}")
+        # *** AND WHETHER THE ONES SOMEBODY AGREED WITH ARE THE ONES THAT WENT. ***
+        # "4 resolved" cannot tell you that, and the difference is the whole question: four
+        # unrelated findings moving while the four you read sat there looks identical from here,
+        # and is what it looks like when reviewing changes nothing.
+        from .outcomes import confirmed_and_fixed
+        loop = confirmed_and_fixed(s, findings)
+        if loop["agreed"]:
+            console.print(
+                f"\n[bold]of the {loop['agreed']} finding(s) a person agreed with, "
+                f"{loop['fixed']} are gone[/] and {loop['still_open']} are still here.")
+            console.print("[dim]The only number on this screen that measures the LOOP rather "
+                          "than the tool: a release cannot move it and neither can an agent.[/]")
         s.close()
         _review_coverage(findings, store_path)
     console.print(f"\n[dim]run {run_id} written to {store_path}[/]")
@@ -2752,6 +2764,69 @@ def evidence(
     console.print(f"\n[dim]{got['how_to_read']}[/]")
 
 
+@app.command()
+def plan(
+    target: str = typer.Option("", "--target", "-t"),
+    config_path: str = typer.Option(".", "--config"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    out: str = typer.Option("assay_plan.jsonl", "--out"),
+    dialect: str = typer.Option(None, "--dialect"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    """What to DO about the findings a person agreed with.
+
+    *** THE LOOP HAD A GAP BETWEEN "THIS IS REAL" AND "IT IS FIXED". ***
+    `check` finds it, `review` settles whether it is real, and then nothing. Somebody holding
+    forty agreed findings has forty sentences about what is wrong and no statement of what to
+    change -- the same gap `suggest` closed on the config side.
+
+    The fix SHAPE falls out of the check name exactly, for free: `arbitrary_pick` is always "add
+    a tie-break column". It is a lookup, not a judgment, so it costs no calls. What it will not
+    write is the WORDS -- what a sentence should say instead is a judgment about a real warehouse.
+    """
+    from . import plan as plan_mod
+    if not target:
+        console.print("[yellow]--target is needed[/] [dim]-- a plan is about findings, and those "
+                      "come from the manifest.[/]")
+        raise typer.Exit(2)
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
+    cfg = Config.load(config_path)
+    store = Store(store_path) if Path(store_path).exists() else None
+    entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store) if store else {})
+    findings = live_mod.all_findings(project, digests, schema, entries, store,
+                                     cfg.row_loss_threshold)
+    rows = plan_mod.build(findings, store)
+
+    if json_out:
+        console.print_json(data={"plan": rows, "n": len(rows)})
+        return
+    if not rows:
+        # *** AN EMPTY PLAN IS NOT A CLEAN WAREHOUSE. ***
+        # It means nobody has agreed with anything yet, which is a different sentence entirely.
+        agreed = len(store.ruled_findings("agree")) if store else 0
+        console.print(f"[yellow]nothing to plan.[/] [dim]{agreed} finding(s) carry a human "
+                      f"`agree`. A plan is built from those and only those -- a plan built from "
+                      f"every finding is the findings list again. `assay review --emit` is where "
+                      f"they come from.[/]")
+        return
+
+    p = plan_mod.write(rows, out)
+    by = Counter(r["fix_shape"] for r in rows)
+    console.print(f"[bold]{len(rows)}[/] agreed finding(s) to fix, highest blast radius first:\n")
+    for r in rows[:12]:
+        console.print(f"  [bold]{r['model']}[/] [dim]{r['check']} - {r['marts']} marts[/]")
+        console.print(f"    [cyan]{r['fix_shape']}[/] - {r['summary'][:90]}")
+        if r["their_reason"]:
+            console.print(f"    [dim]they said: {r['their_reason'][:110]}[/]")
+    if len(rows) > 12:
+        console.print(f"\n  [dim]...and {len(rows) - 12} more, all of them in the file.[/]")
+    console.print(f"\n[green]{p}[/] [dim]-- one JSON object per thing to do. The consumer is an "
+                  f"agent, so it is JSONL rather than a report: `fix_shape` is the lookup, `how` "
+                  f"is what it means, and the words are still yours.[/]")
+    console.print("\n[dim]by shape: " + ", ".join(f"{k} x{v}" for k, v in by.most_common()) + "[/]")
+
+
 @app.command(name="guide")
 def guide_cmd(
     topic: str = typer.Argument("", help="start | vocab | questions | waivers | policy | "
@@ -3297,7 +3372,7 @@ def _load_verdicts(store, path: str, who: str) -> None:
     # verified, and the skill says so -- `source='human'` is set by this code path, not by
     # anything about who ran it.
     by = who or (payload.get("by") if isinstance(payload, dict) else "") or "unknown"
-    fams, dismissed = Counter(), 0
+    fams, dismissed, agreed = Counter(), 0, 0
     for r in rows:
         fams[_record_one_verdict(store, r["subject"], r["question"], r["verdict"],
                                  r["correction"], r["note"], by)] += 1
@@ -3306,13 +3381,26 @@ def _load_verdicts(store, path: str, who: str) -> None:
         # read. It does not dismiss, because it is recorded per (subject, question) and one model
         # carries several findings of one check. The card knows which findings it showed, so the
         # dismissal is written against those, and `apply_policy` drops exactly them.
-        if r["verdict"] == "disagree":
+        # *** AND AN `agree` IS RECORDED PER FINDING TOO, WHICH IS WHAT CLOSES THE LOOP. ***
+        # It dismisses nothing -- the finding is REAL. It is the record that a person read this
+        # exact one and said so, and without it "of the findings somebody agreed with, how many
+        # are now gone" cannot be asked: a verdict filed against (model, check) does not say
+        # which of that model's findings was the real one.
+        if r["verdict"] in ("disagree", "agree"):
             for fid in r.get("findings") or []:
                 store.adjudicate(f"{r['subject']}::finding::{fid}", r["question"],
-                                 r["question"].split("__")[0], "", "disagree", "",
-                                 r["note"] or "read and called wrong in the review form", by)
-                dismissed += 1
+                                 r["question"].split("__")[0], "", r["verdict"], "",
+                                 r["note"] or f"read and called {r['verdict']} in the review form",
+                                 by)
+                if r["verdict"] == "disagree":
+                    dismissed += 1
+                else:
+                    agreed += 1
     console.print(f"recorded [bold]{len(rows)}[/] verdict(s) as `{by}`.")
+    if agreed:
+        console.print(f"   [bold]{agreed} finding(s) confirmed real[/] [dim]-- they stay, and "
+                      f"`assay check` now reports how many of them a fix has actually removed. "
+                      f"That is the only number that measures the LOOP rather than the tool.[/]")
     if dismissed:
         console.print(f"   [green]{dismissed} finding(s) dismissed[/] [dim]-- read and called "
                       f"wrong, so `assay check` will not raise them again. A dismissal is keyed "

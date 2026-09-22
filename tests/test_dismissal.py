@@ -154,3 +154,51 @@ def test_two_findings_of_equal_weight_come_back_in_one_order(store):
     x, y = _f(summary="one"), _f(summary="two")
     assert x.weight == y.weight
     assert [f.id for f in _distinct([x, y])] == [f.id for f in _distinct([y, x])]
+
+
+# --------------------------------------------------------- the only number that measures the loop
+
+def test_of_what_a_person_agreed_with_it_says_how_much_is_gone(store):
+    """*** "4 RESOLVED" CANNOT ANSWER THE QUESTION WORTH ASKING. ***
+
+    Four fewer findings might be the four somebody agreed about, or four unrelated ones that moved
+    while those four sat there. From outside those look identical, and the second is what it looks
+    like when reviewing changes nothing.
+    """
+    from dbt_assay.outcomes import confirmed_and_fixed
+    a, b = _f(summary="one"), _f(summary="two")
+    for f in (a, b):
+        _rule(store, f, verdict="agree")
+
+    both = confirmed_and_fixed(store, [a, b])
+    assert (both["agreed"], both["fixed"], both["still_open"]) == (2, 0, 2)
+
+    # `a` is fixed and no longer reported
+    one = confirmed_and_fixed(store, [b])
+    assert (one["agreed"], one["fixed"], one["still_open"]) == (2, 1, 1)
+    assert [r["gone"] for r in one["rows"] if r["finding"] == a.id] == [True]
+
+
+def test_a_retraction_is_not_a_fix(store):
+    """*** OTHERWISE THE LOOP CAN BE CLOSED BY CHANGING YOUR MIND. ***
+
+    Agree with a finding, then dismiss it, and `apply_policy` drops it -- for a reason that has
+    nothing to do with anybody fixing anything. Counting that as gone would make the one honest
+    number on the screen gameable by the person it is measuring.
+    """
+    from dbt_assay.outcomes import confirmed_and_fixed
+    f = _f()
+    _rule(store, f, verdict="agree")
+    assert confirmed_and_fixed(store, [f])["agreed"] == 1
+    _rule(store, f, verdict="disagree")          # changed their mind
+    got = confirmed_and_fixed(store, [])          # the dismissal removed it from the report
+    assert got["fixed"] == 0, "a retraction counted as a fix"
+    assert got["agreed"] == 0
+
+
+def test_no_verdicts_means_no_claim_either_way(store):
+    """An absent measurement is not a zero."""
+    from dbt_assay.outcomes import confirmed_and_fixed
+    got = confirmed_and_fixed(store, [_f()])
+    assert got == {"agreed": 0, "fixed": 0, "still_open": 0, "rows": []}
+    assert confirmed_and_fixed(None, [_f()])["agreed"] == 0

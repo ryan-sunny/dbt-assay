@@ -127,7 +127,7 @@ dbt docs shows you lineage. This shows you meaning.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.36.2
+- uses: ryan-sunny/dbt-assay@v0.37.0
   with:
     target: target-head
     baseline: base/target
@@ -778,6 +778,28 @@ into "the judge is wrong" or "it was handed the wrong facts" — opposite repair
 question and one editing what gets sent. States are stored by hash, so one reused across a thousand
 answers is stored once. An answer from before state storage says so, in those words; its absence is
 never rendered as an empty state.
+
+## Fixing what you agreed with, and knowing whether it worked
+
+```bash
+assay plan -t target/            # what to DO about the findings a person agreed with
+```
+
+`check` finds it, `review` settles whether it is real, and then there was nothing. The fix **shape**
+falls out of the check name exactly — `arbitrary_pick` is always "add a tie-break column" — so it is
+a lookup that costs no calls. What it will not write is the **words**: what a sentence should say
+instead is a judgment about a real warehouse. It writes `assay_plan.jsonl`, one object per thing to
+do, because the consumer is an agent rather than a person reading a report once.
+
+Then `assay check` reports the one number that measures the loop rather than the tool:
+
+```
+of the 12 finding(s) a person agreed with, 5 are gone and 7 are still here.
+```
+
+"N resolved" could never answer that — four fewer findings might be the four you agreed about or
+four unrelated ones that moved while those sat there. A release cannot move this number and neither
+can an agent. Agreeing and later dismissing does not count as fixed; that is a retraction.
 
 ## Keeping the store from growing forever
 

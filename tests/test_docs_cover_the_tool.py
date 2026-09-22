@@ -439,3 +439,21 @@ def test_a_name_that_swallowed_the_next_key_is_caught_even_when_it_parses():
     meta = yaml.safe_load("name: assay-review description is the rest of the line\n")
     assert isinstance(meta, dict) and "description" not in meta
     assert "description" in str(meta["name"]), "the fixture does not reproduce the shape"
+
+
+def test_every_check_has_a_fix_shape():
+    """*** A PLAN THAT OMITS WHAT IT HAS NO SHAPE FOR READS AS A PLAN THAT COVERED EVERYTHING. ***
+
+    `plan` turns an agreed finding into what to change, and the shape comes from a table keyed by
+    check name. A check added without a row lands in the plan as `unknown` and says so -- which is
+    honest at runtime and still a gap. This closes it at build time instead.
+    """
+    from dbt_assay.config import known_checks
+    from dbt_assay.plan import SHAPES
+    ks = known_checks()
+    assert len(ks) > 20, "the check reader found almost nothing; it is broken"
+    missing = sorted(c for c in ks if c not in SHAPES)
+    assert not missing, f"no fix shape for: {missing}"
+    for name, (shape, how) in SHAPES.items():
+        assert shape and how, name
+        assert len(how) > 40, f"{name}: the `how` says nothing useful"

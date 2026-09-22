@@ -150,3 +150,44 @@ def coverage(project, build: Build) -> dict:
             "models_an_assertion_ran_on": len(models_asserted),
             "tests_declared": len(tests), "tests_that_ran": ran,
             "tests_that_did_not_run": len(tests) - ran}
+
+
+# --------------------------------------------------------------------------------- the loop
+
+def confirmed_and_fixed(store, findings) -> dict:
+    """Of the findings a PERSON agreed with, how many are gone.
+
+    *** EVERY OTHER NUMBER HERE MEASURES THE TOOL. THIS ONE MEASURES THE LOOP. ***
+    `check` already prints "N new, N resolved" against the previous run, and that number cannot
+    answer the question worth asking. Four fewer findings might be the four somebody agreed about,
+    or four unrelated ones that moved while those four sat there. From the outside those look
+    identical, and the second is what it looks like when reviewing changes nothing.
+
+    A verdict filed against `(model, check)` cannot settle it either: one model carries eight
+    findings of one check, so "you agreed about this model" does not say which of the eight was
+    real. It needs the finding, which is why `assay review --load` writes an `agree` against each
+    finding id the card showed.
+
+    Gone is gone for ANY reason -- fixed, refactored away, or the model deleted. This does not
+    claim the edit caused it; it claims the thing somebody said was real is no longer reported,
+    which is what they wanted. `still_open` is the other half and it is the backlog: read, agreed
+    with, and not yet dealt with.
+    """
+    agreed = store.ruled_findings("agree") if store is not None else {}
+    # *** A RETRACTION IS NOT A FIX. ***
+    # Agreeing and later dismissing the same finding removes it from the report, and counting
+    # that as "gone" would let somebody close the loop by changing their mind. `apply_policy`
+    # drops a dismissed finding, so it is absent from `findings` for a reason that has nothing to
+    # do with anybody fixing anything.
+    if agreed and store is not None:
+        for fid in store.ruled_findings("disagree"):
+            agreed.pop(fid, None)
+    if not agreed:
+        return {"agreed": 0, "fixed": 0, "still_open": 0, "rows": []}
+    here = {f.id for f in findings}
+    rows = []
+    for fid, (who, when, note) in sorted(agreed.items()):
+        rows.append({"finding": fid, "by": who, "at": str(when)[:10] if when else "",
+                     "note": note, "gone": fid not in here})
+    gone = sum(1 for r in rows if r["gone"])
+    return {"agreed": len(rows), "fixed": gone, "still_open": len(rows) - gone, "rows": rows}

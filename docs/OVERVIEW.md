@@ -446,6 +446,47 @@ stored once.
 An answer from before state storage says so, in those words. Its absence is never rendered as an
 empty state.
 
+**From "this is real" to "it is fixed"**
+
+```bash
+assay plan -t target/            # what to DO about the findings a person agreed with
+```
+
+`check` finds it, `review` settles whether it is real, and then there was nothing. Somebody
+holding forty agreed findings has forty sentences about what is wrong and no statement of what to
+change — the same gap `suggest` closed on the config side.
+
+The fix **shape** falls out of the check name exactly, so it is a lookup and costs no calls:
+`arbitrary_pick` is always "add a tie-break column", `test_cannot_fail` is always "the test
+asserts nothing, remove or repair it". Nothing about the particular model changes the shape of its
+repair. What `plan` will not write is the **words** — what a sentence should say instead is a
+judgment about a real warehouse, which is the same two-tier split as everything else here.
+
+It writes `assay_plan.jsonl`, one object per thing to do, because the consumer is an agent rather
+than a person reading a report once. Only findings a person agreed with, and only ones still
+present: a plan built from every finding is the findings list again.
+
+**And whether the loop closed**
+
+`check` has always printed "N new, N resolved" against the previous run, and that cannot answer
+the question worth asking. Four fewer findings might be the four somebody agreed about, or four
+unrelated ones that moved while those four sat there — from outside those look identical, and the
+second is what it looks like when reviewing changes nothing.
+
+So `check` also reports:
+
+```
+of the 12 finding(s) a person agreed with, 5 are gone and 7 are still here.
+```
+
+**The only number on that screen that measures the loop rather than the tool.** A release cannot
+move it and neither can an agent. It needs the finding, not the model, which is why
+`assay review --load` records an `agree` against each finding id a card showed — a verdict filed
+against `(model, check)` cannot say which of that model's eight findings was the real one.
+
+Agreeing and later dismissing does not count as fixed. That is a retraction, and counting it would
+make the one honest number gameable by the person it measures.
+
 **Keeping the store from growing forever**
 
 ```bash
@@ -801,7 +842,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.36.2
+- uses: ryan-sunny/dbt-assay@v0.37.0
   with:
     target: target-head
     baseline: base/target

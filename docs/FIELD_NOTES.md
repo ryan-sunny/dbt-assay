@@ -3422,3 +3422,57 @@ Sorting now breaks ties on the id too: by weight alone, equal-weight findings ca
 whatever order they were appended, which is `arbitrary_pick` in the list that reports it.
 
 `arbitrary_pick` 37 to 33; total findings 258 to 254.
+
+## 0.37.0: the loop had no end, and nothing measured whether it worked
+
+`check` finds it. `review` settles whether it is real. Then nothing — and nothing ever came back
+to say the reviewing had been worth doing.
+
+### `assay plan`: from "this is real" to "this is what to change"
+
+Somebody holding forty agreed findings was holding forty sentences about what is wrong and no
+statement of what to do, which is the gap `suggest` closed on the config side.
+
+The fix SHAPE falls out of the check name exactly, so it is a lookup and costs nothing:
+`arbitrary_pick` is always "add a tie-break column"; `test_cannot_fail` is always "the test
+asserts nothing, remove or repair it". Nothing about the particular model changes the shape of its
+repair, which is why this cannot be wrong the way a judged answer can.
+
+What it will not write is the WORDS. For a prose finding the shape is "edit the claim at its
+file:line" and what the sentence should say instead is a judgment about a real warehouse — the
+same two-tier split as everywhere else: structure decides the shape, a person writes the words.
+
+JSONL, not a report, because the consumer is an agent about to make the edit. Only findings a
+person agreed with, and only ones still present: a plan built from every finding is the findings
+list again. A check with no shape lands as `unknown` and says so rather than being omitted, and a
+guard now fails the build if a check ships without one — all 29 are covered.
+
+### The measurement that closes it
+
+`check` has always printed "N new, N resolved" against the previous run, and that number cannot
+answer the question. Four fewer findings might be the four somebody agreed about, or four
+unrelated ones that moved while those four sat there. From outside those are identical, and the
+second is exactly what it looks like when reviewing changes nothing.
+
+    of the 12 finding(s) a person agreed with, 5 are gone and 7 are still here.
+
+**The only number on that screen that measures the LOOP rather than the tool.** Every other figure
+moves when assay improves. This one moves when somebody reads SQL and then changes it, and neither
+a release nor an agent can touch it.
+
+It needs the FINDING, not the model. A verdict filed against `(model, check)` cannot say which of
+that model's eight findings was the real one, so `assay review --load` now records an `agree`
+against each finding id the card showed. That `agree` dismisses nothing — the finding is real —
+it is simply the record that makes the question askable.
+
+Two things it refuses:
+
+- **A retraction is not a fix.** Agreeing and later dismissing removes the finding, for a reason
+  that has nothing to do with anybody fixing anything. Counting it would make the one honest
+  number gameable by the person it measures.
+- **No verdicts is not zero.** A warehouse nobody has reviewed reports nothing here rather than
+  0%, because an absent measurement is not a failing one.
+
+Gone is gone for any reason — fixed, refactored away, model deleted. It does not claim the edit
+caused it. It claims the thing somebody said was real is no longer reported, which is what they
+wanted.
