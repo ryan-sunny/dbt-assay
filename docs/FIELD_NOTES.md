@@ -3115,10 +3115,43 @@ project's `audit.yml`, on 18 findings and 4 agree / 4 unclear.
 
 **A rule for claims about other models.** `dim_building` claims "every fact joins here instead of
 re-deriving it". No amount of reading `dim_building.sql` settles that — the subject is the
-consumers. A real shape, and a phrase-based detector for it matched 28 claims of 5,794, most of
-which are answerable: "READS STAGING, NOT az_section_summary or any mart" is about this model's own
-reads and a parser can check it. A rule that fires on the normal case is the shape this project
-keeps rejecting, so it was rejected here too.
+consumers, and the shape is real.
+
+The first rejection was lazy: one loose regex matched 28 of 5,794 claims, most answerable, and that
+was called a dead end. It was a bad regex, not a bad idea — `downstream models` and `any mart` were
+dragging in claims about a model's own reads. Measured per pattern instead, `joins here` is 2 of
+5,794 and both are correct; a constrained version reaches **3 of 3 with no false positives**, and
+stays clean on every hand-written control.
+
+Which is where it should have been questioned rather than shipped, because precision on three
+matches is not a measurement. **The untested direction was recall**, and recall is where it dies.
+Reading all 197 claims on the `dim_*` / `fact_* `/ `mart_*` models — where this shape concentrates
+— against three hits:
+
+    dim_contractor           "...and GC contact all read THIS."
+    dim_date                 "Facts (permit/sale/inspection) join on their event date"
+    dim_owner                "so the resolver joins it ONCE instead of stitching four models"
+    dim_business             "Inspections / sales / permits are EVENTS that map onto this"
+    dim_pm                   "the resolver already surfaces managed buildings"
+    fact_code_enforcement    "Feeds residential_buyer_leads."
+    fact_residential_sale    "Feeds residential_buyer_leads."
+
+**Roughly 30% recall**, and the phrasings are open-ended: *joins here*, *all read THIS*, *map onto
+this*, *the resolver joins it*, *feeds X*. `Feeds residential_buyer_leads.` is a two-word claim of
+exactly this shape, and no regex enumerating verbs will ever reach it. A rule that catches a third
+of a class, in a module whose job is recognizing what cannot be answered, teaches a reader that the
+rest were checked.
+
+**And the half that IS exact is already covered.** A claim naming a CHILD model names an identifier
+absent from this model and its parents, which is `unanswerable_from_sql`'s first rule — it already
+refuses both `Feeds residential_buyer_leads.` claims today. What remains is claims naming no
+identifier at all, which that code deliberately lets through, with a comment saying why: "a claim
+naming no identifier at all is ordinary prose about the model and stays answerable". That comment
+is right, and `dim_building` is the price of it being right.
+
+Nothing shipped. The single-author confound is worth stating too: all 5,794 claims are one
+person's prose from one warehouse, so a pattern tuned on them is a pattern about how one person
+writes comments.
 
 **Loosening the literal-value rule.** `unanswerable_from_sql` refuses a claim asserting a number
 only when the claim names no real column. Two of the four unclears carry a count and do name one —
