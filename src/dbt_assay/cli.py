@@ -414,10 +414,19 @@ def check(
 
         console.print()
         for f in findings[:limit]:
-            reach = f"{f.descendants} downstream, {f.marts} marts" if f.descendants else "leaf"
+            # *** A FINDING ABOUT THE PROJECT HAS NO MODEL AND NO BLAST RADIUS. ***
+            # The monitoring checks are about whether anything WATCHES this warehouse, which is
+            # not a fact about one model. Rendered with the shared code they printed a blank line
+            # where a model name goes and `(leaf)` -- a reach label for a thing that has no
+            # position in the graph. Caught by reading the output before tagging, which is the
+            # step that was skipped last time.
+            whole_project = not f.subject and not f.subject_name
+            reach = ("the whole project" if whole_project else
+                     f"{f.descendants} downstream, {f.marts} marts" if f.descendants else "leaf")
             act = actions.get((f.check, f.subject), "annotate")
             color = {"fail": "red", "queue": "yellow"}.get(act, "dim")
-            console.print(f"[bold]{f.subject_name}[/]  [dim]{f.file}[/]")
+            console.print(f"[bold]{f.subject_name or project.project_name or 'this project'}[/]"
+                          f"  [dim]{f.file}[/]")
             console.print(f"  [{color}]{act}[/]  {f.check}: {f.summary}  [dim]({reach})[/]")
             console.print(f"  [dim]{f.detail}[/]\n")
         if len(findings) > limit:
