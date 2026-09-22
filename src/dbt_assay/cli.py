@@ -4241,6 +4241,9 @@ def review(
     emit: str = typer.Option(None, "--emit",
                              help="write a form to this .html and record nothing. Needs --target"),
     load: str = typer.Option(None, "--load", help="a handback.json the form handed back"),
+    report: str = typer.Option(None, "--report",
+                               help="path to the report page, relative to the form, so the two "
+                                    "link to each other. `assay page --form` is the other half."),
     monitoring_json: str = typer.Option(None, "--monitoring",
                                         help="an `assay volume --json` output, so the form can "
                                              "show the DERIVED staleness threshold and the "
@@ -4269,7 +4272,7 @@ def review(
     # reading batches; the answering does not have to happen in a conversation at all.
     if emit:
         _emit_review_form(store, emit, target, config_path, store_path, dialect, reads,
-                          monitoring_json)
+                          monitoring_json, report or "")
         store.close()
         raise typer.Exit(0)
     if load:
@@ -4330,7 +4333,7 @@ def review(
 
 def _emit_review_form(store, out: str, target: str, config_path: str, store_path: str,
                       dialect: str, reads_path: str | None,
-                      monitoring_json: str | None = None) -> None:
+                      monitoring_json: str | None = None, report: str = "") -> None:
     """Write the form. It records nothing -- that is the point of it being a file."""
     from . import reviewform
     if not target:
@@ -4366,7 +4369,7 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
     ctx = reviewform.context(store, project, cfg, findings, vol)
     p.write_text(reviewform.form_html(
         cards, sql, project.project_name or "this project",
-        project.raw.get("metadata", {}).get("generated_at", ""), _pkg_version(), ctx))
+        project.raw.get("metadata", {}).get("generated_at", ""), _pkg_version(), ctx, report))
 
     n_read = sum(1 for c in cards if c.get("read") or c.get("agent"))
     console.print(f"wrote [bold]{p}[/] [dim]({len(cards)} card(s) from {len(findings)} finding(s); "

@@ -189,6 +189,49 @@ def load(payload) -> tuple[list, list]:
     return ok, bad
 
 
+# The settings the form writes that have a legal range, and what that range IS. The message is
+# the one a person reads, so it says what the number MEANS rather than quoting a bound.
+_RANGES = {
+    "gating.min_agreement": (0.0, 1.0, "a rate between 0 and 1, not a percentage"),
+    "completeness.row_loss_threshold": (0.0, 1.0,
+                                        "the share of the parent LOST, strictly between 0 and 1"),
+    "jev.max_spend_usd": (0.0, None, "dollars, and never negative"),
+    "gating.min_adjudications": (0.0, None, "a count of human verdicts, and never negative"),
+    "cost.usd_per_tb_scanned": (0.0, None, "dollars per TB, and never negative"),
+}
+_TEXT_SETTINGS = ("cost.engine", "cost.rate_card")
+
+
+def _bad_setting(path, value) -> str:
+    """Why this value cannot be written, or `''`. Checked here so their next run still starts."""
+    dotted = ".".join(path)
+    if dotted in _TEXT_SETTINGS:
+        return "" if isinstance(value, (str, int, float)) else "must be text"
+    if dotted not in _RANGES:
+        return "the form does not write this key"
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return f"must be a number -- {_RANGES[dotted][2]}"
+    lo, hi, said = _RANGES[dotted]
+    if lo is not None and n < lo:
+        return said
+    if hi is not None and n > hi:
+        return said
+    if dotted == "completeness.row_loss_threshold" and not 0.0 < n < 1.0:
+        return said
+    return ""
+
+
+def _typed_setting(path, value):
+    """`"20"` out of a text box is the integer 20 in a YAML file, not a quoted string."""
+    dotted = ".".join(path)
+    if dotted in _TEXT_SETTINGS:
+        return str(value)
+    n = float(value)
+    return int(n) if dotted == "gating.min_adjudications" else n
+
+
 def load_config(payload) -> tuple:
     """`([Change], [problem])` for what they wrote under Words, Explanations and Waivers.
 
@@ -217,12 +260,22 @@ def load_config(payload) -> tuple:
         if not path:
             bad.append(f"config row {i} names no key")
             continue
-        if path[0] not in ("vocab", "explanations", "waivers", "monitoring"):
-            # The form writes these three. Anything else came from somewhere else, and a config
-            # editor that accepts an arbitrary path from a downloaded file is a hole.
-            bad.append(f"`{'.'.join(path)}`: the form only writes vocab, explanations, waivers "
-                       f"and monitoring")
+        if path[0] not in ("vocab", "explanations", "waivers", "monitoring",
+                           "gating", "completeness", "jev", "cost"):
+            # An allow-list, not a deny-list. A config editor that accepts an arbitrary path out
+            # of a downloaded file is a hole, and the failure is silent: the value lands in
+            # somebody's audit.yml under a key nothing reads.
+            bad.append(f"`{'.'.join(path)}`: the form does not write this key")
             continue
+        if path[0] in ("gating", "completeness", "jev", "cost"):
+            # *** A NUMBER OUT OF RANGE HERE BREAKS THEIR NEXT RUN, NOT THIS ONE. ***
+            # `Config.from_dict` raises on a bad floor, so an unvalidated box would write a file
+            # that refuses to load -- discovered later, by somebody who did not type it.
+            problem = _bad_setting(path, value)
+            if problem:
+                bad.append(f"`{'.'.join(path)}`: {problem}")
+                continue
+            value = _typed_setting(path, value)
         if path[-1] == "__new":
             bad.append(f"`{'.'.join(path[:-1])}`: give the new option a name, not `__new`")
             continue
@@ -280,6 +333,65 @@ def monitoring_rows(cfg, volume_json: dict | None) -> dict:
     }
 
 
+# *** THE REST OF audit.yml, WHICH ENDED UP EDITED IN A TEXT EDITOR OR NOT AT ALL. ***
+# "i feel like theres other configs and shit that should be accessible here... its all version
+# control trackable properly anyway so its like the same thing anyway i reckon." He is right: a
+# form that writes `audit.yml` produces the same committed file as an editor does, by a route
+# that shows what each number means and what happens if it is wrong.
+#
+# Every one of these is a number somebody ACTS on, so each carries what assay ships, what is set
+# now, and the consequence -- never a bare box with a default in it.
+SETTINGS = [
+    ("gating.min_adjudications", "min_adjudications", "number", 20,
+     "How many HUMAN verdicts a question family needs before it may fail a build.",
+     ("Under this, a family cannot gate however high its agreement reads. Agent rulings never "
+      "count toward it.")),
+    ("gating.min_agreement", "min_agreement", "number", 0.0,
+     "The agreement rate a family must reach before it may fail a build.",
+     ("Default 0, which is OFF -- a floor set before anything was measured is a guess. "
+      "`assay effectiveness` prints the real rates; pick a number from those.")),
+    ("completeness.row_loss_threshold", "row_loss_threshold", "number", 0.8,
+     "How much of a parent a hop may LOSE before assay reports it.",
+     "It is the share DROPPED, so 0.8 means `kept less than a fifth`. Must be between 0 and 1."),
+    ("jev.max_spend_usd", "max_spend_usd", "number", 1.0,
+     "The most one `assay` invocation may spend on judgment before it stops.",
+     ("It stops a runaway mid-run. It is not a budget and it is not a ledger -- `assay cost` "
+      "is the ledger.")),
+    ("cost.engine", "engine", "text", "",
+     "Which warehouse you are billed by: bigquery, snowflake, duckdb.",
+     ("Blank reads it from your manifest's dialect. DuckDB on your own disk bills nothing and "
+      "says so; MotherDuck speaks the same dialect and does bill.")),
+    ("cost.rate_card", "rate_card", "text", "",
+     "A NAME for the rate below, stored on every statement it prices.",
+     ("Without it a dollar figure has no provenance, and the first time a published rate "
+      "moves, every historical total moves with it.")),
+    ("cost.usd_per_tb_scanned", "usd_per_tb_scanned", "number", None,
+     "What your warehouse charges per TB scanned.",
+     ("BigQuery on-demand. Leave it blank and assay still estimates the BYTES and prints no "
+      "dollar figure: a number it cannot justify is worse than no number.")),
+]
+
+
+def settings_rows(cfg) -> list:
+    """Each setting, what it is now, and what assay ships. Never a bare box with a default in it.
+
+    A form showing `20` in a box cannot be told apart from a form where somebody typed 20, so the
+    shipped value is shown BESIDE the box and the box holds only what this project actually set.
+    """
+    out = []
+    for path, key, kind, shipped, what, why in SETTINGS:
+        head, _, _tail = path.partition(".")
+        if head == "cost":
+            cur = (getattr(cfg, "cost", None) or {}).get(key)
+        else:
+            cur = getattr(cfg, key, None)
+        set_here = cur is not None and cur != shipped and cur != ""
+        out.append({"path": path.split("."), "dotted": path, "kind": kind,
+                    "shipped": shipped, "value": cur if set_here else "",
+                    "current": cur, "set_here": set_here, "what": what, "why": why})
+    return out
+
+
 def context(store, project, cfg, findings=None, volume_json: dict | None = None) -> dict:
     """Everything a person could define here, with what assay measured beside it.
 
@@ -330,6 +442,7 @@ def context(store, project, cfg, findings=None, volume_json: dict | None = None)
         "monitoring": monitoring_rows(cfg, volume_json),
         "explanations": _explanation_rows(cfg, findings or []),
         "waivers": _waiver_rows(store, cfg, findings or []),
+        "settings": settings_rows(cfg),
     }
 
 
@@ -668,8 +781,8 @@ function card(c) {
    where they were, and the counts described something you were not looking at. Paging is per
    pane now, and a pane that fits on one page says so by hiding the controls rather than by
    showing disabled ones. */
-const PAGES = Object.assign({words: 0, explanations: 0, waivers: 0, monitoring: 0, findings: 0},
-                           SAVED_PAGES);
+const PAGES = Object.assign({words: 0, explanations: 0, waivers: 0, monitoring: 0,
+                            settings: 0, findings: 0}, SAVED_PAGES);
 let pane = 'findings';
 
 function paneItems(name) {
@@ -710,7 +823,7 @@ function tick() {
 }
 
 const PANE_NOUN = {findings: 'to rule on', words: 'words', explanations: 'marts',
-                   waivers: 'proposed', monitoring: 'findings'};
+                   waivers: 'proposed', monitoring: 'findings', settings: 'settings'};
 
 function edits_() { return (typeof edits === 'undefined') ? {} : edits; }
 
@@ -848,6 +961,34 @@ function wordsTab(host) {
   host.replaceChildren(...bits);
 }
 
+function settingsTab(host) {
+  const bits = [explainer(
+    'Set the numbers this project is judged by.',
+    'These end up in audit.yml under version control, which is where they would end up if you '
+    + 'edited the file by hand. Each box is empty unless THIS project set it; what assay ships '
+    + 'is beside it.',
+    'gating.min_adjudications: 20   # a question family needs 20 human verdicts to gate a build\n'
+    + 'cost.usd_per_tb_scanned:  6.25 # so `assay cost` can price what it ran on your warehouse',
+    'Nothing here is written until you download the file and run `assay review --load '
+    + 'handback.json --apply`, which shows you the diff first.')];
+  for (const s of (CTX.settings || [])) {
+    const row = el('div', {class: 'wrow'});
+    row.append(el('h3', {text: s.dotted}));
+    row.append(el('div', {class: 'measured', text: s.what}));
+    const shipped = s.shipped == null ? 'nothing' : String(s.shipped);
+    row.append(el('div', {class: 'measured', text: s.set_here
+      ? 'this project set ' + String(s.current) + '. assay ships ' + shipped + '.'
+      : 'not set here, so assay ships ' + shipped + ' and that is what is in force.'}));
+    row.append(field(s.kind === 'number' ? 'value (a number)' : 'value',
+                     s.path, s.value === '' ? '' : String(s.value), ''));
+    row.append(el('div', {class: 'measured dim', text: s.why}));
+    bits.push(row);
+  }
+  if (!(CTX.settings || []).length)
+    bits.push(el('p', {class: 'measured', text: 'No settings are exposed here.'}));
+  host.replaceChildren(...bits);
+}
+
 function explanationsTab(host) {
   const bits = [explainer(
     'Name the kinds of failing row this mart actually has.',
@@ -946,7 +1087,7 @@ function block2(title, text) {
 }
 
 const PANES = {words: wordsTab, explanations: explanationsTab, waivers: waiversTab,
-               monitoring: monitoringTab, findings: null};
+               monitoring: monitoringTab, settings: settingsTab, findings: null};
 function drawPane(name) {
   if (PANES[name]) PANES[name](document.getElementById('p-' + name));
   else render();
@@ -984,6 +1125,10 @@ document.getElementById('n-words').textContent = CTX.words.length || '';
 document.getElementById('n-expl').textContent = CTX.explanations.length || '';
 document.getElementById('n-waiv').textContent = CTX.waivers.length || '';
 document.getElementById('n-mon').textContent = ((CTX.monitoring || {}).findings || []).length || '';
+/* The count is how many THIS project has set, not how many exist: a tab reading `7` when
+   nothing is configured says the opposite of the truth. */
+document.getElementById('n-set').textContent =
+  (CTX.settings || []).filter(s => s.set_here).length || '';
 document.getElementById('n-find').textContent = D.cards.length || '';
 openPane(SAVED_PANE && (SAVED_PANE in PANES) ? SAVED_PANE
          : (CTX.words.length ? 'words' : 'findings'));
@@ -991,10 +1136,10 @@ openPane(SAVED_PANE && (SAVED_PANE in PANES) ? SAVED_PANE
 
 
 def form_html(card_list: list, sql: dict, project: str, generated_at: str, version: str,
-              ctx: dict | None = None) -> str:
+              ctx: dict | None = None, report: str = "") -> str:
     """One self-contained file. No server, no fetch, no network."""
     e = html.escape
-    ctx = ctx or {"words": [], "explanations": [], "waivers": []}
+    ctx = ctx or {"words": [], "explanations": [], "waivers": [], "settings": []}
     blob = json.dumps({"project": project, "cards": card_list, "sql": sql, "no_read": NO_READ,
                        "context": ctx},
                       separators=(",", ":"), sort_keys=True, default=str)
@@ -1002,13 +1147,17 @@ def form_html(card_list: list, sql: dict, project: str, generated_at: str, versi
     # opens a comment inside a script element. A dbt model containing either is not exotic.
     blob = blob.replace("</", "<\\/").replace("<!--", "<\\!--")
     withread = sum(1 for c in card_list if c.get("read") or c.get("agent"))
+    # *** TWO ARTIFACTS THAT LINK, RATHER THAN ONE THAT HALF-DOES BOTH. ***
+    # The report is read-only and shareable; this form owns every box you type into. Without a
+    # link the split reads as a missing feature rather than as a decision.
+    report_link = (f' &middot; <a href="{e(report)}">the report</a>' if report else "")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{e(project)} &middot; assay review</title>
 <style>{_CSS}</style></head><body>
 <header>
 <h1>{e(project)}<span>{len(card_list)} to rule on &middot; {len(ctx.get("words") or [])} word(s) &middot; {withread} carry a reading &middot;
-assay {e(version)} &middot; manifest {e(str(generated_at))}</span></h1>
+assay {e(version)} &middot; manifest {e(str(generated_at))}{report_link}</span></h1>
 <!-- *** WHAT YOU DO WITH THE WHOLE FORM SITS WITH THE TAB STRIP, NOT INSIDE A TAB. ***
      Your name and the download button used to share a row with the findings pager, so switching
      to a tab that has no pager slid them sideways: "so it doesnt get moved around by the UI when
@@ -1018,6 +1167,7 @@ assay {e(version)} &middot; manifest {e(str(generated_at))}</span></h1>
   <button data-pane="explanations">Explanations<b id="n-expl"></b></button>
   <button data-pane="waivers">Waivers<b id="n-waiv"></b></button>
   <button data-pane="monitoring">Monitoring<b id="n-mon"></b></button>
+  <button data-pane="settings">Settings<b id="n-set"></b></button>
   <button data-pane="findings">Findings<b id="n-find"></b></button>
   <span class="tabgap"></span>
   <span class="count" id="count"></span>
@@ -1037,6 +1187,7 @@ assay {e(version)} &middot; manifest {e(str(generated_at))}</span></h1>
 <div id="p-explanations" class="pane" hidden></div>
 <div id="p-waivers" class="pane" hidden></div>
 <div id="p-monitoring" class="pane" hidden></div>
+<div id="p-settings" class="pane" hidden></div>
 <div id="p-findings" class="pane" hidden><div id="cards"></div></div>
 </main>
 <footer>

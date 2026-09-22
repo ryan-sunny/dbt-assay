@@ -268,18 +268,67 @@ def test_a_cleared_box_is_not_a_deletion():
     assert changes == [] and bad == []
 
 
-def test_the_form_cannot_write_outside_the_three_sections():
+def test_the_form_writes_an_ALLOW_LIST_and_nothing_else():
     """*** A DOWNLOADED FILE NAMING AN ARBITRARY CONFIG PATH IS A HOLE. ***
 
-    Gating thresholds want the measured agreement rate in front of you; `assay effectiveness` is
-    that surface, not a text box in a form.
+    And the failure is silent: the value lands in somebody's audit.yml under a key nothing reads.
+    The list grew -- the settings tab writes the gating floors, the row-loss threshold, the spend
+    cap and the rate card, because those end up in the same committed file either way -- but it
+    is still a list. A probability expression is not on it: `act:` wants the measured agreement
+    rate in front of you, and `assay effectiveness` is that surface.
     """
     from dbt_assay import reviewform
     changes, bad = reviewform.load_config({"config": [
         {"path": ["questions", "grain_unresolved", "act"], "value": "p > 0.9"},
-        {"path": ["gating", "min_adjudications"], "value": 1}]})
+        {"path": ["nonsense", "anything"], "value": 1}]})
     assert changes == []
-    assert len(bad) == 2 and all("only writes" in b for b in bad)
+    assert len(bad) == 2 and all("does not write this key" in b for b in bad)
+
+
+def test_a_setting_out_of_range_is_refused_here_rather_than_breaking_the_next_run():
+    """*** `Config.from_dict` RAISES ON A BAD FLOOR. ***
+
+    An unvalidated box would write a file that refuses to load -- discovered later, by somebody
+    who did not type it. The message says what the number MEANS rather than quoting a bound.
+    """
+    from dbt_assay import reviewform
+    changes, bad = reviewform.load_config({"config": [
+        {"path": ["gating", "min_agreement"], "value": 90},
+        {"path": ["completeness", "row_loss_threshold"], "value": 1.0},
+        {"path": ["jev", "max_spend_usd"], "value": -1},
+        {"path": ["cost", "usd_per_tb_scanned"], "value": "six dollars"}]})
+    assert changes == []
+    assert len(bad) == 4, bad
+    assert "not a percentage" in bad[0]
+    assert "strictly between 0 and 1" in bad[1]
+
+
+def test_a_number_typed_into_a_text_box_is_written_as_a_number():
+    """`"20"` out of a text input is the integer 20 in a YAML file, not a quoted string."""
+    from dbt_assay import reviewform
+    changes, bad = reviewform.load_config({"config": [
+        {"path": ["gating", "min_adjudications"], "value": "20"},
+        {"path": ["gating", "min_agreement"], "value": "0.7"},
+        {"path": ["cost", "engine"], "value": "bigquery"}]})
+    assert not bad, bad
+    got = {c.dotted: c.value for c in changes}
+    assert got["gating.min_adjudications"] == 20 and isinstance(got["gating.min_adjudications"], int)
+    assert got["gating.min_agreement"] == 0.7
+    assert got["cost.engine"] == "bigquery"
+
+
+def test_every_setting_the_form_offers_is_one_it_can_write():
+    """*** THE TAB AND THE LOADER ARE TWO LISTS THAT MUST NOT DRIFT. ***
+    A box the form renders and the loader rejects is a person typing into nothing."""
+    from dbt_assay import reviewform
+    # A value inside every one of these ranges: the point is that the PATH is accepted, not that
+    # any particular number is.
+    for path, _key, kind, _shipped, _what, _why in reviewform.SETTINGS:
+        probe = "0.5" if kind == "number" else "x"
+        changes, bad = reviewform.load_config(
+            {"config": [{"path": path.split("."), "value": probe}]})
+        assert not bad, f"the tab offers `{path}` and the loader refuses it: {bad}"
+        assert len(changes) == 1
 
 
 def test_an_unnamed_new_option_is_refused_by_name():
