@@ -337,9 +337,9 @@ def _repeated_reasons(store, cfg, live: set | None) -> list[Suggestion]:
                 "found in production.\n"
                 "  Ask: would a reader who knew this term still call the finding correct? Yes "
                 "means vocab. No means the check is wrong.\n"
-                "  On this project that distinction has gone the second way before: two models "
-                "waived one reason, and the fix was structural (0.15.0, 0.21.1), not a third "
-                "waiver."),
+                "  A reason given on several subjects has gone the second way before: two "
+                "models were waived for one reason and the checker was the thing that needed "
+                "fixing, so the third occurrence was still waiting in production."),
             # No draft. There is nothing to paste until the question above is answered, and a
             # YAML block here would be something to copy -- which is the one thing this rule is
             # trying not to hand over.
@@ -393,7 +393,7 @@ def _questions_unconfigured(cfg, firing: set) -> list[Suggestion]:
         block = shipped_block(name)
         if block:
             draft = "questions:\n" + "\n".join("  " + ln for ln in block.splitlines())
-            draft += "\n  # this is what `assay init` ships for it, thresholds and all."
+            draft += "\n  # this is the entry `assay init` ships for this check."
         else:
             draft = (f"questions:\n  {name}:\n    enabled: true\n    action: annotate\n"
                      f"    # assay ships no opinion for this one, so `annotate` is a starting\n"

@@ -779,7 +779,7 @@ function wordsTab(host) {
     row.append(field('implies', ['vocab', w.term, 'implies'], w.implies,
                      'what follows from it that the name does not say', 1));
     row.append(field('applies_to', ['vocab', w.term, 'applies_to'], w.applies_to,
-                     'blank means every model. e.g. path:models/water'));
+                     'blank means every model. e.g. path:models/marts'));
     if (w.suggested) {
       const b = el('button', {class: 'accept', text: 'use ' + w.suggested});
       b.onclick = () => { setEdit(['vocab', w.term, 'applies_to'].join('\u001f'), w.suggested);
@@ -807,7 +807,7 @@ function explanationsTab(host) {
     for (const o of (x.options || []))
       row.append(field(o.name, ['explanations', x.mart, o.name], o.means, '', 1));
     row.append(field('(new option name)', ['explanations', x.mart, '__new'], '',
-                     'e.g. conditional_right: a claim on water not yet diverted', 1));
+                     'e.g. backorder: an order placed for stock that has not arrived', 1));
     bits.push(row);
   }
   if (!CTX.explanations.length)

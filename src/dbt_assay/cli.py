@@ -6097,7 +6097,8 @@ def _report_unconfigured_checks(cfg, findings) -> None:
     t.add_column("assay would suggest")
     for name, shipped in gap:
         n = sum(1 for f in findings if f.check == name)
-        t.add_row(name, str(n), shipped or "[dim]nothing; severity decides[/]")
+        t.add_row(name, str(n),
+                  shipped or "[dim]not configured; warns, cannot fail a build[/]")
     console.print(t)
     console.print("[dim]Add them to `questions:` in audit.yml to tune or gate them. "
                   "`assay guide policy` is what each action does.[/]")

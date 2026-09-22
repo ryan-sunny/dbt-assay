@@ -1314,9 +1314,15 @@ function questionsTab(host) {
       ['human verdicts', el('span', {class: 'pill ' + (n ? 'on' : 'bad'), text: String(n)})],
       ['all verdicts', String((byFam[q.name] || {}).all || 0)],
     ])));
-    d.append(el('p', {class: 'note', text: 'Only a human verdict counts toward min_adjudications. '
-      + 'An agent ruling is evidence and never authority: it cannot gate a build, satisfy the '
-      + 'verdict floor, anchor the regression check, or move the ruled-on number.'}));
+    /* *** IT EXPLAINED THE DIFFERENCE BETWEEN TWO NUMBERS THAT WERE BOTH ZERO. ***
+       This paragraph printed on every card, including one reading `human 0, all 0`, where the
+       distinction it draws has nothing to draw it between. It is a fact about the tab, so it
+       lives in the tab header; here it appears only when a card actually holds both kinds. */
+    const allV = (byFam[q.name] || {}).all || 0;
+    if (allV > n)
+      d.append(el('p', {class: 'note', text: (allV - n) + ' of these came from an agent. '
+        + 'They are evidence, not authority: they cannot gate a build or count toward '
+        + 'min_adjudications.'}));
 
     /* The question as it is SENT, as prose rather than as a JSON object. */
     const ins = q.instructions || {};
@@ -1357,10 +1363,8 @@ function questionsTab(host) {
   }
 
   host.replaceChildren(
-    el('p', {class: 'note', text: 'Every question assay will ask, in full. The text is the thing '
-      + 'being measured, so it sits next to the measurement: agreement is reported per '
-      + 'prompt_version and a version number on its own tells a reader nothing about what '
-      + 'changed.'}),
+    el('p', {class: 'note', text: 'Every question assay will ask, in full, beside how often it '
+      + 'has been ruled on. Only a human verdict can gate a build.'}),
     el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a question to read its instructions and every option, exactly as they are sent.'}));
   const first = $('tbody tr', list); if (first) first.click();
@@ -1541,9 +1545,8 @@ function block(title, note, node) {
    and would then travel with every judged question from that point on. */
 function suggestTab(host) {
   const S = DATA.suggestions || [], bits = [];
-  bits.push(el('p', {class: 'note', text: 'Candidates drawn from what the checks actually found, '
-    + 'each with the measurement behind it. assay proposes the candidate and the measurement. It '
-    + 'never proposes the meaning, so every means: and implies: below is empty on purpose.'}));
+  bits.push(el('p', {class: 'note', text: 'assay measured these and cannot know what they mean. '
+    + 'Every means: and implies: below is blank for you to fill in.'}));
 
   if (!S.length) {
     /* An empty list is not a complete config, and the two must not read alike. */
@@ -1696,7 +1699,8 @@ function understoodTab(host) {
   if (gap.length) {
     const grows = gap.map(u => ({
       label: u.check, n: (byCheck[u.check] || 0),
-      note: u.shipped ? 'assay suggests ' + u.shipped : 'severity decides',
+      note: u.shipped ? 'assay suggests ' + u.shipped
+                      : 'not configured \u00b7 warns, cannot fail a build',
       color: '#b8c2c6',
       tip: `${u.check} is firing and audit.yml does not name it`}));
     bits.push(block(gap.length + ' check(s) fired that your audit.yml does not name',

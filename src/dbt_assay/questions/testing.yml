@@ -23,11 +23,10 @@ severity_fit:
     - "A violation silently corrupts a figure that reaches a mart. Shipping it is worse than failing the build."
 
 # *** THE STATIC RULE CANNOT SEE AN OVERLAP OF MEANING, AND THAT IS THE COMMON KIND. ***
-# Reported from the field: `not_a_seniority_order` ("ranks rows by a column that is not a priority
-# date") and `something_else` ("ranks something that is not a water right by a column that is not a
-# priority") both correctly describe a window ranking wildfire percentiles. The lint's word-overlap
-# rule scored them 0.25 against a 0.75 threshold and passed them, because they share a SITUATION
-# and not a vocabulary.
+# Reported from the field: two options -- "ranks rows by a column that is not the ordering date"
+# and "ranks something that is not the entity by a column that is not its rank" -- both correctly
+# describe one window function. The lint's word-overlap rule scored them 0.25 against a 0.75
+# threshold and passed them, because they share a SITUATION and not a vocabulary.
 #
 # So assay's own linter uses assay's own argument: a parser settles what it can, and whether two
 # descriptions pick out the same case is a question about meaning.

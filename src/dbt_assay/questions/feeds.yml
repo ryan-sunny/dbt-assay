@@ -2,8 +2,8 @@
 #
 # *** THIS CATCHES THE CLASS THAT POISONS EVERYTHING DOWNSTREAM. ***
 # A column whose NAME, TYPE and ROW COUNT all held steady while its CONTENT changed kind passes
-# every schema test and every volume monitor ever written. A `county` column that starts carrying
-# city names, a `water_source` that switches from names to codes, a feed that quietly changes unit.
+# every schema test and every volume monitor ever written. A `region` column that starts carrying
+# city names, a `channel` that switches from names to codes, a feed that quietly changes unit.
 #
 # Half of this family is CODE and is not asked: a numeric profile spiking at -9999, or a date whose
 # maximum sits years in the future, is a sentinel found by counting. Only meaning is asked.

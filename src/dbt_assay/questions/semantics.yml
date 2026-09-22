@@ -74,8 +74,8 @@ sentence_is_a_claim:
       what: >-
         It asserts that the model follows a rule from somewhere outside this project -- a statute,
         a spec, a standard, a policy -- whether or not it names the source.
-      examples: ["the deadline is the last day of the second month following the filing month",
-                 "per C.R.S. 37-92-302(1)(c), objections close two months after filing"]
+      examples: ["the deadline is the last day of the second month following the invoice month",
+                 "per the payment terms, an invoice is past due after 30 days"]
     rationale:
       what: >-
         It explains WHY the code is the way it is, without asserting what the code does.
