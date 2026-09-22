@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 
 from . import live
-from .store import Store
+from .store import Store, StoreLocked, _is_lock_error, lock_message
 
 
 class Backend:
@@ -54,15 +54,36 @@ class Backend:
             return None, (f"there is no store at {self.store_path}. Run any judged command once "
                           f"(`assay infer --judge`) to create one.")
         try:
-            return Store(self.store_path), ""
+            st = Store(self.store_path)
+        except StoreLocked as e:
+            # duckdb names the holding PID in its own error; the store reads it out and says who,
+            # since then, and what they are running. "Waiting on PID 70034 since 19:42" is a
+            # different experience from a cursor that does not move.
+            return None, str(e)
         except Exception as e:                                          # noqa: BLE001
-            msg = str(e).lower()
-            if "lock" in msg or "being used" in msg or "conflicting" in msg:
-                return None, (f"the store at {self.store_path} is LOCKED by another process. "
-                              f"DuckDB allows one writer: close the other `assay` session or CLI "
-                              f"command and call this again. The store is fine and nothing was "
-                              f"lost.")
+            # A lock error that did not arrive as `StoreLocked` -- a wording duckdb only uses in
+            # some version, or a caller that opened the file some other way. The RULE for what
+            # counts as a lock lives in one place; this is a second READER of it, not a second
+            # spelling.
+            if _is_lock_error(str(e)):
+                return None, lock_message(self.store_path, str(e))
             return None, f"the store at {self.store_path} could not be opened: {e}"
+        # *** AN EMPTY STORE AND A CLEAN WAREHOUSE PRODUCE THE SAME OUTPUT. ***
+        # A store created at a path the container could not see reported `0 of 76 ruled`, with no
+        # error and no warning. Every tool that reads the store carries this sentence when the
+        # store is new, so an agent cannot mistake one for the other.
+        self._new_store = st.new_store_warning()
+        return st, ""
+
+    def _note_new_store(self, out: dict) -> dict:
+        """Add `new_store` to a tool result when the store has nothing in it yet.
+
+        On the result rather than in the prose, so an agent reading JSON cannot skim past it.
+        """
+        why = getattr(self, "_new_store", "")
+        if why and isinstance(out, dict):
+            out["new_store"] = why
+        return out
 
     def _manifest_mtime(self) -> float:
         p = Path(self.target) / "manifest.json"
@@ -76,6 +97,9 @@ class Backend:
             self._state = live.read(self.target, store)
             self._stamp = m
             if store:
+                # Refreshed here as well as in `_store_or_why`, because every tool reaches
+                # `state()` and only some of them take a writable store.
+                self._new_store = store.new_store_warning()
                 store.close()
             if self.baseline is None:
                 self.baseline = live.Snapshot.of(self._state.entries)
@@ -1006,11 +1030,20 @@ def serve(target: str, store_path: str | None = None) -> None:
     # both are tried and the failure says what to install.
     Server = server_class()
     be = Backend(target, store_path)
+
+    def _out(obj) -> str:
+        """Every tool result leaves through here, so the empty-store signal cannot be forgotten.
+
+        *** A NEW STORE AND A CLEAN WAREHOUSE PRODUCE THE SAME NUMBERS. ***
+        Stamping it at each return site would be a list that goes stale the first time somebody
+        adds a tool, and the symptom is an agent reading a zero and believing it.
+        """
+        return json.dumps(be._note_new_store(obj) if isinstance(obj, dict) else obj, default=str)
     app = Server("assay")
 
     @app.tool(description=_desc("contract"))
     def contract(model: str) -> str:
-        return json.dumps(be.contract(model), default=str)
+        return _out(be.contract(model))
 
     @app.tool(description=_desc("guide"))
     def guide(topic: str = "") -> str:
@@ -1021,77 +1054,76 @@ def serve(target: str, store_path: str | None = None) -> None:
 
     @app.tool(description=_desc("lineage"))
     def lineage(model: str, column: str) -> str:
-        return json.dumps(be.lineage(model, column), default=str)
+        return _out(be.lineage(model, column))
 
     @app.tool(description=_desc("blast_radius"))
     def blast_radius(model: str) -> str:
-        return json.dumps(be.blast_radius(model), default=str)
+        return _out(be.blast_radius(model))
 
     @app.tool(description=_desc("findings"))
     def findings(model: str = "", limit: int = 20, check: str = "") -> str:
-        return json.dumps(be.findings(model or None, limit, check), default=str)
+        return _out(be.findings(model or None, limit, check))
 
     @app.tool(description=_desc("changed_contracts"))
     def changed_contracts() -> str:
-        return json.dumps(be.changed_contracts(), default=str)
+        return _out(be.changed_contracts())
 
     @app.tool(description=_desc("practices"))
     def practices(model: str = "") -> str:
-        return json.dumps(be.practices(model), default=str)
+        return _out(be.practices(model))
 
     @app.tool(description=_desc("rule"))
     def rule(verdict: str, why: str, finding: str = "", subject: str = "", question: str = "",
              correction: str = "", decided_by: str = "") -> str:
-        return json.dumps(be.rule(verdict, why, finding, subject, question, correction,
-                                  decided_by), default=str)
+        return _out(be.rule(verdict, why, finding, subject, question, correction, decided_by))
 
     @app.tool(description=_desc("violations"))
     def violations(model: str = "") -> str:
-        return json.dumps(be.violations(model), default=str)
+        return _out(be.violations(model))
 
     @app.tool(description=_desc("claims"))
     def claims(model: str = "") -> str:
-        return json.dumps(be.claims(model), default=str)
+        return _out(be.claims(model))
 
     @app.tool(description=_desc("traversal"))
     def traversal(model: str) -> str:
-        return json.dumps(be.traversal(model), default=str)
+        return _out(be.traversal(model))
 
     @app.tool(description=_desc("review_queue"))
     def review_queue(limit: int = 20) -> str:
-        return json.dumps(be.review_queue(limit), default=str)
+        return _out(be.review_queue(limit))
 
     @app.tool(description=_desc("load_handback"))
     def load_handback(path: str, apply: bool = False, by: str = "") -> str:
-        return json.dumps(be.load_handback(path, apply, by), default=str)
+        return _out(be.load_handback(path, apply, by))
 
     @app.tool(description=_desc("rebase"))
     def rebase() -> str:
-        return json.dumps(be.rebase(), default=str)
+        return _out(be.rebase())
 
     @app.tool(description=_desc("plan"))
     def plan(limit: int = 25) -> str:
-        return json.dumps(be.plan(limit), default=str)
+        return _out(be.plan(limit))
 
     @app.tool(description=_desc("suggestions"))
     def suggestions(section: str = "", limit: int = 15) -> str:
-        return json.dumps(be.suggestions(section, limit), default=str)
+        return _out(be.suggestions(section, limit))
 
     @app.tool(description=_desc("spend"))
     def spend() -> str:
-        return json.dumps(be.spend(), default=str)
+        return _out(be.spend())
 
     @app.tool(description=_desc("stale"))
     def stale(exact: bool = False) -> str:
-        return json.dumps(be.stale(exact), default=str)
+        return _out(be.stale(exact))
 
     @app.tool(description=_desc("vocabulary"))
     def vocabulary() -> str:
-        return json.dumps(be.vocabulary(), default=str)
+        return _out(be.vocabulary())
 
     @app.tool(description=_desc("evidence"))
     def evidence(decision_key: str = "", question: str = "", subject: str = "",
                  limit: int = 5) -> str:
-        return json.dumps(be.evidence(decision_key, question, subject, limit), default=str)
+        return _out(be.evidence(decision_key, question, subject, limit))
 
     app.run()

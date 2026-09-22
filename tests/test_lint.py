@@ -196,3 +196,52 @@ def test_a_two_option_question_is_not_asked_about_overlap():
 
     bank = {"q": {"type": "choice", "criteria": {"a": {"what": "x"}, "b": {"what": "y"}}}}
     assert judge_overlap(bank, _Boom()) == []
+
+
+def test_a_question_asking_for_state_its_subject_does_not_carry_is_an_error():
+    """*** IT LINT-PASSED, WAS ASKED, ANSWERED, PAID FOR AND STORED, AND NEVER FIRED. ***
+
+    Reported from the field and it cost an hour: two custom questions asked about `filters`,
+    which only a `model` carries. A question about an ABSENT predicate cannot be asked one
+    predicate at a time, and an `edge` does not carry filters at all. Nothing said so.
+    """
+    from dbt_assay.lint import lint_question
+
+    q = {"id_prefix": "w.x", "subject": "predicate", "type": "choice",
+         "prompt_version": "v1", "finding_when": ["unchecked"],
+         "instructions": {"question": "Does this model check the id resolves?",
+                          "note": "Read `reads` and `filters` to decide."},
+         "criteria": {"unchecked": {"what": "nothing here would notice a dangling id"},
+                      "checked": {"what": "it joins the relation holding the sections"},
+                      "none_of_these": {"what": "the model has no such id at all"}}}
+    hits = [i for i in lint_question("w.x", q)
+            if i.rule == "state_field_the_subject_does_not_carry"]
+    assert len(hits) == 1, [i.detail for i in lint_question("w.x", q)]
+    assert "`filters`" in hits[0].detail
+    assert "`model` does" in hits[0].detail
+    assert hits[0].level == "error"
+
+    # Declared as the kind that DOES carry it, the same question is clean.
+    q["subject"] = "model"
+    assert not [i for i in lint_question("w.x", q)
+                if i.rule == "state_field_the_subject_does_not_carry"]
+
+
+def test_the_state_field_rule_does_not_fire_on_ordinary_english():
+    """*** A RULE THAT FIRES ON ALMOST EVERY QUESTION IS ONE SOMEBODY SWITCHES OFF. ***
+
+    The first version matched the bare word and flagged three shipped questions: "a claim about a
+    column" is English about columns, not a reference to the `column` key. Backticks are how
+    somebody means the field, and it is the convention every question here follows.
+    """
+    from dbt_assay.lint import lint_question
+
+    q = {"id_prefix": "w.y", "subject": "model", "type": "choice", "prompt_version": "v1",
+         "finding_when": ["bad"],
+         "instructions": {"question": "Does the volume contradict a claim about a column?",
+                          "note": "A parent model may describe the child differently."},
+         "criteria": {"bad": {"what": "the claim is contradicted by what was measured"},
+                      "good": {"what": "the claim holds against the measurement"},
+                      "none_of_these": {"what": "no claim about volume is made here"}}}
+    assert not [i for i in lint_question("w.y", q)
+                if i.rule == "state_field_the_subject_does_not_carry"]

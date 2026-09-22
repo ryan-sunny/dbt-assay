@@ -22,6 +22,37 @@ from dataclasses import dataclass, field
 
 KINDS = ("model", "edge", "column", "predicate", "expression", "window", "ruling_pair")
 
+# *** A QUESTION CAN ONLY ASK WHAT ITS SUBJECT'S STATE CAN ANSWER, AND NOTHING SAID SO. ***
+# Reported from the field, and it cost an hour: two custom questions lint-passed and never fired,
+# because they asked about `filters` -- which only a `model` carries. A question about an absent
+# predicate cannot be asked one predicate at a time, and an `edge` does not carry filters at all.
+# The failure is silent in the worst way: the question is asked, answered, paid for and stored,
+# and the answer is about a field that was never in the state.
+#
+# DECLARED, not inferred from the builders below, because a reader has to be able to see it --
+# and a test asserts this map is exactly what the builders produce, so it fails until it is right
+# rather than drifting quietly. `_add_what_a_row_is` adds `what_one_row_of_this_model_is` to
+# every kind that names a model, which is why it is in all of them but `ruling_pair`.
+STATE_FIELDS: dict = {
+    "model": {"model", "columns", "filters", "groups_by", "reads",
+              "what_one_row_of_this_model_is"},
+    "edge": {"parent", "child", "columns_the_child_drops",
+             "the_child_already_collapsed_the_parent_before_joining",
+             "the_child_reads_this_parent_as_one_arm_of_a_UNION",
+             "what_one_row_of_this_model_is"},
+    "column": {"model", "column", "description", "expression", "derived_from", "other_columns",
+               "what_one_row_of_this_model_is"},
+    "predicate": {"model", "predicate_under_judgment", "the_models_other_filters", "reads",
+                  "what_one_row_of_this_model_is"},
+    "expression": {"model", "produces_column", "expression", "derived_from",
+                   "the_model_groups_by", "columns_it_reads",
+                   "what_one_row_of_this_model_is"},
+    "window": {"model", "where_it_sits", "partition_by", "order_by", "order_is_reprojected",
+               "the_model_filters", "what_one_row_of_this_model_is"},
+    # `ruling_pair` comes from the STORE and names no model, so it gets no row description.
+    "ruling_pair": {"check_or_question_both_rulings_are_about", "first_reason", "second_reason"},
+}
+
 
 @dataclass
 class SubjectSource:

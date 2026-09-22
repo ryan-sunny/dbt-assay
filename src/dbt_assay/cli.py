@@ -478,6 +478,13 @@ def check(
     if store_path:
         run_id = uuid.uuid4().hex[:12]
         s = Store(store_path)
+        # *** SAID BEFORE THE RUN IS WRITTEN, BECAUSE AFTERWARDS IT IS NO LONGER TRUE. ***
+        # An empty store and a clean warehouse print the same zeros. Reported from the field:
+        # a store staged at a path the container could not see reported `0 of 76 model(s) ruled`
+        # with no error and no warning, and that sentence is true of both.
+        first = s.new_store_warning()
+        if first:
+            console.print(f"\n[yellow]{first}[/]")
         ok = sum(1 for d in digests.values() if d.ok)
         s.write_run(run_id, project, project.coverage(), ok, len(failures), str(tdir), __version__)
         s.write_findings(run_id, findings)

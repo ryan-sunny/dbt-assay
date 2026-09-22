@@ -337,6 +337,32 @@ about their DATA is usually true everywhere and should stay unscoped; one that a
 regulatory regime or a regional convention needs `applies_to`. The lint will tell you which of
 theirs look like the second kind, and it writes the selector for you.
 
+**Propose `applies_to` by default on any project past a couple of dozen models, and say why.**
+Measured on the same warehouse: adding a scope to 12 of 16 terms took the lint from 13 warnings
+to 1, and it was the highest-value config change of the whole run. At that size the default of
+writing an unscoped term is the wrong default -- the blast radius of a wrong one is every judged
+answer about the part of the project where it is false, and there is no signal when it happens.
+An unscoped term should be a decision somebody made, not what happened because nobody said.
+
+## Running it on a box rather than a laptop
+
+Three things that cost a day between "assay works on my laptop" and "assay ran against the real
+warehouse". None of them look like what they are.
+
+- **`uvx --refresh`, always.** `uvx --from dbt-assay==<version>` will serve a CACHED environment
+  while the process reports itself as the version you asked for. It produced a completely blank
+  report page from a pin whose published wheel was correct, and the page stamped the new version
+  on itself the whole time. `uvx --refresh --from dbt-assay==<version>` fixed it. The same cache
+  also reports a just-published version as unsatisfiable while the PyPI JSON API already lists
+  it.
+- **`docker compose up -d`, not `restart`.** Environment is baked at container CREATE, so a key
+  added to `.env` and followed by a restart is not in the container. The failure reads as "assay
+  cannot see my key".
+- **The store has to be on a path the container can see.** assay will happily create an empty one
+  at a path that is not bound, and an empty store and a clean warehouse print the same zeros. It
+  now says "this store is NEW and holds nothing" on the first run against one, in the terminal
+  and on the page -- if you see that sentence and expected history, the path is the reason.
+
 ## When `changed_contracts` is noisy
 
 `rebase()` takes a fresh baseline. Use it when you have deliberately changed what several models

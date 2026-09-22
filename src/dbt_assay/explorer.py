@@ -21,6 +21,7 @@ sorting lives in the assembly layer where a test can assert it, and not in the b
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 
@@ -102,6 +103,8 @@ align-items:stretch;height:100%}
   border-radius:4px;padding:8px 10px;margin:8px 0;overflow-x:auto}
 .md code{font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:3px;
   padding:0 3px}
+.newstore{background:#fdf6e3;border:1px solid var(--amber);border-radius:6px;
+padding:12px 14px;margin:0 0 18px;font-size:13px;color:var(--ink)}
 .gridhost{display:flex;flex-direction:column;height:100%;min-height:0}
 .gridhost > .bar{flex:0 0 auto}
 .gridhost > .list{flex:1 1 auto}
@@ -449,6 +452,26 @@ function kv(pairs) {
 """
 
 
+def build_fingerprint() -> str:
+    """A short hash of the code that renders this page, so the version stamp is EVIDENCE.
+
+    *** THE STAMP WAS AN ASSERTION THE PAGE MADE ABOUT ITSELF, AND IT WAS FALSE. ***
+    Reported from the field: `uvx --from dbt-assay==0.47.2` served a cached 0.47.1 environment
+    while the process reported itself as 0.47.2, and the page it produced was completely dead.
+    The published wheel was correct. It took reading `explorer.py` out of the wheel inside the
+    container to settle it, because every number on the page agreed with every other number and
+    all of them came from the same wrong install.
+
+    A version is what the package SAYS it is. This is what the rendering code actually IS, so two
+    pages claiming one version and differing here came from two different installs -- the same
+    argument `state_hash` already makes for a judged answer.
+    """
+    h = hashlib.sha256()
+    for part in (CSS, JS, _VIEWS):
+        h.update(part.encode("utf-8"))
+    return h.hexdigest()[:12]
+
+
 def explorer_html(data: dict, record_html: str) -> str:
     """The whole thing: one file, embedded data, tabs.
 
@@ -525,7 +548,8 @@ def explorer_html(data: dict, record_html: str) -> str:
 <header>
 <h1>{e(meta['project'])}<span>everything assay knows</span></h1>
 <div class="sub">{meta['models']} models &middot; {meta['sources']} sources &middot;
-manifest generated {e(str(meta['generated_at']))} &middot; assay {e(meta['version'])}{form_link}</div>
+manifest generated {e(str(meta['generated_at']))} &middot;
+<span title="A hash of the code that rendered this page. The version is what the package says it is; this is what the rendering code actually IS, so two pages claiming one version and differing here came from two different installs.">assay {e(meta['version'])} &middot; build {e(build_fingerprint())}</span>{form_link}</div>
 <nav role="tablist">{nav}</nav>
 </header>
 <main>{panels}</main>
@@ -1858,6 +1882,15 @@ function goTab(name, label) {
 function understoodTab(host) {
   const M_ = DATA.models, F = DATA.findings, meta = DATA.meta;
   const bits = [];
+
+  /* *** A ZERO THAT MEANS "NOTHING HAS RUN" LOOKS EXACTLY LIKE ONE THAT MEANS "NOTHING IS
+     WRONG", AND ONLY ONE OF THEM IS GOOD NEWS. ***
+     Reported from the field as the most dangerous behaviour of the whole run: a store created at
+     a path a container could not see reported `0 of 76 model(s) ruled`, with no error anywhere. */
+  if (meta.new_store)
+    bits.push(el('div', {class: 'newstore'}, [
+      el('b', {text: 'Nothing has been recorded yet. '}),
+      el('span', {text: meta.new_store})]));
 
   /* *** THE OVERVIEW LED WITH AN INVENTORY OF FINDINGS BY CHECK. ***
      That is a table of contents, not an argument. The first screen has to say the thing nothing

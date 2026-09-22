@@ -93,6 +93,36 @@ def _acknowledged(q: dict) -> dict:
     return {k: str(v) for k, v in ack.items() if isinstance(ack, dict) and str(v).strip()}
 
 
+def _walk_strings(node) -> list:
+    """Every string anywhere in a question definition: instructions, criteria, options, nested."""
+    out = []
+    if isinstance(node, str):
+        out.append(node)
+    elif isinstance(node, dict):
+        for k, v in node.items():
+            out.append(str(k))
+            out += _walk_strings(v)
+    elif isinstance(node, (list, tuple)):
+        for v in node:
+            out += _walk_strings(v)
+    return out
+
+
+def _names_field(text: str, field: str) -> bool:
+    """Whether a question's prose refers to a state field AS A FIELD.
+
+    *** IN BACKTICKS, BECAUSE THAT IS HOW SOMEBODY MEANS THE KEY RATHER THAN THE WORD. ***
+    The first version matched the bare word and flagged three shipped questions: "volume
+    contradicts a claim about a column" is English about columns, not a reference to the
+    `column` key. A rule that fires on almost every question is a rule somebody switches off,
+    and then the one that mattered goes with it.
+
+    The real failure from the field wrote it the other way -- "Read `reads` and `filters`" --
+    because the author meant the field, and that is the convention every question here follows.
+    """
+    return f"`{field}`" in text
+
+
 def lint_question(name: str, q: dict, shipped: dict | None = None) -> list[Issue]:
     """Every rule this codebase learned the hard way, applied to one question.
 
@@ -207,9 +237,27 @@ def lint_question(name: str, q: dict, shipped: dict | None = None) -> list[Issue
     # --- a family that declares a subject is run by the generic runner ---
     subj = q.get("subject")
     if subj is not None:
-        from .subjects import KINDS
+        from .subjects import KINDS, STATE_FIELDS
         if subj not in KINDS:
             add("error", "subject", f"unknown subject {subj!r}. Use one of {sorted(KINDS)}.")
+        else:
+            # *** A QUESTION CAN ONLY ASK WHAT ITS SUBJECT'S STATE CAN ANSWER. ***
+            # Reported from the field and it cost an hour: a question asking about `filters`
+            # declared `subject: predicate`, lint-passed, and never fired -- only a `model`
+            # carries filters. The failure is silent in the worst way, because the question IS
+            # asked, answered, paid for and stored, and the answer is about a field that was
+            # never in the state it was sent.
+            mine = STATE_FIELDS.get(subj, set())
+            elsewhere = {f: k for k, fields in STATE_FIELDS.items() for f in fields
+                         if k != subj and f not in mine}
+            text = " ".join(str(v) for v in _walk_strings(q))
+            wanted = sorted({f for f in elsewhere if _names_field(text, f)})
+            for f in wanted[:4]:
+                add("error", "state_field_the_subject_does_not_carry",
+                    f"this asks about `{f}`, which a `{subj}` state does not carry -- "
+                    f"`{elsewhere[f]}` does. The question would be asked, answered, paid for and "
+                    f"stored, about a field that was never sent. A `{subj}` carries: "
+                    f"{sorted(mine)}.")
         ss = q.get("subject_state")
         if ss is not None and ss not in ("full", "minimal"):
             add("error", "subject_state",

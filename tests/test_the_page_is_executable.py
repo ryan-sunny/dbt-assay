@@ -69,3 +69,41 @@ def test_the_script_list_names_things_that_exist():
     for name, get in sorted(SCRIPTS.items()):
         js = get()
         assert isinstance(js, str) and len(js) > 500, f"{name} is not a script any more"
+
+
+def test_the_page_stamps_what_the_rendering_CODE_is_not_only_what_it_says_it_is():
+    """*** `uvx` SERVED A CACHED 0.47.1 WHILE THE PROCESS REPORTED ITSELF AS 0.47.2. ***
+
+    The page it produced was completely dead, and every number on it agreed with every other
+    number because all of them came from the same wrong install. A version is what the package
+    SAYS; the build hash is what the rendering code actually IS, so two pages claiming one
+    version and differing here came from two different installs.
+
+    Same argument `state_hash` already makes for a judged answer.
+    """
+    from dbt_assay import explorer
+
+    first = explorer.build_fingerprint()
+    assert len(first) == 12 and first == explorer.build_fingerprint(), "it is not deterministic"
+
+    real = explorer._VIEWS
+    try:
+        explorer._VIEWS = real + "\n/* one more line */"
+        assert explorer.build_fingerprint() != first, (
+            "the rendering code changed and the stamp did not, so the stamp is not evidence")
+    finally:
+        explorer._VIEWS = real
+    assert explorer.build_fingerprint() == first
+
+
+def test_the_stamp_reaches_the_page():
+    from dbt_assay import explorer
+
+    data = {"meta": {"project": "p", "models": 1, "sources": 0, "version": "9.9.9",
+                     "generated_at": "x", "coverage": {}},
+            "models": [], "edges": [], "claims": [], "findings": [], "decisions": [],
+            "questions": [], "adjudications": [], "config": {}, "runs": [], "unreadable": [],
+            "unconfigured": [], "effectiveness": [], "moved": {}}
+    doc = explorer.explorer_html(data, "<html></html>")
+    assert f"build {explorer.build_fingerprint()}" in doc
+    assert "assay 9.9.9" in doc

@@ -43,8 +43,16 @@ because it gates a build and it carries their name.
 finding, and a backlog of 159 is 159 turns that nobody will sit through. The reading batches; the
 answering does not have to happen in a conversation at all.
 
+**Read everything in the queue and rule on it BEFORE you emit.** Reported from the field: 167
+cards, 91 carrying a reading, so 76 said "nothing on this question" to the person sitting down to
+answer them. *"isnt that YOUR job when YOURE using the skills to make the report?"* — yes. Drain
+`review_queue()` and `rule()` on every item first, or write a `--reads` file, and only then
+render. A form where a quarter of the cards are a cold start is asking somebody to do the reading
+you were there to do.
+
 ```bash
-assay review --emit review.html --target <target/> --store assay.duckdb
+assay review --emit review.html --target <target/> --store assay.duckdb \
+  --report assay.html      # so the form and the report link to each other
 ```
 
 One self-contained file, opened from `file://`, no server and nothing left running. Twenty cards at
@@ -57,6 +65,12 @@ assay review --load verdicts.json --store assay.duckdb
 
 records every verdict at once. A card nobody answered is never submitted and never recorded, and
 `--load` names each row it did not record rather than reporting a total that hides them.
+
+**Do not end the turn on "open this file".** The download writes `handback.json` and NOTHING
+happens until it is loaded — the most valuable work in this whole system, sitting in a downloads
+folder. Ask for the path the moment they say they have filled it in, and load it:
+`load_handback(path)` over MCP, or the `--load` line above. It is the only path that files
+`human` verdicts, and it files only what the file carries.
 
 **The expensive half is yours, and it is what makes each card cheap.** Read the SQL for every
 finding once, offline, and write what you found into a file keyed by `<subject>::<check>`, with a

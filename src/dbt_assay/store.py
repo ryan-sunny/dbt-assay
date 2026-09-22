@@ -12,7 +12,10 @@ guard that scanned nothing and passed.
 from __future__ import annotations
 
 import json
+import os
 import platform
+import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar
@@ -187,19 +190,102 @@ class StoreUnwritable(RuntimeError):
     """The store cannot be opened for writing. Says which path and why, rather than a traceback."""
 
 
+class StoreLocked(StoreUnwritable):
+    """Somebody else holds the write lock. A subclass, so every existing handler still catches it,
+    and its own type, so a caller that wants to wait can tell this apart from a bad path."""
+
+
+def _is_lock_error(message: str) -> bool:
+    """duckdb spells the same condition several ways across versions, so match on all of them."""
+    low = (message or "").lower()
+    return any(s in low for s in ("lock", "being used", "conflicting"))
+
+
+# *** DUCKDB IS SINGLE-WRITER, AND A SCHEDULED PIPELINE HOLDS THE LOCK FOR AS LONG AS IT LIKES. ***
+# Reported from the field: `check --verify` hung for ELEVEN MINUTES against a cursor that did not
+# move, blocked on a nightly job that had been running 37 minutes with two more queued behind it.
+# Killing the assay run left a stale lock that needed `kill -9`.
+#
+# duckdb's own error names the holding PID. Reading it out and saying "PID 70034 has held this
+# since 19:42" is a completely different experience from a hang, and it is the difference between
+# "assay is broken" and "your nightly is still running".
+_LOCK_PID = re.compile(r"PID\s+(\d+)", re.IGNORECASE)
+
+
+def _lock_holder(message: str) -> dict:
+    """Who holds the store's write lock, from duckdb's own error text plus `ps`.
+
+    Everything here is best-effort and each piece is reported only if it was actually read. A
+    guessed process name would be worse than none: it is the thing a person is about to kill.
+    """
+    m = _LOCK_PID.search(message or "")
+    if not m:
+        return {}
+    pid = int(m.group(1))
+    out: dict = {"pid": pid}
+    try:
+        import subprocess
+        got = subprocess.run(["ps", "-o", "lstart=,command=", "-p", str(pid)],
+                             capture_output=True, text=True, timeout=5, check=False)
+        line = (got.stdout or "").strip()
+        if line:
+            # `ps -o lstart=` is a fixed 24-character date, then the command.
+            out["since"], out["command"] = line[:24].strip(), line[24:].strip()[:160]
+    except Exception:                                            # noqa: BLE001,S110
+        pass
+    return out
+
+
+def lock_message(path: str, err: str) -> str:
+    """The sentence a person can act on, instead of a traceback or a hang."""
+    who = _lock_holder(err)
+    if not who:
+        return (f"the store at {path} is LOCKED by another process. DuckDB allows one writer: "
+                f"close the other `assay` session or the job that is writing, and try again. "
+                f"The store is fine and nothing was lost.")
+    since = f", holding it since {who['since']}" if who.get("since") else ""
+    what = f"\n  {who['command']}" if who.get("command") else ""
+    return (f"the store at {path} is LOCKED by PID {who['pid']}{since}.{what}\n"
+            f"DuckDB allows one writer. Wait for it, or stop it. Nothing was lost, and nothing "
+            f"was written by this run.")
+
+
 class Store:
-    def __init__(self, path: str | Path = "assay.duckdb"):
+    def __init__(self, path: str | Path = "assay.duckdb", timeout: float | None = None):
+        """`timeout` seconds to wait for the write lock. 0 means do not wait.
+
+        Waiting is opt-in because the honest default for a person at a terminal is to be TOLD who
+        holds the lock immediately, rather than to sit in front of a cursor that does not move --
+        eleven minutes of it, in the field. A SCHEDULED caller would rather queue, and sets
+        `ASSAY_LOCK_TIMEOUT` once for the whole box instead of threading a flag through every
+        command that might open a store.
+        """
         self.path = str(path)
-        try:
-            self.con = duckdb.connect(self.path)
-        except Exception as e:
-            # *** A READ-ONLY WORKING DIRECTORY IS AN ORDINARY CI SETUP, NOT A BUG REPORT. ***
-            # duckdb raises an IOException that surfaces as a full traceback through the store's
-            # own internals, which reads like assay broke rather than like a path being wrong.
-            raise StoreUnwritable(
-                f"cannot open the assay store at {self.path!r}: {e}. "
-                f"Pass --store with a writable path, or run from a writable directory. "
-                f"The structural checks work without a store at all.") from e
+        if timeout is None:
+            try:
+                timeout = float(os.environ.get("ASSAY_LOCK_TIMEOUT") or 0.0)
+            except ValueError:
+                timeout = 0.0
+        deadline = time.monotonic() + max(0.0, float(timeout or 0.0))
+        while True:
+            try:
+                self.con = duckdb.connect(self.path)
+                break
+            except Exception as e:
+                text = str(e)
+                if _is_lock_error(text):
+                    if time.monotonic() < deadline:
+                        time.sleep(0.5)
+                        continue
+                    raise StoreLocked(lock_message(self.path, text)) from e
+                # *** A READ-ONLY WORKING DIRECTORY IS AN ORDINARY CI SETUP, NOT A BUG REPORT. ***
+                # duckdb raises an IOException that surfaces as a full traceback through the
+                # store's own internals, which reads like assay broke rather than like a path
+                # being wrong.
+                raise StoreUnwritable(
+                    f"cannot open the assay store at {self.path!r}: {e}. "
+                    f"Pass --store with a writable path, or run from a writable directory. "
+                    f"The structural checks work without a store at all.") from e
         self.con.execute(DDL)
         self.renamed_question_ids: list[tuple[str, str, int]] = []
         self.unrenamable_question_ids: list[tuple[str, str, int]] = []
@@ -579,6 +665,44 @@ class Store:
             return n - after
         except Exception:                                        # noqa: BLE001
             return 0
+
+    def is_new(self) -> dict:
+        """What this store does NOT yet hold, for a caller about to report on it.
+
+        *** AN EMPTY STORE AND A CLEAN WAREHOUSE PRODUCE THE SAME OUTPUT. ***
+        Reported from the field as the single most dangerous behaviour of the whole run: a store
+        was staged at a path the container could not see, assay created an empty one there, and
+        the run reported `0 of 76 model(s) ruled`. No error, no warning. That sentence is TRUE of
+        a warehouse nobody has reviewed and TRUE of a store that was created four seconds ago,
+        and only one of them means anything.
+
+        So it is answerable, and every surface that reports a zero can say which zero it is.
+        Counts, never a verdict: `{"runs": 0, "verdicts": 0, ...}` and a caller decides what to
+        say about it.
+        """
+        out = {"path": str(self.path)}
+        for key, table in (("runs", "runs"), ("verdicts", "adjudications"),
+                           ("answers", "model_decisions"), ("observations", "observed_keys"),
+                           ("claims", "claims")):
+            try:
+                out[key] = int(self.con.execute(f"select count(*) from {table}").fetchone()[0])
+            except Exception:                                    # noqa: BLE001
+                # A table this store is too old to have holds nothing, which is the same answer.
+                out[key] = 0
+        out["empty"] = not any(out[k] for k in ("runs", "verdicts", "answers", "observations",
+                                                "claims"))
+        return out
+
+    def new_store_warning(self) -> str:
+        """One sentence for a brand-new store, or `''`. Never printed for a store with history."""
+        st = self.is_new()
+        if not st["empty"]:
+            return ""
+        return (f"this store is NEW and holds nothing -- no runs, no verdicts, no answers. "
+                f"Every count below is zero because nothing has been recorded at {st['path']}, "
+                f"which is not the same as a warehouse with nothing wrong in it. If you expected "
+                f"history here, check the path: a store created at one a container cannot see "
+                f"reports exactly this.")
 
     def close(self) -> None:
         try:

@@ -189,3 +189,38 @@ def test_a_word_already_in_the_vocab_is_not_proposed_again():
     a = _model("stg_wells", {"diversion_point": {"description": "where water leaves"}})
     b = _model("fct_wells", {"diversion_point": {"description": "where water leaves"}})
     assert _vocab_from_descriptions(cfg, _project(a, b)) == []
+
+
+# ------------------------------------------- a question can only ask what its subject can answer
+
+def test_the_declared_state_fields_are_what_the_builders_actually_produce(project_dir):
+    """*** DECLARED, AND A TEST FAILS UNTIL THE DECLARATION IS TRUE. ***
+
+    `STATE_FIELDS` is what the lint checks a question against, so a key added to a builder and
+    not to the map means a legitimate question gets flagged, and a key removed from a builder and
+    left in the map means the broken one does not. Either way somebody is misled by a rule that
+    exists to stop them being misled.
+    """
+    from dbt_assay import subjects
+    from dbt_assay.infer import Schema
+    from dbt_assay.manifest import Project
+    from dbt_assay.parse import digest
+
+    project = Project.load(str(project_dir))
+    digests = {uid: digest(m.compiled or "", dialect="duckdb")
+               for uid, m in project.models.items()}
+    schema = Schema(project)
+
+    seen: dict = {}
+    for kind in ("model", "edge", "column", "predicate", "expression", "window"):
+        for s in subjects.build(kind, subjects.SubjectSource(
+                project=project, digests=digests, schema=schema)):
+            seen.setdefault(kind, set()).update(s.state or {})
+    assert seen, "the builders produced no subjects at all; this test is not testing anything"
+
+    for kind, produced in sorted(seen.items()):
+        declared = subjects.STATE_FIELDS[kind]
+        undeclared = sorted(produced - declared)
+        assert not undeclared, (
+            f"`{kind}` state carries {undeclared}, which STATE_FIELDS does not declare. A "
+            f"question asking about one of those would be flagged as impossible when it is not.")

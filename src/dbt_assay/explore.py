@@ -159,6 +159,12 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
             "coverage": project.coverage(),
             "yours": sum(1 for m in models if m["yours"]),
             "packaged": sum(1 for m in models if not m["yours"]),
+            # *** AN EMPTY STORE AND A CLEAN WAREHOUSE RENDER THE SAME PAGE. ***
+            # Every zero on this page -- ruled, spent, answered -- reads as "nothing is wrong"
+            # when it can equally mean "nothing has run". The page says which.
+            "new_store": (store.new_store_warning() if store is not None else
+                          "no store was read, so every count that comes from one is absent "
+                          "rather than zero."),
         },
         "models": models,
         "edges": _edges(store, by_uid),
