@@ -3367,3 +3367,58 @@ nobody has tested — that one confirms the old substring check passes on it and
 There is a second shape worth naming, which parsing alone does not catch: `name: x description is
 the rest` has no colon in the tail, parses cleanly as one string, and leaves a skill with a name
 nobody meant and no description. So the guard also asserts `name` did not swallow the next key.
+
+## 0.36.2: three things found by looking at one card
+
+Read from a screenshot of the review form, which is the only way any of them were going to be
+found.
+
+### "MY READ" was an agent's read, and the card contradicted itself
+
+A card drew two sections. `an agent said` came from rulings in the store; `my read` came from the
+`--reads` file. Both are an AGENT's reading. So a card could print
+
+    AN AGENT SAID   nothing on this question
+    MY READ         disagree — Claim is exactly true. Line 9 is ...
+
+to a person who had not touched it. It contradicts itself in four lines, and the obvious reading
+of `MY READ` is "I already answered this and disagreed" — the one thing a review form must never
+imply. Nothing on that page is the reader's until the reader clicks a radio.
+
+One section now, `an agent read this`, and a stored model-level ruling appears under its own label
+with the scope caveat it always carried.
+
+### The reason a finding exists was behind a click
+
+`why assay says so` was a `<details>`. The reason a thing is on the page is not an appendix to it:
+a card that hides its reasoning is asking for a verdict on a headline, one click cheaper. It is
+always drawn now.
+
+Which immediately showed why it had been hidden. Every finding on a card is the same check, so
+they share one explanation, and `int_azcc_owners` drew the identical paragraph about
+`row_number() ... = 1` three times. Said once, after the findings it explains.
+
+### Two different defects were rendering as the same sentence
+
+`int_azcc_owners` showed `dedupe on ['owner_key'] whose tie-break may not be total` twice. Not a
+duplicate — two windows, both partitioned by `owner_key`, ordered by
+`(NOT officer_name IS NULL) DESC, matched_name` and by `scraped_at DESC`. Distinct findings with
+distinct ids, rendered identically, so a reader could not tell which one they were ruling on.
+
+`Finding.id`'s own docstring says the summary "carries the column or the hop, which is what
+separates eight findings on one model". Here it did not. The tie-break is what differs, so the
+tie-break is in the summary.
+
+### ...and that turned up real duplicates
+
+With the distinguishable ones separated, what was left were genuine repeats: `water_reach_screen`
+reporting one finding **three times**, same id, same evidence, because the same window appears
+more than once in the compiled SQL and the check walks each occurrence. 4 duplicate rows of 258,
+inflating the headline number, the per-check breakdown and the form.
+
+A finding IS its id, so two rows carrying one id are one finding by this project's own definition.
+Deduped in the single stream every surface reads, rather than in each check that might repeat one.
+Sorting now breaks ties on the id too: by weight alone, equal-weight findings came back in
+whatever order they were appended, which is `arbitrary_pick` in the list that reports it.
+
+`arbitrary_pick` 37 to 33; total findings 258 to 254.

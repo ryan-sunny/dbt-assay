@@ -393,7 +393,15 @@ def arbitrary_pick(project, digests: dict[str, Digest]) -> list[Finding]:
             found.append(Finding(
                 check="arbitrary_pick",
                 subject=uid, subject_name=m.name, file=m.path,
-                summary=f"dedupe on {w.partition_columns} whose tie-break may not be total",
+                # *** THE PARTITION ALONE DOES NOT SEPARATE TWO OF THESE ON ONE MODEL. ***
+                # `int_azcc_owners` carries two, both partitioned by `owner_key`, ordered by
+                # `officer_name DESC, matched_name` and by `scraped_at DESC`. Two distinct
+                # defects rendered as the same sentence twice, so a reader could not tell which
+                # one they were ruling on -- and the id docstring says the summary is precisely
+                # what separates eight findings on one model. The tie-break is what differs, so
+                # the tie-break is in it.
+                summary=(f"dedupe on {w.partition_columns} whose tie-break may not be total"
+                         + (f", ordered by {', '.join(w.order_sql)}" if w.order_sql else "")),
                 detail=("`row_number() ... = 1` keeps one row per partition. None of the ORDER BY "
                         "keys is a column this project declares unique, so ties are broken by "
                         "whatever the engine returned, and the winner can change between builds "

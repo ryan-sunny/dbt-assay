@@ -235,6 +235,7 @@ border-radius:4px;padding:4px 10px;cursor:pointer}
 input[type=text]{font:inherit;padding:5px 8px;border:1px solid var(--line);border-radius:4px;
 width:100%;background:var(--bg)}
 .note-none{color:var(--faint)}
+.q.dim{color:var(--dim);font-size:13px}
 .warn{color:var(--amber)}
 footer{padding:0 24px 40px;color:var(--dim);font-size:12.5px}
 """
@@ -289,34 +290,46 @@ function card(c) {
   ]));
 
   box.append(el('div', {class: 'lbl', text: 'what assay found'}));
+  /* *** EVERY FINDING ON A CARD IS THE SAME CHECK, SO ITS EXPLANATION IS THE SAME TEXT. ***
+     `int_azcc_owners` carries three `arbitrary_pick` findings and drew the identical paragraph
+     about `row_number() ... = 1` three times. Once it stopped being hidden behind a click, that
+     turned a card into a wall -- and three copies of one sentence is what makes a reader skip
+     the sentence. It is said once, after the findings it explains. */
+  const seenDetail = new Set();
   for (const f of c.findings) {
     box.append(el('div', {class: 'q', text: f.summary}));
     if (f.claim) box.append(el('div', {class: 'q claim', text: '"' + f.claim + '"'}));
-    /* *** THE SUMMARY ALONE IS NOT ENOUGH TO RULE ON. ***
+    /* *** THE SUMMARY ALONE IS NOT ENOUGH TO RULE ON, AND IT WAS BEHIND A CLICK. ***
        "the description claims something the code does not do" is a category, not a case. The
-       detail is what says WHICH sentence and WHY, and it was being carried in the data and never
-       drawn -- so half the cards asked for a verdict on a headline. */
-    if (f.detail) box.append(el('details', {}, [
-      el('summary', {text: 'why assay says so'}),
-      el('div', {class: 'q', text: f.detail}),
-    ]));
+       detail is what says WHY, and it was first carried in the data and never drawn, then drawn
+       inside a <details>. The reason a thing is on the page is not an appendix to it: a card
+       that hides its reasoning is asking for a verdict on a headline, one click cheaper. */
+    if (f.detail) seenDetail.add(f.detail);
   }
+  for (const d of seenDetail) box.append(el('div', {class: 'q dim', text: d}));
 
-  box.append(el('div', {class: 'lbl', text: 'an agent said'}));
+  /* *** ONE SECTION, AND IT SAYS WHO. ***
+     This drew two: "an agent said" from rulings in the store, and "my read" from the --reads
+     file. Both are an AGENT's reading, and a card could therefore say "nothing on this question"
+     directly above a full verdict -- contradicting itself -- while labelling the verdict MY READ
+     to a person who had not touched the card yet. The obvious reading of that is "I already
+     answered this and disagreed", which is the one thing a review form must never imply.
+     Nothing on this page is the reader's until the reader clicks a radio. */
+  box.append(el('div', {class: 'lbl', text: 'an agent read this'}));
+  if (c.read) {
+    box.append(el('div', {class: 'q', text: c.read.verdict + ' — ' + c.read.why}));
+  }
   if (c.agent) {
+    if (c.read) box.append(el('div', {class: 'lbl', text: 'and a ruling stored on this model'}));
     box.append(el('div', {class: 'q', text: c.agent.verdict + ' — ' + c.agent.note}));
     /* WHICH question it was answering. A model-level ruling lands on every finding that model
        has and usually addressed a different one; passing it off is how somebody confirms a
        reading nobody did. */
     box.append(el('div', {class: 'q' + (c.agent.scope.startsWith('the model') ? ' warn' : ''),
                           text: 'about: ' + c.agent.scope}));
-  } else {
-    box.append(el('div', {class: 'q note-none', text: D.no_read}));
   }
-
-  if (c.read) {
-    box.append(el('div', {class: 'lbl', text: 'my read'}));
-    box.append(el('div', {class: 'q', text: c.read.verdict + ' — ' + c.read.why}));
+  if (!c.read && !c.agent) {
+    box.append(el('div', {class: 'q note-none', text: D.no_read}));
   }
 
   const sql = D.sql[c.file];

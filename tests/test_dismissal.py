@@ -125,3 +125,32 @@ def test_no_store_means_nothing_is_dismissed(store):
     """A missing store is not a clean bill. Every finding stands."""
     kept, _w = apply_policy([_f()], Config(), None, None)
     assert kept
+
+
+def test_the_same_finding_is_never_reported_twice(store):
+    """*** `water_reach_screen` REPORTED ONE FINDING THREE TIMES. ***
+
+    Identical id, identical evidence, because the same window appears more than once in the
+    compiled SQL and the check walks each occurrence. 4 duplicate rows of 258 on the field
+    warehouse, which inflates the headline number, the per-check breakdown, and the review form --
+    where a card drew the same sentence three times.
+
+    A finding IS its id, so two rows carrying one id are one finding by this project's own
+    definition.
+    """
+    from dbt_assay.live import _distinct
+    a, b = _f(), _f()
+    assert a.id == b.id, "the fixture does not produce a duplicate"
+    assert len(_distinct([a, b])) == 1
+
+
+def test_two_findings_of_equal_weight_come_back_in_one_order(store):
+    """Sorting by weight alone left ties to the order they happened to be appended.
+
+    That is `arbitrary_pick`, the defect this tool reports in other people's SQL, in the list it
+    reports it from.
+    """
+    from dbt_assay.live import _distinct
+    x, y = _f(summary="one"), _f(summary="two")
+    assert x.weight == y.weight
+    assert [f.id for f in _distinct([x, y])] == [f.id for f in _distinct([y, x])]

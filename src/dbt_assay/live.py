@@ -115,8 +115,34 @@ def all_findings(project, digests, schema, entries=None,
         except Exception:                                        # noqa: BLE001
             # A store too old to hold a series still produces every other finding. The comparison
             # is absent, which is honest: `assay probe` twice is what makes it possible.
-            return sorted(fs, key=lambda f: -f.weight)
-    return sorted(fs, key=lambda f: -f.weight)
+            return _distinct(fs)
+    return _distinct(fs)
+
+
+def _distinct(fs: list) -> list:
+    """One row per finding, highest weight first.
+
+    *** THE SAME FINDING WAS BEING EMITTED TWICE AND THREE TIMES. ***
+    `water_reach_screen` reported one `arbitrary_pick` three times -- identical id, identical
+    evidence -- because the same window appears more than once in the compiled SQL and the check
+    walks each occurrence. On the field warehouse that is 4 duplicate rows of 258, which inflates
+    every count derived from the list: the headline number, the per-check breakdown, and the
+    review form, where a card drew the same sentence three times.
+
+    A finding IS its id -- the check, the subject, the summary and the non-measured evidence -- so
+    two rows carrying one id are one finding by the project's own definition. Deduped here, in the
+    single stream every surface reads, rather than in each check that might repeat one.
+
+    The sort is stable and the id breaks ties, so two findings of equal weight come back in one
+    order across runs. Ordering by weight alone left that to the order they were appended.
+    """
+    seen, out = set(), []
+    for f in fs:
+        if f.id in seen:
+            continue
+        seen.add(f.id)
+        out.append(f)
+    return sorted(out, key=lambda f: (-f.weight, f.id))
 
 
 def findings_for(state: LiveState, model: str | None = None, store=None) -> list:

@@ -801,7 +801,7 @@ not a fact and nothing here pretends otherwise.
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.36.1
+- uses: ryan-sunny/dbt-assay@v0.36.2
   with:
     target: target-head
     baseline: base/target
