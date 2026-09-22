@@ -313,3 +313,132 @@ def test_a_verdict_made_before_any_recorded_run_stays_unversioned(tmp_path):
     got, = again.con.execute("select prompt_version from adjudications").fetchone()
     assert got == ""
     again.close()
+
+
+# ------------------------------------------------------- sampling, which is evidence and not a key
+
+def test_each_dialect_gets_its_own_sampling_syntax():
+    """*** A CLAUSE THE WAREHOUSE DOES NOT UNDERSTAND COMES BACK LOOKING LIKE AN EMPTY TABLE. ***
+    `dbt show` reports a syntax error the same way it reports no rows."""
+    assert probe.sample_clause("duckdb", 10) == "using sample 10%"
+    assert probe.sample_clause("bigquery", 10) == "tablesample system (10 percent)"
+    assert probe.sample_clause("snowflake", 2.5) == "sample (2.5)"
+    # An engine assay has no spelling for is counted exactly rather than guessed at.
+    assert probe.sample_clause("teradata", 10) == ""
+    assert probe.sample_clause("duckdb", 0) == ""
+    assert probe.sample_clause("duckdb", 100) == "", "sampling all of it is not sampling"
+
+
+def test_the_sample_clause_lands_in_the_statement():
+    t = _target()
+    assert probe.build_sql(t, "duckdb").endswith("orders")
+    assert probe.build_sql(t, "duckdb", 5).endswith("using sample 5%")
+
+
+def test_a_sampled_pass_is_never_a_unique_key():
+    """*** DUPLICATES ARE EXACTLY WHAT A SAMPLE MISSES. ***
+
+    Set at the point of CREATION, not at the point of display: a weaker record that looks like a
+    stronger one because a field did not get set is the defect that stamped 70 verdicts
+    `(unversioned)`.
+    """
+    row = {"row_count": 100, "nn_0": 100, "dc_0": 100}
+    t = probe.Target(relation="db.main.orders", uid="u", columns=["id"])
+    exact = probe.interpret(t, row)[0]
+    assert exact.status == "unique" and exact.is_unique_key is True
+
+    sampled = probe.interpret(t, row, sample_pct=1.0)[0]
+    assert sampled.sampled is True and sampled.sample_pct == 1.0
+    assert sampled.is_unique_key is False, "a sample cannot settle a key"
+    assert "NOT settled" in sampled.detail
+    assert "sample" in sampled.detail
+
+
+def test_a_sampled_duplicate_is_still_a_duplicate():
+    """The one direction a sample CAN settle: it found duplicates, so they exist."""
+    t = probe.Target(relation="db.main.orders", uid="u", columns=["id"])
+    got = probe.interpret(t, {"row_count": 100, "nn_0": 100, "dc_0": 40}, sample_pct=1.0)[0]
+    assert got.status == "has_duplicates"
+    assert "1% sample" in got.detail
+
+
+def test_the_store_remembers_that_an_observation_was_sampled(tmp_path):
+    """Without this, `--sample` writes a row indistinguishable from an exact one and every
+    reader downstream treats 1% of a table as the whole of it."""
+    s = Store(str(tmp_path / "s.duckdb"))
+    probe.write(s, [probe.Observation("db.main.orders", "id", 100, 100, 100, "unique",
+                                      sampled=True, sample_pct=1.0)])
+    back = probe.read(s)["db.main.orders"]["id"]
+    assert back.sampled is True and back.sample_pct == 1.0
+    assert back.is_unique_key is False
+    s.close()
+
+
+def test_a_sampled_observation_never_enters_a_drift_comparison(tmp_path):
+    """*** IT WOULD MANUFACTURE `key_stopped_holding` OUT OF THE SAMPLING. ***
+    A sample is evidence about today, never a point in a series."""
+    import datetime as dt
+
+    s = Store(str(tmp_path / "s.duckdb"))
+    s.con.execute(probe.DDL)
+    rows = [("db.main.orders", "id", 100, 100, 100, "unique", "", "", False, 0.0,
+             dt.datetime(2026, 9, 1, tzinfo=dt.timezone.utc)),
+            ("db.main.orders", "id", 10, 10, 4, "has_duplicates", "", "", True, 1.0,
+             dt.datetime(2026, 9, 2, tzinfo=dt.timezone.utc))]
+    s.con.executemany(
+        """insert into observed_keys (relation, column_name, row_count, non_null, distinct_ct,
+           status, detail, minimality, sampled, sample_pct, observed_at)
+           values (?,?,?,?,?,?,?,?,?,?,?)""", [list(r) for r in rows])
+    assert probe.changes(s) == [], "a sample was compared against an exact count"
+    s.close()
+
+
+# --------------------------------------------- what the adapter itself said, where it says anything
+
+def test_the_adapter_response_is_read_off_dbts_json_log():
+    """*** VERIFIED AGAINST dbt-core 1.11, NOT ASSUMED. ***
+    `dbt show --log-format json --log-level debug` emits a `Q025 NodeFinished` event carrying
+    `run_result.adapter_response`. On DuckDB that object has no bytes, because DuckDB has none
+    to report; BigQuery's adapter puts `bytes_processed` and `bytes_billed` on it."""
+    import json as _json
+
+    log = "\n".join([
+        "12:00:00 Running with dbt=1.11.12",
+        _json.dumps({"info": {"code": "Q041"}, "data": {"preview": '[{"n": 1}]'}}),
+        _json.dumps({"info": {"code": "Q025"}, "data": {"run_result": {
+            "adapter_response": {"bytes_billed": 10485760, "bytes_processed": 2048},
+            "execution_time": 0.25}}}),
+    ])
+    rows, resp, secs = probe.parse_dbt_json_logs(log)
+    assert rows == [{"n": 1}]
+    assert secs == 0.25
+    # `bytes_billed` wins: BigQuery bills a 10MB minimum, so a 2KB scan costs 10MB and only one
+    # of those two numbers is what it cost.
+    assert probe.adapter_bytes(resp) == 10485760
+
+
+def test_an_adapter_with_no_bytes_to_report_gives_none():
+    """DuckDB's response is `{_message, code, query_id, rows_affected}`, measured. None is the
+    answer, and the estimate stays in its own column."""
+    assert probe.adapter_bytes({"_message": "OK", "rows_affected": None}) is None
+    assert probe.adapter_bytes({}) is None
+
+
+def test_a_measured_statement_says_adapter_and_leaves_the_estimate_alone(tmp_path):
+    s = Store(str(tmp_path / "s.duckdb"))
+    probe.enrich(dialect="bigquery", rate=BQ,
+                 types={"db.main.orders": {"id": "INT64"}})
+    probe.write(s, [probe.Observation("db.main.orders", "id", 1000, 1000, 1000, "unique")])
+    res = probe.Result(rows=[{"n": 1}], wall_ms=900,
+                       adapter={"bytes_billed": 10485760}, engine_ms=250)
+    probe._record("select count(*) from db.main.orders", res, caller="assay.probe.keys",
+                  kind="key_scan", relation="db.main.orders", columns=["id"])
+    est, measured, basis, usd = s.con.execute(
+        "select bytes_estimated, bytes_measured, estimate_basis, usd_estimated "
+        "from warehouse_calls").fetchone()
+    assert est == 8 * 1000, "the estimate is still computed and still its own column"
+    assert measured == 10485760
+    assert basis == "adapter"
+    # Priced on the invoice, not on the guess.
+    assert usd == (10485760 / cost.USD_PER_TB) * 6.25
+    s.close()

@@ -66,6 +66,13 @@ create table if not exists observed_keys (
     -- move the column was determined by the others. That is the whole of minimality and it is two
     -- counts, so a model was being asked a question arithmetic settles exactly.
     minimality   varchar,
+    -- *** A SAMPLED COUNT AND AN EXACT ONE ARE DIFFERENT FACTS UNDER ONE NAME. ***
+    -- Without this, `--sample` would write a row indistinguishable from an exact observation,
+    -- and every reader downstream -- grain propagation, the drift checks, the page -- would
+    -- treat 1% of a table as the whole of it. `sample_pct` is 0 for an exact count, which is
+    -- the honest reading: nothing was sampled.
+    sampled      boolean,
+    sample_pct   double,
     -- *** EVERY OTHER TABLE THAT RECORDS A MEASUREMENT KEEPS ITS SERIES. THIS ONE OVERWROTE. ***
     -- `model_decisions` keys on the version so `effectiveness` and `regress` are possible;
     -- `findings` and `edge_facts` key on `run_id`. `observed_keys` keyed on (relation, column)
@@ -149,10 +156,22 @@ class Observation:
     # "adds" | "carried" | "" when minimality was not counted for this column.
     minimality: str = ""
     observed_at: object = None
+    # *** A SAMPLED RESULT MUST NEVER SATISFY THE CLAIM AN EXACT ONE DOES. ***
+    # `count(distinct k) = count(*)` over 1% of a table says nothing about the other 99%: the
+    # duplicates are exactly what a sample is likely to miss. Set at the point of CREATION, not
+    # at the point of display -- a weaker record that looks like a stronger one because a field
+    # did not get set is the defect that stamped 70 verdicts `(unversioned)`.
+    sampled: bool = False
+    sample_pct: float = 0.0
 
     @property
     def is_unique_key(self) -> bool:
-        return self.status == "unique"
+        """Unique in today's data, counted over ALL of it.
+
+        A sampled observation is never a unique key however the counts came out, because the
+        thing it would be asserting is about rows it did not read.
+        """
+        return self.status == "unique" and not self.sampled
 
 
 @dataclass
@@ -172,6 +191,11 @@ class Result:
     failed: bool = False
     why: str = ""
     wall_ms: int = 0
+    # What the ADAPTER said, when assay asked for it. `bytes_measured` is filled from here and
+    # from nowhere else; `engine_ms` is dbt's own execution time, which excludes its startup and
+    # is therefore a truer number than the wall clock around the subprocess.
+    adapter: dict = field(default_factory=dict)
+    engine_ms: int | None = None
 
     def __bool__(self):
         """*** DELIBERATELY UNUSABLE, BECAUSE `if not got:` IS THE BUG. ***
@@ -204,6 +228,10 @@ class _Ledger:
     # bytes are estimated at all, which is the honest outcome for a project with no catalog.
     types: dict = field(default_factory=dict)
     rate: object = None
+    # *** ASKING THE ADAPTER COSTS A DEBUG-LEVEL LOG, SO IT IS ASKED FOR. ***
+    # `cost.measure_bytes` in audit.yml. Off by default: the log is slow and enormous, and the
+    # estimate needs no warehouse at all.
+    measure: bool = False
     written: int = 0
     unrecorded: int = 0            # ledger writes that themselves failed, reported, never silent
     _rows: dict | None = None
@@ -275,7 +303,7 @@ def detach(store) -> None:
 
 
 def enrich(dialect: str | None = None, types: dict | None = None, rate=None,
-           run_id: str | None = None) -> None:
+           run_id: str | None = None, measure: bool | None = None) -> None:
     """Give the live ledger what the manifest and the config know. A no-op with no ledger."""
     led = _RECORDING
     if led is None:
@@ -288,6 +316,14 @@ def enrich(dialect: str | None = None, types: dict | None = None, rate=None,
         led.rate = rate
     if run_id is not None:
         led.run_id = run_id
+    if measure is not None:
+        led.measure = bool(measure)
+
+
+def measuring() -> bool:
+    """Whether to ask dbt for its adapter's own numbers on the next statement."""
+    led = _RECORDING
+    return bool(led is not None and led.measure)
 
 
 def ledger():
@@ -321,6 +357,15 @@ def _record(sql: str, res: Result, *, caller: str, kind: str, relation: str = ""
             # over many relations -- cannot be sized from the schema, and a number built from the
             # columns it happened to recognise would understate the scan with nothing saying so.
             est, basis = None, "unknown"
+        # *** A NUMBER THE WAREHOUSE RETURNED, OR NOTHING. NEVER THE ESTIMATE COPIED ACROSS. ***
+        # When the adapter gave one, the basis says `adapter` and the estimate stays in its own
+        # column: two figures under two names, so a reader can always tell which they have.
+        measured = adapter_bytes(res.adapter)
+        if measured is not None:
+            basis = "adapter"
+        # dbt's own execution time excludes its startup, so it prices a Snowflake second better
+        # than the wall clock around the subprocess does.
+        took = res.engine_ms if res.engine_ms is not None else res.wall_ms
         led.store.con.execute(DDL)
         led.store.con.execute(
             """insert into warehouse_calls
@@ -332,8 +377,10 @@ def _record(sql: str, res: Result, *, caller: str, kind: str, relation: str = ""
             [hashlib.sha1(sql.encode("utf-8")).hexdigest()[:16],
              led.run_id, caller, relation, kind, rate.engine,
              len(cols) or None, json.dumps(cols) if cols else None,
-             len(res.rows), scanned, est, None, basis, bool(sampled), sample_rows,
-             res.wall_ms, rate.price(est, res.wall_ms), rate.name,
+             len(res.rows), scanned, est, measured, basis, bool(sampled), sample_rows,
+             res.wall_ms,
+             # Priced on the measured bytes when there are any: that is the invoice.
+             rate.price(measured if measured is not None else est, took), rate.name,
              bool(res.failed), (res.why or "")[:300],
              datetime.now(timezone.utc)])
         led.written += 1
@@ -342,15 +389,21 @@ def _record(sql: str, res: Result, *, caller: str, kind: str, relation: str = ""
 
 
 def _execute(sql: str, project_dir: str, profiles_dir: str | None = None,
-             dbt_bin: str = "dbt", limit: int = 50, timeout: int = 300) -> Result:
+             dbt_bin: str = "dbt", limit: int = 50, timeout: int = 300,
+             measure: bool = False) -> Result:
     """`dbt show --inline`, timed, with failure separated from emptiness.
 
     `dbt_bin` may carry arguments ("uv run dbt", "poetry run dbt", a venv path), because plenty of
     projects have no bare `dbt` on PATH and failing on that would be a pointless wall.
+
+    `measure` asks dbt for its adapter's own numbers, which needs JSON logging at debug level --
+    slow, and enormous, so it is off unless `cost.measure_bytes` is set.
     """
     cmd = [*dbt_bin.split(), "show", "--inline", sql, "--output", "json", "--limit", str(limit)]
     if profiles_dir:
         cmd += ["--profiles-dir", profiles_dir]
+    if measure:
+        cmd += ["--log-format", "json", "--log-level", "debug"]
     started = time.monotonic()
 
     def elapsed() -> int:
@@ -362,6 +415,15 @@ def _execute(sql: str, project_dir: str, profiles_dir: str | None = None,
     except (OSError, subprocess.TimeoutExpired) as e:
         return Result(failed=True, why=str(e)[:300], wall_ms=elapsed())
     ms = elapsed()
+    if measure:
+        # With JSON logging the result object is not on its own line: it is the `preview` field
+        # of the ShowNode event, so it needs the other parser.
+        rows, resp, secs = parse_dbt_json_logs(p.stdout or "")
+        if p.returncode != 0:
+            return Result(failed=True, wall_ms=ms,
+                          why=(p.stderr or p.stdout or "no output")[-300:].strip())
+        return Result(rows=rows, wall_ms=ms, adapter=resp,
+                      engine_ms=None if secs is None else int(secs * 1000))
     data = parse_dbt_show(p.stdout or "")
     if p.returncode != 0 or data is None:
         return Result(failed=True, wall_ms=ms,
@@ -418,15 +480,50 @@ def targets(project, digests, schema, declared, known_grain: dict) -> list[Targe
     return out
 
 
-def build_sql(target: Target, dialect: str = "duckdb") -> str:
-    """One statement, one scan, three numbers per candidate column."""
+# *** SAMPLING IS DIALECT-SPECIFIC AND A WRONG CLAUSE READS AS AN EMPTY TABLE. ***
+# `dbt show` reports a syntax error the same way it reports no rows, so a sample clause that the
+# warehouse does not understand would come back looking like a relation with nothing in it. Each
+# engine's own spelling, and an engine assay has no spelling for is not sampled at all -- exact
+# is the default and falling back to it is never wrong, only slower.
+_SAMPLE_CLAUSE = {
+    "duckdb": "using sample {pct}%",
+    "bigquery": "tablesample system ({pct} percent)",
+    "snowflake": "sample ({pct})",
+    "databricks": "tablesample ({pct} percent)",
+    "spark": "tablesample ({pct} percent)",
+}
+
+
+def sample_clause(dialect: str, pct: float) -> str:
+    """The engine's own sampling syntax, or `''` where assay does not know it."""
+    tpl = _SAMPLE_CLAUSE.get((dialect or "").lower())
+    if not tpl or not pct or pct <= 0 or pct >= 100:
+        return ""
+    # Trailing zeros off: `10%` rather than `10.0%`, because two of these dialects parse the
+    # percentage as an integer literal.
+    text = f"{pct:.4f}".rstrip("0").rstrip(".")
+    return tpl.format(pct=text)
+
+
+def build_sql(target: Target, dialect: str = "duckdb", sample_pct: float = 0.0) -> str:
+    """One statement, one scan, three numbers per candidate column.
+
+    *** EXACT IS THE DEFAULT AND SAMPLING IS AN ESCAPE HATCH. ***
+    `count(distinct k)` settles a grain exactly, once, and caches forever, and that exactness is
+    the whole reason this exists. But a uniqueness check on a billion-row BigQuery table is a
+    real bill, so `--sample` exists for people with big warehouses -- and a sampled result is
+    evidence, never a settled fact. Every Observation it produces carries `sampled`, set at the
+    point of creation rather than at the point of display, because the alternative is 1.2 again:
+    a weaker record that looks like a stronger one because a field did not get set.
+    """
     parts = ["count(*) as row_count"]
     for i, c in enumerate(target.columns):
         col = sqlglot.parse_one(c, dialect=dialect).sql(dialect=dialect)
         parts.append(f"count({col}) as nn_{i}")
         parts.append(f"count(distinct {col}) as dc_{i}")
     rel = exp.to_table(target.relation).sql(dialect=dialect)
-    return f"select {', '.join(parts)} from {rel}"
+    clause = sample_clause(dialect, sample_pct)
+    return f"select {', '.join(parts)} from {rel}" + (f" {clause}" if clause else "")
 
 
 def parse_dbt_show(stdout: str) -> dict | None:
@@ -448,21 +545,107 @@ def parse_dbt_show(stdout: str) -> dict | None:
     return None
 
 
-def interpret(target: Target, row: dict) -> list[Observation]:
+# *** WHETHER dbt CARRIES THE ADAPTER'S OWN NUMBERS: VERIFIED, NOT ASSUMED. ***
+# Run against dbt-core 1.11 with dbt-duckdb:
+#
+#   dbt show --inline "select 1 as n" --output json --log-format json --log-level debug
+#
+# emits a `Q025 NodeFinished` event carrying `run_result.adapter_response` and
+# `run_result.execution_time`. On DuckDB the response is `{_message, code, query_id,
+# rows_affected}` -- no bytes, because DuckDB does not bill on bytes and has none to report. The
+# BigQuery adapter puts `bytes_processed` and `bytes_billed` on the same object, and Snowflake
+# puts `query_id` and `rows_affected`.
+#
+# So a real engine number IS reachable without a credential, through the project's own dbt. It
+# costs a debug-level log, which is slow and enormous, so it is opt-in: `cost.measure_bytes` in
+# `audit.yml`. What it buys is `bytes_measured` filled from a number the warehouse returned,
+# beside `estimate_basis = 'adapter'` -- and the estimate column left alone, so the two never mix.
+_BYTES_KEYS = ("bytes_billed", "bytes_processed", "total_bytes_billed", "total_bytes_processed")
+
+
+def parse_dbt_json_logs(stdout: str) -> tuple[list[dict], dict, float | None]:
+    """(rows, adapter_response, execution_seconds) from `--log-format json` output.
+
+    With JSON logging the result object does not arrive on its own line: it is the `preview`
+    field of the `Q041 ShowNode` event. A reader looking for a bare `{` finds a log line instead,
+    which is why this is a second parser rather than a flag on the first one.
+    """
+    rows: list[dict] = []
+    resp: dict = {}
+    secs: float | None = None
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        code = (ev.get("info") or {}).get("code")
+        data = ev.get("data") or {}
+        if code == "Q041":
+            try:
+                got = json.loads(data.get("preview") or "[]")
+                rows = list(got) if isinstance(got, list) else []
+            except (json.JSONDecodeError, TypeError):
+                rows = []
+        elif code == "Q025":
+            rr = data.get("run_result") or {}
+            resp = rr.get("adapter_response") or {}
+            try:
+                secs = float(rr.get("execution_time"))
+            except (TypeError, ValueError):
+                secs = None
+    return rows, resp, secs
+
+
+def adapter_bytes(resp: dict) -> int | None:
+    """Bytes the ADAPTER reported, or None. Never a fallback to anything estimated.
+
+    `bytes_billed` first, because that is the number on the invoice: BigQuery bills a 10MB
+    minimum per table, so a scan of 2KB is processed as 2KB and billed as 10MB, and only one of
+    those is what it cost.
+    """
+    for k in _BYTES_KEYS:
+        v = (resp or {}).get(k)
+        if v is None:
+            continue
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n >= 0:
+            return n
+    return None
+
+
+def interpret(target: Target, row: dict, sample_pct: float = 0.0) -> list[Observation]:
     n = row.get("row_count")
+    sampled = bool(sample_pct)
+    over = f" over a {sample_pct:g}% sample" if sampled else ""
     out = []
     for i, c in enumerate(target.columns):
         nn, dc = row.get(f"nn_{i}"), row.get(f"dc_{i}")
-        o = Observation(target.relation, c, n, nn, dc)
+        o = Observation(target.relation, c, n, nn, dc,
+                        sampled=sampled, sample_pct=float(sample_pct or 0.0))
         if nn is None or dc is None or n is None:
             o.status, o.detail = "unknown", "the query did not return counts for this column"
         elif nn < n:
             # NULLs first: `count(distinct)` ignores them, so a mostly-null column can look unique.
             o.status = "has_nulls"
-            o.detail = f"{n - nn:,} of {n:,} rows are NULL, so this cannot be a key on its own"
+            o.detail = (f"{n - nn:,} of {n:,} rows are NULL{over}, so this cannot be a key on "
+                        f"its own")
         elif dc < nn:
             o.status = "has_duplicates"
-            o.detail = f"{nn:,} rows, {dc:,} distinct: {nn - dc:,} duplicates"
+            o.detail = f"{nn:,} rows{over}, {dc:,} distinct: {nn - dc:,} duplicates"
+        elif sampled:
+            # *** THE ONE CASE A SAMPLE CANNOT SETTLE, SO IT SAYS SO IN THE STATUS ITSELF. ***
+            # Duplicates are precisely what a sample misses. A sampled pass is a reason to run
+            # the exact count, not a substitute for having run it.
+            o.status = "unique"
+            o.detail = (f"{n:,} sampled rows, all non-null and distinct{over}. NOT settled: "
+                        f"duplicates are what a sample misses. Re-run without --sample to "
+                        f"count it exactly.")
         else:
             o.status = "unique"
             o.detail = f"{n:,} rows, all non-null and distinct, observed today"
@@ -473,23 +656,30 @@ def interpret(target: Target, row: dict) -> list[Observation]:
 def run_via_dbt(target: Target, project_dir: str, profiles_dir: str | None = None,
                 dialect: str = "duckdb", timeout: int = 300,
                 dbt_bin: str = "dbt",
-                caller: str = "assay.probe.keys") -> tuple[list[Observation], str]:
+                caller: str = "assay.probe.keys",
+                sample_pct: float = 0.0) -> tuple[list[Observation], str]:
     """Returns (observations, raw_sql). A failure yields `unknown` rows, never `not unique`.
 
     One of the two places a statement reaches a warehouse, so one of the two places that records
     what it cost.
     """
-    sql = build_sql(target, dialect)
-    res = _execute(sql, project_dir, profiles_dir, dbt_bin, limit=1, timeout=timeout)
+    # An engine assay has no sampling syntax for is counted EXACTLY rather than with a clause it
+    # guessed at, and the observations say so.
+    clause = sample_clause(dialect, sample_pct)
+    used_pct = sample_pct if clause else 0.0
+    sql = build_sql(target, dialect, sample_pct)
+    res = _execute(sql, project_dir, profiles_dir, dbt_bin, limit=1, timeout=timeout,
+                   measure=measuring())
     _record(sql, res, caller=caller, kind="key_scan", relation=target.relation,
-            columns=target.columns)
+            columns=target.columns, sampled=bool(used_pct),
+            sample_rows=None)
     if res.failed or not res.rows:
         # An aggregate over any table returns exactly one row, so no rows here is a failure and
         # not an empty table -- but the detail now says WHICH, instead of both reading the same.
         why = res.why or "the query returned no row"
         return ([Observation(target.relation, c, status="unknown", detail=why)
                  for c in target.columns], sql)
-    return interpret(target, res.rows[0]), sql
+    return interpret(target, res.rows[0], used_pct), sql
 
 
 def migrate(store) -> int:
@@ -516,6 +706,12 @@ def migrate(store) -> int:
     # `minimality` may be missing on an old store; add it before anything reads it.
     if "minimality" not in have:
         store.con.execute("alter table observed_keys add column minimality varchar")
+    # Same for the sampling pair. An existing row has neither, and NULL reads as `false` and
+    # `0.0` through the coalesce in `read` -- which is correct: it was counted exactly.
+    if "sampled" not in have:
+        store.con.execute("alter table observed_keys add column sampled boolean")
+    if "sample_pct" not in have:
+        store.con.execute("alter table observed_keys add column sample_pct double")
     # Is `observed_at` already part of the key? duckdb exposes it through the constraint list.
     try:
         keyed = store.con.execute(
@@ -530,7 +726,7 @@ def migrate(store) -> int:
         create table _ok_hist (
             relation varchar, column_name varchar, row_count bigint, non_null bigint,
             distinct_ct bigint, status varchar, detail varchar, observed_at timestamp,
-            via varchar, minimality varchar,
+            via varchar, minimality varchar, sampled boolean, sample_pct double,
             primary key (relation, column_name, observed_at))""")
     store.con.execute("""
         insert into _ok_hist
@@ -539,7 +735,10 @@ def migrate(store) -> int:
                -- existed at all would be NULL, and NULL cannot sit in a primary key. Such a row
                -- is the oldest thing here by definition, so it is dated as such rather than lost.
                coalesce(observed_at, timestamp '1970-01-01 00:00:00'),
-               via, coalesce(minimality, '')
+               via, coalesce(minimality, ''),
+               -- Anything written before sampling existed was counted exactly, which is what
+               -- these two values say.
+               coalesce(sampled, false), coalesce(sample_pct, 0.0)
         from observed_keys""")
     store.con.execute("drop table observed_keys")
     store.con.execute("alter table _ok_hist rename to observed_keys")
@@ -560,10 +759,11 @@ def write(store, observations: list[Observation], via: str = "dbt-show") -> None
     store.con.executemany(
         """insert or replace into observed_keys
            (relation, column_name, row_count, non_null, distinct_ct, status, detail,
-            observed_at, via, minimality)
-           values (?,?,?,?,?,?,?,?,?,?)""",
+            observed_at, via, minimality, sampled, sample_pct)
+           values (?,?,?,?,?,?,?,?,?,?,?,?)""",
         [[o.relation, o.column, o.row_count, o.non_null, o.distinct_ct,
-          o.status, o.detail, now, via, o.minimality or ""] for o in observations])
+          o.status, o.detail, now, via, o.minimality or "",
+          bool(o.sampled), float(o.sample_pct or 0.0)] for o in observations])
 
 
 def read(store) -> dict[str, dict[str, Observation]]:
@@ -576,14 +776,16 @@ def read(store) -> dict[str, dict[str, Observation]]:
     """
     store.con.execute(DDL)
     out: dict[str, dict[str, Observation]] = {}
-    for rel, col, n, nn, dc, status, detail, at, _via, mini in store.con.execute(
+    for rel, col, n, nn, dc, status, detail, at, _via, mini, smp, pct in store.con.execute(
             """select relation, column_name, row_count, non_null, distinct_ct, status, detail,
-                      observed_at, via, minimality
+                      observed_at, via, minimality,
+                      coalesce(sampled, false), coalesce(sample_pct, 0.0)
                from (select *, row_number() over (partition by relation, column_name
                                                   order by observed_at desc) rn
                      from observed_keys) where rn = 1""").fetchall():
         out.setdefault(rel.lower(), {})[col] = Observation(
-            rel, col, n, nn, dc, status, detail, mini or "", at)
+            rel, col, n, nn, dc, status, detail, mini or "", at,
+            sampled=bool(smp), sample_pct=float(pct or 0.0))
     return out
 
 
@@ -598,10 +800,11 @@ def history(store, relation: str = "", column: str = "") -> list[Observation]:
             args.append(column)
     rows = store.con.execute(
         f"""select relation, column_name, row_count, non_null, distinct_ct, status, detail,
-                   observed_at, minimality
+                   observed_at, minimality, coalesce(sampled, false), coalesce(sample_pct, 0.0)
             from observed_keys {where} order by relation, column_name, observed_at""",
         args).fetchall()
-    return [Observation(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[8] or "", r[7]) for r in rows]
+    return [Observation(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[8] or "", r[7],
+                        sampled=bool(r[9]), sample_pct=float(r[10] or 0.0)) for r in rows]
 
 
 def sample_sql(relation: str, columns: list[str], n: int = 20, dialect: str = "duckdb") -> str:
@@ -649,7 +852,8 @@ def run_sql(sql: str, project_dir: str, profiles_dir: str | None = None,
     fallbacks exist so an outside caller records SOMETHING rather than nothing, and every call
     site inside assay passes both.
     """
-    res = _execute(sql, project_dir, profiles_dir, dbt_bin, limit=limit, timeout=timeout)
+    res = _execute(sql, project_dir, profiles_dir, dbt_bin, limit=limit, timeout=timeout,
+                   measure=measuring())
     _record(sql, res, caller=caller, kind=kind, relation=relation, columns=columns,
             sampled=sampled, sample_rows=sample_rows)
     return res
@@ -740,12 +944,17 @@ def changes(store, project=None) -> list:
     """
     from .checks.structural import Finding
     store.con.execute(DDL)
+    # *** A SAMPLED OBSERVATION CANNOT ENTER A DRIFT COMPARISON. ***
+    # `key_stopped_holding` says a column WAS unique and is not, which is the finding that
+    # matters most here. Comparing last week's exact count against this week's 1% sample would
+    # manufacture that finding out of the sampling, and comparing the other way would manufacture
+    # `key_started_holding`. A sample is evidence about today, never a point in a series.
     rows = store.con.execute("""
         select relation, column_name, status, minimality, row_count, distinct_ct, non_null,
                observed_at,
                row_number() over (partition by relation, column_name
                                   order by observed_at desc) as rn
-        from observed_keys
+        from observed_keys where not coalesce(sampled, false)
     """).fetchall()
     latest, prior = {}, {}
     for rel, col, status, mini, n, dc, nn, at, rn in rows:

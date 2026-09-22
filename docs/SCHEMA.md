@@ -150,6 +150,8 @@ erDiagram
         varchar via "dbt-show / loaded"
         varchar minimality
         varchar detail
+        boolean sampled "a sampled count is not a settled one"
+        double sample_pct "0 when it was counted exactly"
     }
     WAREHOUSE_CALLS {
         varchar call_id "sha1 of the STATEMENT, so a rerun is identifiable"

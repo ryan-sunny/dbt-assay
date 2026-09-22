@@ -3836,7 +3836,8 @@ def _price(project, schema, cfg=None, run_id: str = "") -> object:
     dialect = getattr(project, "dialect", "duckdb") or "duckdb"
     rate = cost_mod.RateCard.from_config(getattr(cfg, "cost", None) or {}, dialect)
     probe_mod.enrich(dialect=rate.engine, types=cost_mod.declared_types(project, schema),
-                     rate=rate, run_id=run_id)
+                     rate=rate, run_id=run_id,
+                     measure=bool((getattr(cfg, "cost", None) or {}).get("measure_bytes")))
     return rate
 
 
@@ -4017,6 +4018,11 @@ def probe(
     limit: int = typer.Option(0, "--limit", "-n"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     config_path: str = typer.Option(".", "--config"),
+    sample: float = typer.Option(0.0, "--sample",
+                                 help="count over a percentage of each relation instead of all "
+                                      "of it, for warehouses where an exact count is a real "
+                                      "bill. EXACT IS THE DEFAULT: a sampled result is evidence, "
+                                      "never a settled key, and every surface says so."),
 ):
     """Count what the SQL cannot settle. Runs through YOUR dbt; assay never sees a credential."""
     cfg = Config.load(config_path)
@@ -4042,6 +4048,20 @@ def probe(
                       f"{2 * -(-n_all // max(limit, 1))}.[/]")
 
     console.print(f"[bold]{len(tg)}[/] relations have no settled grain and are read by a model.")
+    if sample:
+        # *** EVERY SURFACE THAT PRINTS A SAMPLED FINDING PRINTS THAT IT WAS SAMPLED. ***
+        # A sampled uniqueness result is evidence, not a settled fact, and it must not be cached
+        # as though it were one. The flag is set on the Observation at creation; this is the
+        # first of the places that reads it back.
+        clause = probe_mod.sample_clause(dialect, sample)
+        if clause:
+            console.print(f"[yellow]sampling {sample:g}% of each relation[/] [dim]({clause}). "
+                          f"Duplicates are what a sample misses, so nothing counted this way is "
+                          f"recorded as a settled key, and the drift checks ignore it.[/]")
+        else:
+            console.print(f"[yellow]--sample was ignored[/] [dim]-- assay has no sampling syntax "
+                          f"for `{dialect}`, and a clause it guessed at would come back looking "
+                          f"like an empty table. Counted exactly instead.[/]")
     if not tg:
         store.close()
         raise typer.Exit(0)
@@ -4084,14 +4104,15 @@ def probe(
     found = []
     for t_ in tg:
         obs, _sql = probe_mod.run_via_dbt(t_, project_dir, profiles_dir, dialect,
-                                          dbt_bin=dbt_bin, caller="assay.probe.keys")
+                                          dbt_bin=dbt_bin, caller="assay.probe.keys",
+                                          sample_pct=sample)
         probe_mod.write(store, obs)
         for o in obs:
             if o.status == "unknown":
                 unknown += 1
             else:
                 ok += 1
-            if o.status == "unique":
+            if o.is_unique_key:
                 found.append(o)
     console.print(f"observed [bold]{ok}[/] columns, [yellow]{unknown} unknown[/] "
                   f"(a failure is recorded as unknown, never as 'not unique')")

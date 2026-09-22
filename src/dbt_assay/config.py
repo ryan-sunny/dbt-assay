@@ -583,6 +583,11 @@ cost: {}
 #  usd_per_credit: 3.00              # snowflake, with credits_per_hour for your warehouse size
 #  credits_per_hour: 1
 #  nominal_string_bytes: 32   # a VARCHAR has no width until you read it; this is the assumption
+#  measure_bytes: true       # ask dbt for the ADAPTER's own byte count instead of estimating.
+#                            # Verified on dbt-core 1.11: `dbt show --log-format json --log-level
+#                            # debug` carries `run_result.adapter_response`, which the BigQuery
+#                            # adapter fills with bytes_processed and bytes_billed. Off by
+#                            # default because a debug-level log is slow and enormous.
 
 # practices: override how a standard dbt-project-evaluator check is treated.
 #   enforce (exact, may gate) | recommend (informational) | adjudicate (ask) | off
