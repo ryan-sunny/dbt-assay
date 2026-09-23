@@ -284,10 +284,11 @@ assay adjudicate          # triage the rows a dbt test already failed
 
 ```bash
 assay review --emit review.html -t target/   # the form, with everything in it
+assay review --emit review.html -t target/ --monitoring volume.json --report assay.html
 assay review --load verdicts.json            # every verdict at once
 ```
 
-The form is not only findings. Three more tabs carry the parts of `audit.yml` that are pure domain
+The form is not only findings. Five more tabs carry the parts of `audit.yml` that are pure domain
 knowledge, and **Words comes first**: a verdict settles one finding, while a vocabulary term
 reaches every judged answer about every model it applies to.
 
@@ -296,6 +297,8 @@ reaches every judged answer about every model it applies to.
 | **Words** | their vocabulary, plus candidates ranked by how often this warehouse joins on them. assay fills in what it measured — how many models name the word, which directories they sit in, what the lint says, a scope that resolves — and leaves `means:` empty, because a definition written from a model name looks exactly like one they chose |
 | **Explanations** | the per-mart options for failing-row adjudication. `config.py` calls this "the part of the file worth maintaining" in its own comment, and nothing had ever let anybody maintain it |
 | **Waivers** | findings somebody already called fine, carrying the reason *they* typed. assay never invents one |
+| **Monitoring** | the staleness threshold, DERIVED from how often this project actually builds rather than picked, with the cadence it came from set beside it, so changing it is a disagreement with a measurement. Needs `--monitoring volume.json` |
+| **Settings** | the rest of `audit.yml` a person acts on — the gating floors, the row-loss threshold, the spend cap, the rate card — each carrying what assay ships, what this project set, and what happens if it is wrong |
 | **Findings** | the cards, as before |
 
 What they write comes back as a **proposal**, never a write. `assay review --load handback.json`
@@ -387,7 +390,15 @@ see.
 ```bash
 assay probe --dry-run     # the SQL it would run, run nothing
 assay probe               # run it, via `dbt show --inline`. assay never holds a credential.
+assay probe --sample      # count a sample rather than the whole relation
+assay probe --emit        # ...or take the SQL, run it yourself, and --load the results
 ```
+
+Relations are batched into one statement, because dbt's startup is the cost and the count itself
+is milliseconds: 271 statements became 23 on a 358-model warehouse, and 24 relations went from
+about seven minutes to 46 seconds. The catalog is read first — a metadata query that scans
+nothing — so a statement can only ask for columns the warehouse actually has, and a batch that
+fails is bisected rather than discarded.
 
 **Ruling on what it found**
 
@@ -542,6 +553,13 @@ CALL in `model_calls`, written at decide time with the rate that was in force, s
 never rewrites what was already spent. It does not estimate -- a call the provider returned no
 usage for is excluded and counted, and output tokens are shown and never priced because Jev does
 not bill them.
+
+**Warehouse spend is a separate ledger, and only one of its clocks is billable.** A statement's
+wall time includes dbt's startup and your network, and calling that warehouse time overstated a
+batch by 263x. `exec_ms` is its own column, recorded only where the adapter reports it, and it is
+the only one a credit rate is ever multiplied by. Bytes scanned come from the catalog where the
+engine exposes them; a statement nothing could estimate is counted as **unestimated** rather than
+priced at zero, because a zero reads as *this was free*.
 
 The obvious derivation is wrong and this is why the table exists. `model_decisions` is one row per
 ANSWER and carries its CALL's token count on each of them, so summing it counts a batched call
@@ -743,9 +761,13 @@ assay watch                                # rerun on save; print only what your
 **Wiring it in**
 
 ```bash
-assay page assay.html     # EVERYTHING assay knows: models, chain drawn as lineage,
-                          # claims, findings, answers, questions, config. One file, eight
+assay page assay.html     # EVERYTHING assay knows: models, chain drawn as lineage, claims,
+                          # findings, monitoring, answers, questions, config. One file, ten
                           # tabs. ALSO writes assay-data/ -- commit that, not the page
+assay page assay.html --monitoring volume.json   # ...and whether anything is WATCHING it:
+                          # build cadence, each monitor's freshness, what the declared tests
+                          # are doing, and the models with no row-count history at all
+assay page assay.html --form review.html         # the report and the form link to each other
 assay page x.html --from assay-data/   # re-render from a committed artifact, no warehouse
 assay page --plain        # ...just the record: is this warehouse understood, and by whom
 assay export <dir>        # the tables, as seeds your own models can join to

@@ -1,6 +1,6 @@
 # assay
 
-<img src="docs/cuts/condensers.gif" align="right" width="190" alt="">
+<img src="docs/cuts/condensers.gif" align="right" width="260" alt="two condensing trains rising off a still, with the cooling barrel beside them">
 
 **Recover the semantics your warehouse never wrote down.**
 
@@ -122,8 +122,9 @@ which is strictly worse than serving it dated. An answer `assay` cannot check at
 ## Volume, read from Elementary rather than rebuilt
 
 ```bash
-assay volume            # what Elementary counted, joined to what your project claims
-assay volume --judge    # ...and whether a movement contradicts one of those claims
+assay volume                          # what Elementary counted, joined to what you claim
+assay volume --judge                  # ...and whether a movement contradicts a claim
+assay volume --json > volume.json     # the same numbers as a file
 ```
 
 Elementary detects with no semantics — *row count fell 41%*. assay has the declared grain, the
@@ -135,6 +136,12 @@ ingested as assay findings — that would corrupt the one number measuring the l
 Six absence states are told apart and **none of them reads as "fine"**, including the three a spec
 did not predict: a monitoring table nothing has written to for months, a test whose last result was
 a failure and which has not run since, and a warehouse assay could not reach at all.
+
+Taking the measurement needs your dbt connection, so `--json` writes it once and everything else
+reads the file: `assay page --monitoring volume.json` renders it as the report's Monitoring tab,
+`assay review --emit --monitoring volume.json` puts the derived staleness threshold in the form
+beside the cadence it came from, and the `monitoring()` MCP tool hands an agent the same summary.
+**assay still holds no credential anywhere in that chain.**
 
 ## Read next
 
@@ -176,7 +183,7 @@ unresolved premise says so rather than inheriting confidence it did not earn.
 
 <img src="docs/cuts/tower.gif" align="right" width="140" alt="">
 
-## The page
+## The inventory page
 
 ```bash
 assay inventory --html docs/warehouse.html
@@ -187,6 +194,40 @@ from, and **who said so**. Color-coded, searchable, no build step, opens from a 
 Commit it and a change in what your warehouse MEANS shows up as a diff.
 
 dbt docs shows you lineage. This shows you meaning.
+
+## The report
+
+```bash
+assay page assay.html -t target/                            # everything assay knows
+assay page assay.html -t target/ --form review.html         # the two link to each other
+assay page assay.html -t target/ --monitoring volume.json   # ...and what is watching it
+```
+
+Everything assay knows, as one file you double-click. Ten tabs: the Overview, every model, every
+hop, every claim, every finding, what to configure, every answer ever given, what each call cost,
+every question in full, the resolved config — and **Monitoring**, which is the one that asks
+whether anybody would notice if what this SQL produces changed tonight:
+
+- how often this project actually builds, which every threshold on the tab is derived from rather
+  than picked;
+- each monitor's own freshness, because a monitor that stopped reads exactly like one that finds
+  nothing;
+- what the declared tests are doing. On the warehouse this was built against: 1,291 declared,
+  1,098 that have ever produced a result, and 1,846 results that are `skipped` rather than passed;
+- tests whose last result was a **failure** and which have not run since — neither a live failure
+  nor a pass, and indistinguishable from a live failure in any view that sorts by status;
+- the models with a mart downstream and no row-count history at all.
+
+Without `--monitoring` that tab says the measurement has not been taken and prints the command that
+takes it. **It never renders zeros**, because a zero there reads as *nothing is wrong* and means
+*nobody looked*.
+
+It writes a data artifact beside the page — one JSONL line per entity — and that is the thing worth
+committing: a diff reads as *these 3 models changed*, and `assay page --from assay-data/` renders
+any past commit's artifact as the page it was, with no warehouse, no store and no manifest.
+
+No network, no build step, deterministic: it carries the manifest's own `generated_at` and never a
+wall clock, so a rerun that changes nothing writes an identical file.
 
 ## On the pull request
 
@@ -249,6 +290,8 @@ reaches every judged answer about every model it applies to.
 | **Words** | their vocabulary, plus candidates ranked by how often this warehouse joins on them. assay fills in what it measured — how many models name the word, which directories they sit in, what the lint says, a scope that resolves — and leaves `means:` empty, because a definition written from a model name looks exactly like one they chose |
 | **Explanations** | the per-mart options for failing-row adjudication. `config.py` calls this "the part of the file worth maintaining" in its own comment, and nothing had ever let anybody maintain it |
 | **Waivers** | findings somebody already called fine, carrying the reason *they* typed. assay never invents one |
+| **Monitoring** | the staleness threshold, derived from how often this project actually builds rather than picked, with the cadence it came from beside it. Needs `--monitoring volume.json` |
+| **Settings** | the rest of `audit.yml` a person acts on — gating floors, the row-loss threshold, the spend cap, the rate card — each with what assay ships beside what this project set |
 | **Findings** | the cards, as before |
 
 What they write comes back as a **proposal**, never a write. `assay review --load handback.json`
@@ -450,9 +493,24 @@ assay probe --emit > probe.sql # or run it yourself and --load the results
 ```
 
 It shells out to `dbt show --inline`, so **assay never sees a credential** and every adapter and
-auth scheme your dbt already handles works unchanged. One statement per relation, one scan, and
+auth scheme your dbt already handles works unchanged. Each relation is counted once, with
 `count(*)`, `count(col)` and `count(distinct col)` together, because `count(distinct)` ignores NULLs
 and a mostly-null column would otherwise look unique.
+
+**Relations are batched into one statement, because the startup is the cost.** dbt takes seconds
+to boot and the count itself is milliseconds, so a statement per relation spends nearly all of its
+time starting dbt up again. Measured on a 358-model warehouse: 271 statements became 23, and 24
+relations went from about seven minutes to 46 seconds. A batch that fails is bisected rather than
+discarded, so one bad column cannot throw away the good ones beside it.
+
+**And it asks only for columns the warehouse actually has.** The catalog is read first — a
+metadata query that scans nothing — and the target list is intersected with it. Before that, 70 of
+271 statements on that warehouse were asking for columns that do not exist, and every one came
+back `unknown`, which is indistinguishable from a permissions error. A target nothing can confirm
+is marked `UNVERIFIED` instead of being guessed at.
+
+`--sample` counts a sample rather than the whole relation, when the whole relation is more than you
+want to pay for.
 
 A result says `unique`, `has_duplicates`, `has_nulls` or `unknown`. A permissions error, a missing
 table or a timeout records **unknown**, never "not unique". And an observation is stored with its

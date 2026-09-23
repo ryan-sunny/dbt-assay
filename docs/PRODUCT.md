@@ -243,7 +243,7 @@ it.
 ## The page
 
 `assay page assay.html` writes **everything assay knows about your warehouse**, as one file you
-open by double-clicking. Eight tabs:
+open by double-clicking. Ten tabs:
 
 | tab | what is on it |
 |---|---|
@@ -251,6 +251,9 @@ open by double-clicking. Eight tabs:
 | **The chain** | every hop in the DAG, what it carries, what it **drops**, what it joined on, whether it drives, and how much of the parent survived |
 | **Claims** | every sentence the project says about itself, where it was written down to `path:line`, and what the code said back |
 | **Findings** | ranked by reach, each with its evidence and whether a person has read *this finding* or only its model |
+| **Monitoring** | whether anybody would notice if what this SQL produces changed tonight: how often the project actually builds, each monitor's own freshness, what the declared tests are doing, the tests whose last result was a FAILURE and which have not run since, and the models with a mart downstream and no row-count history. Needs `--monitoring volume.json`; without it the tab says the measurement was never taken rather than showing zeros |
+| **What to configure** | the join between a long findings list and four lines of YAML, each row carrying the measurement that produced it |
+| **Spend** | one row per call, what the thinking cost and what the warehouse cost, kept apart because they are priced by different people in different units |
 | **Answers** | the live answer to every question asked about this project, with its confidence and the runner-up |
 | **Questions** | all the question banks in full: the instructions and every option, exactly as they are sent |
 | **Config** | what was actually resolved, the vocab, the runs, and what assay could not read |
@@ -267,7 +270,7 @@ models in one scroll, it is less: the first screen tells you nothing about the s
 there and gives you nowhere obvious to click. So the high-volume tabs open on a grouped summary
 you can read in one screen, and the rows are one click in, already filtered. Claims group by
 model, answers by the question family that asked them, findings by check. And a model name in any
-table is a link to that model, so the tabs are one thing rather than eight islands.
+table is a link to that model, so the tabs are one thing rather than ten islands.
 
 **The chain is drawn, not listed.** You never draw 573 hops; that is the whole graph. A drawing is
 always one model's neighborhood, and those are small: on a 358-model warehouse the median is 3

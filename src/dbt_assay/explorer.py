@@ -99,8 +99,9 @@ color:var(--faint);margin-top:5px}
    the line made it a speck. Floated at the head of the paragraph it is legible AND the sentence
    runs around it, so the header costs the height of the cut and nothing more -- which is how a
    plate is set into a page in the books these came out of. */
-.tabhead{margin:0 0 12px;display:flow-root;min-height:0}
-.tabcut{float:left;height:172px;width:auto;margin:0 26px 12px 0;mix-blend-mode:multiply}
+.tabhead{margin:0 0 12px}
+.tabcut{float:right;height:196px;width:auto;margin:0 0 16px 34px;mix-blend-mode:multiply}
+.clearcut{clear:both}
 
 /* ---- controls. A search box is a ruled line, not a pill. */
 input[type=search],select,input[type=text]{font:inherit;font-size:14px;padding:5px 2px;
@@ -1765,13 +1766,16 @@ function configTab(host) {
   /* The one tab besides the Overview that carries a plate: it has a short opening line and a
      long table under it, so a cut set into that line costs nothing and fills paper that was
      otherwise empty. */
+  /* *** A FLOAT INSIDE A flow-root PARAGRAPH IS NOT A FLOAT, IT IS A BLOCK. ***
+     Containing it in the opening line meant one short sentence wrapped around a 172px plate and
+     everything after it started below the whole thing -- a column of bare paper down the left
+     and the settings pushed half a screen down. It sits in the TAB, on the right, and the note
+     and the resolved settings run up the left of it. */
   const cut = (DATA.cuts || {}).tower;
-  const head = el('p', {class: 'note tabhead'});
-  if (cut) head.append(el('img', {class: 'cut tabcut', src: cut, alt: ''}));
-  head.append(document.createTextNode(
+  if (cut) bits.push(el('img', {class: 'cut tabcut', src: cut, alt: ''}));
+  bits.push(el('p', {class: 'note tabhead', text:
     'What was actually resolved, which is not always what the file says. Everything under here '
-    + 'you wrote by hand.'));
-  bits.push(head);
+    + 'you wrote by hand.'}));
 
   const scalars = Object.entries(c).filter(([, v]) => typeof v !== 'object' || v === null);
   if (scalars.length) bits.push(section('resolved', kv(scalars.map(([k, v]) => [k, String(v)]))));
@@ -1815,6 +1819,8 @@ function configTab(host) {
     if (c[k] && Object.keys(c[k]).length) bits.push(section(k, kvAny(c[k])));
   }
 
+  /* A full-width table beside a float is a squeezed table, so the float ends before one. */
+  bits.push(el('div', {class: 'clearcut'}));
   if (DATA.runs.length) bits.push(section('runs recorded (' + DATA.runs.length + ')',
     grid(DATA.runs, [
       {key: 'run', label: 'run', mono: 1, val: r => r.run_id},
