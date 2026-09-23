@@ -297,7 +297,8 @@ It is written every run rather than behind a flag, because a page and an artifac
 disagree is the same one-fact-two-spellings defect this tool exists to find.
 
 Everything renders from one object called `DATA`, embedded here and one `fetch` on a server, so
-this already builds most of `assay serve` if a warehouse ever outgrows a file.
+this already builds most of a served version if a warehouse ever outgrows a file. There is no
+server command today; the page is a file.
 
 And it is still **deterministic**: it carries the manifest's own `generated_at` and never a wall
 clock, and every array is sorted in the assembly layer rather than in the browser, so a rerun that

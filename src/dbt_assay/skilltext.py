@@ -38,6 +38,19 @@ reports itself as the version you asked for, and the symptom is a page that rend
 `assay --help` lists every command; the table at the end of this file has all of them with every
 flag.
 
+**The edit gate.** `assay hook install --dbt "<how dbt runs here>"` writes a hook into
+`.claude/settings.json` that compiles a model after you edit it and stops you on any finding the
+edit introduced (`onboard --agent` installs it too). It compares against the last full
+`assay check`, so run one first. When it stops you, fix the SQL -- or, if the finding is correct
+and should stand, tell the person; your own ruling does not clear it.
+
+**A command that reaches the warehouse is blind without its connection, not clean.** `probe`,
+`volume`, `feeds`, `practices`, `adjudicate`, `completeness`, `patch`, `tests --count-defaults` and
+`check --verify` all run the project's own dbt, so every one of them takes
+`--project-dir <the dbt project>` and `--dbt "<how dbt runs here, e.g. uv run dbt>"`. Without them
+they run dbt in the wrong place and report "NOT LOOKED AT" -- which is a fact about the
+invocation, never about the project.
+
 ## Before you touch a model
 
 1. `contract(model)` — what one row is, what each column does, where each value comes from.
@@ -284,8 +297,8 @@ and nothing is lost:
 | `blast_radius(model)` | `assay inventory --model <model> --json` (`descendants`, `marts`) |
 | `claims(model)` | `assay claims --model <model>` then `assay verify --model <model>` |
 | `traversal(model)` | `assay traverse --model <model>` |
-| `practices(model)` | `assay practices --keys-only --model <model>` |
-| `lineage(model, column)` | `assay trace <column> --model <model>` |
+| `practices(model)` | `assay practices --keys-only --no-verify --model <model>` |
+| `lineage(model, column)` | `assay trace <model>.<column>` |
 | `findings(model)` | `assay check --json` — one object with a `findings` list |
 | `changed_contracts()` | `assay diff --baseline <main target>` |
 | `violations()` | `assay check --json`, then read `action` |
@@ -299,7 +312,7 @@ and nothing is lost:
 | `spend()` | `assay cost`, or `assay cost --json` |
 | `stale(exact)` | `assay stale`, `assay stale --exact`, `assay stale --cost` |
 | `vocabulary()` | `assay config --target <target/>` |
-| `monitoring(volume_json)` | `assay volume --json > volume.json` |
+| `monitoring(volume_json)` | `assay volume --json --project-dir <dbt project> --dbt "<dbt>" > volume.json` |
 
 The one difference worth knowing: the MCP tools reload when the manifest moves, and a CLI run
 reads whatever `target/` holds at that moment. Run `dbt compile` first if you have edited SQL.
@@ -319,12 +332,14 @@ reads whatever `target/` holds at that moment. Run `dbt compile` first if you ha
   by whom". Deterministic, so it can be committed and diffed.
 - `assay diff --baseline <main target>` — what changed about what models MEAN, for a review.
 - `assay version-check --baseline <main target>` — whether anything owes a version bump.
-- `practices(model)` / `assay practices --keys-only` — models with no uniqueness test, and the
-  grain a test should cover. A patch, not a nag.
+- `practices(model)` / `assay practices --keys-only --project-dir <dbt project> --dbt "<dbt>"` —
+  models with no uniqueness test, and the grain a test should cover, each grain counted through
+  their dbt first. `--no-verify` is the pure-code half. A patch, not a nag.
 - `assay claims --extract` then `assay verify` — pull every claim out of this project's own prose
   and check each one against the code.
 - `assay traverse` — judge every hop in the graph for a fan-out nobody declared.
-- `assay patch tests/assay` — write the uniqueness tests assay can PROVE will pass. It counts each
+- `assay patch tests/assay --project-dir <dbt project> --dbt "<dbt>"` — write the uniqueness
+  tests assay can PROVE will pass. It counts each
   grain first and refuses to write one that would fail on its first run.
 - `assay cost` — what the judged tier has cost here, by caller and by day. Free, and it is the
   number to put in front of somebody BEFORE proposing a judged run.
@@ -345,7 +360,7 @@ models with a mart downstream and no row-count history at all.
 assay never holds a credential, so they run the measurement and you read it:
 
 ```bash
-assay volume --json > volume.json                      # their connection, free, no judgment
+assay volume --json --project-dir <dbt project> --dbt "<dbt>" > volume.json   # their connection, free
 assay page assay.html --monitoring volume.json         # the same numbers on the report
 assay review --emit review.html -t target/ --monitoring volume.json
 ```

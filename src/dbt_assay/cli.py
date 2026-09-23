@@ -86,6 +86,22 @@ def _estimate_line(est: dict, rate) -> str:
             f"[dim]({est['engine']}, {card})[/].{tail}")
 
 
+# *** A WAREHOUSE-TOUCHING COMMAND WITHOUT A CONNECTION IS BLIND, NOT CLEAN. ***
+# Every one of these reaches the warehouse through the project's own dbt, so without `--project-dir`
+# and `--dbt` it runs dbt in the wrong place and reports what it could not see. The skill taught
+# seven of them with neither flag, and a blind `practices` run -- "23 of 23 standard check(s) were
+# NOT LOOKED AT" -- was read as a finding about the project. The value is the flag that makes the
+# command reach a warehouse at all; None means it always does. A test holds every example in the
+# skills to this table, and holds this table to the commands' real options.
+WAREHOUSE_COMMANDS: dict = {
+    # command: (only WITH this flag, or None for always; never WITH this flag, or None)
+    "probe": (None, None), "volume": (None, None), "feeds": (None, None),
+    "adjudicate": (None, None), "completeness": (None, None), "patch": (None, None),
+    "practices": (None, "--no-verify"),
+    "tests": ("--count-defaults", None), "check": ("--verify", None),
+}
+
+
 def _find_target(given: str | None) -> Path:
     if given:
         p = Path(given)
@@ -6241,8 +6257,10 @@ def practices(
                                      "recommending it. A test that fails on its first run is "
                                      "not a patch."),
     keys_only: bool = typer.Option(False, "--keys-only",
-                                   help="just the primary-key patches. Pure code, no key, no "
-                                        "warehouse."),
+                                   help="just the primary-key patches. No key and no judged "
+                                        "tier; it still counts each grain through your dbt "
+                                        "unless --no-verify, which is the pure-code half."),
+    model: str = typer.Option(None, "--model", "-m", help="only this model"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     config_path: str = typer.Option(".", "--config"),
 ):
@@ -6258,6 +6276,8 @@ def practices(
     project, _d, _sch, entries = _entries(tdir, store, dialect)
 
     patches = prac_mod.primary_key_patches(project, entries)
+    if model:
+        patches = [p_ for p_ in patches if p_[0] == model]
     # *** "CAN BE WRITTEN" IS NOT "WOULD PASS", AND THE DIFFERENCE WAS 0 OF 7. ***
     # Counted, in one statement per batch, wherever the models are built. A proposal nobody can
     # count stays absent from `held` and is reported as unchecked, never as holding.
