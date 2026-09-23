@@ -120,3 +120,24 @@ def test_the_monitoring_bank_sorts_each_pile_and_refuses_to_guess(tmp_path):
     assert subs["stale_monitor_still_matters"]
     assert subs["test_never_ran_is_a_gap_or_a_leftover"] == [], \
         "an unreadable results table is not 'nothing ran'"
+
+
+def test_patch_worth_testing_ranks_the_judged_risks(project_dir, tmp_path):
+    import json as _json
+
+    from typer.testing import CliRunner
+
+    from dbt_assay.cli import app
+    from dbt_assay.store import Store
+    s = Store(str(tmp_path / "s.duckdb"))
+    s.con.execute("""insert into model_decisions (decision_key, question, answer, confidence,
+                     probabilities, prompt_version, model_version, decided_at, state_hash)
+                     values ('model.p.stg_bad_notnull::risk::amount', 'risk',
+                             'a_default_would_hide_missing_data', 0.8, '{}', 'risk.v1', 'm',
+                             now(), 'h')""")
+    s.close()
+    r = CliRunner().invoke(app, ["patch", "--worth-testing", "-t", str(project_dir),
+                                 "--store", str(tmp_path / "s.duckdb"), "--json"])
+    assert r.exit_code == 0, r.output
+    got = _json.loads(r.output)["worth_testing"]
+    assert got[0]["column"] == "amount" and "catches it" in got[0]["test_that_catches_it"]

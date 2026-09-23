@@ -390,6 +390,11 @@ matter, and whether a test that never ran is a gap or a leftover. Every defect a
 in `assay check` that rests on its own family, so none can fail a build until people have ruled on
 it. On a 356-model warehouse all seven code-derived families together price at about two cents.
 
+`assay patch --worth-testing` turns `what_would_break_silently` into a list: the untested columns
+whose shape invites a silent failure, ranked by how many marts read them, each with the failure
+named and the kind of test that catches it. `patch` alone still writes only the uniqueness tests it
+can prove will pass; this is the list of tests worth writing because they can fail.
+
 ## Drafts of what you would otherwise write by hand
 
 ```bash

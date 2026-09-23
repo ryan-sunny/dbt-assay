@@ -96,7 +96,8 @@ def _estimate_line(est: dict, rate) -> str:
 WAREHOUSE_COMMANDS: dict = {
     # command: (only WITH this flag, or None for always; never WITH this flag, or None)
     "probe": (None, None), "volume": (None, None), "feeds": (None, None),
-    "adjudicate": (None, None), "completeness": (None, None), "patch": (None, None),
+    "adjudicate": (None, None), "completeness": (None, None),
+    "patch": (None, "--worth-testing"),
     "practices": (None, "--no-verify"),
     "tests": ("--count-defaults", None), "check": ("--verify", None),
 }
@@ -2714,6 +2715,12 @@ def patch(
     dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin", help="the dbt command, e.g. 'uv run dbt'"),
     dry_run: bool = typer.Option(False, "--dry-run", help="print what it would write, write none"),
     dialect: str = typer.Option(None, "--dialect"),
+    worth_testing: bool = typer.Option(False, "--worth-testing",
+                                       help="rank the columns worth a REAL test, and why, from "
+                                            "`what_would_break_silently` answers. Writes nothing "
+                                            "and needs no warehouse."),
+    limit: int = typer.Option(25, "--limit", "-n", help="with --worth-testing: how many"),
+    json_out: bool = typer.Option(False, "--json"),
 ):
     """Write the uniqueness tests assay can prove will pass.
 
@@ -2730,6 +2737,9 @@ def patch(
     import dbt_assay as _pkg
     tdir = _find_target(target)
     store = Store(store_path) if Path(store_path).exists() else None
+    if worth_testing:
+        _worth_testing(tdir, store, dialect, limit, json_out)
+        return
     project, _d, _sch, entries = _entries(tdir, store, dialect)
     patches = prac_mod.primary_key_patches(project, entries)
     if store:
@@ -5467,6 +5477,67 @@ def read(
                   f"${client.spent_usd:.4f}. Nothing was recorded as a verdict: "
                   f"`assay review --emit form.html --reads {out}` puts these on the cards, and "
                   f"the click is still a person's.[/]")
+
+
+def _worth_testing(tdir, store, dialect, limit: int, json_out: bool) -> None:
+    """*** THE TESTS WORTH WRITING ARE THE ONES THAT CAN FAIL. ***
+
+    `patch` writes only uniqueness tests it can prove will pass, which by construction are tests
+    of things that are already true. The better question is which columns deserve a test and
+    why, and every input to it was already stored: the column's shape, what joins on it, what
+    reads it, what tests it has and whether they can fail. `what_would_break_silently` asks it,
+    and this ranks the answers by reach, with the failure named and the test the option says
+    catches it -- so an agent writes a real test against a real risk.
+    """
+    from .contracts import QUESTIONS
+    q = QUESTIONS["what_would_break_silently"]
+    if store is None:
+        console.print("[yellow]no store, so nothing has been asked.[/] [dim]`assay ask --family "
+                      "what_would_break_silently` asks it; `--dry-run` prices it first.[/]")
+        raise typer.Exit(0)
+    project, _d, _f, _s, _st = _load(tdir, dialect)
+    rows = store.live_decisions("question = ? or starts_with(question, ?)",
+                                [q["id_prefix"], q["id_prefix"] + "__"],
+                                columns="decision_key, answer, confidence")
+    store.close()
+    want = set(q.get("finding_when") or [])
+    crit = q.get("criteria") or {}
+    out = []
+    for key, answer, conf in rows:
+        if answer not in want or "::risk::" not in str(key):
+            continue
+        uid, col = str(key).split("::risk::", 1)
+        m = project.models.get(uid)
+        if m is None:
+            continue                          # a model since removed: nothing to write a test on
+        what = " ".join(str((crit.get(answer) or {}).get("what", "")).split())
+        catches = next((x.strip().rstrip(".") + "." for x in what.split(". ")
+                        if "catches it" in x), "")
+        out.append({"model": m.name, "column": col, "risk": answer,
+                    "confidence": round(float(conf or 0), 2),
+                    "marts": project.blast_radius(uid)["marts"], "file": m.path,
+                    "test_that_catches_it": catches})
+    out.sort(key=lambda r: (-r["marts"], -r["confidence"], r["model"], r["column"]))
+    if json_out:
+        print(_json.dumps({"worth_testing": out[:limit], "total": len(out)}, indent=2))
+        return
+    if not out:
+        console.print("[dim]no column has been judged at risk yet. `assay ask --family "
+                      "what_would_break_silently` asks it; nothing asked is not nothing at "
+                      "risk.[/]")
+        return
+    t = Table(title="worth a real test, ranked by reach", header_style="bold", box=None,
+              padding=(0, 2), title_justify="left")
+    t.add_column("column"); t.add_column("what would break"); t.add_column("marts", justify="right")
+    t.add_column("the test that catches it", overflow="fold")
+    for r in out[:limit]:
+        t.add_row(f"{r['model']}.{r['column']}", f"{r['risk']} [dim]@{r['confidence']:.2f}[/]",
+                  _n(r["marts"]), r["test_that_catches_it"])
+    console.print(t)
+    if len(out) > limit:
+        console.print(f"[dim]{len(out) - limit} more. --limit, or --json for all.[/]")
+    console.print("[dim]Judged, not proven: each rests on `what_would_break_silently`, which has "
+                  "no human verdicts yet. Write the test where you agree with the reason.[/]")
 
 
 @app.command()
