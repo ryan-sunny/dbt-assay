@@ -125,7 +125,7 @@ Every one of those shapes this tool: arithmetic and dates are settled by sqlglot
 never asked, states are the smallest thing that can answer the question, and there is one noul per
 rule rather than one over a list of them. The [README](../README.md) carries the measurements.
 
-Nineteen question families ship. The one worth seeing first:
+Thirty question families ship. The one worth seeing first:
 
 ### Does the description still describe the code?
 
@@ -209,7 +209,7 @@ fires after the spend is not a cap.
 
 ## Every question, and what rests on it
 
-Nineteen families ship. `assay config` shows how many verdicts each has and which can gate;
+Thirty families ship. `assay config` shows how many verdicts each has and which can gate;
 `rests_on` on a finding names the family it derives from, and these are those names.
 
 | family | type | finding it feeds |
@@ -232,6 +232,17 @@ Nineteen families ship. `assay config` shows how many verdicts each has and whic
 | `options_overlap` | choice | — *lints a question, not a project: `assay banks --judge`* |
 | `same_defect` | noul | — *groups assay's own rejected findings: `assay disagreements --judge`* |
 | `finding_is_correct` | choice | — *a reading for a review card, written to a file: `assay read`* |
+| `default_is_a_measurement_or_an_absence` | choice | itself: a COALESCE default that marks "not found" (`assay ask`) |
+| `what_would_break_silently` | choice | itself: an untested column whose shape invites a silent failure (`assay ask`) |
+| `filter_is_complete` | choice | itself: a hand-typed list of an open set (`assay ask`) |
+| `units_agree_across_models` | choice | itself: one column name carrying two units (`assay ask`) |
+| `time_grain` | choice | itself: a join on a time column across two grains (`assay ask`) |
+| `tie_break_is_total` | choice | itself: a dedupe whose ordering can tie (`assay ask`) |
+| `sentinel_is_not_a_value` | choice | itself: a placeholder like -9999 that reaches the data (`assay ask`) |
+| `movement_is_expected_for_this_kind_of_table` | choice | itself: a movement unusual for this kind of table (`assay volume --judge`) |
+| `monitor_covers_what_matters` | choice | itself: an unwatched model worth watching (`assay volume --judge`) |
+| `stale_monitor_still_matters` | choice | itself: a stale failed monitor still worth answering (`assay volume --judge`) |
+| `test_never_ran_is_a_gap_or_a_leftover` | choice | itself: a declared test that never ran on a live model (`assay volume --judge`) |
 
 **A dash means no finding rests on it yet.** Those answers still fill the inventory, the page and
 `trace`, and ruling on them records evidence — but it moves no gate, and `assay review -i` says so

@@ -212,7 +212,7 @@ def test_the_declared_state_fields_are_what_the_builders_actually_produce(projec
     schema = Schema(project)
 
     seen: dict = {}
-    for kind in ("model", "edge", "column", "predicate", "expression", "window", "finding"):
+    for kind in [k for k in subjects.KINDS if k != "ruling_pair"]:
         for s in subjects.build(kind, subjects.SubjectSource(
                 project=project, digests=digests, schema=schema)):
             seen.setdefault(kind, set()).update(s.state or {})

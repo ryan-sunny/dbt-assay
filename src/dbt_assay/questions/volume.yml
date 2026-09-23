@@ -56,3 +56,101 @@ volume_contradicts_a_claim:
   # The whole reason this family exists as a DECLARATION rather than a function: `check` builds
   # the finding from this list, through the generic producer shipped in 0.38.0.
   finding_when: ["contradicts_the_claim"]
+
+# *** THE MONITORING BANK: FOUR PILES OF COUNTS, EACH SORTED BY A JUDGMENT. ***
+# Asked by `assay volume --judge` from what Elementary already counted. Each judges the
+# MONITORING -- whether a movement, a gap, a stale monitor or a silent test matters -- and never
+# the data, which stays Elementary's.
+
+movement_is_expected_for_this_kind_of_table:
+  id_prefix: "mvmt"
+  type: choice
+  prompt_version: "movement.v1"
+  finding_when: [unexpected_for_this_kind]
+  instructions:
+    question: >-
+      `model`'s arrivals moved by `arrivals_per_bucket.change_percent`. Given what kind of table
+      this is -- its layer, what it reads, how it is built and what it describes -- is a movement
+      like this routine for it?
+    note: >-
+      An append-only feed, a backfill or an event log moves a lot on an ordinary day. A reference
+      table, a dimension of fixed entities or a model rebuilt from a stable source should barely
+      move, so the same percentage there means something upstream changed. Judge the kind of
+      table, not the size of the number.
+  criteria:
+    routine_for_this_kind:
+      what: "Tables of this kind move like this in normal operation: feeds, logs, backfills."
+    unexpected_for_this_kind:
+      what: >-
+        This kind of table should be stable, so a movement like this means an upstream change
+        somebody should look at.
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+monitor_covers_what_matters:
+  id_prefix: "mcov"
+  type: choice
+  prompt_version: "coverage.v1"
+  finding_when: [worth_watching]
+  instructions:
+    question: >-
+      `model` has `marts_downstream` marts reading it and no volume monitor. Given what it is and
+      what it reads, is it worth watching?
+    note: >-
+      Nobody writes a monitor for every model, so the useful answer is which ones. A model loaded
+      from an outside feed, or one whose row count carries meaning for the marts, is worth
+      watching. A model derived deterministically from another watched model, or a fixed
+      reference list, is covered by its parent or does not move.
+  criteria:
+    worth_watching:
+      what: >-
+        Its row count can change for reasons outside this project, and the marts would be wrong
+        without anything failing.
+    covered_upstream_or_static:
+      what: >-
+        It follows deterministically from a model that is watched, or it is a fixed list that
+        does not move.
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+stale_monitor_still_matters:
+  id_prefix: "mstl"
+  type: choice
+  prompt_version: "stale.v1"
+  finding_when: [still_matters]
+  instructions:
+    question: >-
+      A `monitor` on `model` last FAILED and has not run since. Given what the model is and what
+      reads it now, is that failure still something somebody needs to deal with?
+    note: >-
+      A stale failure reads as a live one in every status view. It still matters when the model
+      is built and marts read it. It is archaeology when the model feeds nothing now, or the
+      monitor was on a column or a shape that no longer exists.
+  criteria:
+    still_matters:
+      what: "The model is live and read downstream; the failure is an alert nobody has answered."
+    archaeology:
+      what: "Nothing that matters reads this now, or the monitored thing is gone. Clear it."
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+test_never_ran_is_a_gap_or_a_leftover:
+  id_prefix: "tnvr"
+  type: choice
+  prompt_version: "neverran.v1"
+  finding_when: [a_coverage_gap]
+  instructions:
+    question: >-
+      `test` is declared on `model` and has never produced a result. Is that a hole in coverage
+      somebody should close, or a leftover on something that no longer builds or matters?
+    note: >-
+      A test on a live model that marts read, which has never once run, protects nothing while
+      reading as coverage. A test on a model nothing reads, or on one that is disabled or
+      replaced, is a leftover to delete. The two want opposite responses.
+  criteria:
+    a_coverage_gap:
+      what: "The model is live and read downstream, and the test should be running."
+    a_leftover:
+      what: "The model feeds nothing that matters, or the test belongs to something replaced."
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."

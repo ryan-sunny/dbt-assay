@@ -282,9 +282,13 @@ def lint_question(name: str, q: dict, shipped: dict | None = None) -> list[Issue
                 add("error", "finding_when",
                     f"{unknown} are not options of this question, so the finding can never fire. "
                     f"Options are {sorted(crit)}.")
-    elif q.get("finding_when") is not None:
+    elif q.get("finding_when") is not None and name not in CALLERS:
+        # `judged.declared_findings` reads `finding_when` for EVERY family whose answers are filed
+        # under a model, so a family a shipped command asks is fine without a `subject`. One that
+        # nothing asks has no answers for the declaration to read.
         add("warn", "finding_when",
-            "`finding_when` without a `subject` does nothing: only the generic runner reads it.")
+            "`finding_when` without a `subject` does nothing unless a command asks this family: "
+            "only the generic runner asks a family by its subject.")
 
     if not crit and kind != "noul":
         add("error", "criteria", "no criteria. The options are the question.")
@@ -421,6 +425,15 @@ CALLERS: dict[str, tuple[str, str, str]] = {
     # Counted tier: Elementary counted the movement, assay brought the claim and the blast radius.
     "volume_contradicts_a_claim":       ("cli",        "assay volume --judge",
                                          "one counted movement + one claim"),
+    # The monitoring bank: judged from what Elementary counted, filed under the model.
+    "movement_is_expected_for_this_kind_of_table": ("monitoring_bank", "assay volume --judge",
+                                                    "one moved table + what kind it is"),
+    "monitor_covers_what_matters":      ("monitoring_bank", "assay volume --judge",
+                                         "one unwatched model + its reach"),
+    "stale_monitor_still_matters":      ("monitoring_bank", "assay volume --judge",
+                                         "one stale failed monitor + its model"),
+    "test_never_ran_is_a_gap_or_a_leftover": ("monitoring_bank", "assay volume --judge",
+                                              "one never-run test + its model"),
     # A reading of a review card, written to the file `review --reads` takes. Never a verdict.
     "finding_is_correct":               ("reads",      "assay read",
                                          "one (model, check) card: findings, evidence, SQL"),
@@ -433,6 +446,9 @@ def caller_of(name: str, bank: dict | None = None) -> tuple[str, str, str] | Non
     A family that declares a `subject:` is asked by the GENERIC RUNNER, whatever its name. That is
     the whole point of the runner, and reporting it as uncalled would be the same lie in reverse.
     """
+    if bank is None and name not in CALLERS:
+        from .contracts import QUESTIONS
+        bank = QUESTIONS.get(name)
     if bank and bank.get("subject"):
         return ("subjects", "assay ask", f"one {bank['subject']}")
     return CALLERS.get(name)

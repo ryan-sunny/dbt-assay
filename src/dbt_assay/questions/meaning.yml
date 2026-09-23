@@ -1,0 +1,227 @@
+# What a value MEANS where the SQL alone cannot say: a default, a filter's list, a unit, a time
+# grain, a tie-break, a sentinel. Each family is asked only where code already found the shape.
+#
+# *** THE PARSER FINDS THE SHAPE. THE QUESTION IS WHAT IT STANDS FOR. ***
+# `COALESCE(orders_placed, 0)` and `COALESCE(credit_check_status, 'not looked up')` parse
+# identically, and one is a count while the other is a marker meaning nobody checked. Both raised
+# the same `test_cannot_fail` finding. No parser separates them, and which one it is decides
+# whether the default is fine or is hiding that a lookup never ran.
+version: 1
+
+default_is_a_measurement_or_an_absence:
+  id_prefix: "dflt"
+  type: choice
+  subject: default
+  prompt_version: "default.v1"
+  finding_when: [an_absence_marker]
+  instructions:
+    question: >-
+      `column` is `the_value_it_stands_in_for` with NULL replaced by `default`. When the default
+      is what a row carries, is it a TRUE VALUE of the thing, or a marker that the value was never
+      found?
+    note: >-
+      Judge what the default MEANS for a row that carries it. Zero orders for a customer who
+      placed none is a true count. 'not looked up', 'unknown', -1 or 0 standing for "the lookup did not
+      match" is an absence dressed as a value, and a test on the column passes on every row while
+      saying nothing about whether the lookup ran. Use the descriptions and the name of what is
+      being defaulted.
+  criteria:
+    a_true_value:
+      what: >-
+        For a row with nothing upstream, the default is the correct value: a customer who
+        placed no orders has zero orders, a flag that was never set is false.
+    an_absence_marker:
+      what: >-
+        The default stands for "not found", "not looked up" or "unknown". A row carrying it and a
+        row whose real value happens to equal it cannot be told apart downstream.
+      examples: ["COALESCE(dwr_analysis_status, 'not looked up')",
+                 "COALESCE(address_count, 0) where 0 also means the join found no match"]
+    a_display_placeholder:
+      what: >-
+        The default is cosmetic, for a report or an export -- an empty string, 'N/A' -- and
+        nothing downstream computes on it.
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+what_would_break_silently:
+  id_prefix: "risk"
+  type: choice
+  subject: column_risk
+  prompt_version: "risk.v1"
+  finding_when: [joins_would_fan_out_or_drop, a_value_would_fall_through,
+                 an_aggregate_would_be_wrong, a_default_would_hide_missing_data]
+  instructions:
+    question: >-
+      `column` has `why_it_could_go_wrong` and `tests_on_it`, and `marts_downstream` marts read
+      this model. If this column's values went wrong tomorrow, what is the FIRST thing that would
+      break without any error?
+    note: >-
+      Pick the failure the column's own shape invites, not the worst thing imaginable. A join key
+      duplicating fans rows out; a CASE with no ELSE turns a new category into NULL; a measure a
+      mart totals goes wrong in every total; a default hides that a lookup missed. `nothing_much` is
+      a real answer for a label nothing downstream reads as a number. A test that "cannot fail" protects nothing.
+  criteria:
+    joins_would_fan_out_or_drop:
+      what: >-
+        A child joins on it, so a duplicate multiplies rows downstream and a mismatch drops them.
+        A uniqueness or relationships test that can fail is what catches it.
+    a_value_would_fall_through:
+      what: >-
+        It classifies with a list of cases or a pattern, so a new upstream value becomes NULL or
+        the wrong class. A not_null or an accepted_values over the INPUT is what catches it.
+    an_aggregate_would_be_wrong:
+      what: >-
+        A mart sums, counts or averages it, so a wrong value is wrong in every total and no row
+        looks bad. A range or reconciliation test is what catches it.
+    a_default_would_hide_missing_data:
+      what: >-
+        A default stands in for NULL, so a lookup that stopped matching reads as a real value. A
+        test on the share of rows at the default is what catches it.
+    nothing_much:
+      what: "It is carried or displayed and nothing downstream computes, joins or filters on it."
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+filter_is_complete:
+  id_prefix: "fltr"
+  type: choice
+  subject: enumerated_filter
+  prompt_version: "filter.v1"
+  finding_when: [a_hand_list_of_an_open_set]
+  instructions:
+    question: >-
+      `filter` lists `values_listed` by hand. Does that list cover everything the filter MEANS to,
+      now and as the data grows?
+    note: >-
+      A list of every value of a closed set -- the four seasons, the days of the week -- is
+      complete. A list of the members of an OPEN set -- product categories, vendor names, city names -- is
+      complete only until the source adds one, at which point the filter silently lets it through or
+      keeps it out. Judge the set the values belong to, using the column, the values and the
+      model's description.
+  criteria:
+    a_closed_set:
+      what: "The values are all members of a fixed set that will not grow, and the list names them."
+    a_hand_list_of_an_open_set:
+      what: >-
+        The values are some members of a set that exists as data somewhere and can grow. A new
+        member is handled wrongly without anything failing.
+      examples: ["ten vendor names typed into a NOT IN", "three category codes"]
+    a_deliberate_subset:
+      what: >-
+        The list picks out specific cases on purpose, and a new value SHOULD fall outside it --
+        the model or its description says which ones and why.
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+units_agree_across_models:
+  id_prefix: "uagr"
+  type: choice
+  subject: same_name_measure
+  prompt_version: "units.v1"
+  finding_when: [different_units]
+  instructions:
+    question: >-
+      `first_model` and `second_model` each produce a column named `column`. From their
+      expressions and descriptions, do the two carry the SAME unit?
+    note: >-
+      Judge the unit of the number, not whether the two numbers are equal. `acres` derived from a
+      GIS area and `acres` read from an assessor field are the same unit. `af` that is a flow rate
+      in one and a stored volume in another are not. A unit differing is a wrong number that looks
+      right the moment the two are joined or compared.
+  criteria:
+    same_unit:
+      what: "Both expressions produce the same unit under the same name."
+    different_units:
+      what: >-
+        The expressions or descriptions show different units, scales or rates under one name:
+        meters against feet, a total against a per-year rate, a fraction against a percent.
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+time_grain:
+  id_prefix: "tgrn"
+  type: choice
+  subject: time_join
+  prompt_version: "time.v1"
+  finding_when: [the_grains_differ]
+  instructions:
+    question: >-
+      `model` joins `joins` on `time_columns`. Do the rows on both sides describe the SAME time
+      grain, so each row meets its counterpart once?
+    note: >-
+      Use the group bys and the time expressions on each side. A table at a finer grain joined to a
+      coarser one either matches a fraction of its rows or repeats the coarser value many times,
+      and both look like correct rows. Two sides at one grain under different column names are
+      still the same grain.
+  criteria:
+    the_same_grain:
+      what: "Both sides are at the same time grain, so each row meets its counterpart once."
+    the_grains_differ:
+      what: >-
+        One side is finer than the other -- daily against monthly, an event time against a
+        snapshot -- so the join repeats or drops rows without an error.
+    not_a_time_grain:
+      what: >-
+        The column is named like a time but joins as an identifier: an admin number, a
+        priority, a version.
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+tie_break_is_total:
+  id_prefix: "tie"
+  type: choice
+  subject: ranking_window
+  prompt_version: "tie.v1"
+  finding_when: [ties_are_possible]
+  instructions:
+    question: >-
+      `model` keeps one row per `partition_by`, ordered by `order_by`. Can two rows in one
+      partition tie on every ordering key, so which one survives is whatever the engine returned?
+    note: >-
+      The order is TOTAL when its keys together identify one row within the partition -- it ends
+      in a column declared unique, or in the rest of this model's own key. A date, a status or a
+      name alone usually ties. Picking a row by a column that
+      repeats is the tie bug every warehouse ships eventually.
+  criteria:
+    total:
+      what: >-
+        The ordering keys, together with the partition, pick out exactly one row: the last key is
+        unique or completes the key.
+    ties_are_possible:
+      what: >-
+        Two rows in one partition can share every ordering key, so the survivor can change
+        between builds on the same data.
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+sentinel_is_not_a_value:
+  id_prefix: "sntl"
+  type: choice
+  subject: sentinel
+  prompt_version: "sentinel.v2"
+  finding_when: [a_sentinel_used_as_a_value]
+  instructions:
+    question: >-
+      `sql` contains `sentinel_literals`. Is each one being HANDLED as a placeholder -- nulled,
+      excluded, bounded -- or does it flow through as if it were a real measurement?
+    note: >-
+      Feeds write -9999 for "no reading" and a far-future value for "no expiry". SQL that bounds a
+      value to a plausible range, or turns -9999 into NULL, is handling it. SQL that averages a
+      column holding -9999, or writes 9999-12-31 into an output column, is treating a placeholder
+      as data, and every number downstream carries it. A literal standing in for "no limit" inside
+      a comparison, and never output, is neither: it is an unbounded value on purpose.
+  criteria:
+    handled:
+      what: "The literal is used to recognise the placeholder and remove, null or bound it."
+    an_unbounded_stand_in:
+      what: >-
+        The literal means "no limit" or "never" inside a comparison or an ordering --
+        COALESCE(max_age, 99999) -- and is never itself written out as a value.
+    a_sentinel_used_as_a_value:
+      what: >-
+        The placeholder is OUTPUT, or reaches arithmetic or an aggregate, so it lands in the data
+        downstream as though it were a real reading or date.
+    not_a_sentinel:
+      what: "The literal is a genuine value here -- a real code, a real boundary date."
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."

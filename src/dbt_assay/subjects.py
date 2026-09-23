@@ -21,7 +21,8 @@ import re
 from dataclasses import dataclass, field
 
 KINDS = ("model", "edge", "column", "predicate", "expression", "window", "ruling_pair",
-         "finding")
+         "finding", "default", "column_risk", "enumerated_filter", "same_name_measure",
+         "time_join", "ranking_window", "sentinel")
 
 # *** A QUESTION CAN ONLY ASK WHAT ITS SUBJECT'S STATE CAN ANSWER, AND NOTHING SAID SO. ***
 # Reported from the field, and it cost an hour: two custom questions lint-passed and never fired,
@@ -57,6 +58,10 @@ STATE_FIELDS: dict = {
     "finding": {"model", "check", "findings", "sql", "description",
                 "what_one_row_of_this_model_is"},
 }
+# The build queue's families, whose subjects are narrowed in `subject_kinds`.
+from .subject_kinds import STATE_FIELDS as _MORE_FIELDS
+
+STATE_FIELDS.update(_MORE_FIELDS)
 
 
 @dataclass
@@ -119,8 +124,11 @@ def build(kind: str, src: SubjectSource, limit: int = 0,
         # It is two verdicts somebody gave, and its ordering is its own.
         out = _ruling_pairs(src.store)
         return out[:limit] if limit else out
+    from .subject_kinds import BUILDERS as _MORE
     if kind == "finding":
         out = _findings(project, digests, schema, src.findings, src.store)
+    elif kind in _MORE:
+        out = _MORE[kind](project, digests, schema)
     else:
         fn = {"model": _models, "edge": _edges, "column": _columns,
               "predicate": _predicates, "expression": _expressions, "window": _windows}[kind]

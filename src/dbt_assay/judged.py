@@ -390,7 +390,7 @@ def declared_findings(project, entries) -> list[Finding]:
                     # nobody has ever measured.
                     rests_on=name,
                     subject=e.uid, subject_name=e.name, file=e.path,
-                    summary=_declared_summary(name, q, e, answer),
+                    summary=_declared_summary(name, q, _with_ctx(e, v), answer),
                     detail=((q.get("instructions") or {}).get("question", "").strip()
                             or f"`{name}` answered `{answer}` for this model."),
                     base=2,
@@ -398,6 +398,11 @@ def declared_findings(project, entries) -> list[Finding]:
                               "asked": name, "context": (v or {}).get("context", "")},
                 ))
     return out
+
+
+def _with_ctx(entry, v):
+    from types import SimpleNamespace
+    return SimpleNamespace(name=entry.name, _ctx=(v or {}).get("context", ""))
 
 
 def _declared_summary(name: str, q: dict, entry, answer: str) -> str:
@@ -415,9 +420,15 @@ def _declared_summary(name: str, q: dict, entry, answer: str) -> str:
     if isinstance(crit, dict):
         crit = crit.get("what") or crit.get("means") or ""
     label = str(crit or "").strip()
+    # *** TWO COLUMNS FLAGGED ON ONE MODEL READ AS ONE FINDING TWICE. ***
+    # A family asked per column or per filter files every answer under the model, and the summary
+    # named only the model. The subject the answer was about is in `context`; it is named when it
+    # is finer than the model, so a family asked about whole models reads exactly as before.
+    ctx = str(getattr(entry, "_ctx", "") or "")
+    who = ctx if ctx and ctx != entry.name else entry.name
     if label:
-        return f"{entry.name}: {label[:110]}"
-    return f"{entry.name}: `{name}` answered `{answer}`"
+        return f"{who}: {label[:110]}"
+    return f"{who}: `{name}` answered `{answer}`"
 
 
 def run_all(project, entries, declared, digests=None) -> list[Finding]:

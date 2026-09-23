@@ -371,6 +371,25 @@ A contract is fifteen lines where the SQL is two hundred, so an agent can hold a
 in about what reading four models costs it now. `changed_contracts` is the self-check to run after
 an edit and before moving on: *did that change what anything MEANS?*
 
+## Eleven questions no parser can answer, asked only where a parser found the shape
+
+```bash
+assay ask --family default_is_a_measurement_or_an_absence --dry-run   # count and price first
+assay ask --family tie_break_is_total
+assay volume --judge --project-dir transform --dbt "uv run dbt"      # the monitoring bank
+```
+
+`COALESCE(orders, 0)` and `COALESCE(status, 'not looked up')` parse identically; one is a count and
+one means nobody checked. Code finds every default, hand-typed IN-list, unit-named column computed
+twice, join on a date, dedupe and sentinel literal, and a judgment is asked only about those:
+`default_is_a_measurement_or_an_absence`, `what_would_break_silently`, `filter_is_complete`,
+`units_agree_across_models`, `time_grain`, `tie_break_is_total` and `sentinel_is_not_a_value`.
+`volume --judge` adds four about the MONITORING, never the data: whether a movement is routine for
+that kind of table, which unwatched models are worth watching, which stale failed monitors still
+matter, and whether a test that never ran is a gap or a leftover. Every defect answer is a finding
+in `assay check` that rests on its own family, so none can fail a build until people have ruled on
+it. On a 356-model warehouse all seven code-derived families together price at about two cents.
+
 ## Drafts of what you would otherwise write by hand
 
 ```bash

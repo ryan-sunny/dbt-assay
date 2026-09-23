@@ -3332,6 +3332,69 @@ def volume(
 
     _judge_volume(project, digests, schema, store, store_path, cfg, rep, threshold, limit,
                   dry_run)
+    from . import monitoring_bank as mb
+    _judge_monitoring(project, digests, schema, store, cfg, rep,
+                      mb.ran_test_ids(runner, schema_name), threshold, limit, dry_run)
+
+
+def _judge_monitoring(project, digests, schema, store, cfg, rep, ran, threshold, limit,
+                      dry_run) -> None:
+    """The monitoring bank: sort each pile Elementary counted by whether it matters here."""
+    from . import monitoring_bank as mb
+    from .contracts import QUESTIONS
+    if store is None:
+        return
+    subs = mb.subjects(rep, project, ran, threshold, limit)
+    if ran is None:
+        console.print("[yellow]which tests ever produced a result could not be read[/] [dim]-- "
+                      "`test_never_ran_is_a_gap_or_a_leftover` was not asked, which is not a "
+                      "clean result.[/]")
+    from .jev import USD_PER_INPUT_TOKEN
+    total = sum(len(v) for v in subs.values())
+    est = sum(len(_json.dumps(st, default=str)) / 4 * USD_PER_INPUT_TOKEN
+              for v in subs.values() for *_x, st in v)
+    console.print("\n[bold]monitoring bank[/]: "
+                  + ", ".join(f"{len(v)} for {f}" for f, v in subs.items())
+                  + f" · about [bold]${est:.4f}[/bold]")
+    if dry_run or not total:
+        return
+    if est > cfg.max_spend_usd:
+        console.print(f"[red]refused before spending anything:[/] ~${est:.2f} exceeds the "
+                      f"${cfg.max_spend_usd:.2f} cap. --limit narrows each family.")
+        return
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        console.print("[yellow]no API key.[/] [dim]--dry-run needs none.[/]")
+        return
+    ctx = _state_ctx(project, digests, schema, store, cfg)
+    for fam, items in subs.items():
+        q = QUESTIONS[fam]
+        want = q.get("finding_when") or []
+        counts, hits = Counter(), []
+        for uid, key, name, st in items:
+            v = ctx.vocab_for(uid)
+            rec = states.make("volume", ctx, key=key, inputs={"uid": uid, "family": fam},
+                              state={**st, **({"vocabulary": v} if v else {})})
+            try:
+                store.use_project(project)
+                ans = decide(store, client, rec, {q["id_prefix"]: choice_q(fam)},
+                             contexts={q["id_prefix"]: name},
+                             prompt_version=q["prompt_version"], caller=f"assay.volume.{fam}")
+            except BudgetExceeded as e:
+                console.print(f"[yellow]stopped at the cap: {e}[/]")
+                return
+            a = ans.get(q["id_prefix"]) or {}
+            counts[a.get("answer")] += 1
+            if a.get("answer") in want:
+                hits.append((name, a.get("confidence") or 0))
+        if not items:
+            continue
+        console.print(f"\n[bold]{fam}[/]  " + ", ".join(f"{n} {k}" for k, n in
+                                                         counts.most_common()))
+        for name, c in sorted(hits, key=lambda h: -h[1])[:6]:
+            console.print(f"   [red]{name}[/] [dim]@{c:.2f}[/]")
+    console.print(f"[dim]{client.calls} calls, ${client.spent_usd:.4f}. Each defect answer is a "
+                  f"finding in `assay check`, resting on its family and gated like any other.[/]")
 
 
 def _monitoring_findings(project, cfg, verify: bool, project_dir: str, profiles_dir: str | None,
