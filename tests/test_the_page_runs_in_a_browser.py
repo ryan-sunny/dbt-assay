@@ -22,6 +22,25 @@ from dbt_assay.cli import app
 pytest.importorskip("playwright.sync_api",
                     reason="playwright is a dev dependency; CI installs it")
 
+
+@pytest.fixture(scope="session", autouse=True)
+def _chromium_or_skip():
+    """*** THE PACKAGE BEING INSTALLED IS NOT THE BROWSER BEING INSTALLED. ***
+
+    `playwright` is a dev dependency, so `importorskip` passes everywhere -- and then
+    `chromium.launch()` fails on any machine that has not run `playwright install`. A test that
+    goes red because a binary is missing teaches people to ignore this file, which is the one
+    file here that runs the artifact rather than inspecting it. The dedicated CI job installs the
+    browser and does NOT skip.
+    """
+    from playwright.sync_api import sync_playwright
+    try:
+        with sync_playwright() as pw:
+            pw.chromium.launch().close()
+    except Exception as e:                                       # noqa: BLE001
+        pytest.skip(f"chromium is not installed here: `uv run playwright install chromium` "
+                    f"({str(e)[:120]})")
+
 # Every tab the page ships. A new one is covered by adding it here, and a tab that stops existing
 # fails this test rather than quietly losing its coverage.
 TABS = ["models", "chain", "claims", "findings", "suggest", "answers", "spend", "questions",
