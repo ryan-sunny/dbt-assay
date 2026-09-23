@@ -1404,8 +1404,8 @@ def claims(
         # loses it quietly. Printing the pair is what makes that reviewable rather than trusted.
         console.print(f"[dim]{len(merged)} sentence(s) merged as the same claim written twice, "
                       f"once in a description and once in a comment.[/]")
-        for _n, _kept, _drop in merged[:3]:
-            console.print(f"[dim]  {_n}: kept {_kept[:70]!r}, merged {_drop[:70]!r}[/]")
+        for _name, _kept, _drop in merged[:3]:
+            console.print(f"[dim]  {_name}: kept {_kept[:70]!r}, merged {_drop[:70]!r}[/]")
     by_model: dict = {}
     for c in uniq:
         by_model.setdefault(c.subject, []).append(c)
@@ -1420,7 +1420,19 @@ def claims(
     n_new = sum(len(v) for v in todo.values())
     console.print(f"[bold]{len(uniq)}[/] candidate sentence(s) across {len(by_model)} model(s) · "
                   f"[bold]{n_new}[/] not yet classified")
+
+    def _write_if_asked() -> None:
+        # *** `--extract --write` NEVER WROTE, AND SAID NOTHING. ***
+        # The file was handled only on the listing branch, so the combination the skill teaches
+        # produced no file and no message. Written right after the store is, so nothing printed
+        # afterwards can cost somebody the file they asked for.
+        if write:
+            rows_ = store.claims(checkable_only=True, min_conf=min_conf)
+            _write_claims_yaml(Path(write), rows_)
+            console.print(f"wrote [bold]{write}[/] with {len(rows_)} claim(s).")
+
     if not n_new:
+        _write_if_asked()
         store.close()
         raise typer.Exit(0)
 
@@ -1460,6 +1472,7 @@ def claims(
                                  c.source_ref, a["answer"], a["confidence"], c.citation,
                                  "suppressed" if c.claim_id in suppressed else "active"))
     store.save_claims(rows)
+    _write_if_asked()
     console.print(f"[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
     _report_vocab_drops()
@@ -1578,8 +1591,8 @@ def verify(
     if unanswerable:
         console.print(f"\n[bold]{len(unanswerable)}[/] claim(s) NOT ANSWERABLE from the SQL, "
                       f"and not asked. [dim]Absent evidence is not disagreement.[/]")
-        for _n, _t, _w in unanswerable[:6]:
-            console.print(f"  [dim]{_n}[/]  {_t[:86]}")
+        for _name, _t, _w in unanswerable[:6]:
+            console.print(f"  [dim]{_name}[/]  {_t[:86]}")
             console.print(f"    [dim]{_w}[/]")
         if len(unanswerable) > 6:
             console.print(f"  [dim]... {len(unanswerable) - 6} more[/]")
