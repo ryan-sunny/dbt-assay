@@ -371,6 +371,24 @@ A contract is fifteen lines where the SQL is two hundred, so an agent can hold a
 in about what reading four models costs it now. `changed_contracts` is the self-check to run after
 an edit and before moving on: *did that change what anything MEANS?*
 
+## Drafts of what you would otherwise write by hand
+
+```bash
+assay suggest -t target/ --section descriptions --out drafts.yml
+```
+
+`column_has_no_description` counts the columns nobody described; this drafts them. Every line says
+where its words came from, and there are only three places: a sentence a person already wrote
+upstream of the column, quoted; the one sentence the rest of the project uses for that column,
+quoted; or assay's recorded facts -- the judged role as one word, the column's own expression
+quoted from the compiled SQL, and the judged meaning of a NULL in that question's own words. No
+word is written for the occasion. It goes to a separate file and never into `schema.yml`.
+
+A vocab candidate's `means:` is filled the same way, only when most of the models that describe
+the column use one sentence, and it cites them. An `accept` on the form drafts the first half of its
+reason from the finding and leaves "it stays because" for you; a reason left at the draft is not
+recorded.
+
 ## The rest of the bank
 
 ```bash

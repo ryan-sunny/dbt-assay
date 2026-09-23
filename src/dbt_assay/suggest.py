@@ -95,7 +95,30 @@ class Suggestion:
 
 # --------------------------------------------------------------------------- vocab
 
-def _vocab_from_joins(store, cfg, run_id: str | None) -> list[Suggestion]:
+def _majority_sentence(project, col: str) -> tuple[str, str, list]:
+    """(sentence, where, others) when MORE THAN HALF of the models describing `col` use one
+    sentence, else ("", "", variants). A majority is selected and says so with its count; a
+    plurality is not, because picking one of several contested sentences is an arbitrary pick."""
+    if project is None:
+        return "", "", []
+    from .subjects import described
+    said: dict = {}
+    for m in project.models.values():
+        t = described(m).get(col)
+        if t:
+            said.setdefault(" ".join(str(t).split()), []).append(m.name)
+    total = sum(len(v) for v in said.values())
+    if not total:
+        return "", "", []
+    ranked = sorted(said.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    top, where = ranked[0]
+    others = [f"{len(w)} model(s): {t[:120]}" for t, w in ranked[1:4]]
+    if len(where) * 2 > total:
+        return top, f"{len(where)} of {total} models describing it, e.g. {min(where)}", others
+    return "", "", [f"{len(w)} model(s): {t[:120]}" for t, w in ranked[:4]]
+
+
+def _vocab_from_joins(store, cfg, run_id: str | None, project=None) -> list[Suggestion]:
     """Columns the warehouse joins on constantly that the vocab has never heard of.
 
     *** SORTED BY THE NUMBER THE HEADLINE READS FIRST. ***
@@ -159,18 +182,37 @@ def _vocab_from_joins(store, cfg, run_id: str | None) -> list[Suggestion]:
             # The headline already says the number and so does the comment in the draft. A third
             # copy is not more evidence; it is the same fact spelled three times, which is the
             # defect this tool reports in other people's warehouses.
-            measured=[],
             decide=(f"vocab defines {len(known)} term(s), {len(covered)} of which are among the "
                     f"columns actually joined on.\n"
-                    f"  Both fields below arrive EMPTY and assay will not fill them. It measured "
-                    f"the candidate; what the term\n"
-                    f"  means in this warehouse is yours. A plausible guess written from a model "
-                    f"name looks exactly like\n"
-                    f"  knowledge and then rides along with every judged question from that "
-                    f"point on."),
-            draft=f"vocab:\n  {col}:\n    means: \"\"\n    implies: \"\"\n"
-                  f"    # measured: {n_models} models, {n_hops} hops"))
+                    f"  assay never WRITES a meaning. Where most of the models that describe a "
+                    f"column use one sentence,\n"
+                    f"  `means:` quotes it and cites them -- theirs, not assay's, and yours to "
+                    f"edit. Otherwise it arrives EMPTY:\n"
+                    f"  a plausible guess written from a model name looks exactly like knowledge "
+                    f"and then rides along with\n"
+                    f"  every judged question from that point on."),
+            measured=_described_as(project, col),
+            draft=_join_draft(project, col, n_models, n_hops)))
     return out
+
+
+def _described_as(project, col: str) -> list:
+    sentence, where, others = _majority_sentence(project, col)
+    if sentence:
+        return [f"means: selected -- the sentence {where} use"] + \
+               [f"other wordings: {o}" for o in others]
+    return [f"described as: {o}" for o in others]
+
+
+def _join_draft(project, col: str, n_models: int, n_hops: int) -> str:
+    """The vocab block. `means:` carries the project's own majority sentence when there is one,
+    quoted and cited; otherwise it stays empty, as every other rule leaves it."""
+    sentence, where, _o = _majority_sentence(project, col)
+    means = sentence.replace('"', "'")[:220] if sentence else ""
+    cite = (f"    # means: quoted from {where}; edit it, it is theirs not assay's\n"
+            if sentence else "")
+    return (f"vocab:\n  {col}:\n    means: \"{means}\"\n    implies: \"\"\n{cite}"
+            f"    # measured: {n_models} models, {n_hops} hops")
 
 
 def _vocab_from_descriptions(cfg, project) -> list[Suggestion]:
@@ -289,6 +331,138 @@ def _vocab_from_contradicted_names(store) -> list:
                     "  enumerate, and what identifies a row where it repeats?"),
             draft=f"vocab:\n  {col}:\n    means: \"\"\n    implies: \"\"\n"
                   f"    # measured: {best[2]:,}/{best[1]:,} distinct in {best[0]}"))
+    return out
+
+
+# --------------------------------------------------------------------------- descriptions
+
+# A judged answer is worth drafting from only when it was not close. Below this the draft would
+# carry a coin flip dressed as a sentence.
+_DRAFT_CONFIDENCE = 0.6
+
+# `column_role`'s options, as the noun a description opens with. The option's own criterion text
+# is the same sentence for every dimension in every warehouse, so it says nothing about THIS one;
+# the role is worth one word and the expression is worth the rest.
+_ROLE_WORD = {"identifier": "Identifier", "foreign_key": "Foreign key", "measure": "Measure",
+              "dimension": "Dimension", "event_time": "When the real-world event happened",
+              "audit_time": "When the pipeline loaded or refreshed the row",
+              "status_flag": "Status flag", "free_text": "Free text", "attribute": "Attribute",
+              "geometry": "Geometry"}
+
+
+def _composed(c, exprs: dict, roots: dict, nulls: dict) -> tuple[str, list]:
+    """(sentence, what it was built from) for one column, or ("", []) when nothing is recorded.
+
+    Three parts, each from something assay holds: the judged role as one word, the column's own
+    expression quoted from the compiled SQL (or what it is carried from), and the judged meaning of
+    a NULL in the option's own words. The expression is the specific part -- "A dimension, derived
+    by an expression" is true of half of every warehouse and helps nobody.
+    """
+    bits, facts = [], []
+    if c.role and (c.role.confidence or 0) >= _DRAFT_CONFIDENCE and c.role.value in _ROLE_WORD:
+        bits.append(_ROLE_WORD[c.role.value])
+        facts.append(f"role {c.role.value} @{c.role.confidence:.2f}")
+    kind = str(c.provenance.value)
+    expr = " ".join(str((exprs or {}).get(c.name) or "").split())
+    root = (roots or {}).get(c.name.lower()) or ""
+    if kind == "null_placeholder":
+        bits.append("NULL in every row one arm of a union contributes (a CAST(NULL) placeholder)")
+        facts.append("provenance null_placeholder")
+    elif kind in ("carried", "from_source"):
+        src = root if isinstance(root, str) and root and root != "column" else ""
+        bits.append(f"Carried unchanged from `{src}`" if src else "Carried unchanged from upstream")
+        facts.append(f"provenance {kind}")
+    elif expr and expr.lower() != c.name.lower():
+        shown = expr if len(expr) <= 140 else expr[:137] + "..."
+        verb = {"defaulted": "Defaulted here", "aggregated": "Aggregated here",
+                "ranked": "Ranked here", "constant": "The same literal on every row"}.get(
+                    kind, "Computed here")
+        bits.append(f"{verb} as `{shown}`" if kind != "constant" else f"{verb}: `{shown}`")
+        facts.append(f"expression from the compiled SQL ({kind})")
+    if c.null_meaning and (c.null_meaning.confidence or 0) >= _DRAFT_CONFIDENCE \
+            and c.null_meaning.value in nulls and c.null_meaning.value != "cannot_tell":
+        w = " ".join(str(nulls[c.null_meaning.value].get("what", "")).split()).rstrip(".")
+        if w:
+            bits.append(f"A NULL means {w[0].lower() + w[1:]}")
+            facts.append(f"null {c.null_meaning.value} @{c.null_meaning.confidence:.2f}")
+    if not facts:
+        return "", []
+    return ". ".join(b.rstrip(".") for b in bits) + ".", facts
+
+
+def _descriptions(project, entries, schema, digests=None) -> list[Suggestion]:
+    """A draft for every column nobody has described, built from what assay already holds.
+
+    *** SELECTION, NEVER GENERATION -- THE RULE `claims` ALREADY ENFORCES. ***
+    Every word in a draft is one of three things, in this order, and the draft says which:
+      1. QUOTED from upstream: the column passes through from a model whose own description a
+         person wrote. That sentence is theirs, and it is still true here.
+      2. QUOTED from elsewhere: the same column is described one way everywhere else in the project.
+      3. COMPOSED from recorded facts: the column's judged role and null meaning, each the option's
+         own criterion text, and the parser's sentence for where the value comes from. No word is
+         written for the occasion, and a judgment below 0.6 is left out rather than drafted from.
+    It is a PROPOSAL, keyed to that evidence and written to a separate file. It never touches
+    schema.yml; a person edits it and puts it there.
+    """
+    from .contracts import QUESTIONS
+    from .subjects import described
+    nulls = (QUESTIONS.get("null_meaning") or {}).get("criteria") or {}
+    by_rel = {str(r).replace('"', "").lower(): u
+              for u, r in (getattr(schema, "relation", {}) or {}).items() if r}
+    said: dict = {}
+    for m in project.models.values():
+        for col, text in described(m).items():
+            said.setdefault(col, {}).setdefault(" ".join(str(text).split()), []).append(m.name)
+    out = []
+    for e in entries or []:
+        m = project.models.get(e.uid)
+        if m is None:
+            continue
+        d = (digests or {}).get(e.uid)
+        have = described(m)
+        rows, cites = [], []
+        for c in e.columns:
+            if c.name in have:
+                continue
+            text, how = "", ""
+            origin_uid = by_rel.get(str(c.provenance.origin or "").replace('"', "").lower())
+            parent = project.models.get(origin_uid) if origin_uid else None
+            if c.provenance.value in ("carried", "from_source") and parent is not None \
+                    and described(parent).get(c.name):
+                text = " ".join(str(described(parent)[c.name]).split())
+                how = f"quoted from {parent.name}, which it passes through from unchanged"
+            elif len(said.get(c.name, {})) == 1:
+                sentence, where = next(iter(said[c.name].items()))
+                text, how = sentence, (f"quoted: described this way in {len(where)} other "
+                                       f"model(s), e.g. {min(where)}")
+            else:
+                text, facts = _composed(c, d.output_exprs if d else {},
+                                        d.output_roots if d else {}, nulls)
+                if not text:
+                    continue                 # nothing recorded to draft from; not drafted
+                how = "composed from recorded facts: " + ", ".join(facts)
+            rows.append({"name": c.name, "description": text})
+            cites.append(f"{c.name}: {how}")
+        if not rows:
+            continue
+        import yaml as _yaml
+        body = _yaml.safe_dump({"models": [{"name": e.name, "columns": rows}]},
+                               sort_keys=False, width=100, allow_unicode=True)
+        quoted = sum(1 for x in cites if ": quoted" in x)
+        out.append(Suggestion(
+            section="descriptions", key=e.name, rank=float(e.marts * 1000 + len(rows)),
+            basis="drafted from what assay already holds, for columns nobody described",
+            headline=(f"{e.name}: {len(rows)} undescribed column(s) drafted, {quoted} quoted "
+                      f"from a sentence a person wrote"),
+            measured=cites[:12] + ([f"...and {len(cites) - 12} more"] if len(cites) > 12 else []),
+            decide=("A draft is a proposal. Each line says where its words came from; a quoted one "
+                    "is somebody's sentence,\n"
+                    "  a composed one is assay's recorded facts in its own option text. Edit, then "
+                    "put it in schema.yml yourself --\n"
+                    "  assay never writes to it, and a description nobody read is the defect "
+                    "`description_contradicts_the_code` exists to find."),
+            draft=f"# for {m.path.rsplit('/', 1)[0]}/schema.yml -- a DRAFT, edit before use\n"
+                  + body))
     return out
 
 
@@ -649,7 +823,7 @@ def resolved_clusters(store, cfg, live: set) -> list:
 
 
 def build(store, cfg, firing: set, run_id: str | None = None, live: set | None = None,
-          project=None) -> list:
+          project=None, entries=None, schema=None, digests=None) -> list:
     """Every suggestion the store supports, ordered so the best-evidenced is first.
 
     Ordering is (section, -rank, key) with a fixed section order, so two runs over one store
@@ -683,7 +857,7 @@ def build(store, cfg, firing: set, run_id: str | None = None, live: set | None =
                         "  To turn one into a waiver, rule on it yourself -- `assay review -i` "
                         "-- and write why."),
                 draft=""))
-        out += _vocab_from_joins(store, cfg, run_id)
+        out += _vocab_from_joins(store, cfg, run_id, project)
         out += _vocab_from_contradicted_names(store)
         out += _repeated_reasons(store, cfg, live)
         out += _waivers_from_acceptances(store, cfg)
@@ -692,7 +866,10 @@ def build(store, cfg, firing: set, run_id: str | None = None, live: set | None =
     out += _questions_unconfigured(cfg, firing)
     if project is not None:
         out += _vocab_from_descriptions(cfg, project)
-    order = {"open": 0, "vocab": 1, "questions": 2, "waivers": 3, "explanations": 4}
+        if entries is not None:
+            out += _descriptions(project, entries, schema, digests)
+    order = {"open": 0, "vocab": 1, "questions": 2, "waivers": 3, "explanations": 4,
+             "descriptions": 5}
     # *** RANK WITHIN A RULE, NEVER ACROSS RULES. ***
     # `section_id` scores 65 hops x 24 models = 1560 and `incident_id` scores 99.68% unique. Both
     # are vocab candidates and the numbers measure different things in different units, so sorting

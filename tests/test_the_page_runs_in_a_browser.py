@@ -376,6 +376,9 @@ def test_accept_on_a_card_and_a_waiver_from_the_tab_reach_the_handback(tmp_path,
             assert until.is_hidden(), "the date only belongs to an accept"
             card.locator('input[value="accept"]').check()
             assert until.is_visible()
+            drafted = card.locator("input.note").input_value()
+            assert drafted.endswith("It stays because "), \
+                "the evidence half of the reason is drafted from the finding"
             until.fill("2027-06-01")
             card.locator("input.note").fill("intended: the model is a lookup")
 

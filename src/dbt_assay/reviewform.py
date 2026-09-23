@@ -176,6 +176,10 @@ def load(payload) -> tuple[list, list]:
             bad.append(f"{subj.split('.')[-1]} / {q}: verdict is {v or 'empty'}, not recorded")
             continue
         until = str(r.get("until", "") or "").strip()
+        if v == "accept" and str(r.get("note", "") or "").rstrip().endswith("It stays because"):
+            bad.append(f"{subj.split('.')[-1]} / {q}: the reason was left at the form's draft -- "
+                       f"\"It stays because\" with nothing after it. Not recorded.")
+            continue
         if v == "accept" and not str(r.get("note", "") or "").strip():
             bad.append(f"{subj.split('.')[-1]} / {q}: accepted with no reason, not recorded. "
                        f"An accept is a waiver with a name on it and needs the waiver's why.")
@@ -867,6 +871,15 @@ function card(c) {
     r.onchange = () => {
       answers[c.key] = Object.assign({}, answers[c.key], {verdict: v});
       untilBox.hidden = v !== 'accept';
+      /* *** AN ACCEPT NEEDS A REASON, AND HALF OF ONE IS ALREADY ON THE CARD. ***
+         The finding says what is true; only the reader knows why it stays. So an empty reason
+         box is filled with the first half, quoted from the finding, and the second half is left
+         for them -- a draft keyed to the evidence, never a reason written for them. */
+      if (v === 'accept' && !note.value.trim() && c.findings.length) {
+        note.value = c.findings[0].summary.replace(/\.$/, '') + '. It stays because ';
+        answers[c.key].note = note.value;
+        note.focus();
+      }
       box.classList.add('done'); save(); tick();
     };
     ans.append(el('label', {title: v === 'accept'

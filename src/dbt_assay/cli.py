@@ -3690,7 +3690,8 @@ def suggest(
     config_dir: str = typer.Option(".", "--config", help="where audit.yml lives"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     section: str = typer.Option("", "--section",
-                                help="vocab | questions | waivers | explanations | open"),
+                                help="vocab | questions | waivers | explanations | "
+                                     "descriptions | open"),
     limit: int = typer.Option(12, "--limit", "-n", help="how many to print"),
     out: str = typer.Option("", "--out", help="write the drafts to a file as well"),
     json_out: bool = typer.Option(False, "--json"),
@@ -3716,6 +3717,7 @@ def suggest(
     # is optional: without one the store still carries every other signal, and the section that
     # needs a fresh run says so rather than reporting an empty list as "nothing to configure".
     firing, ran, live_now = set(), False, None
+    entries = schema = project = None
     if target:
         tdir = _find_target(target)
         project, digests, _f, schema, _s = _load(tdir, None)
@@ -3742,7 +3744,8 @@ def suggest(
             "select run_id from runs order by started_at desc, run_id desc limit 1").fetchone()
         run_id = row[0] if row else None
 
-    items = sug.build(store, cfg, firing, run_id, live_now, project)
+    items = sug.build(store, cfg, firing, run_id, live_now, project, entries, schema,
+                      digests if target else None)
     if section:
         items = [i for i in items if i.section == section]
     shown = items[:limit]
@@ -3769,7 +3772,8 @@ def suggest(
         return
 
     ORDER = {"open": "DECIDE FIRST", "vocab": "VOCAB", "questions": "QUESTIONS",
-             "waivers": "WAIVERS", "explanations": "EXPLANATIONS"}
+             "waivers": "WAIVERS", "explanations": "EXPLANATIONS",
+             "descriptions": "COLUMN DESCRIPTIONS"}
     last, last_basis, last_decide = None, None, None
     for i in shown:
         if i.section != last:
@@ -3797,9 +3801,10 @@ def suggest(
 
     if len(items) > len(shown):
         console.print(f"\n[dim]{len(items) - len(shown)} more. `--limit` or `--section`.[/]")
-    console.print("\n[dim]Every `means:` and `implies:` above is empty on purpose. assay measured "
-                  "the candidate; it cannot know what the term means here, and a guess would look "
-                  "exactly like knowledge.[/]")
+    console.print("\n[dim]assay writes no meaning. A `means:` above is either empty or QUOTED from "
+                  "a sentence this project already uses, with where it came from; a description "
+                  "draft says per line whether it is quoted or composed from recorded facts. A "
+                  "guess would look exactly like knowledge.[/]")
 
     if out:
         Path(out).write_text(_suggest_file(shown, len(items)))
