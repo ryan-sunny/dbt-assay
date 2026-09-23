@@ -45,7 +45,8 @@ TABLES = {
     # win. A count is not a clock. This is the clock.
     "runs": "One row per assay run: when it started, which assay and which dbt produced it, and "
             "what it could and could not read. The only table here that says which run is CURRENT "
-            "-- order by `started_at`, never by how much a run happened to find.",
+            "-- order by `started_at`, never by how much a run happened to find. A run with a "
+            "`scope` was narrowed (`check --check`) and is history, never the current one.",
 }
 
 COLUMN_DOCS = {
@@ -60,6 +61,8 @@ COLUMN_DOCS = {
     "row_count": "How many rows the probe saw, so an observation can be weighed.",
     "observed_at": "When it was counted. An observation ages; a declaration does not.",
     "weight": "base severity lifted by reach. Arithmetic over the DAG, never a judgment.",
+    "scope": "NULL for a full run. Otherwise what the run was narrowed to; `(inferred)` when it "
+             "was reconstructed for a run written before the column existed.",
 }
 
 

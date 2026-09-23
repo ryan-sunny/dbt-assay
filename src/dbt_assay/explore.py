@@ -508,9 +508,7 @@ def _suggestions(store, cfg, find_rows: list, project=None) -> list:
         live = _sug.live_pairs(find_rows)
         run_id = None
         if store is not None:
-            row = store.con.execute(
-                "select run_id from runs order by started_at desc, run_id desc limit 1").fetchone()
-            run_id = row[0] if row else None
+            run_id = store.latest_run(getattr(project, "project_name", None))
         return [s.as_dict() for s in _sug.build(store, cfg, firing, run_id, live, project)]
     except Exception:                                            # noqa: BLE001
         # A store too old to carry a signal still renders every other section. An empty list here
@@ -550,14 +548,13 @@ def _moved(store, project) -> dict:
     if store is None:
         return {}
     try:
-        run = store.con.execute(
-            "select run_id from runs order by started_at desc limit 1").fetchone()
+        run = store.latest_run(project.project_name)
         if not run:
             return {}
-        prev = store.previous_run(project.project_name, run[0])
+        prev = store.previous_run(project.project_name, run)
         if not prev:
             return {}
-        d = store.diff(prev, run[0])
+        d = store.diff(prev, run)
     except Exception:                                            # noqa: BLE001
         return {}
     return {"new": [list(x) for x in d.get("new", [])][:40],

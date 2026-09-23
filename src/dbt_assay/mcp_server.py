@@ -1007,9 +1007,7 @@ class Backend:
         pairs = sug.live_pairs(_fs)
         run_id = None
         if store is not None:
-            row = store.con.execute(
-                "select run_id from runs order by started_at desc, run_id desc limit 1").fetchone()
-            run_id = row[0] if row else None
+            run_id = store.latest_run(self.state().project.project_name)
         items = sug.build(store, cfg, firing, run_id, pairs, self.state().project)
         if section:
             items = [i for i in items if i.section == section]

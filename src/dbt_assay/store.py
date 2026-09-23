@@ -65,7 +65,8 @@ create table if not exists runs (
     readable     integer,
     unreadable   integer,
     parse_ok     integer,
-    parse_failed integer
+    parse_failed integer,
+    scope        varchar
 );
 create table if not exists findings (
     run_id       varchar,
@@ -327,6 +328,11 @@ class Store:
         # name -- so `assay cost` died with a binder error on every existing store until this
         # line existed. Which is what the banner above this dict says, and it still happened.
         "warehouse_calls": [("exec_ms", "integer")],
+        # *** A PARTIAL RUN BECAME THE BASELINE. ***
+        # `check --check <name>` wrote 21 findings as a run, and the next diff called the other
+        # 515 resolved and the loop line said "63 are gone" on a project where none were. NULL is
+        # a full run; anything else says what the run was narrowed to.
+        "runs": [("scope", "varchar")],
     }
 
     def _migrate(self) -> None:
@@ -336,6 +342,7 @@ class Store:
         self._rename_moved_question_ids()
         self._backfill_model_calls()
         self.verdict_versions_filled = self._backfill_verdict_versions()
+        self.scoped_runs_marked = self._backfill_scoped_runs()
         # *** THE ONE TABLE RECORDING A MEASUREMENT OF THE DATA WAS THE ONE THAT FORGOT. ***
         # `observed_keys` keyed on (relation, column) with `insert or replace`, so each probe
         # overwrote the last and assay could never say a key that held last week has stopped.
@@ -632,6 +639,39 @@ class Store:
         self.con.execute("drop table adjudications")
         self.con.execute("alter table _adj_reshaped rename to adjudications")
 
+    def _backfill_scoped_runs(self) -> int:
+        """Mark the partial runs written before `scope` existed. Returns how many.
+
+        *** ONLY THE SHAPE `--check` LEAVES, AND ONLY WHEN BOTH NEIGHBOURS DISAGREE WITH IT. ***
+        A run whose findings are all one check, fewer than half of the full runs either side of it,
+        where both of those carry more than one check. A project that genuinely has one kind of
+        finding has full runs of one check too, so it is never marked. Recorded as `inferred` so
+        the mark says it was reconstructed rather than observed.
+        """
+        try:
+            rows = self.con.execute("""
+                with per as (
+                    select r.run_id, r.project, r.started_at,
+                           count(f.run_id) as n, count(distinct f.check_name) as checks,
+                           min(f.check_name) as only_check
+                    from runs r left join findings f on f.run_id = r.run_id
+                    where r.scope is null
+                    group by all),
+                ranked as (
+                    select *, lag(n) over w as n_before, lag(checks) over w as c_before,
+                              lead(n) over w as n_after, lead(checks) over w as c_after
+                    from per window w as (partition by project order by started_at, run_id))
+                select run_id, only_check from ranked
+                where checks = 1 and n_before is not null and n_after is not null
+                  and c_before > 1 and c_after > 1
+                  and n * 2 < n_before and n * 2 < n_after""").fetchall()
+        except Exception:                                        # noqa: BLE001
+            return 0
+        for run_id, only in rows:
+            self.con.execute("update runs set scope = ? where run_id = ?",
+                             [f"check:{only} (inferred)", run_id])
+        return len(rows)
+
     def _backfill_verdict_versions(self) -> int:
         """Give an already-reshaped store's unversioned verdicts their version back.
 
@@ -734,13 +774,33 @@ class Store:
         self.con.close()
 
     def write_run(self, run_id: str, project, coverage: dict, parse_ok: int, parse_failed: int,
-                  target_dir: str, version: str) -> None:
+                  target_dir: str, version: str, scope: str | None = None) -> None:
+        # Named, never positional, for the reason `write_findings` gives.
         self.con.execute(
-            """insert or replace into runs values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            """insert or replace into runs
+               (run_id, started_at, project, dbt_version, target_dir, assay_version, host,
+                models, sources, tests, edges, readable, unreadable, parse_ok, parse_failed,
+                scope)
+               values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [run_id, datetime.now(timezone.utc), project.project_name, project.dbt_version,
              target_dir, version, platform.node(),
              coverage["models"], coverage["sources"], coverage["tests"], coverage["edges"],
-             coverage["readable"], coverage["unreadable"], parse_ok, parse_failed])
+             coverage["readable"], coverage["unreadable"], parse_ok, parse_failed, scope])
+
+    def latest_run(self, project_name: str | None = None) -> str | None:
+        """The most recent FULL run: what "the current findings" means everywhere.
+
+        *** ONE DEFINITION, BECAUSE SIX PLACES SPELLED IT THEMSELVES. ***
+        `suggest`, MCP, the page and the explorer each asked for `order by started_at desc limit
+        1`, and each would have taken a scoped run for the current state of the project. A scoped
+        run is history; it is never "now".
+        """
+        r = self.con.execute(
+            "select run_id from runs where scope is null"
+            + (" and project = ?" if project_name else "")
+            + " order by started_at desc, run_id desc limit 1",
+            [project_name] if project_name else []).fetchone()
+        return r[0] if r else None
 
     def write_findings(self, run_id: str, findings) -> None:
         rows = [[run_id, f.check, f.subject, f.subject_name, f.file, f.summary, f.detail,
@@ -1173,8 +1233,8 @@ class Store:
 
     def previous_run(self, project_name: str, before: str) -> str | None:
         r = self.con.execute(
-            """select run_id from runs where project = ? and run_id <> ?
-               order by started_at desc limit 1""", [project_name, before]).fetchone()
+            """select run_id from runs where project = ? and run_id <> ? and scope is null
+               order by started_at desc, run_id desc limit 1""", [project_name, before]).fetchone()
         return r[0] if r else None
 
     def baseline_findings(self, project_name: str) -> tuple[dict | None, list[tuple]]:
@@ -1186,8 +1246,9 @@ class Store:
         anyone fixing it.
         """
         r = self.con.execute(
-            """select run_id, started_at, assay_version from runs where project = ?
-               order by started_at desc limit 1""", [project_name]).fetchone()
+            """select run_id, started_at, assay_version from runs
+               where project = ? and scope is null
+               order by started_at desc, run_id desc limit 1""", [project_name]).fetchone()
         if not r:
             return None, []
         rows = self.con.execute(

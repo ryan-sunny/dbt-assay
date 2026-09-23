@@ -93,3 +93,81 @@ def test_a_reworded_finding_is_matched_by_count_not_called_new():
     assert new_findings([*now, third], base) == [third]
     other = _F("d", "arbitrary_pick", "m")
     assert new_findings([*now, other], base) == [other]
+
+
+def _runs(store):
+    import duckdb
+    c = duckdb.connect(str(store), read_only=True)
+    try:
+        return c.execute("select run_id, scope from runs order by started_at").fetchall()
+    finally:
+        c.close()
+
+
+def test_a_check_scoped_run_is_history_and_never_the_baseline(project_dir, tmp_path):
+    """*** `--check` WROTE A PARTIAL RUN AND THE LOOP NUMBER SAID "63 ARE GONE". ***
+
+    Reported from the field (25.3). `--select` already refused to write; `--check`, one flag
+    over, wrote 21 of 536 findings as a run, and the next diff and the loop line read from it.
+    """
+    from dbt_assay.store import Store
+    store = tmp_path / "s.duckdb"
+    args = ["check", "-t", str(project_dir), "--store", str(store), "--config", str(tmp_path)]
+    runner.invoke(app, args)
+    full = _runs(store)[-1][0]
+    r = runner.invoke(app, [*args, "--check", "arbitrary_pick"])
+    assert "scoped to --check arbitrary_pick" in r.output
+    assert "vs previous run" not in r.output and "are gone" not in r.output
+    _scoped_id, scope = _runs(store)[-1]
+    assert scope == "check:arbitrary_pick"
+    s = Store(str(store))
+    try:
+        assert s.latest_run("p") == full
+        assert s.baseline_findings("p")[0]["run_id"] == full
+    finally:
+        s.close()
+    # The next full run compares with the previous FULL run, so nothing moved.
+    r = runner.invoke(app, args)
+    assert "vs previous run: 0 new, 0 resolved" in " ".join(r.output.split()), r.output
+
+
+def _fake_runs(store_path, shapes):
+    """Runs with findings of the given (n, checks) shapes, one minute apart."""
+    from datetime import datetime, timedelta, timezone
+
+    from dbt_assay.store import Store
+    s = Store(str(store_path))
+    t0 = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    for i, (n, checks) in enumerate(shapes):
+        rid = f"r{i}"
+        s.con.execute("insert into runs (run_id, started_at, project) values (?, ?, 'p')",
+                      [rid, t0 + timedelta(minutes=i)])
+        for k in range(n):
+            s.con.execute("insert into findings (run_id, check_name, subject, summary) "
+                          "values (?, ?, ?, ?)", [rid, checks[k % len(checks)], f"m{k}", f"s{k}"])
+    s.close()
+
+
+def test_a_partial_run_written_before_scope_existed_is_marked_once(tmp_path):
+    from dbt_assay.store import Store
+    _fake_runs(tmp_path / "a.duckdb",
+               [(30, ["a", "b", "c"]), (4, ["b"]), (30, ["a", "b", "c"])])
+    s = Store(str(tmp_path / "a.duckdb"))
+    try:
+        assert s.latest_run("p") == "r2"
+        rows = dict(s.con.execute("select run_id, scope from runs").fetchall())
+        assert rows == {"r0": None, "r1": "check:b (inferred)", "r2": None}
+        assert s.previous_run("p", "r2") == "r0"
+    finally:
+        s.close()
+
+
+def test_a_project_with_one_kind_of_finding_is_never_marked(tmp_path):
+    """Full runs of one check look like the partial shape; the neighbours tell them apart."""
+    from dbt_assay.store import Store
+    _fake_runs(tmp_path / "b.duckdb", [(30, ["a"]), (4, ["a"]), (30, ["a"])])
+    s = Store(str(tmp_path / "b.duckdb"))
+    try:
+        assert s.scoped_runs_marked == 0
+    finally:
+        s.close()

@@ -312,7 +312,9 @@ def check(
     store_path: str = typer.Option("assay.duckdb", "--store",
                                    help="the DuckDB file to read judgments from and write to"),
     limit: int = typer.Option(25, "--limit", "-n", help="how many findings to print"),
-    check_name: str = typer.Option(None, "--check", help="only this check"),
+    check_name: str = typer.Option(None, "--check",
+                                   help="only this check. Recorded as a SCOPED run: kept as "
+                                        "history, never compared against, never the baseline."),
     config_path: str = typer.Option(".", "--config", help="directory holding audit.yml"),
     dialect: str = typer.Option(None, "--dialect",
                                 help="override; read from the manifest by default"),
@@ -591,13 +593,23 @@ def check(
         if first:
             console.print(f"\n[yellow]{first}[/]")
         ok = sum(1 for d in digests.values() if d.ok)
-        s.write_run(run_id, project, project.coverage(), ok, len(failures), str(tdir), __version__)
+        run_scope = f"check:{check_name}" if check_name else None
+        s.write_run(run_id, project, project.coverage(), ok, len(failures), str(tdir), __version__,
+                    scope=run_scope)
         s.write_findings(run_id, findings)
         s.write_edge_facts(run_id, facts)
         s.write_unreadable(run_id, [(uid, m.name, m.path, "no compiled SQL")
                                     for uid, m in project.models.items() if not m.readable]
                            + [(uid, n, p, e) for uid, n, p, e in failures])
-        prev = s.previous_run(project.project_name, run_id)
+        # *** A SCOPED RUN IS HISTORY, NOT A MEASUREMENT OF THE PROJECT. ***
+        # Reported from the field (25.3): `--check` wrote 21 findings as a run, the diff called the
+        # other 515 resolved, and the loop line -- "the only number a release cannot move" --
+        # flipped to "63 are gone" on a project where none were. It is recorded with its scope and
+        # nothing below is computed from it.
+        prev = None if run_scope else s.previous_run(project.project_name, run_id)
+        if run_scope:
+            console.print(f"\n[dim]scoped to --check {check_name}: written as history, not "
+                          f"compared with any run and not counted as the project's state.[/]")
         if prev:
             d = s.diff(prev, run_id)
             console.print(f"\n[bold]vs previous run:[/] {len(d['new'])} new, "
@@ -611,7 +623,8 @@ def check(
         # unrelated findings moving while the four you read sat there looks identical from here,
         # and is what it looks like when reviewing changes nothing.
         from .outcomes import confirmed_and_fixed
-        loop = confirmed_and_fixed(s, findings)
+        loop = (confirmed_and_fixed(s, findings) if not run_scope
+                else {"agreed": 0, "fixed": 0, "still_open": 0})
         if loop["agreed"]:
             console.print(
                 f"\n[bold]of the {loop['agreed']} finding(s) a person agreed with, "
@@ -619,8 +632,10 @@ def check(
             console.print("[dim]The only number on this screen that measures the LOOP rather "
                           "than the tool: a release cannot move it and neither can an agent.[/]")
         s.close()
-        _review_coverage(findings, store_path)
-    console.print(f"\n[dim]run {run_id} written to {store_path}[/]")
+        if not run_scope:
+            _review_coverage(findings, store_path)
+    console.print(f"\n[dim]run {run_id} written to {store_path}"
+                  + (f" (scoped: {run_scope})" if run_scope else "") + "[/]")
 
     if failing:
         raise typer.Exit(1)
@@ -2196,12 +2211,11 @@ def page(
         ruled_keys = store.ruled_subjects()
         agent_n = len(store.agent_rulings())
         eff = store.effectiveness("human")
-        run = store.con.execute(
-            "select run_id from runs order by started_at desc limit 1").fetchone()
+        run = store.latest_run(project.project_name)
         if run:
-            prev = store.previous_run(project.project_name, run[0])
+            prev = store.previous_run(project.project_name, run)
             if prev:
-                moved = store.diff(prev, run[0])
+                moved = store.diff(prev, run)
 
     def _is_ruled(f) -> bool:
         return f.subject in ruled_keys or f"{f.subject}::finding::{f.id}" in ruled_keys
@@ -3851,9 +3865,7 @@ def suggest(
 
     run_id = None
     if store is not None:
-        row = store.con.execute(
-            "select run_id from runs order by started_at desc, run_id desc limit 1").fetchone()
-        run_id = row[0] if row else None
+        run_id = store.latest_run(project.project_name)
 
     items = sug.build(store, cfg, firing, run_id, live_now, project, entries, schema,
                       digests if target else None)
