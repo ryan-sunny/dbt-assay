@@ -237,6 +237,13 @@ def _coverage_panel(project, digests, failures, show_errors: bool = True) -> Non
                   f"[yellow]{cov['unreadable']} model(s) have no SQL assay could reach, so they "
                   f"are absent from everything below.[/]")
     t.add_row("parsed", f"{_n(ok)}/{_n(len(digests))}" + (f"   [yellow]{len(failures)} failed[/]" if failures else ""))
+    # *** SQL THAT EXISTS AND IS NOT THE REAL THING, SAID BEFORE ANY FINDING. ***
+    from . import compilecheck
+    blind, looked = compilecheck.for_project(project, digests)
+    if blind:
+        t.add_row("[red]compiled blind?[/]", f"[red]{compilecheck.sentence(blind, looked)}[/]")
+        for b in blind[:5]:
+            t.add_row("", f"[dim]{b.model}: {b.why}[/]")
     console.print(t)
     if not show_errors:
         # A first run should not open with five screens of someone else's SQL. The COUNT is the
@@ -466,7 +473,11 @@ def check(
         policed = [p for p in policed if id(p[0]) in _keep]
 
     if json_out:
+        from . import compilecheck
+        _blind, _looked = compilecheck.for_project(project, digests)
         print(_json.dumps({
+            **({"compiled_blind": [{"model": b.model, "why": b.why} for b in _blind]}
+               if _blind else {}),
             **({"select": select, "scope": sorted(project.models[u].name for u in scope
                                                   if u in project.models)} if scope else {}),
             **({"baseline": baseline} if baseline else {}),
