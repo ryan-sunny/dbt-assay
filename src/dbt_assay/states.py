@@ -101,6 +101,9 @@ class Ctx:
     store: object = None
     vocab: dict = field(default_factory=dict)
     entries: list | None = None
+    # The full finding stream, judged findings included, for `finding` subjects. None builds the
+    # structural ones, which is what a rebuild months later can reproduce from code alone.
+    findings: list | None = None
     _memo: dict = field(default_factory=dict, repr=False)
     # (term, the subjects it was dropped for) -- every time a scoped term did not reach a state.
     # Counted rather than silent: a vocabulary quietly thinning is the same shape as one that was
@@ -231,7 +234,8 @@ class Ctx:
     def subjects_of(self, kind: str, state: str = "full") -> dict:
         from . import subjects as subjects_mod
         def load():
-            src = subjects_mod.SubjectSource(self.project, self.digests, self.schema, self.store)
+            src = subjects_mod.SubjectSource(self.project, self.digests, self.schema, self.store,
+                                             findings=self.findings)
             return {s.key: s for s in subjects_mod.build(kind, src, state=state)}
         return self.once(f"subjects::{kind}::{state}", load)
 

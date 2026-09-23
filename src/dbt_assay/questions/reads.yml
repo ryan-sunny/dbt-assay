@@ -1,0 +1,49 @@
+# Reading a finding before a person rules on it.
+#
+# *** THE MOST EXPENSIVE HUMAN STEP IN THE LOOP WAS THE ONLY ONE WITH NO JUDGED PATH. ***
+# `assay review --reads` pre-fills an agent's reading on every card, which is what makes a card
+# cheap to answer -- and nothing wrote that file. The skill said "an agent writes it once,
+# offline", which in practice meant a conversation, one finding at a time. Priced from a real
+# ledger: `practices` judged 171 findings for $0.0057, so the 212 cold cards on that form would
+# have cost about $0.007.
+#
+# The answer goes into a FILE a person reads, never into the store as a verdict. An agent is not
+# the authority, and this does not make it one: the card still waits for a click.
+version: 1
+
+finding_is_correct:
+  id_prefix: "read"
+  acknowledge:
+    finding_when: >-
+      deliberate. The answer is a reading handed to a person on a review card, not a defect in a
+      model. A finding produced from it would be a finding about a finding.
+  type: choice
+  subject: finding
+  prompt_version: "read.v2"
+  instructions:
+    question: >-
+      A check raised `findings` about `model`. Using each finding's `evidence`, the `sql` and the
+      `description`, is what the findings STATE true?
+    note: >-
+      Judge whether each statement is true, not whether it matters. Many findings report a fact
+      assay counted or compared -- a column "described 16 different ways", a test that "cannot
+      fail", a tie-break that "may not be total" -- and `evidence` carries what was counted. If the
+      evidence and the code bear the statement out, it is correct, even when the underlying
+      difference is harmless. A finding can be true and still describe something the author
+      meant; that is `correct_and_deliberate`. Only a comment, the description or the code itself
+      counts as evidence of intent -- never a guess about what the author probably wanted.
+  criteria:
+    correct:
+      what: >-
+        What the findings state is true: the evidence and the code show exactly what they say.
+    correct_and_deliberate:
+      what: >-
+        What the findings state is true, AND a comment, the description or the shape of the code
+        shows it was done on purpose.
+      examples: ["a comment above the join saying the fan-out is intended and aggregated below"]
+    misreads_the_sql:
+      what: >-
+        At least one finding states something the code or its own evidence contradicts: a join, a
+        filter, a column, a count or a claim it got wrong.
+    cannot_tell:
+      what: "The evidence and the code do not settle it. Choose this rather than guess."

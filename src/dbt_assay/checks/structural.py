@@ -48,7 +48,10 @@ BBOX_FUNCS = {"ST_MAKEENVELOPE", "ST_EXPAND", "ST_ENVELOPE"}
 # model or the state moves -- hashing it would orphan every ruling on the next run, which is the
 # exact bug this id exists to fix. Measurements are excluded: a float is a probability or a share,
 # and reach is a property of the DAG rather than of the defect.
-_MEASURED = frozenset({"downstream", "marts", "probability", "confidence"})
+# `one_of_each` is a READING AID: one example per variant, so a reader sees what differs. It is
+# rebuilt from the descriptions every run and must not move the finding's identity, which is what
+# every ruling on it is filed under.
+_MEASURED = frozenset({"downstream", "marts", "probability", "confidence", "one_of_each"})
 
 
 def _identity(evidence: dict) -> str:

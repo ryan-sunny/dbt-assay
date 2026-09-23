@@ -72,18 +72,20 @@ folder. Ask for the path the moment they say they have filled it in, and load it
 `load_handback(path)` over MCP, or the `--load` line above. It is the only path that files
 `human` verdicts, and it files only what the file carries.
 
-**The expensive half is yours, and it is what makes each card cheap.** Read the SQL for every
-finding once, offline, and write what you found into a file keyed by `<subject>::<check>`, with a
-`verdict` and a `why` for each. Then:
+**The expensive half is what makes each card cheap, and the judged tier does it.** `assay read`
+reads every unruled card once and writes the file the form takes -- a verdict in the form's own
+vocabulary and a reason selected from the question's criteria, never written. It costs about a
+third of a hundredth of a cent a card, prices itself first, and records NO verdict:
 
 ```bash
+assay read --out reads.json --target <target/> --store assay.duckdb --dry-run   # count, price
+assay read --out reads.json --target <target/> --store assay.duckdb
 assay review --emit review.html --reads reads.json --target <target/>
 ```
 
-ships the form with MY READ already filled. That is a long job and a background one, and it is the
-difference between a form somebody answers and a form somebody closes. The emit line says how many
-cards already carry a reading and how many are a cold start, so you know the size of the job before
-you start it.
+That ships the form with a reading already on each card. Where you have read a card's SQL yourself
+and disagree with the file, change that entry before emitting: the file is yours to edit, the click
+is still theirs. The emit line says how many cards carry a reading and how many are a cold start.
 
 **A handful, or they want to talk through them: the loop below.** It is the right shape for a
 call. It is the wrong shape for a project.

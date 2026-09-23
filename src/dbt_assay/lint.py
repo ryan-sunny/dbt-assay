@@ -421,6 +421,9 @@ CALLERS: dict[str, tuple[str, str, str]] = {
     # Counted tier: Elementary counted the movement, assay brought the claim and the blast radius.
     "volume_contradicts_a_claim":       ("cli",        "assay volume --judge",
                                          "one counted movement + one claim"),
+    # A reading of a review card, written to the file `review --reads` takes. Never a verdict.
+    "finding_is_correct":               ("reads",      "assay read",
+                                         "one (model, check) card: findings, evidence, SQL"),
 }
 
 

@@ -132,7 +132,16 @@ def models_disagree_about_a_column(project, _digests=None, _schema=None) -> list
                     "the same thing is a question for somebody who knows the domain."),
             evidence={"column": col, "variants": len(variants),
                       "described_in": [f"{n}: {t}" for n, t in said][:8],
-                      "models": len(flat)}))
+                      "models": len(flat),
+                      # *** EIGHT IDENTICAL SENTENCES UNDER "DESCRIBED 3 DIFFERENT WAYS". ***
+                      # `described_in` is the first eight alphabetically, and 104 models share
+                      # one sentence, so a reader -- and a judged reading of this card -- saw
+                      # the claim contradicted by its own evidence. One of each, with its count.
+                      "one_of_each": [
+                          f"{len(rows)} model(s), e.g. {min(r[1].name for r in rows)}: "
+                          f"{rows[0][2][:200]}"
+                          for _k, rows in sorted(variants.items(), key=lambda kv: -len(kv[1]))
+                      ][:8]}))
     return out
 
 

@@ -383,7 +383,7 @@ def test_accept_on_a_card_and_a_waiver_from_the_tab_reach_the_handback(tmp_path,
             page.locator("label.write input[type=checkbox]").first.check()
             with page.expect_download() as dl:
                 page.click("#dl")
-            doc = json.loads(open(dl.value.path()).read())
+            doc = json.loads(dl.value.path().read_text())
             assert not errors, "\n".join(errors[:5])
         finally:
             browser.close()

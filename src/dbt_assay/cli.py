@@ -4632,8 +4632,9 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
     console.print(f"   [dim]{n_read} carry a reading already; {len(cards) - n_read} are a cold "
                   f"start.[/]")
     if len(cards) - n_read:
-        console.print("   [dim]`--reads <json>` pre-fills MY READ, which is what makes each card "
-                      "cheap to answer. An agent writes that file once, offline.[/]")
+        console.print("   [dim]`--reads <json>` pre-fills a reading on each card, which is what "
+                      "makes it cheap to answer. `assay read --out reads.json` writes that file "
+                      "by the judged tier, and prices it first with --dry-run.[/]")
     console.print(f"   [dim]{_n(len(ctx['words']))} word(s), {_n(len(ctx['explanations']))} "
                   f"mart(s) with options and {_n(len(ctx['waivers']))} proposed waiver(s) are in "
                   f"there too. A word reaches every judged answer about every model it applies "
@@ -5267,6 +5268,113 @@ def watch(
     finally:
         if store:
             store.close()
+
+
+@app.command()
+def read(
+    out: str = typer.Option(..., "--out", "-o", help="the reads file to write, for "
+                                                    "`assay review --emit --reads`"),
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    select: str = typer.Option(None, "--select", "-s", help="only cards on these models"),
+    check_name: str = typer.Option(None, "--check", help="only cards for this check"),
+    limit: int = typer.Option(0, "--limit", "-n", help="read at most this many cards"),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="count the cards and price them, and show one state. "
+                                      "Spends nothing."),
+    dialect: str = typer.Option(None, "--dialect"),
+):
+    """Read every unruled review card once, by the judged tier, into a file a person checks.
+
+    The cards are exactly the ones `assay review --emit` would show: one per (model, check), and
+    none a person has already ruled on. Each reading is a verdict in the form's own vocabulary and
+    a reason SELECTED from the question's criteria, never written. Entries already in `--out` are
+    kept and not paid for twice. Nothing is recorded as a verdict: the file is for a person.
+    """
+    from . import reads as reads_mod
+    from . import reviewform
+    from .selector import resolve
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
+    cfg = Config.load(config_path)
+    store = Store(store_path)
+    entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store))
+    findings = live_mod.all_findings(project, digests, schema, entries, store,
+                                     cfg.row_loss_threshold)
+    cards, _sql = reviewform.cards(findings, store, Path(tdir).parent)
+    keys = {c["key"] for c in cards}
+    have: dict = {}
+    if Path(out).exists():
+        try:
+            have = _json.loads(Path(out).read_text()) or {}
+        except ValueError as e:
+            console.print(f"[red]{out} is not JSON ({e}); left alone.[/] Pass a new --out.")
+            raise typer.Exit(2) from e
+    scope = resolve(project, select)
+    ctx = _state_ctx(project, digests, schema, store, cfg, entries=entries)
+    ctx.findings = findings
+    subs = [s for s in ctx.subjects_of("finding").values()
+            if s.key in keys and s.key not in have
+            and (scope is None or s.uid in scope)
+            and (not check_name or s.state.get("check") == check_name)]
+    # The costly ones first: a cap should spend itself where a wrong verdict costs most.
+    subs.sort(key=lambda s: (-project.blast_radius(s.uid)["marts"], s.key))
+    if limit:
+        subs = subs[:limit]
+    q = reads_mod.bank()
+    est = _estimate(subs, q)
+    console.print(f"[bold]{len(subs)}[/] card(s) to read of {len(cards)} unruled "
+                  f"[dim]({len(have)} already in {out}) · ~${est:.4f}[/]")
+    if dry_run:
+        if subs:
+            console.print(f"[dim]{_json.dumps(subs[0].state, default=str)[:600]}...[/]")
+        store.close()
+        return
+    if not subs:
+        store.close()
+        return
+    if est > cfg.max_spend_usd:
+        console.print(f"[red]refused before spending anything:[/] ~${est:.2f} exceeds the "
+                      f"${cfg.max_spend_usd:.2f} cap in audit.yml. --select or --limit.")
+        store.close()
+        raise typer.Exit(1)
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        console.print("[yellow]no API key.[/] [dim]`--dry-run` shows what would be sent and "
+                      "costs nothing; `assay config` shows what was resolved.[/]")
+        store.close()
+        raise typer.Exit(1)
+    got = dict(have)
+    tally = Counter()
+    with console.status(f"reading {len(subs)} card(s)..."):
+        for sub in subs:
+            rec = states.make("subject", ctx, key=sub.key,
+                              inputs={"kind": "finding", "key": sub.key})
+            if rec is None:
+                continue
+            try:
+                store.use_project(project)
+                ans = decide(store, client, rec, {q["id_prefix"]: choice_q(reads_mod.FAMILY)},
+                             contexts={q["id_prefix"]: sub.name},
+                             prompt_version=q["prompt_version"], caller="assay.read")
+            except BudgetExceeded as e:
+                console.print(f"[yellow]stopped at the cap: {e}[/]")
+                break
+            a = ans.get(q["id_prefix"])
+            if not a:
+                continue
+            got[sub.key] = reads_mod.reading(a)
+            tally[got[sub.key]["verdict"]] += 1
+    store.close()
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out).write_text(_json.dumps(got, indent=2, sort_keys=True, default=str) + "\n")
+    console.print(f"wrote [bold]{out}[/]: {sum(tally.values())} new reading(s) "
+                  + ", ".join(f"{n} {v}" for v, n in tally.most_common()))
+    console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}. Nothing was recorded as a verdict: "
+                  f"`assay review --emit form.html --reads {out}` puts these on the cards, and "
+                  f"the click is still a person's.[/]")
 
 
 @app.command()

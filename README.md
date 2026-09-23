@@ -87,7 +87,7 @@ Six kinds of thing accrue, and five of them cost something to produce:
 
 | what | where | on a real 358-model warehouse |
 |---|---|---|
-| **your verdicts** — a finding you read and called real, wrong, or unclear | `adjudications` | 136 human, 105 from an agent, 82 derived from assertions already in the project |
+| **your verdicts** — a finding you read and called real, wrong, unclear, or right-and-staying (`accept`) | `adjudications` | 136 human, 105 from an agent, 82 derived from assertions already in the project |
 | **your vocabulary** — the words this project uses for its own concepts, and *where each one is true* | `audit.yml` | 16 terms; 6 asserted one state's law to a project a quarter of which is in another |
 | **your own questions** — families you wrote, in YAML, no code change | `assay_questions/*.yml` | asked, stored, and (since 0.38.0) able to produce findings like any shipped one |
 | **what the project claims about itself**, as data rather than prose | `claims` | 5,794 atomic claims, each with an id that survives a paragraph being reflowed |
@@ -329,9 +329,11 @@ writes `verdicts.json`.
 did not record rather than printing a total that hides them. One card per `(model, check)`, because
 that is what a verdict covers: 260 findings are 212 cards.
 
-`--reads <json>` pre-fills the agent's own read of each finding. That is the expensive half and it
-is what makes a card cheap to answer; done once, offline, it is the difference between a form
-somebody answers and a form somebody closes.
+`--reads <json>` pre-fills a reading of each finding. That is the expensive half and it is what
+makes a card cheap to answer, and `assay read --out reads.json` writes it: every unruled card, once,
+by the judged tier (`finding_is_correct`), at about $0.00003 a card. The verdict is in the form's own vocabulary and the
+reason is selected from the question's criteria rather than written. Nothing is recorded as a
+verdict -- the file is for a person, and the click on each card is still theirs.
 
 
 ```bash

@@ -125,7 +125,7 @@ Every one of those shapes this tool: arithmetic and dates are settled by sqlglot
 never asked, states are the smallest thing that can answer the question, and there is one noul per
 rule rather than one over a list of them. The [README](../README.md) carries the measurements.
 
-Eighteen question families ship. The one worth seeing first:
+Nineteen question families ship. The one worth seeing first:
 
 ### Does the description still describe the code?
 
@@ -209,7 +209,7 @@ fires after the spend is not a cap.
 
 ## Every question, and what rests on it
 
-Eighteen families ship. `assay config` shows how many verdicts each has and which can gate;
+Nineteen families ship. `assay config` shows how many verdicts each has and which can gate;
 `rests_on` on a finding names the family it derives from, and these are those names.
 
 | family | type | finding it feeds |
@@ -231,6 +231,7 @@ Eighteen families ship. `assay config` shows how many verdicts each has and whic
 | `row_is_internally_coherent` | noul | — *needs warehouse rows* |
 | `options_overlap` | choice | — *lints a question, not a project: `assay banks --judge`* |
 | `same_defect` | noul | — *groups assay's own rejected findings: `assay disagreements --judge`* |
+| `finding_is_correct` | choice | — *a reading for a review card, written to a file: `assay read`* |
 
 **A dash means no finding rests on it yet.** Those answers still fill the inventory, the page and
 `trace`, and ruling on them records evidence — but it moves no gate, and `assay review -i` says so

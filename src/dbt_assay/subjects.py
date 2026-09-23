@@ -20,7 +20,8 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 
-KINDS = ("model", "edge", "column", "predicate", "expression", "window", "ruling_pair")
+KINDS = ("model", "edge", "column", "predicate", "expression", "window", "ruling_pair",
+         "finding")
 
 # *** A QUESTION CAN ONLY ASK WHAT ITS SUBJECT'S STATE CAN ANSWER, AND NOTHING SAID SO. ***
 # Reported from the field, and it cost an hour: two custom questions lint-passed and never fired,
@@ -51,6 +52,10 @@ STATE_FIELDS: dict = {
                "the_model_filters", "what_one_row_of_this_model_is"},
     # `ruling_pair` comes from the STORE and names no model, so it gets no row description.
     "ruling_pair": {"check_or_question_both_rulings_are_about", "first_reason", "second_reason"},
+    # One (model, check) pair's findings, and the code they are about: what a review card shows a
+    # person, so a reading of it is a reading of what they will be asked to rule on.
+    "finding": {"model", "check", "findings", "sql", "description",
+                "what_one_row_of_this_model_is"},
 }
 
 
@@ -71,6 +76,9 @@ class SubjectSource:
     digests: dict = field(default_factory=dict)
     schema: object = None
     store: object = None
+    # The findings a `finding` subject is built from. None computes the structural ones; a caller
+    # that already holds the full stream -- judged findings included -- passes it.
+    findings: list | None = None
 
 
 @dataclass
@@ -111,9 +119,12 @@ def build(kind: str, src: SubjectSource, limit: int = 0,
         # It is two verdicts somebody gave, and its ordering is its own.
         out = _ruling_pairs(src.store)
         return out[:limit] if limit else out
-    fn = {"model": _models, "edge": _edges, "column": _columns,
-          "predicate": _predicates, "expression": _expressions, "window": _windows}[kind]
-    out = fn(project, digests, schema)
+    if kind == "finding":
+        out = _findings(project, digests, schema, src.findings, src.store)
+    else:
+        fn = {"model": _models, "edge": _edges, "column": _columns,
+              "predicate": _predicates, "expression": _expressions, "window": _windows}[kind]
+        out = fn(project, digests, schema)
     if state == "full":
         _add_what_a_row_is(out, project, digests, schema)
     # Most reachable first: a limit should spend itself where a defect costs most.
@@ -140,6 +151,69 @@ def _models(project, digests, schema) -> list[Subject]:
                                ("1 = 1", "TRUE", "true")][:12],
                    "groups_by": list(d.group_by or [])[:8] or None,
                    "reads": [project.name_of(p) for p in (m.parents or [])][:8]}))
+    return out
+
+
+# The SQL is the evidence a reading of a finding needs, and the one field that can be huge. The
+# largest real model on the field warehouse is 629 lines; this keeps the state readable and says so.
+_SQL_CHARS = 6000
+
+
+def _findings(project, digests, schema, findings, store) -> list[Subject]:
+    """One subject per (model, check), the grain a verdict covers and a review card shows."""
+    if findings is None:
+        from . import live
+        findings = live.all_findings(project, digests, schema, None, store=store)
+    by: dict = {}
+    for f in findings:
+        if not f.subject:
+            continue                          # a finding about the whole project has no card
+        by.setdefault((f.subject, f.check), []).append(f)
+    out = []
+    for (uid, check), fs in sorted(by.items()):
+        # A source or a seed has a card too, and no SQL: its finding is about where it reaches.
+        m = project.models.get(uid) or _Named(fs[0].subject_name or uid.split(".")[-1],
+                                              fs[0].file or "")
+        sql = m.compiled or ""
+        if len(sql) > _SQL_CHARS:
+            sql = (sql[:_SQL_CHARS] + f"\n-- assay: {_SQL_CHARS:,} of {len(sql):,} characters; "
+                   f"the rest is not in this state")
+        fs = sorted(fs, key=lambda x: x.id)
+        out.append(Subject(
+            "finding", f"{uid}::{check}", uid, f"{m.name} / {check}", file=m.path,
+            state=_prune({
+                "model": m.name, "check": check,
+                # *** THE EVIDENCE, BECAUSE THE DETAIL IS THE CHECK'S AND NOT THE CASE'S. ***
+                # The first run read five `models_disagree_about_a_column` cards and answered
+                # `cannot_tell` on four, at 0.4: the detail says what the check means in general,
+                # and the sixteen sentences it was about were only in `evidence`. An unclear is
+                # the state failing to carry the answer, which is fixed by a field.
+                "findings": [_prune({"summary": f.summary,
+                                     "detail": (f.detail or "")[:700],
+                                     "claim": str((f.evidence or {}).get("claim") or ""),
+                                     "evidence": _evidence(f.evidence)})
+                             for f in fs[:6]],
+                "sql": sql,
+                "description": (getattr(m, "description", "") or "")[:600]})))
+    return out
+
+
+def _evidence(ev) -> dict:
+    """A finding's evidence, bounded: long lists cut with a count, the whole capped."""
+    import json as _json
+    out = {}
+    for k, v in (ev or {}).items():
+        if k in ("claim", "confidence") or v in (None, "", [], {}):
+            continue
+        if k == "described_in" and (ev or {}).get("one_of_each"):
+            continue                            # the variants say what differs; this does not
+        if isinstance(v, list) and len(v) > 12:
+            v = [*v[:12], f"... and {len(v) - 12} more"]
+        if isinstance(v, str) and len(v) > 400:
+            v = v[:400] + "..."
+        out[k] = v
+    while out and len(_json.dumps(out, default=str)) > 1500:
+        out.popitem()
     return out
 
 
@@ -333,6 +407,15 @@ def _add_what_a_row_is(subs: list[Subject], project, digests, schema) -> None:
 
 class _Blank:
     path = ""
+
+
+@dataclass
+class _Named:
+    """A card's subject that is not a model: a name, a file, and no SQL of its own."""
+    name: str
+    path: str = ""
+    compiled: str = ""
+    description: str = ""
 
 
 def _prune(d: dict) -> dict:
