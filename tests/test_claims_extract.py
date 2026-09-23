@@ -70,8 +70,18 @@ def test_a_second_extract_with_nothing_new_still_writes_the_file(tmp_path, monke
     assert out.exists()
 
 
-def _module_functions(tree: ast.Module) -> set[str]:
-    return {n.name for n in tree.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)}
+def _module_names(tree: ast.Module) -> tuple[set[str], set[str]]:
+    """(functions, imports) defined at module level.
+
+    An import counts too: `live = ...` inside a function that also reads `live.findings_for` is
+    the same crash with a module in place of a helper, and it was found in `suggestions`.
+    """
+    fns = {n.name for n in tree.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)}
+    mods = set()
+    for n in tree.body:
+        if isinstance(n, ast.Import | ast.ImportFrom):
+            mods |= {(a.asname or a.name).split(".")[0] for a in n.names}
+    return fns, mods
 
 
 def _bound_in(fn: ast.FunctionDef) -> dict[str, int]:
@@ -103,15 +113,20 @@ def test_no_function_rebinds_a_module_level_function_name():
     bad = []
     for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text())
-        helpers = _module_functions(tree)
+        fns, mods = _module_names(tree)
         for fn in ast.walk(tree):
             if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             called = {n.func.id for n in ast.walk(fn)
                       if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+            dotted = {n.value.id for n in ast.walk(fn)
+                      if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)}
             for name, line in _bound_in(fn).items():
-                # Rebinding alone is harmless; rebinding a helper the same function also CALLS
-                # is the crash, and it only fires on the data that reaches the binding.
-                if name in helpers and name in called and name != fn.name:
-                    bad.append(f"{path.name}:{line} {fn.name}() rebinds `{name}` and calls it")
+                # Rebinding alone is harmless; rebinding a helper the same function also CALLS,
+                # or a module it also reads from, is the crash -- and it only fires on the data
+                # that reaches the binding.
+                if name == fn.name:
+                    continue
+                if (name in fns and name in called) or (name in mods and name in dotted):
+                    bad.append(f"{path.name}:{line} {fn.name}() rebinds `{name}` and uses it")
     assert not bad, "\n".join(bad)

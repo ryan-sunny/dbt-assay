@@ -947,15 +947,19 @@ class Backend:
         store, why = self._store_or_why()
         cfg = Config.load(Path(self.target).parent if Path(self.target).name == "target"
                           else self.target)
-        _fs = self.state().findings
+        # *** `LiveState` HAS NO `findings`, AND THIS TOOL WAS DEAD ON EVERY PROJECT. ***
+        # Reported from the field (25.22): the one MCP tool that tells an agent what to put in
+        # audit.yml raised AttributeError unconditionally. The CLI's `assay suggest` reads the
+        # same single stream every other surface does; so does this now.
+        _fs = live.findings_for(self.state(), None, store)
         firing = {f.check for f in _fs}
-        live = sug.live_pairs(_fs)
+        pairs = sug.live_pairs(_fs)
         run_id = None
         if store is not None:
             row = store.con.execute(
                 "select run_id from runs order by started_at desc, run_id desc limit 1").fetchone()
             run_id = row[0] if row else None
-        items = sug.build(store, cfg, firing, run_id, live, self.state().project)
+        items = sug.build(store, cfg, firing, run_id, pairs, self.state().project)
         if section:
             items = [i for i in items if i.section == section]
         out = {

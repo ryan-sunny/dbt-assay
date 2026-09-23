@@ -70,3 +70,16 @@ def test_both_sdk_majors_are_tried_before_giving_up():
     # the message names the EXTRA now, not the bare package: a bare `uvx dbt-assay`
     # installs no mcp and the old wording did not say so.
     assert "pip install" in src and "dbt-assay[mcp]" in src
+
+
+def test_suggestions_answers_over_mcp(project_dir, tmp_path):
+    """*** THE TOOL THAT SAYS WHAT TO WRITE IN audit.yml RAISED ON EVERY PROJECT. ***
+
+    Reported from the field (25.22): `self.state().findings` on a dataclass that has never had the
+    field. The CLI `assay suggest` worked, which is why nothing noticed.
+    """
+    from dbt_assay.store import Store
+    Store(tmp_path / "s.duckdb").close()
+    be = Backend(str(project_dir), str(tmp_path / "s.duckdb"))
+    out = be.suggestions("", 5)
+    assert "error" not in out and "suggestions" in out
