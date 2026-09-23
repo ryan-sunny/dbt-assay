@@ -56,7 +56,7 @@ def test_every_command_answers_as_a_module_the_way_the_tools_run_it():
     bad = []
     for c in cli_tools.commands():
         r = subprocess.run([sys.executable, "-m", "dbt_assay.cli", c["name"], "--help"],
-                           capture_output=True, text=True, timeout=120)
+                           capture_output=True, text=True, timeout=120, check=False)
         if r.returncode != 0:
             bad.append(c["name"])
     assert not bad, f"not runnable as a module: {bad}"
