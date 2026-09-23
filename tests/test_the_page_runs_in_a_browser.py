@@ -281,3 +281,37 @@ def test_the_mark_renders_in_both_headers(page_file, tmp_path, project_dir):
                 page.close()
         finally:
             browser.close()
+
+
+def test_no_tab_scrolls_the_document(page_file):
+    """*** THE SCROLL BELONGS TO THE PANE, AND EVERY TAB WAS OUT BY 12px. ***
+
+    "the left area INCLUDING filters and dropdowns and checkboxes and the scrollable list need to
+    be the same size as the window... so that the screen doesnt jankily scroll down when it
+    shouldnt."
+
+    The height was `calc(100vh - 210px)`, a number counted once by hand, and driving the real
+    page found it 12px short on every single tab. No static check can see that -- the CSS is
+    valid and the arithmetic is somebody's -- so it is measured here, in a browser, at two
+    window sizes, because a constant is right at one size and wrong at the other.
+    """
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            for size in ({"width": 1440, "height": 900}, {"width": 1100, "height": 620}):
+                page = browser.new_page(viewport=size)
+                page.goto(page_file.as_uri())
+                page.wait_for_timeout(120)
+                for tab in TABS:
+                    page.click(f'nav button[data-tab="{tab}"]')
+                    page.wait_for_timeout(50)
+                    over = page.evaluate(
+                        "() => document.documentElement.scrollHeight - window.innerHeight")
+                    assert over <= 1, (
+                        f"`{tab}` at {size['width']}x{size['height']} makes the DOCUMENT scroll "
+                        f"by {over}px. The panes scroll; the page does not.")
+                page.close()
+        finally:
+            browser.close()

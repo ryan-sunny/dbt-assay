@@ -106,6 +106,14 @@ monitoring: {}
 
 # practices: override how a standard dbt-project-evaluator check is treated.
 #   enforce (exact, may gate) | recommend (informational) | adjudicate (ask) | off
+# cost: what your warehouse charges, so `assay cost` can price what assay ran on it. DuckDB on
+# your own disk bills nothing and says so, which is why this is empty here.
+cost: {}
+#  engine: bigquery
+#  rate_card: bigquery.on_demand.2026
+#  usd_per_tb_scanned: 6.25
+#  measure_bytes: true   # ask dbt for the adapter's own byte count. Costs a debug-level log.
+
 practices: {}
 #  fct_model_fanout: recommend
 

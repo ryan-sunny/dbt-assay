@@ -27,10 +27,18 @@ import json
 
 CSS = """
 :root{--ink:#16232a;--dim:#6b7a80;--faint:#94a3aa;--line:#dfe6e8;--bg:#fbfcfc;
---card:#fff;--red:#9e2b20;--green:#5a6a2f;--blue:#2b5c7a;--amber:#8a6412;--lin-h:460px;--pane-h:calc(100vh - 210px)}
+--card:#fff;--red:#9e2b20;--green:#5a6a2f;--blue:#2b5c7a;--amber:#8a6412;--lin-h:460px}
 *{box-sizing:border-box}
+/* *** THE HEIGHT IS MEASURED, NOT GUESSED. ***
+   It was `calc(100vh - 210px)`, and 210 was a number somebody counted once: header plus nav plus
+   footer plus the paddings between them. Measured on a real page it was out by 12px, so EVERY
+   tab scrolled the document a little -- which is the complaint, and a magic constant is how it
+   comes back the next time the header gains a line. The body is a flex column instead: the
+   header and footer take what they need, `main` takes the rest, and nothing has to add up. */
 body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-color:var(--ink);background:var(--bg)}
+color:var(--ink);background:var(--bg);
+display:flex;flex-direction:column;height:100vh;overflow:hidden}
+header,footer{flex:0 0 auto}
 header{padding:18px 24px 0;border-bottom:1px solid var(--line);background:var(--card)}
 h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.01em;
 display:flex;align-items:center;gap:9px}
@@ -61,14 +69,14 @@ nav button:hover{color:var(--ink);background:var(--bg)}
 nav button[aria-selected=true]{color:var(--ink);font-weight:600;background:var(--bg);
 border-color:var(--line);border-bottom:1px solid var(--bg)}
 nav button b{font-weight:500;color:var(--faint);margin-left:5px;font-size:11.5px}
-main{padding:18px 24px 24px;max-width:1500px}
+main{padding:18px 24px 24px;max-width:1500px;width:100%;flex:1 1 auto;min-height:0}
 /* *** THE SCROLL BELONGS TO THE PANEL, NOT THE DOCUMENT. ***
    Every tab is now exactly as tall as the window, so the two-pane tabs line up and the long
    single-column ones (Overview, Config, Spend) scroll INSIDE the same box rather than growing the
    page behind a sticky header. Putting `overflow:hidden` on the body instead would have stranded
    those three below the fold -- caught by asking which tabs are not two-pane before shipping it. */
-.panel{height:var(--pane-h);overflow:auto}
-@media (max-height:640px){:root{--pane-h:calc(100vh - 150px);--lin-h:320px}}
+.panel{height:100%;overflow:auto}
+@media (max-height:640px){:root{--lin-h:320px}}
 .panel[hidden]{display:none}
 .bar{display:flex;gap:9px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
 input[type=search],select{font:inherit;font-size:13px;padding:6px 9px;border:1px solid var(--line);
@@ -86,6 +94,11 @@ tr.pick{cursor:pointer}
 tr.pick:hover td{background:#f4f8f9}
 tr.on td{background:#eef5f8}
 .n{text-align:right;font-variant-numeric:tabular-nums}
+/* *** A PROSE CELL WILL TAKE THE WHOLE TABLE AND PUSH THE NUMBERS OFF THE PANE. ***
+   Measured on the real page: the confidence column -- which is the SORT KEY -- was clipped out
+   of sight by an `about` cell carrying 90 characters of a model's documentation. The full text
+   is in the detail pane; the cell is an index into it. */
+td.clip{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
 /* *** FOUR TABS SHARED THIS TEMPLATE AND NONE OF THEM WERE THE SAME SIZE. ***
    Both panes were `max-height`, so each box shrank to its own content: the right pane was tall on
@@ -94,6 +107,13 @@ tr.on td{background:#eef5f8}
    for both, on every tab, and the page itself does not scroll -- the panes do. */
 .wrap2{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,2.1fr);gap:16px;
 align-items:stretch;height:100%}
+/* A left pane holding a three-column table is not a list of names. Same shell, more room, so a
+   `why it fired` cell is a line rather than five. */
+.wrap2.wide{grid-template-columns:minmax(380px,1.15fr) minmax(0,1.35fr)}
+.drillhost{display:flex;flex-direction:column;height:100%;min-height:0;gap:10px}
+.drilltop{flex:0 0 auto}
+.drilltop .note{margin:0}
+.drillhost > .wrap2{flex:1 1 auto;min-height:0}
 .wrap2 > *{min-height:0}
 /* *** THE FILTERS WERE NOT PART OF THE HEIGHT, SO THE WHOLE PAGE SCROLLED. ***
    The left column is a search box, some dropdowns and a list, and only the LIST was bound to the
@@ -346,7 +366,8 @@ function grid(rows, cols, opts) {
       : num(view.length) + ' of ' + num(rows.length) + (view.length > cap ? ', showing ' + num(cap) : '');
     body.replaceChildren(...shown.map(r => {
       const tr = el('tr', {class: opts.pick ? 'pick' : ''},
-        cols.map(c => el('td', {class: (c.n ? 'n ' : '') + (c.mono ? 'mono' : '')},
+        cols.map(c => el('td', {class: (c.n ? 'n ' : '') + (c.mono ? 'mono ' : '')
+                                       + (c.clip ? 'clip' : '')},
           [c.cell ? c.cell(r) : el('span', {text: cellText(c.val(r))})])));
       if (opts.pick) tr.onclick = () => { body.querySelectorAll('tr.on').forEach(x => x.classList.remove('on'));
         tr.classList.add('on'); opts.pick(r); };
@@ -658,7 +679,12 @@ function drill(opts) {
      you nothing until you went looking for it somewhere else. It is the same two-pane shell the
      Findings tab already had: list on the left, bound to the window, and what you picked on the
      right. */
-  const host = el('div', {class: 'wrap2'});
+  /* *** THE EXPLANATION IS PAGE-WIDE. THE LIST IS NOT. ***
+     Putting the blurb inside the left column wrapped one sentence over five lines in a 260px
+     gutter, which is a paragraph pretending to be a column. It sits above both panes. */
+  const host = el('div', {class: 'drillhost'});
+  const top = el('div', {class: 'drilltop'});
+  const cols = el('div', {class: 'wrap2 wide'});
   const left = el('div', {class: 'pane'});
   const detail = el('div', {class: 'detail'});
   const head = el('div', {class: 'panehead'});
@@ -679,7 +705,8 @@ function drill(opts) {
      move the switch cannot undo. */
   function showGroups() {
     if (opts.onGroups) opts.onGroups();
-    head.replaceChildren(el('p', {class: 'note', text: opts.blurb}));
+    top.replaceChildren(el('p', {class: 'note', text: opts.blurb}));
+    head.replaceChildren();
     body.replaceChildren(grid(opts.groups, opts.groupCols, {
       placeholder: opts.groupFilter || 'filter...', pick: g => showRows(g, true),
       sort: opts.groupSort, dir: opts.groupDir || -1, cap: 800, scroll: 1,
@@ -693,14 +720,9 @@ function drill(opts) {
        the one piece of text that says what this table IS read as another widget. It gets its own
        line as a small title, with the way back immediately to its left where a person looks for
        it. The filter bar below it goes back to holding only things you operate. */
-    const bits = [];
-    if (drilled) {
-      bits.push(el('div', {class: 'titlerow'},
-                   [back, el('h3', {class: 'crumb', text: opts.label(g)})]));
-    } else {
-      bits.push(el('p', {class: 'note', text: opts.blurb}));
-    }
-    head.replaceChildren(...bits);
+    head.replaceChildren(...(drilled
+      ? [el('div', {class: 'titlerow'}, [back, el('h3', {class: 'crumb', text: opts.label(g)})])]
+      : []));
     body.replaceChildren(grid(opts.rowsOf(g), opts.rowCols, {
       placeholder: 'filter...', cap: 2000, sort: opts.rowSort, dir: opts.rowDir || 1,
       scroll: 1, pick: opts.detailOf ? r => showOne(r, g) : null,
@@ -712,7 +734,8 @@ function drill(opts) {
     detail.replaceChildren(...[].concat(opts.detailOf(row, g)));
   }
   left.append(head, body);
-  host.append(left, detail);
+  cols.append(left, detail);
+  host.append(top, cols);
   showGroups();
   host.showGroups = showGroups;
   host.showRows = showRows;
@@ -1127,7 +1150,7 @@ function modelsTab(host) {
     const bad = cs.filter(c => c.contradicted != null).length;
     d.append(section('claims (' + cs.length + (bad ? ', ' + bad + ' contradicted' : '') + ')',
       cs.length ? grid(cs, [
-        {key: 'text', label: 'claim', val: c => c.text},
+        {key: 'text', label: 'claim', clip: 1, val: c => c.text},
         {key: 'where', label: 'written', mono: 1, val: c => c.source_ref},
         {key: 'v', label: 'the code', val: c => c.contradicted == null ? -1 : c.contradicted,
          cell: c => c.contradicted == null ? el('span', {class: 'tot', text: 'not contradicted'})
@@ -1143,7 +1166,7 @@ function modelsTab(host) {
       {key: 'r', label: 'next best', val: a => a.runner_up && a.runner_up[0],
        cell: a => a.runner_up ? el('span', {class: 'tot',
          text: a.runner_up[0] + ' ' + a.runner_up[1].toFixed(2)}) : el('span')},
-      {key: 'ctx', label: 'about', val: a => a.context},
+      {key: 'ctx', label: 'about', clip: 1, val: a => a.context},
     ], {placeholder: 'filter answers...', cap: 400})
       : el('p', {class: 'empty', text: 'nothing has been asked about this model'})));
   }
@@ -1278,7 +1301,7 @@ function claimsTab(host) {
   const rowCols = [
     {key: 'model', label: 'model', mono: 1, val: c => c.subject_name,
      cell: c => link(c.subject_name)},
-    {key: 'text', label: 'claim', val: c => c.text},
+    {key: 'text', label: 'claim', clip: 1, val: c => c.text},
     {key: 'kind', label: 'kind', val: c => c.kind,
      cell: c => el('span', {class: 'pill', text: c.kind || 'unclassified'})},
     {key: 'from', label: 'written', mono: 1, val: c => c.source_ref},
@@ -1470,9 +1493,7 @@ function answersTab(host) {
          box.append(BY_NAME[s.name] ? link(s.name) : el('span', {class: 'mono', text: s.name}));
          if (s.scope) box.append(el('span', {class: 'pill', text: s.scope}));
          return box; }},
-      {key: 'about', label: 'about', val: a => a.context,
-       cell: a => el('span', {text: (a.context || '').slice(0, 90)
-                                    + ((a.context || '').length > 90 ? '\u2026' : '')})},
+      {key: 'about', label: 'about', clip: 1, val: a => a.context},
       {key: 'a', label: 'answered', val: a => a.answer},
       {key: 'c', label: 'confidence', n: 1, val: a => a.confidence, cell: a => conf(a.confidence)},
     ],
@@ -1853,9 +1874,15 @@ function suggestTab(host) {
                            : el('span')},
     ],
     rowsOf: g => g.rows.slice().sort((a, b) => (b.rank || 0) - (a.rank || 0)),
+    /* *** THE HEADLINE IS THE GROUP'S OWN REASON, REPEATED ONCE PER ROW. ***
+       123 rows reading "`X` is described identically in N models and the vocab does not carry
+       it" is the reason spelled 123 times: it is already the crumb above the table and the first
+       line of the pane. What differs between rows is the NAME and the number, so those are the
+       columns. */
     rowCols: [
-      {key: 'h', label: 'candidate', val: r => r.headline},
-      {key: 'n', label: 'measured', n: 1, val: r => (r.measured || []).length},
+      {key: 'k', label: 'candidate', mono: 1, val: r => r.key || r.headline},
+      {key: 'm', label: 'what was measured', clip: 1, val: r => (r.measured || [])[0] || '',
+       cell: r => el('span', {class: 'tot', text: (r.measured || [])[0] || ''})},
       {key: 'rank', label: 'rank', n: 1, val: r => r.rank},
     ],
     rowSort: 'rank', rowDir: -1,

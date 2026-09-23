@@ -591,7 +591,8 @@ def test_no_view_switch_floats_above_the_table_it_switches():
     db = db[:db.index("\nfunction conf(")]
     assert db.count("controls: opts.controls") == 2, \
         "the switch is not carried into BOTH views"
-    assert "if (drilled)" in db, "the way back shows in a view the switch can already undo"
+    assert "drilled" in db, "the way back shows in a view the switch can already undo"
+    assert "opts.label(g)" in db, "the crumb no longer says what you drilled into"
     # the same shape on findings
     fb = v[v.index("function findingsTab"):]
     fb = fb[:fb.index("function answersTab")]
@@ -1028,8 +1029,19 @@ def test_every_tab_gets_the_same_pane_geometry():
     long past the end of itself into blank screen.
     """
     css = explorer.CSS
-    assert "--pane-h" in css, "the shared pane height is gone"
-    assert ".panel{height:var(--pane-h);overflow:auto}" in css, (
+    # *** AND THE HEIGHT IS MEASURED, NOT COUNTED ONCE BY HAND. ***
+    # It was `calc(100vh - 210px)`, where 210 was header plus nav plus footer plus the paddings
+    # between them. Driven in a real browser against a real 12MB page it was out by 12px, so
+    # every tab scrolled the document a little -- which is the complaint, and the next time the
+    # header gains a line the constant is wrong again. The body is a flex column: the header and
+    # footer take what they need, `main` takes the rest, and nothing has to add up.
+    assert "--pane-h" not in css, "the magic constant is back"
+    body = css[css.index("body{"):css.index("}", css.index("body{"))]
+    assert "flex-direction:column" in body and "height:100vh" in body and "overflow:hidden" in body
+    main = css[css.index("main{"):css.index("}", css.index("main{"))]
+    assert "flex:1 1 auto" in main and "min-height:0" in main, (
+        "main does not take the space the header and footer leave")
+    assert ".panel{height:100%;overflow:auto}" in css, (
         "the panel does not own the scroll, so the document grows behind the sticky header")
     two = css[css.index(".wrap2{"):css.index("}", css.index(".wrap2{"))]
     assert "align-items:stretch" in two and "height:100%" in two, (
