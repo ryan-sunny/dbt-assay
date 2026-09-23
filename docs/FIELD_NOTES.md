@@ -3647,3 +3647,33 @@ naive `TIMESTAMP`s written by machines in different time zones (a laptop in Moun
 whose DuckDB session reports Europe/Berlin). The version backfill compares the two with `<=`, so a
 verdict made within a few hours of a run can resolve to the neighbouring version. Nothing measured
 was wrong because of it; it is recorded here rather than silently changed.
+
+## The build queue, P0 through P5c, and what verifying it changed
+
+Everything in `docs/BUILD_QUEUE.md` shipped on one branch. The items are in the commit log; what is
+worth keeping here is what doing them found that the queue did not say.
+
+- **`python -m dbt_assay.cli` knew 17 of 47 commands.** The `__main__` block sat in the middle of
+  `cli.py`. The `assay` entry point imports the whole module first and never noticed; the MCP tools
+  and the edit hook, which run a command as a module, would have failed on 30 of them. Found only
+  because the MCP parity work ran commands in a child process.
+- **The waiver proposals recorded the opposite of what the person said,** in two places -- the
+  form's Waivers tab and `assay suggest` both drafted waivers from `disagree` rulings -- and the tab
+  wrote loose fields `audit.yml` could not load. Both now propose from `accept`.
+- **`min_adjudications` counted one keypress up to nine times,** because the per-finding rows a
+  card writes were counted beside the model-level one.
+- **`inventory --model --json` printed no JSON,** though the skill named it as the CLI form of
+  `contract()`; `practices --model` and `trace --model` did not exist, though the skill taught them.
+- **The question banks were parsed 3,620 times per `check`**, 13 of its 22 seconds on the field
+  project. The ten minutes the queue measured on the box was mostly this.
+- **Calibrating on the field warehouse changed three questions before they shipped** (about two
+  cents): `finding_is_correct` gained evidence in its state and a reworded v2, `sentinel_is_not_a_
+  value` gained an "unbounded stand-in" option, and `models_disagree_about_a_column` gained one
+  example per variant after its own evidence -- eight identical sentences under "described 3
+  different ways" -- contradicted its summary.
+- **The blind-compile detector's first version called a connected compile blind**, three times, by
+  reading `source('raw', 't')` and a type argument as columns looked up. It reads only the project's
+  own macros, and only the name each call asks about.
+- **The queue's example for `what_would_break_silently`, `stg_mesa_permits.permit_class`, is
+  protected**: beside its vacuous `accepted_values` it carries a `not_null`, which catches the
+  CASE-with-no-ELSE fall-through.
