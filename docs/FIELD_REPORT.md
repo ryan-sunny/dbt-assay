@@ -2192,3 +2192,1167 @@ All three are mechanically checkable, and `guide.py` already demonstrates the te
   pointed inward.
 
 The first of these is the cheapest and would have prevented the most expensive mistake in this session.
+
+## 25. 0.50.0 used rather than tested: what `read` puts on a card, and five smaller things
+
+Run on 2026-09-23 against `sunny_data` from PyPI via `uvx --from 'dbt-assay[mcp]'`. 358 models, 212
+sources, 1,291 tests, 956 edges, DuckDB. Every number below came out of a command in this session.
+The judged tier was on the whole way. The running total for the commands reported below is 1,254
+calls, 9,161,395 tokens, $0.3848, against a ledger that stood at $1.3199 before this session.
+
+The session's shape matters for reading the rest. The MCP server is registered in
+`sunny-data/.mcp.json` but the agent opened at the parent directory, so it never connected, and the
+`dbt-assay` skill's "Without the MCP server" table carried the whole run. That table is correct.
+Nothing in this report is a consequence of the CLI path.
+
+**24.1 shipped and is in use.** `accept` exists, and `assay read` chose it 63 times of 407. The
+verdict that had no way to be recorded is now the second most common answer the tool gives itself.
+
+### 25.1 `assay read` fills MY READ with the option text, and proposes 47 permanent dismissals at a median confidence of 0.22
+
+This is the largest item here, and it is about the command that exists specifically to make a
+person's click cheap.
+
+```
+407 card(s) to read of 407 unruled · ~$0.0276
+wrote reads.json: 407 new reading(s) 290 agree, 63 accept, 47 disagree, 7 unclear
+407 calls, 1,243,115 tokens, $0.0522
+```
+
+407 cards produced **four** distinct explanation bodies. They are the four option `what:` strings
+from the question, echoed back:
+
+```
+290  "What the findings state is true: the evidence and the code show exactly what they say."
+ 63  "What the findings state is true, AND a comment, the description or the shape of the code
+      shows it was done on purpose."
+ 47  "At least one finding states something the code or its own evidence contradicts: a join, a
+      filter, a column, a count or a claim it got wrong."
+  7  "The evidence and the code do not settle it. Choose this rather than guess."
+```
+
+Not one of the 407 names a line, a column, a join, a predicate or a claim. A representative card,
+verbatim:
+
+```json
+"model.sunny_data.int_az_section_structures::join_fans_out": {
+  "answer": "misreads_the_sql", "confidence": 0.29, "verdict": "disagree",
+  "why": "misreads_the_sql at 0.46; next most likely: correct at 0.39. At least one finding
+          states something the code or its own evidence contradicts: a join, a filter, a
+          column, a count or a claim it got wrong."
+}
+```
+
+The `assay-review` skill states the rule for this exact slot: *"Quote the actual claim and cite line
+numbers. 'The description is wrong' is not evidence."* The same skill says a ruling carrying a
+reason not formed by reading the SQL is worse than none. `read` writes the thing both sentences
+forbid, into the field those sentences are about, 407 times.
+
+The confidence distribution is what turns this from a presentation problem into a correctness one.
+
+| | min | median | max | n |
+|---|---|---|---|---|
+| all cards | 0.06 | 0.46 | 0.92 | 407 |
+| the `disagree` cards | 0.10 | 0.22 | 0.58 | 47 |
+
+44 of the 47 disagreements are below 0.5. `disagree` is not a note. Per the skill it *"removes the
+finding. Permanently, from `assay check` and from every surface that reads it."* So the command
+pre-fills 47 permanent dismissals, each at a median confidence of 0.22, each carrying a sentence
+that is a restatement of the option rather than a reading, onto the cards whose entire purpose is
+to make the click cost ten seconds. The safety rail is intact and the command says so plainly
+("Nothing was recorded as a verdict... the click is still a person's"). The rail is not the issue.
+A cheap click on a card that reads as though somebody looked is the issue.
+
+Where it disagrees, by check:
+
+| check | cards | agree | accept | disagree | unclear |
+|---|---|---|---|---|---|
+| `code_contradicts_a_claim` | 82 | 15 | 36 | 31 | 0 |
+| `section_id_assumed_to_resolve` | 42 | 30 | 6 | 4 | 2 |
+| `description_contradicts_the_code` | 17 | 14 | 1 | 2 | 0 |
+| `hop_multiplies_rows` | 6 | 1 | 1 | 3 | 1 |
+| `join_fans_out` | 3 | 0 | 1 | 2 | 0 |
+| `measure_inside_grain` | 4 | 2 | 0 | 2 | 0 |
+| `column_has_no_description` | 129 | 127 | 1 | 1 | 0 |
+| `identifier_outside_grain` | 12 | 4 | 8 | 0 | 0 |
+
+`code_contradicts_a_claim` at 15 agree of 82 is the one line here that is not about `read`. It
+lands on the same number `assay effectiveness` already computes from human verdicts on this
+project, 4 of 12, 33%. Two independent readers putting the same check at about a third correct is
+the strongest signal in the run, and it is evidence about the check.
+
+Three fixes, cheapest first:
+
+- **Do not pre-fill a `disagree` below a confidence floor.** File it `unclear`, which is the answer
+  the store already has for "the evidence does not settle it", and which gates nothing. On this run
+  that moves 44 cards out of dismissal and costs nothing.
+- **Put the confidence on the card.** MY READ currently reads identically at 0.92 and at 0.10.
+- **Give the answer a free-text field and require a locator in it.** The state sent already carries
+  the evidence construct, the file and the line; the question asks for a choice and nothing else, so
+  a locator is not being withheld, it is not being asked for. A reading with no `file:line` is the
+  thing `rule()` refuses from an agent, and `read` should hold itself to what `rule` holds an agent
+  to.
+
+### 25.2 `read --dry-run` quoted $0.0276 and the run cost $0.0522
+
+1.9x, and in the direction that matters, because the quote is the whole point of the flag: it is
+the number a person sees before deciding whether to spend. `volume --dry-run` quoted $0.0014 on the
+same session and is not contradicted by anything, so this is not a general estimator fault. The
+`read` path prices the cards it counted and then sends more tokens per card than it priced.
+
+### 25.3 `assay check --check <name>` writes a partial run to the store and corrupts the baseline
+
+`--select`'s help says, in the shipped text:
+
+> only findings about these models, in dbt's selector syntax. A scoped run is never written to the
+> store as a run.
+
+`--check` scopes the same output and carries no such note, and it *is* written. One call:
+
+```
+$ assay check -t transform/target --store assay.duckdb --check call_exposure_includes_nontributary
+...
+vs previous run: 0 new, 515 resolved, 21 unchanged
+of the 63 finding(s) a person agreed with, 63 are gone and 0 are still here.
+4 of 21 model(s) with a finding have been ruled on by a person.
+run 5c17c6fa0f68 written to assay.duckdb
+```
+
+The store's latest run became 21 findings. 515 of 536 were reported resolved. And the loop
+number flipped to "63 are gone", against a project where the true figure is zero.
+
+That number is the one the tool describes, on the same screen, as the only one a release cannot
+move and an agent cannot move. A single flag moves it, and moves it to the most flattering possible
+value, and nothing in the output says the run was partial. A full `assay check` restored it
+(`run fee19d3ee5e9`, back to `0 are gone and 63 are still here`), so the damage is recoverable by
+anyone who knows to look. The residue is a partial run left in the history and one spurious
+515-resolved delta.
+
+Fix: treat `--check` exactly as `--select` is treated, or record the scope on the run and exclude
+scoped runs from the baseline diff, the agreed-findings count and the ruled-models count. The
+second is better, because a scoped run is useful history. Either way the guard already exists one
+flag over.
+
+### 25.4 The `config` vocab lint flagged the term that is fine and missed the one that is not
+
+`assay config --target transform/target` on a 16-term vocabulary:
+
+```
+warn vocab.geography asserts_law_everywhere
+  names Arizona and declares no `applies_to`, so it is asserted to every model in the project
+  as universal fact.
+1 warning(s).
+```
+
+`geography` reads: *"the market a row belongs to, e.g. a Colorado or Arizona metro"*, implying rows
+from different geographies are not comparable totals. By the tool's own test in `guide('vocab')`,
+that is a term about the project's **data**, true everywhere, and correctly unscoped. It was
+flagged because the sentence contains a state name.
+
+Unflagged, in the same file:
+
+```yaml
+case_number:
+  means: "a water court case, e.g. 97CW0059 or 25CW3045, assigned per division"
+  implies: >-
+    never a key on its own, and never a unique tie-break in a window function...
+```
+
+No `applies_to`. That is a Colorado water court convention asserted to all 358 models, including
+every permit, food-inspection and lead model in the warehouse. It is the exact failure the skill
+devotes a section to, and the lint walked past it to flag a market label.
+
+The heuristic is reading for place names in the text. What distinguishes the two is whether the
+sentence asserts a **rule that holds in one jurisdiction** (a statute, a court convention, a
+regulatory regime) rather than describing a column. `case_number`'s own `implies` is a rule about
+where a value is unique; `geography`'s is a rule about arithmetic, which travels. Both signals are
+in the text already.
+
+Worth noting what is working: 12 of the 16 terms carry `applies_to`, and `assay columns` reported
+`590 state(s) did not carry a scoped term: comid (590), absolute_and_conditional_together (458)...`
+on the same run. The scoping machinery does what it says. One term is outside it and the lint
+cannot see which.
+
+### 25.5 `completeness` counts Elementary's own models as unreadable, and says it is not a pass
+
+```
+models assay could not read    30    not audited, and not a pass
+```
+
+All 30 are `package_name == "elementary"`. Their `original_file_path` is `models/edr/run_results/...`,
+which resolves under `transform/dbt_packages/elementary/`, not the project root, so the file is
+looked for where it is not. `coverage` reports `readable: 328, unreadable: 30, from_disk: 328` out
+of 358.
+
+A user reads that line as thirty of their own models sitting outside the audit. None of them are.
+The same JSON also carries `parse_failures: []`, so the two fields in one object disagree about
+whether anything failed to parse.
+
+Fix: resolve a node's path against its own package root, or exclude non-root packages from the
+count and name the packages excluded. The second is probably right. Auditing a vendored package's
+models is not the user's job and counting them as a gap in the user's coverage is a false alarm on
+the tool's most reassuring-sounding line.
+
+### 25.6 `columns` disagrees with the project's own tests 14 times in 187, and is right in the ones I checked
+
+```
+5252 columns across 328 models, 804 calls at 8 columns each
+804 calls, 7,741,866 tokens, $0.3252
+against the project's own tests: 173/187 agree (92%)
+```
+
+The 14 are the interesting part, and three of them are the same defect in the warehouse rather than
+in the judgment:
+
+```
+column_role stg_az_wui.geom_json:           said geometry @0.86, the project's test says identifier
+column_role stg_adwr_land_hazards.geom_json: said geometry @0.97, the project's test says identifier
+column_role stg_az_flood_zones.geom_json:    said geometry @0.98, the project's test says identifier
+column_role source_health.leads:             said measure @0.99, the project's test says identifier
+column_role source_funnel.raw_rows:          said measure @0.92, the project's test says identifier
+```
+
+A serialized geometry blob is not an identifier and a row count is not an identifier. In all five
+the judgment is right and the label is wrong, and the labels are the project's own declared tests,
+which is precisely what `calibration` warns about: *"Labels come from your own tests and joins.
+They are evidence and never permission: the label can be the thing that is wrong."* This run is that
+sentence with numbers attached, and it is the tier working.
+
+### 25.7 `infer` keyed `my_prospects` on `city`
+
+```
+126 models have code-proposed candidates; 30 have more than one column and need a judgment.
+judged 30 models   30 calls, 98,557 tokens, $0.0041
+  my_prospects: key ['city']  dropped ['name_key']
+  int_eco_basin: key ['huc8']  dropped ['state', 'habitat_segments', 'listed_species']
+  business_leads: key ['business_key']  dropped ['geography', 'building_key']
+```
+
+A prospects model at one row per city, with `name_key` discarded as the loser, does not read right.
+
+`assay calibrate`, run afterwards and costing nothing because it replays stored answers, settles it:
+
+```
+wrong my_prospects: got ['city']  declared ['entity_key']
+```
+
+The project declares `entity_key`. The judgment picked `city` and did not flag itself uncertain.
+Two of the other three outright wrong calls are the same shape:
+
+```
+wrong int_water_county_referral_record: got ['county', 'water_source']  declared ['approved', 'first_reviewed']
+wrong delinquency_leads:                got ['building_key', 'geography'] declared ['street_address']
+```
+
+The whole calibration, which is the most useful free number in the tool:
+
+| outcome | n | % |
+|---|---|---|
+| exact | 8 | 33% |
+| flagged uncertain | 9 | 37% |
+| kept too many | 1 | 4% |
+| dropped too many | 2 | 8% |
+| disagrees | 4 | 16% |
+
+`code alone was exact on 5/24; with judgment 8/24`. The judged tier is worth three models out of
+twenty-four over the structural proposal, and is outright wrong on four. That is a defensible place
+to be and it is stated plainly by the tool itself, which is the part worth protecting.
+
+One consequence for the config: `audit.yml`'s `gating` comment records *"`assay calibrate` puts the
+grain judgment at 9 exact of 25, 9 flagged uncertain, 5 disagreeing."* Today it is 8 of 24, 9
+uncertain, 4 disagreeing. The comment has drifted from the store it describes, which is exactly what
+`config_comment_contradicts_the_store` exists to catch, and that check fired 3 times on this run
+without catching this one.
+
+### 25.8 Smaller
+
+- `assay --version` is not an option; `assay version` is a command. Both spellings are natural and
+  one errors.
+- `assay disagreements` rejects `-t/--target`. Every neighbouring command takes it, so the muscle
+  memory from `check` fails on the next command typed.
+- `assay practices --keys-only` without `--project-dir`/`--dbt` fails with
+  `[Errno 2] No such file or directory: 'dbt'` and says so usefully, naming both flags and the
+  `uv run dbt` form. This is 22.2 fixed and it reads well.
+- The MCP block documented in `sunny-data/.mcp.json` (`uvx --from dbt-assay[mcp] assay mcp`) is
+  correct and unchanged; 510's missing-extra problem does not recur.
+
+### 25.9 `arbitrary_pick` evidence named a partition column the window does not use
+
+`models/intermediate/int_azcc_owners.sql` has three windows:
+
+```
+12:    select *, row_number() over (partition by matched_name order by scraped_at desc) as rn
+32:    qualify row_number() over (partition by id_business order by trank, officer_name) = 1
+65:    qualify row_number() over (partition by {{ owner_key('matched_name') }}
+                                  order by (officer_name is not null) desc, matched_name) = 1
+```
+
+Three findings came back, and `assay plan` records their evidence as:
+
+```
+3e41a24d47ca  order_by ["(NOT officer_name IS NULL) DESC", "matched_name"]  partition_by ["owner_key"]
+8f4972e2f252  order_by ["trank", "officer_name"]                            partition_by ["id_business"]
+afe9ea5bd487  order_by ["scraped_at DESC"]                                  partition_by ["owner_key"]
+```
+
+The `scraped_at DESC` window is line 12, and line 12 partitions by `matched_name`. Only line 65
+partitions by `owner_key`, and it does so through the macro. Two of the three findings claim the
+same partition key, so the evidence cannot tell them apart, and the one it gets wrong points a
+reader at the wrong window in a file that has three.
+
+The likely cause is the column resolver mapping `matched_name` forward to the final projection's
+`owner_key` alias, which is `{{ owner_key('matched_name') }}` and does derive from that column. That
+resolution is right for lineage and wrong for evidence: evidence has to quote the construct as
+written, because its job is to save the reader from re-deriving it. The skill says so directly:
+*"`evidence` names the exact construct: the partition and sort keys of the window, the predicate,
+the columns. Use it to find the code rather than re-deriving it."*
+
+It also reaches further than presentation. A finding's identity includes its evidence, which is what
+makes a `disagree` lapse when the model is later edited into a genuinely different defect. An
+evidence field carrying a resolved alias rather than the written expression will not move when the
+written expression moves, and will move when an unrelated downstream alias is renamed.
+
+### 25.10 A judged command that runs for 43 minutes prints its plan and then nothing
+
+`assay semantics -t transform/target --families both` printed one line:
+
+```
+328 models · 876 filters in 301 calls · 239 descriptions to check
+```
+
+and then produced no further output for 43 minutes, at which point it was killed. It was not hung.
+Checked at 43:01 elapsed: 24.1s of CPU, 8.8% at the sample, and an established HTTPS connection to
+the provider. It was working, at roughly 5 seconds per call against the 1 second per call `read`
+sustained on the same session and the same key.
+
+Two separate problems, and the second is the one that cost the time.
+
+**There is no progress output.** A silent process is indistinguishable from a hung one, and the only
+way to tell them apart is `ps` and `lsof`, which is not a thing a user of a CLI should have to
+reach for. `read` has the same shape and gets away with it at seven minutes. At forty-three it
+stops being a stylistic choice. A line per N calls, or a count on the same line, costs nothing and
+is the difference between waiting and guessing.
+
+**The plan line quotes calls, not time.** "301 calls" is true and gives a reader no way to decide
+whether to start it. `read --dry-run` is the right pattern and `semantics` has no equivalent, so the
+only way to find out that this one takes the better part of an hour is to spend the better part of
+an hour. A rate is already measurable from the store: the cost ledger records every call with a
+timestamp, so a plan line could say "301 calls, about 25 minutes at this project's observed rate"
+without guessing.
+
+The decision that followed is the point. Faced with an unknown remaining time on a command whose
+output family the same store already rates poorly (`description_contradicts_the_code` at 0 of 1
+human and `hop_multiplies_rows` at 3 of 6 disagreed), the rational move was to kill it and spend the
+hour on the warehouse tier, which produces counted facts.
+
+**It was 502 calls into 540 when it was killed.** `assay cost` records
+`assay.semantics 502 calls, 1,223,370 tokens, $0.0514`, so it was about 93% done and within a few
+minutes of finishing, and nothing on screen said so.
+
+**The work was not lost, and that is the more interesting half.** Re-run afterwards with identical
+flags, the whole command completed in **17 seconds for 48 calls and $0.0054**. The 492 answers
+already in the store were reused. The cache is doing exactly what it should, a killed run is
+resumable at no cost, and the only thing the interruption cost was wall clock.
+
+Which turns the missing-information problem around and makes it worse. The second run printed the
+same plan line as the first:
+
+```
+328 models · 876 filters in 301 calls · 239 descriptions to check
+```
+
+301 calls, on a run that made 48. The plan is computed from the work to be judged and takes no
+account of what the store already answers, so the number a user reads before deciding whether to
+start is wrong by 6x in the cheap direction. Having just been burned by a 43-minute run, a
+reasonable person reads that line and does not re-run it, and the thing they are declining costs
+seventeen seconds.
+
+Both halves are one fix: the plan line should say what it will actually do. `N calls, M already
+answered, about T at this project's observed rate`. Every input to that is already in the store.
+
+
+### 25.11 What worked, so it does not get changed by accident
+
+Four things in this run were right in a way that is easy to lose in a refactor.
+
+**The deferral message on `check --verify` is exactly the right words, and it caught a live gap.**
+
+```
+1 check(s) deferred to another package. assay is silent because somebody else covers it.
+Verify that somebody actually ran.
+  source_freshness_undeclared: 29 of 212 source(s) declare no freshness. Not reported here
+  because dbt-project-evaluator is installed and ships `fct_sources_without_freshness` --
+  but only if that model is BUILT. If it is not, nobody is checking this.
+```
+
+It is not built. The warehouse holds four `fct_` models from that package and all four are
+documentation ones. So the deferral was correct, the warning was correct, and following the warning
+found a real hole. Most tools would have deferred silently and been wrong. This one deferred loudly
+and was right twice.
+
+**`probe` records a failed count as unknown, never as "not unique".** `observed 893 columns, 0
+unknown (a failure is recorded as unknown, never as 'not unique')`. This is the same discipline as
+the deferral and it is the reason a probe result can be trusted as evidence.
+
+**98 stored contradictions were held back because the claim cannot be answered from the SQL in
+either direction.** *"Absent evidence is not disagreement."* On a check already running at 33%
+agreement, suppressing the unanswerable third is what keeps the agreement number meaning anything.
+
+**`calibrate` costs nothing and reports the tool losing.** 8 of 24 exact against code alone at 5 of
+24, printed without softening. It is the most useful number in the product and it is free.
+
+One small gap in the same area: `completeness --verify` reports `models that are EMPTY  3` and does
+not name them. `practices --keys-only` names two (`int_azcc_owners`, `stg_pm_properties`) because
+it only surfaces the ones where a uniqueness test is at stake. Both are defensible, and a reader
+who sees 3 and can find 2 has no way to close the gap without querying the warehouse by hand. The
+count should carry the names, as every other line in that table effectively does.
+
+
+### 25.12 `semantics`, once it finished
+
+For the record, since the section above is about the command rather than its output. 876 filters
+across 328 models, classified:
+
+| intent | n | example |
+|---|---|---|
+| `scope_limit` | 517 | `stg_maricopa_permits: work_class IN ('New Construction', 'Addition'...)` |
+| `business_rule` | 186 | `stg_gilbert_permits: NOT address IS NULL` |
+| `data_quality_workaround` | 113 | `stg_maricopa_permits: NOT full_street_address IS NULL` |
+| `cannot_tell` | 54 | `stg_maricopa_sales: NOT physical_address IS NULL` |
+| `performance_prefilter` | 6 | `water_section_fire_response: NOT ymin IS NULL` |
+
+54 `cannot_tell` out of 876 is 6%, and the family declines rather than guessing, which is the
+behaviour `read` does not have (25.1). 37 filters were called a patch over a bad feed, the top two
+at 0.99. Six descriptions contradict their code, the highest at 0.70, which is a much thinner
+result than `code_contradicts_a_claim`'s 110 and is the same defect class asked with a better state.
+
+The top-ranked patch-over-a-bad-feed is
+`stg_denver_residential_sales: sale_date <= CURRENT_DATE /* drop future-date sentinels */` at 0.99,
+and the judgment is right on the substance: the real fix is upstream and the filter goes stale if
+the feed improves. It is also a decision this project made deliberately and documented in the
+comment assay quoted back. That is the shape of finding this family produces, and it is why the
+family annotates rather than gates.
+
+### 25.13 `onboard` and `check` disagree on two checks, on a fresh store with no config
+
+Reproduced from nothing. A throwaway store, an empty directory as `--config`, the same manifest:
+
+```
+$ assay onboard -t transform/target --store /tmp/throwaway.duckdb --config /tmp/emptycfg --no-judge
+  208    column_has_no_description
+   73    models_disagree_about_a_column
+   50    test_cannot_fail
+   37    arbitrary_pick
+    7    seed_reaches_nothing
+    4    source_reaches_nothing
+    3    join_fans_out
+    2    bbox_as_radius
+
+$ assay check -t transform/target --store /tmp/fresh.duckdb --config /tmp/emptycfg --json
+  129    column_has_no_description
+   73    models_disagree_about_a_column
+   50    test_cannot_fail
+   33    arbitrary_pick
+```
+
+Six checks agree exactly. Two do not: `column_has_no_description` by 61% and `arbitrary_pick` by
+four. No waivers exist, no verdicts exist, no prior run exists, so nothing is being suppressed and
+nothing is being carried forward. The two commands are counting the same structural check
+differently on identical input.
+
+This matters more than the size of the gap. `assay guide start` makes `onboard` step 1 and `check`
+step 2, so the first number a user ever sees is 208 and the second is 129, for the same check, with
+nothing on either screen acknowledging the other exists. The whole design of this tool rests on its
+numbers being the kind you can act on, and the onboarding path opens by contradicting itself.
+
+Both numbers cannot be right and the one written to the store is `check`'s: the `findings` table for
+the latest run holds exactly 129 and 32.
+
+One related observation that is the system working. `arbitrary_pick` is 33 on a fresh store and 32
+on the real one. The difference is `assay probe`: an observed unique key cleared one window that
+could not be cleared from code alone. That is the probe-to-check loop doing precisely what it is
+for, and it is worth protecting while the above gets fixed.
+
+### 25.14 `banks` asks for a `forked_from` that is already declared
+
+```
+note  edge_preserves_the_grain  override_copies_the_shipped_text
+  9 of 11 blocks are byte-identical to the shipped `edge_preserves_the_grain`...
+  Add `forked_from: edge.v2` and assay will tell you when the shipped one moves.
+```
+
+`assay_questions/water_edges.yml:27` is `forked_from: edge.v2`. It is already there, three lines
+above the `prompt_version` the same file bumps for the same reason, with a comment block above it
+explaining why.
+
+The note is otherwise good and its advice is right; it just does not check whether the thing it is
+asking for has been done. FIELD_NOTES item 2 records `forked_from` being added to `banks` as the fix
+for a real problem, so this is a check that shipped and then stopped reading its own field. It is
+the same shape as the `config_comment_contradicts_the_store` class: an assertion in assay's own
+output that is checkable against assay's own input.
+
+### 25.15 `onboard` teaches the flag from 25.3
+
+Step 3 of `onboard`'s own output ends with:
+
+```
+`assay check --check <name>` reads one of them in full.
+```
+
+That is the flag that writes a partial run to the store, reports the other 515 findings as resolved,
+and flips the agreed-findings headline to "63 are gone". The onboarding path recommends it by name,
+to the user least equipped to notice what it did. Fixing 25.3 fixes this line too; until then the
+line is the more urgent half, because it is aimed at first-time users.
+
+### 25.16 `traverse` and `calibration`, for the record
+
+`traverse` completed in 2 minutes 26 seconds over 573 edges, 543 of which change something. The
+cache carried most of it, as in 25.10.
+
+```
+271  same_thing            90  deliberately_coarser    84  silently_multiplied
+ 57  different_entity      40  cannot_tell              1  wrong_scope_entirely
+```
+
+84 hops multiply rows without declaring it, topping out at p=0.77, which is a modest ceiling and
+consistent with this family's measured false-positive history. The cluster worth noting is the six
+hops into `water_rights` joined on `wdid`, because `audit.yml`'s vocabulary already records the
+measurement that makes them right: *"132,175 distinct wdid across 172,695 rows of water_rights, and
+15,834 of them carry more than one right... joining a right to a wdid fans out."* The judged tier
+independently reproduced a fact a human had already measured and written down. That is the best
+calibration evidence in this run and it is worth more than the agreement percentages.
+
+`calibration` is the honest counterweight:
+
+```
+column_is_part_of_the_key   < 0.30      22 ruled   86% agree   67% to 95%
+column_is_part_of_the_key   0.30-0.50   16 ruled   75% agree   50% to 90%
+column_is_part_of_the_key   0.50-0.70   21 ruled   52% agree   32% to 72%
+column_is_part_of_the_key   0.70+       23 ruled   61% agree   41% to 78%
+No two bands separate.
+```
+
+Read naively the ordering is inverted, with the least confident band the most often right. The tool
+refuses to let anyone read it naively: every interval overlaps every other, so nothing has been
+demonstrated in either direction. Saying "this is what this many verdicts look like whether the
+judge is calibrated or not" is the single most disciplined sentence in the product.
+
+### 25.17 `assay feeds` crashes on a non-finite float, and retries the provider three times for a client-side bug
+
+```
+$ assay feeds -t transform/target --store assay.duckdb --project-dir transform --dbt "uv run dbt"
+...
+RuntimeError: jev failed after 3 attempts: Out of range float values are not JSON compliant: inf
+```
+
+An unhandled traceback, exit 1, no findings. The sampled rows from one of this warehouse's sources
+contain an `inf`, and `inf` has no JSON representation, so the request body cannot be built.
+
+Two defects, and the second is the expensive one.
+
+**The value is never sanitized.** A warehouse will contain `inf`, `-inf` and `NaN`, from a division,
+a cast, or a feed that shipped them. Anything sampling real rows and sending them as JSON has to
+coerce non-finite floats to null and say it did. `probe` already demonstrates the right instinct in
+a neighbouring place: *"a failure is recorded as unknown, never as 'not unique'."*
+
+**A serialization error is retried as a provider failure.** `jev.py:336` reports "jev failed after 3
+attempts", and `:335` sleeps 1.5, 3.0 and 4.5 seconds between them. The request never reached a
+provider, because it could not be encoded. So the tool waited nine seconds and blamed the API for a
+bug in its own encoder, and the error a user reads names the wrong component entirely. The retry
+loop already distinguishes one class it refuses to retry (`raise  # a bad question will not fix
+itself`); an encoding failure belongs in that same class.
+
+The user-facing consequence is the misdirection. "jev failed after 3 attempts" sends somebody to
+check their key, their network and the provider's status page, and the answer is a float in their
+own data.
+
+### 25.18 What the rest of the kit did, and the two numbers worth keeping
+
+**`adjudicate` is fast now.** 36 failing rows, 1,074 tests with nothing stored, 36 calls, $0.0048,
+**34 seconds**. FIELD_NOTES item 4 records this command at 5.4 hours before the 0.5.1 fix. It is
+worth writing down that the fix held, because nothing else in the suite would have told you.
+
+It also produced the single most specific defect of the run, through a project-written adjudication
+option rather than a shipped one:
+
+```
+water_level_deeper_than_the_well    10    stg_adwr_wells: accepted_range on `water_level_ft`
+```
+
+Ten wells record a water level below the bottom of their own well. No shipped check could have named
+that; the option was written by somebody who knows Arizona groundwater, and the tier's job was to
+route rows into it. This is the argument for `explanations` in `audit.yml` in one line, and it is
+better evidence than any agreement percentage in this document.
+
+**`backtest` is the number assay does not grade.** Over this repo's history since 2026-06-01:
+
+```
+caught        2      still_firing   3     silent  54
+no_pair      44      unparseable   26
+a check was firing in 5 replay(s); a later commit silenced it in 40% of them.
+```
+
+Both catches are `ranks_by_degrees` at commit `75a62f649`, whose message never says "fix". The tool
+found a real repair in this repo's history that a search for the word would have missed. And it
+refuses to round up: *"26 of 85 comparable replays could not be read (31%), and are not counted as
+clean. A Jinja strip is not a compile."*
+
+**`page` is the artifact to commit.** `assay.html` at 15,175,949 bytes plus `assay-data/`, 18 files
+and 32,409 rows, with the right instruction attached: commit the JSONL, not the markup, so a diff
+reads as "these 3 models changed" rather than as 8MB.
+
+**`review --emit --reads` closed the loop the rest of the run opens.** 671 cards from 815 findings,
+479 carrying a reading, 192 a cold start, plus 36 words and 40 marts with options. The 192 are
+findings that arrived from `traverse`, `semantics` and `volume --judge` after the pre-read, which is
+correct behaviour and worth noting as the one place in the suite where running more of the tool
+makes the form *less* complete rather than more. A `read` after the last judged command, rather than
+before it, is the order to document.
+
+Caveat on 25.1 that this run sharpens rather than softens: those 479 pre-filled readings are the
+ones carrying four distinct sentences between them and a median confidence of 0.22 on every
+dismissal. The form is the right shape. What it is filled with is the open problem.
+
+### 25.19 `assay claims --extract` crashes on a shadowed `_n`, after it has already written to the store
+
+The `dbt-assay` skill's line is *"`assay claims --extract` then `assay verify` — pull every claim
+out of this project's own prose and check each one against the code."* Step one exits 1.
+
+```
+5757 candidate sentence(s) across 349 model(s) · 23 not yet classified
+  cli.py:1463 in claims
+    console.print(f"[dim]{_n(client.calls)} calls, ...")
+TypeError: 'str' object is not callable
+```
+
+`_n` is the module-level number formatter at `cli.py:47`. Earlier in the same function, the
+merged-sentence report does:
+
+```python
+for _n, _kept, _drop in merged[:3]:
+```
+
+Python function scope is per function, not per block, so `_n` is a local for the whole of `claims()`
+from that point on, holding a model name. Every later `_n(...)` call is a string call.
+
+**It only fires when `merged` is non-empty.** `merged` holds claims this project writes twice, once
+in a description and once in a comment. A project with no duplicated claim prose never enters the
+loop, `_n` stays the function, and the command works. This warehouse has 58:
+
+```
+58 sentence(s) merged as the same claim written twice, once in a description and once in a comment.
+  stg_wqp_results: kept 'THE UNIT COLUMN IS THE MOST DANGEROUS FIELD IN THIS SOURCE.', merged '***...'
+```
+
+So the bug is invisible on a tidy project and certain on a thoroughly documented one, which is the
+wrong way round: the better a project's prose, the more likely it cannot extract its claims.
+
+**The failure is not clean, and that is the part to fix first.** Line order in the `--extract`
+branch:
+
+```
+1462   store.save_claims(rows)      <- runs
+1463   console.print(... _n ...)    <- raises
+```
+
+The 1,782 claims were written to the store. `assay verify` picks them up immediately afterwards and
+reports `1782 claim(s) to check`. Meanwhile `--write claims.yml` is handled at `cli.py:1362`, on the
+non-`--extract` branch, so it is never reached and `claims.yml` does not exist. A user reads a
+traceback, concludes nothing happened, and is wrong twice: the store did change, and the file they
+asked for did not appear.
+
+Three fixes, in order:
+
+- Rename the loop variable. One line, and it is the whole crash.
+- Move `--write` so `--extract --write` writes the file it was asked for, or say the combination is
+  not supported.
+- The general rule, since this is the second shadowing-class defect in this document: a summary
+  print that runs after a store write should not be able to fail the command. Wrap the reporting
+  tail, or write the store last.
+
+Worth noting that everything before line 1463 worked well. The extraction found 5,757 candidate
+sentences across 349 models, merged 58 duplicates with both versions quoted, and left 23
+unclassified rather than guessing. The command is one identifier away from being fine.
+
+### 25.20 A locked store presents to an agent as twelve broken tools, and the fix for it is already imported
+
+The most consequential finding in this session, and it was produced by accident. While
+`assay verify` was running in the background holding the store, a smoke test of the MCP tools
+returned:
+
+```
+tool                 verdict
+contract             ERROR: Error executing tool contract
+blast_radius         ERROR: Error executing tool blast_radius
+claims               ok  218 bytes
+traversal            ERROR: Error executing tool traversal
+lineage              ERROR: Error executing tool lineage
+findings             ERROR: Error executing tool findings
+practices            ERROR: Error executing tool practices
+violations           ERROR: Error executing tool violations
+review_queue         ERROR: Error executing tool review_queue
+changed_contracts    ERROR: Error executing tool changed_contracts
+plan                 ERROR: Error executing tool plan
+spend                ok  264 bytes
+stale                ok  244 bytes
+vocabulary           ERROR: Error executing tool vocabulary
+monitoring           ok  814 bytes
+guide                ok  7910 bytes
+suggestions          ERROR: Error executing tool suggestions
+
+5 ok, 12 error
+```
+
+Read that as an agent reads it and there is exactly one available conclusion: the MCP server is
+broken, and it is broken on precisely the tools the skill is built around. Every tool in "Before you
+touch a model" fails. Every tool in "before you hand anything back" fails. The five that work are
+the peripheral ones. **I wrote that conclusion down and said it out loud before checking, because
+the error message supports no other reading.**
+
+The real cause, from stderr with `COLUMNS=300` so rich stops wrapping it into a 30-column gutter:
+
+```
+dbt_assay/mcp_server.py:1210 in contract
+dbt_assay/mcp_server.py:131  in contract
+dbt_assay/mcp_server.py:95   in state
+dbt_assay/store.py:294       in __init__
+dbt_assay/store.py:286       in __init__
+IOException: IO Error: Could not set lock on file ".../assay.duckdb":
+  Conflicting lock is held in .../python3.12 (PID 28033) by user
+```
+
+A DuckDB lock. Another process had the store open: this session's own `assay verify`, mid-run on
+1,782 claims. Nothing is broken at all, and the twelve tools that "failed" are simply the twelve
+that open the store. The five that "worked" are the five that do not.
+
+**assay already produces the right message, and the transport discards it.** This is the part worth
+being precise about, because the defect is one `except` clause rather than a missing feature.
+
+`store.py:284-294` handles the lock correctly:
+
+```python
+while True:
+    try:
+        self.con = duckdb.connect(self.path); break
+    except Exception as e:
+        text = str(e)
+        if _is_lock_error(text):
+            if time.monotonic() < deadline: time.sleep(0.5); continue
+            raise StoreLocked(lock_message(self.path, text)) from e
+```
+
+So a `StoreLocked` carrying `lock_message` is raised, and `lock_message` names the holding PID,
+since when, and what it is running. The sentence an agent needs is built.
+
+`mcp_server.py:40` shows the lesson was already learned once. `_store_or_why` exists precisely for
+this and catches `StoreLocked` by name, under a docstring reading *"A LOCKED STORE REPORTED ITSELF AS
+A MISSING ONE. Reported from the field."*
+
+But `state()` at `mcp_server.py:92-96` opens the store a second time, bare:
+
+```python
+store = Store(self.store_path) if self.store_path and Path(self.store_path).exists() else None
+```
+
+No `try`. Its own inline comment says *"Refreshed here as well as in `_store_or_why`, because every
+tool reaches..."*, so both paths were known and the store-open was duplicated without the handling.
+`StoreLocked` propagates to the MCP wrapper, and `base.py:210` raises
+`UnexpectedToolError(f"Error executing tool {self.name}")`, dropping the message. `base.py:207`, the
+branch that does not fire, formats `f"Error executing tool {self.name}: {exc}"` and would have
+carried it.
+
+Three fixes, cheapest first:
+
+- **Catch `StoreLocked` in `state()`** and return the `lock_message` that already exists, the way
+  `_store_or_why` does. One `except`, one call site.
+- **Give the MCP server a default `ASSAY_LOCK_TIMEOUT`.** `store.py:279` already reads it and polls
+  every 0.5s until the deadline, so the machinery for waiting out a transient lock is written and
+  defaults to 0. An agent working alongside a human running a sweep is the normal case, not the edge
+  case, and a few seconds of patience resolves it with no message at all.
+- **Never let the wrapper report a bare tool name.** An agent cannot act on `Error executing tool
+  contract`. It can act on `the store is locked by PID 28033 since 16:00, running assay verify`.
+
+The severity is not the lock, it is what the message causes. assay's whole premise is that an agent
+should call these tools instead of reading SQL and guessing. A transient lock that presents as
+twelve permanently broken tools trains the agent to stop calling them and go back to guessing, which
+is the one outcome the product exists to prevent. It also means the single most likely moment for
+this to fire is the moment assay is being used hardest: a human running a sweep while an agent works
+alongside them.
+
+Worth stating plainly: the previous section of this document nearly reported twelve non-existent
+bugs on the strength of that message, in a session whose entire purpose was checking whether the
+tool tells the truth.
+
+### 25.21 The component surface is lopsided: 0 checks reason about a macro, and one macro defect was reported nine times
+
+Asked in the field: does assay notice the same implementation in several places and suggest a macro,
+and how does it treat dbt components other than models? Read out of `checks/` and `manifest.py`
+rather than from `--help`.
+
+The eighteen structural checks, by what they are about:
+
+| component | checks | which |
+|---|---|---|
+| models | 12 | `arbitrary_pick`, `first_match_pick`, `window_after_where`, `ranks_by_degrees`, `bbox_as_radius`, `duckdb_full_match`, `variant_column`, `column_has_no_description`, `models_disagree_about_a_column`, `description_promises_what_the_column_cannot_keep`, `hop_drops_most_rows`, grain |
+| sources | 4 | `source_reaches_nothing`, `source_only_a_test_reads`, `source_freshness_stale`, `source_freshness_undeclared` |
+| tests | 3 | `test_cannot_fail`, `test_outruns_its_source`, plus `assay tests` severity and coverage |
+| seeds | 1 | `seed_reaches_nothing` |
+| macros | 0 | — |
+| snapshots | 0 | — |
+| exposures | 0 | — |
+
+`manifest.py:155,170` reads `resource_type == "model"` and `== "test"`; `checks/sources.py:96`
+reads `"seed"`. Nothing reads a snapshot or an exposure at all, so a project's snapshots are absent
+from every number assay prints, in the same way the 30 unreadable models are.
+
+**Macros appear only as a hazard, never as a subject.** The entire macro surface is
+`compilecheck.py`, which walks `depends_on.macros` transitively to find macros that introspect the
+warehouse, because a model built on one compiles to SQL assay cannot trust; and `hook.py:47`, which
+excludes macros from "is this a model". Both treat a macro as something to route around. Neither
+asks whether a macro is correct, whether its callers agree about it, or whether one should exist.
+
+**There is no duplication check of any kind.** Nothing compares SQL shape across models. The two
+nearest things compare MEANING rather than code: `models_disagree_about_a_column` (73 findings on
+this warehouse) flags one column name carrying different sentences, and `align` asks whether two
+columns in different models are the same concept (117 of 120 same, 97% agreement with the joins the
+project already makes). Both are about whether two things mean the same. Neither is about whether
+two things are written the same.
+
+**This warehouse contains the argument for the missing check, twice.**
+
+First, `test_cannot_fail` fired on nine `stg_*_permits` models, each at 15 marts. The recorded
+reason on all nine is the same sentence, naming the same place:
+
+> Verified in `macros/permit_stg.sql:28-32` -- three regexp branches emitting 'New Construction',
+> 'Addition / Expansion', 'Tenant Improvement' and nothing else.
+
+One macro. Nine findings. `assay plan` lists nine rows with nine `fix_shape` entries, and nothing in
+the output says they are one defect with one edit. `assay disagreements` already ships the principle
+for verdicts — *"N rejections are usually far fewer than N bugs"* — and the same collapse applied to
+findings that share a `file:line` in a macro would turn nine rows into one, for free, from data
+already in the evidence field.
+
+Second, `semantics` classified 113 filters as `data_quality_workaround`, and five of the top eight
+are the same construct in five different models:
+
+```
+int_water_irrigation_trend   COALESCE(TRIM(w), '') <> ''    0.99
+water_county_summary         TRIM(c.county) <> ''           0.94
+stg_denver_delinquent        TRIM(street_address) <> ''     0.92
+stg_crexi_listings           TRIM(address) <> ''            0.89
+water_address_sections       addr_key <> ''                 0.87
+```
+
+Five models independently defending against empty-string-where-null. That is a macro, or better, an
+ingestion fix. assay found it — and found it through a judged per-filter classification at a cost
+per filter, not through a structural check that would have cost nothing and said "this predicate
+shape appears in five models".
+
+The capability is half-present in the wrong tier. A structural check keyed on normalized predicate
+or expression shape across models would find both cases for free, before any judgment is asked, and
+would give `plan` the collapse it currently lacks.
+
+### 25.22 `suggestions` is dead over MCP on every project, from one wrong attribute
+
+```
+mcp_server.py:950   _fs = self.state().findings
+AttributeError: 'LiveState' object has no attribute 'findings'
+```
+
+Unconditional. Not data-dependent, not lock-dependent: `LiveState` is
+`project, digests, schema, entries, unparsed` and has never had a `findings` attribute. The
+dataclass even annotates the nearest one, `unparsed: list  # models mid-edit; NOT findings`, so the
+confusion was anticipated. `:950` is the only `.findings` in the file; every other call site reads
+`.project` or `.entries`.
+
+It matters more than a one-line fix usually would, because of what this tool is. Its own docstring:
+
+> *** AN AGENT COULD READ EVERY FINDING AND STILL NOT KNOW WHAT TO WRITE DOWN. *** `guide` teaches
+> what a vocab term is for and `findings` says what is wrong, and nothing joined the two. This is
+> that join, and it is the tool an agent should reach for when somebody asks "so what do I put in
+> audit.yml".
+
+The MCP server exists so an agent configures the project instead of guessing at it. The tool that
+does exactly that is the one tool that cannot run. The CLI `assay suggest` works fine, so the
+capability is there and only the MCP path is broken, which is also why it survived: nothing exercises
+the MCP surface.
+
+That is the general lesson. 17 semantic tools, 16 working, and the one that is dead is dead
+unconditionally and has been for some time. A smoke test that calls every tool once and asserts no
+exception would have caught it the day it broke, costs nothing, and needs no warehouse.
+
+### 25.23 The next build, from what the store already holds
+
+Requested in the field, and written here because each piece is buildable from data this session
+already produced rather than from a new collection step. Measured facts are marked; the rest is
+proposal.
+
+#### a. Cluster models and columns on their judged answers, to find areas rather than findings
+
+**Measured.** `model_decisions` holds 27,986 rows over 8,950 distinct decision keys and 4,314
+distinct question instances. 349 models carry an average of 43 judged answers each, up to 400. Every
+row has `answer`, `confidence` and `probabilities` as a full distribution, plus `state_hash`,
+`state_builder` and `state_inputs`. The matrix needed to cluster is already dense and already
+persisted.
+
+**Proposal.** Treat each model as a vector over (question, answer) and cluster. The output is not a
+finding, it is an area: *"these fourteen models answer the same way to the same questions"*. Two
+clusters in this session's data would have fallen straight out:
+
+- the nine `stg_*_permits` models, which share `macros/permit_stg.sql` and produced nine identical
+  `test_cannot_fail` findings;
+- the five models each carrying a `TRIM(x) <> ''` predicate that `semantics` independently
+  classified `data_quality_workaround`.
+
+Both were found by a human reading a list. Neither required a new question to be asked.
+
+**One constraint, from this run's own calibration.** Cluster on ANSWERS, not on confidence. `assay
+calibration` reports that no two confidence bands separate on any family: `column_is_part_of_the_key`
+runs 86% agreement below 0.30 and 52% between 0.50 and 0.70, with every interval overlapping every
+other. Weighting a cluster by a confidence that has not been shown to measure anything would import
+noise and look rigorous doing it.
+
+#### b. Make a macro a subject, not just a hazard
+
+**Measured.** `checks/` contains no macro check. `compilecheck.py` walks `depends_on.macros` only to
+find macros that introspect the warehouse, and `hook.py:47` excludes macros from "is this a model".
+One macro defect in `macros/permit_stg.sql:28-32` produced nine separate findings across nine models
+at 15 marts each, and `assay plan` emitted nine rows with nine `fix_shape` values and no indication
+they are one edit.
+
+**Two checks, both free and structural:**
+
+- **Collapse findings that share a macro `file:line`.** The evidence field already carries the
+  location. Nine rows become one, with its nine call sites listed. `assay disagreements` already
+  ships this exact principle for verdicts — *"N rejections are usually far fewer than N bugs"* — and
+  it applies to findings unchanged.
+- **Model-versus-macro drift.** A model writing inline what a macro already does is the same defect
+  class as prose drifting from code: two artefacts asserting one thing, with nothing keeping them
+  together. Normalized expression shape on both sides is enough to flag it, and `first_match_pick`
+  already demonstrates assay comparing expression shapes.
+
+#### c. The routing question, which is the one that must not be guessed
+
+The `TRIM(x) <> ''` cluster has two defensible fixes: a macro, or an ingestion fix upstream. They
+are not equivalent, and an agent picking between them from the finding alone is guessing.
+
+**assay should supply the discriminator and refuse the verdict**, the way it already refuses to write
+a `means:`. Everything the discriminator needs is already computed:
+
+- **layer** of each model carrying the predicate (`inventory` emits it);
+- **provenance** of each column: a column arriving `from_source` with an empty string in it is an
+  ingestion fact, and one computed inside the project is not;
+- **how many distinct sources** sit behind the cluster, through the edges assay already walks.
+
+Five staging models over five different sources means the feeds ship empty strings and the fix is
+ingestion. Five models across three layers over one source means one staging model should have
+cleaned it and the fix is a macro or a parent. That is a mechanical discriminator over data assay
+holds, and it turns "here are five findings" into "here is the evidence for which of two fixes this
+is", with the choice still a person's.
+
+This is the general shape worth stating once: the tier's job is to narrow a decision to its evidence,
+never to make it. It is the same rule as the empty `means:`, applied to a fix instead of a
+definition.
+
+#### d. The components with no coverage
+
+**Measured.** `manifest.py:155,170` reads `resource_type == "model"` and `"test"`.
+`checks/sources.py:96` reads `"seed"`. No file in the package reads `snapshot` or `exposure`.
+
+- **Macros.** Covered in (b).
+- **Tests.** Three checks plus `assay tests` and `adjudicate`, which is the best-served non-model
+  component. The gap found this session is `unevaluable_tests`: 65 tests assay cannot reason about
+  because their model ends in `select *`. That number is reported and is not a check, so nothing
+  ranks it or gates on it.
+- **Seeds.** One check, `seed_reaches_nothing`, which found 7 here. A seed is a file a human
+  maintains by hand, so the checks that would pay are about drift: a seed whose columns no longer
+  match what reads it, and a seed nothing has updated while the models around it moved.
+- **Snapshots.** Zero coverage. A dbt snapshot is SCD2 history, and the questions that matter are
+  whether the `unique_key` is actually unique, whether `check_cols` covers the columns that change,
+  and whether a snapshot has stopped running. Worth noting for this project specifically: it takes
+  its SCD2 from dlt (`_dlt_valid_to`) rather than dbt snapshots, so the value here is low and the
+  value on a typical dbt project is high.
+- **Exposures.** Zero coverage, and this is the one worth building first for a project that ships a
+  product. A dbt `exposure` is a declaration that something outside the warehouse — a dashboard, an
+  app, a report — depends on named models. It is how a project writes down "these models feed the
+  paid report".
+
+  Everything in assay currently ranks by `marts`, which is a proxy: a count of downstream models
+  that happen to sit in the marts layer. Exposures would make blast radius real. `stg_blm_plss_sections`
+  is "24 marts" today; with exposures it could be "reaches the Water Table report", which is a
+  different sentence to put in front of a person deciding what to fix first. The checks write
+  themselves: an exposure whose model does not exist, a mart nothing exposes, an exposure depending
+  on a model with an open `fail`-action finding, and a finding's blast radius expressed in products
+  rather than in models.
+
+### 25.24 Handoff: the cluster subject, exposures, and history
+
+Continues 25.23 with what came out of working through it. Where 25.23 establishes that the substrate
+exists, this says what to build on it. Measured facts are marked; the rest is design.
+
+#### a. The safety model already exists in this repo, on rulings
+
+The hazard with clustering is the one `assay-review` already names: *"A verdict on a MODEL lands on
+every finding that model has... one keypress covered all six."* A cluster verdict is that hazard
+multiplied.
+
+`rulings.yml` solved it. `same_defect` is `type: noul`, `subject: ruling_pair`, and its
+`acknowledge` block states the design:
+
+> The answer is one edge of a graph, not a verdict about a model. `assay disagreements` takes the
+> connected components and prints them; a single pair is not a finding and there is nothing in a
+> project to attach one to.
+
+**Ask pairwise. Cluster by connected components. Make the pair answer structurally incapable of
+being a verdict.** No cluster is ever ruled on as a unit, verdicts stay exactly where they are
+today, and the cluster is an artefact of reading rather than a new thing to adjudicate. This avoids
+the hazard rather than mitigating it, and it is already shipping.
+
+The cost discipline is in the same block: *"Identical first sentences are never sent here -- code
+already grouped those -- so a pair that LOOKS similar is exactly the case worth deciding."* Group
+structurally for free — shared macro, shared normalized predicate shape, shared source — and send
+Jev only the pairs code cannot settle.
+
+The second precedent is `same_name_measure` in `meaning.yml`, already an N-model subject. Its
+builder filters to models that each COMPUTE the column, on the stated grounds that *"a carry cannot
+disagree about units with what it carries"*, then caps at three pairs. A cluster subject should do
+the same: filter to members that can actually disagree, then cap.
+
+#### b. Four families that have no single-model form
+
+Against the rules in `guide questions`: no arithmetic, absence sayable, every option able to lose,
+always a way to decline.
+
+| family | type | subject | finding_when |
+|---|---|---|---|
+| `one_rule_or_a_coincidence` | choice | predicate_cluster | `one_rule_repeated` |
+| `the_odd_one_out` | choice | cluster_member | `undeclared_divergence` |
+| `where_the_fix_belongs` | choice | predicate_cluster | (routing; see 25.23c) |
+| `claims_are_the_same_assertion` | noul | claim_pair | none — edges of a graph |
+
+- **`one_rule_or_a_coincidence`.** "These five models each carry `TRIM(x) <> ''`. One rule in five
+  places, or five independent decisions?" Options `one_rule_repeated` / `independent_decisions` /
+  `cannot_tell`. This question cannot be put to one model, which is the point: FIELD_NOTES item 2
+  records that a question can only ask about what its call site hands it, and a cluster is a call
+  site that does not exist yet.
+- **`the_odd_one_out`.** "These nine share this shape; this one differs in exactly this way.
+  Deliberate exception, or undeclared divergence?" The state must carry the shared shape and the
+  single difference and nothing else — `guide questions` measured 0.96 with the right state against
+  0.47 with one extra correct sentence added.
+- **`where_the_fix_belongs`.** `at_the_source` / `in_a_shared_macro` / `correct_where_it_is` /
+  `cannot_tell`. Code computes the discriminator into the state: layer per member, provenance per
+  column, count of distinct sources behind the cluster. Jev reads those counts and never derives
+  them, because *"if your question needs two numbers compared, it is two questions."*
+- **`claims_are_the_same_assertion`.** Direct mirror of `same_defect`. This project already merges
+  the same claim written twice within a model, 58 of them; connected components extend that across
+  models.
+
+**Engineering surface.** The generic runner since 0.7.0 runs anything declaring `subject:`, so the
+families are YAML. What is new is builders in `subject_kinds.py` for `predicate_cluster`,
+`cluster_member` and `claim_pair`, modelled on `same_name_measures`.
+
+**One constraint from this run.** Cluster on ANSWERS, not on confidence. `assay calibration` reports
+no two bands separating on any family: `column_is_part_of_the_key` runs 86% agreement below 0.30 and
+52% between 0.50 and 0.70, every interval overlapping every other. Weighting a cluster by a
+confidence not yet shown to measure anything imports noise and looks rigorous doing it.
+
+#### c. Exposures: four landing spots, and one place to keep them out of
+
+**Measured.** No file in the package reads `resource_type == "exposure"`. `manifest.py:155,170`
+reads model and test; `checks/sources.py:96` reads seed.
+
+dbt puts exposures in `manifest.json` under `exposures`, each carrying `depends_on.nodes`, `type`,
+`owner`, `url` and `maturity`. Load them and build `model_uid -> [exposure]`. Then:
+
+1. **`LiveState.entries` / inventory**, so `contract()` and `blast_radius()` carry it.
+2. **The `findings` table**, which already has `descendants` and `marts`. Add `exposures` and rank
+   on it above marts. One column changes the ordering in `check`, `plan`, `review.html` and `page`
+   at once.
+3. **`audit.yml` policy**: `{action: fail, when_exposed: true}`. Gate hard on what reaches a
+   product, annotate the rest. This is the best use of the feature.
+4. **Bootstrap.** `exposure_undeclared` is the `column_has_no_description` shape rather than a
+   defect: absence of a declaration is not a defect, and assay's rule is coverage of what a project
+   itself declares. What makes it worth shipping is that assay can propose the CANDIDATES from
+   evidence — a mart with no downstream model readers is almost certainly consumed externally —
+   while refusing to write the name, the owner or the URL. Same rule as the empty `means:`.
+
+**Keep them out of judged subject state.** `subject_kinds.py` already puts `marts_downstream` and
+`models_downstream` into question state, so adding `exposures_downstream` is the reflex. The
+measurement in `guide questions` argues against it: one extra correct sentence moved an answer from
+0.96 to 0.47. Exposures are for ranking and gating. They are not for telling Jev what is at stake.
+
+The payoff is a different sentence in front of a person. `stg_blm_plss_sections` is "24 marts"
+today, which is a proxy: a count of downstream models that happen to sit in a layer. With exposures
+it is "reaches the Water Table report".
+
+#### d. History, and the 31% that is smaller than it looks
+
+**Measured.** `assay backtest -r . --since 2026-06-01` reported `26 of 85 comparable replays could
+not be read (31%), and are not counted as clean. A Jinja strip is not a compile.` It does not name
+them, which is the same gap as `completeness` reporting three empty models without naming them.
+
+Measured here from git: 16 models carrying a jinja control block were touched since 2026-06-01, and
+the churn is concentrated.
+
+```
+24 touches  water_provenance                 6 touches  stg_az_parcels
+21 touches  water_section_fingerprint        5 touches  source_funnel
+21 touches  az_water_provenance              3 and below: 11 more
+13 touches  water_rights
+```
+
+Four models account for 79 of 107 jinja touches, and three of the four are provenance or fingerprint
+models, which are jinja-heavy precisely because they enumerate sources. The dark 31% is a handful of
+much-edited models, not a broad blind spot. Three responses, and the third is the one to skip:
+
+1. **Name them.** Free. "26 replays unreadable" cannot be acted on; "these four models are dark, and
+   here is how often they change" can be judged in ten seconds. Nobody can assess a blind spot whose
+   shape they cannot see, which is assay's own argument pointed inward. Same fix applies to
+   `completeness`' unnamed empty models.
+2. **Harvest the compiled SQL that already exists.** dbt writes `target/compiled/` on every build and
+   the manifest carries a `checksum` per node. Cache the compiled body keyed on that checksum, and
+   `backtest` reads the cache instead of stripping jinja. Replay of any commit whose checksum has
+   been seen becomes free and exact, with no warehouse at replay time. `assay-data/` is already this
+   shape: committable JSONL keyed per entity.
+3. **Full `--compile` per commit.** Skip it. It needs the warehouse, and `compilecheck.py` argues
+   against trusting the result: a model built on an introspective macro compiles to whatever the
+   warehouse said at that moment, which for a historical replay is the wrong warehouse.
+
+**What a `commits` table unlocks** beyond replay. Sha, message, date, files, models touched, joined
+to `findings.run_id`, gives finding AGE and first appearance: which commit introduced it, how long
+it has survived, which models churn. Two things fall out that nothing currently does:
+
+- **Co-change as an independent clustering signal.** Models that always change together are a
+  cluster derived from behaviour rather than from judged answers. Where the two agree, that is
+  strong. Where they disagree — models that answer alike but never co-change, or co-change but
+  answer differently — the disagreement is itself the finding.
+- **A real check for `version-check`.** It says a bump is owed when meaning changed. With history it
+  can ask whether the bump landed in the SAME commit as the meaning change, three commits later, or
+  never. That is checkable and currently is not.
+
+On commit messages: `backtest` currently treats them as unreliable and annotates its catches with
+"(the message never says 'fix')". That assumption is worth revisiting. Messages written with a model
+in the loop are more descriptive than the "fix" and "yep" era, so the message is becoming signal
+rather than noise, and tying it to the files and models it touched is worth persisting rather than
+replaying one-shot.
+
+#### e. Build order
+
+Fixes first, because each one would distort the re-test that follows.
+
+1. `_n` shadowing at `cli.py:1407` and `:1581` (25.19). Two renames. Unblocks `claims --extract` and
+   `verify`, which is the skill's documented pair.
+2. `suggestions`' `self.state().findings` at `mcp_server.py:950` (25.22). One attribute. It is the
+   only MCP tool that is dead, and it is the one an agent needs to configure a project.
+3. A smoke test calling all 17 semantic MCP tools once, asserting no exception. Costs nothing, needs
+   no warehouse, would have caught 2 the day it broke.
+4. `StoreLocked` in `state()` plus a default `ASSAY_LOCK_TIMEOUT` (25.20). A locked store currently
+   presents as twelve broken tools.
+5. `onboard` versus `check` count reconciliation (25.13), and drop `--check <name>` from onboard's
+   step-3 hint until 25.3 is fixed.
+6. Name the unnamed: `completeness`' empty models, `backtest`'s unparseable replays.
+7. Sanitize non-finite floats in `feeds`, and stop retrying an encoding error as a provider failure
+   (25.17).
+8. Plan line reports work net of the cache (25.10), and a progress line on any judged command.
+
+Then the features, in the order their evidence is strongest: exposures (c), macro collapse (25.23b),
+predicate clustering and the four families (a, b), history (d).

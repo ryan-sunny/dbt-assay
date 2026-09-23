@@ -1,4 +1,78 @@
-# Build queue — SHIPPED. Do not build from this file.
+# Build queue for 0.51, from FIELD_REPORT section 25
+
+Sections 1 to 24 of `docs/FIELD_REPORT.md` shipped in 0.50.0. This queue covers section 25 only.
+Every item below was checked against `src/` on 2026-09-23, and the method is given for each one.
+Where the report's diagnosis was wrong, the entry says so. Items marked NEW are not in the report;
+they turned up while checking it.
+
+Reproductions ran against `sunny-data/transform/target` with scratch stores. Store counts come from
+a copy of `sunny-data/assay.duckdb` in the scratchpad, queried read-only.
+
+## Decisions (Ryan, 2026-09-23)
+
+- Scope: all of it. F1 to F18, then X1, X2, X3 and X4.
+- F12 / `read`: a `disagree` below 0.5 is filed `unclear`; the card shows confidence; a second Choice in the same call picks the locator from code-listed candidates, with a NONE option.
+- F7 / `--check`: the scope is recorded on the run and kept out of the baseline diff, the loop count and ruled-model counts. A one-time backfill marks existing partial runs.
+- F15 / `arbitrary_pick`: the written partition and its line go into evidence as a reading aid outside the id. Ids and rulings do not move.
+- X3: paid calibration capped at $0.50 in total. `where_the_fix_belongs` annotates and never becomes a finding.
+- X4: the compiled-SQL cache is a table in the store.
+- The defaults listed below stand.
+
+## Fixes
+
+Fixes come first, because each one would distort the re-test that follows.
+
+| # | item | report | verified how | what is actually wrong |
+|---|---|---|---|---|
+| F1 | `_n` shadowed in `claims` and `verify` | 25.19 | read `cli.py:1407`, `:1581` | Both loops bind `_n`. `claims --extract` crashes after `save_claims` has run; `verify` crashes whenever a claim is unanswerable. `--write` is only reached on the non-extract branch. Fix: rename both loop variables, honour `--extract --write`, and make sure the reporting tail after a store write cannot fail the command. |
+| F2 | MCP `suggestions` is dead | 25.22 | `mcp_server.py:950` reads `self.state().findings`; `LiveState` has no such field | One line: `live.findings_for(st, None)`. |
+| F3 | No test calls each MCP tool | 25.22 | `tests/test_mcp_server.py` and `test_mcp_parity.py` list tools but call none of the semantic ones | Add a smoke test that calls every semantic tool once on the fixture project, with a store, and asserts no exception. |
+| F4 | A locked store shows up as twelve broken tools | 25.20 | `state()` at `mcp_server.py:92` opens `Store` with no handling; the tool wrappers pass exceptions straight to the SDK | Catch `StoreLocked` in `state()`. Wrap every tool so an exception comes back as `{"error": <message>}` and never as a bare tool name. Give the MCP server a short default lock wait (see Defaults). |
+| F5 | NEW: `check` under-reports `column_has_no_description` | 25.13 | reproduced: `run_all` with schema gives 208, without gives 129; `live.py:127` calls `structural_checks(project, digests)` with no schema | **The report had this backwards.** `onboard`'s 208 is the right number. `check`, MCP and every `all_findings` caller drop `schema`, so derived columns are invisible to them. The `arbitrary_pick` gap (37 vs 33) goes the other way: `onboard` skips `_distinct`. Fix: `all_findings` passes schema, and `onboard` reads from `all_findings`. **Effect on the field store: the next full `check` reports 79 new `column_has_no_description` findings.** Those findings are real; they were being missed. |
+| F6 | NEW: `all_findings` gets its arguments swapped at five call sites | none | `cli.py:1801, 3828, 4023, 4727, 5442` pass `(…, entries, store, threshold)` to a signature of `(…, entries, threshold, store)` | `probe.changes(0.8)` raises and the bare `except` swallows it. The result: `key_stopped_holding` and the other key-change findings never reach `plan`, `suggest`, `review --emit` or `read`, and nothing says so. Fix: make `threshold` and `store` keyword-only, and fix the callers. |
+| F7 | `check --check <name>` writes a partial run | 25.3, 25.15 | `cli.py:417` filters before `write_findings`; `onboard` teaches the flag at `:929` and `:1037` | The field store still holds the partial run `5c17c6fa0f68` (21 findings). **Needs a decision (Q3).** |
+| F8 | Installed-package models counted as unreadable | 25.5 | `Model.is_installed_package` exists and is ignored by `coverage()`, `completeness` (`cli.py:2054`), the page table (`:2209`) and the onboard panel | Leave them out of the unreadable count, and name the packages that were left out. |
+| F9 | Counts with no names | 25.11, 25.24d.1 | `completeness` prints `models that are EMPTY` as a count (`cli.py:2067`); `backtest` prints `26 of 85… could not be read` with no models (`:5321`) | Name the empty models. Name the unreadable replays by model, with how many times each was touched. |
+| F10 | `inf` in sampled rows is retried as a provider fault | 25.17 | `jev.py:303` builds the JSON inside the retry `try`, so the encoder's `ValueError` is retried 3 times, then reported as "jev failed" | Coerce non-finite floats to null in `jev.Client.ask` (one choke point, so every family is covered) and report the count. If the body still cannot be encoded, fail once and name the encoder. |
+| F11 | The plan line ignores the cache, has no ETA, and nothing shows progress | 25.10, 25.2 | `semantics` plans from subjects (`cli.py:5896`); `read` prices `sub.state` from a 25-card sample (`_estimate`, `:2445`), not the state `states.make` sends; spinners with no count in 12 places | `decide` looks cache hits up by `(key, question, prompt_version, state_hash)`, so the calls still to make can be counted up front. Add `jev.plan()` returning to-ask, cached, dollars priced from the real states, and seconds from `model_calls` history for this caller. Add one shared progress line (`n/N · cached · $ · ETA`). Every judged command uses both. |
+| F12 | `read` shows the option text, has no confidence, and suggests dismissals it is unsure of | 25.1 | `reads.py:why()` returns the option's own criterion; the card renders `verdict — why` (`reviewform.py:854`) | Correction to the report: the form does **not** pre-select the radio (`:890` checks only the person's own answer). The reading is shown as a suggestion. **Needs a decision (Q2).** |
+| F13 | The vocab law lint matches state names | 25.4 | `lint.py:677`: `_STATES` substring match plus a statute regex | It flags `geography` ("e.g. a Colorado or Arizona metro") and misses `case_number` ("a water court case… assigned per division"). See Defaults. |
+| F14 | `banks` asks for a `forked_from` that is already there | 25.14 | `lint.py:618` never reads `forked` | When `forked_from` is declared and current, keep the copy count and drop the request. |
+| F15 | `arbitrary_pick` evidence names the resolved alias, not the column as written | 25.9 | `parse.py:589` maps partition columns through `alias_of`; the evidence prints the mapped name | Evidence is part of the finding id (`_identity`), and 37 rulings sit on these findings (13 human, 24 agent). **Needs a decision (Q4).** |
+| F16 | Drift in the `calibrate` comment in `audit.yml` goes unseen | 25.7 | `selfaudit.py:31-37` only parses "N of M agreed"-style sentences | Also parse `calibrate` figures ("N exact of M", "N flagged uncertain", "N disagreeing") and compare them with a free `calibrate` replay. |
+| F17 | Two CLI rough edges | 25.8 | no `--version` callback; `disagreements` has no `-t` | Add `assay --version`. Have `disagreements` accept `-t/--target`; it ignores the value and says so. |
+| F18 | Docs | 25.6, 25.16, 25.18 | none; these record measurements | Document that `read` goes after the last judged command. Add the VERIFICATION.md rows: `column_role` 173/187 with 5 of the misses being wrong labels; `traverse` independently reproducing the `wdid` fan-out; `finding_is_correct` putting `code_contradicts_a_claim` at 15/82, which agrees with `effectiveness`' 4/12. |
+
+## Features, in order of evidence
+
+| # | item | report | verified how | what building it means |
+|---|---|---|---|---|
+| X1 | Exposures | 25.23d, 25.24c | nothing reads `manifest["exposures"]`; the field manifest has **1 exposure** and **48 root models no model reads** | Load exposures and map each model to the exposures downstream of it. Carry that into `contract`, `blast_radius` and inventory. Add a `findings.exposures` column and rank on it above `marts`, which changes `check`, `plan`, the review form and the page together. Add an `audit.yml` policy `when_exposed: true` for gating. Add `exposure_undeclared`: candidates proposed from evidence (models no model reads), never the name, owner or URL. Keep exposures out of judged state. On this project the bootstrap does most of the work, since there is 1 exposure today. |
+| X2 | Collapsing one defect written in many places | 25.21, 25.23b | **Correction: the evidence does not carry a macro `file:line`.** The nine permit findings carry the compiled `CASE` expression; 7 of 9 are identical and 2 (Maricopa, Denver) are written inline | Group findings by (check, expression with the column name masked). Attribute a group to a macro when every member's `depends_on.macros` includes that macro and its raw code calls it. `plan`, the review form and the page show one row with its call sites. No verdict lands on a group: a ruling still goes on one finding. |
+| X3 | The cluster subject and four families | 25.23a,c, 25.24a,b | `same_defect` and `same_name_measure` exist as precedents; `predicate_cluster`, `cluster_member` and `claim_pair` builders do not | Structural grouping for free first: shared normalized predicate, shared macro, shared source. Then send Jev only the pairs code cannot settle, and take connected components. Families are YAML (`one_rule_or_a_coincidence`, `the_odd_one_out`, `where_the_fix_belongs`, `claims_are_the_same_assertion`). The discriminator for `where_the_fix_belongs` (layer, provenance, count of distinct sources) is computed in code and put into state. Each family needs `banks --strict`, OVERVIEW and VERIFICATION rows, a caller, and a paid calibration on the scratch store copy. |
+| X4 | History | 25.24d | `backtest` strips jinja per commit | Add a `commits` table (sha, date, message, files, models touched) joined to runs, giving finding age and first appearance. Cache compiled SQL keyed on the manifest checksum so `backtest` replays exactly. Later: co-change as a clustering signal, and whether a `version-check` bump landed in the same commit as the change. Skip full per-commit `--compile`. |
+
+Deferred and not proposed: snapshot checks (this project has 0 snapshots), seed drift, and
+`unevaluable_tests` as a check.
+
+## Defaults I will use unless you say otherwise
+
+- **F4 lock wait:** the MCP server defaults `ASSAY_LOCK_TIMEOUT` to 5 seconds when unset. That
+  covers a CLI command briefly holding the store. A 40-minute sweep still gets the named-PID
+  message straight away after 5 seconds.
+- **F13 vocab lint (free, no judgment):** a place name inside an example clause (`e.g.`, `such as`,
+  `for example`) no longer counts. Legal-institution words in `means` or `implies` do count: court,
+  decree, statute, ordinance, regulation, division, adjudicat*, water right, and case numbers.
+- **F8:** installed packages are excluded from the unreadable count, and the line says
+  `30 model(s) from installed packages (elementary) not counted`.
+- **X1:** ranking is `exposures`, then `marts`, then `descendants`. `exposure_undeclared` is a
+  coverage finding with base 1, the same shape as `column_has_no_description`.
+- **UI:** each change that shows up on a surface lands on the page, the review form and MCP in the
+  same commit, with a Playwright screenshot read before the item is called done.
+
+---
+
+# Previous queue (0.50.0), SHIPPED. Kept for its evidence.
 
 Everything below landed on one branch (see `docs/FIELD_NOTES.md`, "The build queue, P0 through P5c,
 and what verifying it changed"). This file is kept for the evidence and measurements, not as work.
