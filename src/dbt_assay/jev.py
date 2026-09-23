@@ -471,21 +471,7 @@ def decide(store, client: Client, recipe, questions: dict, *,
     sh = state_hash(state)
     model_name = client.model or client._conn()[1]["model"]
 
-    hits, ask_these = {}, {}
-    for q, qdef in questions.items():
-        row = store.con.execute(
-            """select kind, answer, confidence, probabilities, state_hash
-               from model_decisions
-               where decision_key = ? and question = ? and prompt_version = ?
-               order by decided_at desc limit 1""",
-            [decision_key, q, prompt_version]).fetchone()
-        # A hit whose state moved is a MISS. The subject changed under a key that did not, and
-        # serving the old answer is how a cache starts lying about the present.
-        if row and row[4] == sh:
-            hits[q] = {"kind": row[0], "answer": row[1], "confidence": row[2],
-                       "probabilities": json.loads(row[3] or "{}"), "cached": True}
-        else:
-            ask_these[q] = qdef
+    hits, ask_these = cache_split(store, recipe, questions, prompt_version, sh)
 
     if ask_these:
         resp = client.ask(state, ask_these, caller=caller)
@@ -543,4 +529,158 @@ def decide(store, client: Client, recipe, questions: dict, *,
                 prompt_version, model_version, call_id, caller, context, input_tokens,
                 file_checksum, state_builder, state_inputs, decided_at)
                values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, current_timestamp)""", rows)
+    if ON_DECIDE is not None:
+        ON_DECIDE(bool(ask_these), client)
     return hits
+
+
+def cache_split(store, recipe, questions: dict, prompt_version: str,
+                sh: str | None = None) -> tuple[dict, dict]:
+    """(answers the store already holds for this exact state, questions it does not).
+
+    The ONE definition of a cache hit, used by `decide` to answer and by `plan` to count -- so a
+    plan line can never promise a hit the run then pays for.
+    """
+    sh = sh or state_hash(recipe.state)
+    hits, ask_these = {}, {}
+    for q, qdef in questions.items():
+        row = store.con.execute(
+            """select kind, answer, confidence, probabilities, state_hash
+               from model_decisions
+               where decision_key = ? and question = ? and prompt_version = ?
+               order by decided_at desc limit 1""",
+            [recipe.key, q, prompt_version]).fetchone()
+        # A hit whose state moved is a MISS. The subject changed under a key that did not, and
+        # serving the old answer is how a cache starts lying about the present.
+        if row and row[4] == sh:
+            hits[q] = {"kind": row[0], "answer": row[1], "confidence": row[2],
+                       "probabilities": json.loads(row[3] or "{}"), "cached": True}
+        else:
+            ask_these[q] = qdef
+    return hits, ask_these
+
+
+# Called after every `decide` with (whether it sent a request, the client). A command's progress
+# line hangs off this, so no call site has to remember to tick.
+ON_DECIDE = None
+
+
+@dataclass
+class Plan:
+    """What a judged command is about to do, net of what the store already answers."""
+    calls: int                   # requests that will be sent
+    cached: int                  # requests the store answers in full
+    usd: float                   # priced from the states that will be SENT, not a sample
+    seconds: float | None        # at this project's observed rate; None when never measured
+    rate_basis: str = ""         # what the rate was measured on, said beside it
+    price_basis: str = ""        # what the tokens-per-state ratio was measured on, or ""
+
+    def line(self) -> str:
+        """"48 call(s) to make, 492 already answered · ~$0.0054 · about 4 min at the rate
+        measured on 502 calls of assay.semantics"."""
+        head = f"{self.calls:,} call(s) to make"
+        if self.cached:
+            head += f", {self.cached:,} already answered"
+        tail = f" · ~${self.usd:.4f}" + ("" if self.price_basis else
+                                          " (no calls recorded here yet: estimated from another project's ledger)")
+        if not self.calls:
+            return head + " · nothing to send"
+        if self.seconds is None:
+            return head + tail + " · no rate measured on this store yet"
+        return head + tail + f" · about {_duration(self.seconds)} at the rate measured on " \
+                             f"{self.rate_basis}"
+
+
+def _duration(sec: float) -> str:
+    if sec < 90:
+        return f"{max(1, round(sec))}s"
+    if sec < 5400:
+        return f"{round(sec / 60)} min"
+    return f"{sec / 3600:.1f} h"
+
+
+def observed_rate(store, caller: str) -> tuple[float | None, str]:
+    """(seconds per call, what it was measured on), from the ledger's own timestamps.
+
+    *** A PLAN THAT QUOTES CALLS AND NOT TIME CANNOT BE DECIDED ON. ***
+    Reported from the field (25.10): "301 calls" was true, and the only way to learn it meant 43
+    minutes was to spend them. The ledger timestamps every call, so the rate is a measurement.
+    The median gap between consecutive calls, ignoring gaps over two minutes -- those are the
+    pauses between runs, not the speed of one. This caller's history first, else every caller's.
+    """
+    for where, args, label in _callers(caller):
+        try:
+            row = store.con.execute(f"""
+                with t as (
+                    select epoch(called_at) - epoch(lag(called_at) over (order by called_at)) g
+                    from model_calls where {where} and called_at is not null)
+                select median(g), count(*) from t where g > 0 and g < 120""", args).fetchone()
+        except Exception:                                        # noqa: BLE001
+            return None, ""
+        if row and row[0] is not None and row[1] >= 5:
+            return float(row[0]), f"{int(row[1]):,} calls of {label}"
+    return None, ""
+
+
+def _callers(caller: str) -> tuple:
+    """This caller, then its family (`assay.ask.x` -> `assay.ask.%`), then every caller."""
+    fam = caller.rsplit(".", 1)[0] + ".%" if caller.count(".") >= 2 else None
+    return tuple(x for x in (("caller = ?", [caller], caller),
+                             ("caller like ?", [fam], fam) if fam else None,
+                             ("true", [], "every command")) if x)
+
+
+# Billed input tokens per (state characters / 4) with no ledger to measure. The 75th percentile over
+# 8,393 calls on the field store (median 1.63): a quote nobody can check yet should err high,
+# because the failure that prompted this was a quote that came in at half the bill.
+UNMEASURED_TOKEN_RATIO = 2.25
+
+
+def token_ratio(store, caller: str) -> tuple[float | None, str]:
+    """(billed input tokens per state-character/4, what it was measured on).
+
+    *** `read --dry-run` QUOTED $0.0276 AND THE RUN COST $0.0522. ***
+    Reported from the field (25.2). Two causes: it priced the subject's state rather than the one
+    the builder sends, and a state's own size is not what is billed -- the question's text and the
+    provider's framing ride along. Measured on the field ledger the ratio runs 1.4 (`read`) to 6.6
+    (`columns`), so no constant is right. The ledger holds the real one for every caller.
+    """
+    for where, args, label in _callers(caller):
+        try:
+            row = store.con.execute(f"""
+                with calls as (
+                    select any_value(state_hash) sh, any_value(input_tokens) tok
+                    from model_decisions
+                    where {where} and input_tokens is not null group by call_id)
+                select median(tok / (length(s.state) / 4.0)), count(*)
+                from calls join states s on s.state_hash = calls.sh
+                where length(s.state) > 0""", args).fetchone()
+        except Exception:                                        # noqa: BLE001
+            return None, ""
+        if row and row[0] is not None and row[1] >= 5:
+            return float(row[0]), f"{int(row[1]):,} calls of {label}"
+    return None, ""
+
+
+def plan(store, asks: list, caller: str) -> Plan:
+    """`asks` is [(recipe, questions, prompt_version)]. Nothing is sent and nothing is written.
+
+    Priced from each state that WILL be sent, times this store's measured tokens per state; with
+    no history, times `UNMEASURED_TOKEN_RATIO`, and the line says so.
+    """
+    store.con.execute(DDL)
+    calls = cached = 0
+    state_chars = 0
+    for recipe, questions, pv in asks:
+        _hits, ask_these = cache_split(store, recipe, questions, pv)
+        if not ask_these:
+            cached += 1
+            continue
+        calls += 1
+        state_chars += len(json.dumps(recipe.state, default=str, sort_keys=True))
+    ratio, price_basis = token_ratio(store, caller)
+    tokens = state_chars / 4 * (ratio if ratio is not None else UNMEASURED_TOKEN_RATIO)
+    rate, basis = observed_rate(store, caller)
+    return Plan(calls=calls, cached=cached, usd=tokens * USD_PER_INPUT_TOKEN,
+                seconds=rate * calls if rate is not None else None, rate_basis=basis,
+                price_basis=price_basis)

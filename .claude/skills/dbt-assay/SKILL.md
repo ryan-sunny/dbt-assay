@@ -502,7 +502,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay regress` | `assay_regress` | Re-ask every question a person already agreed with, and report what moved. | `--target/-t` `--store` `--config` `--family/-f` |
 | `assay review` | `assay_review` | List judgments nobody has ruled on, or record a verdict. | `--store` `--interactive/-i` `--from-labels` `--target/-t` `--dialect` `--limit/-n` `--subject` `--question` `--verdict` `--finding` `--until` `--correction` `--note` `--by` `--config` `--emit` `--load` `--report` `--monitoring` `--apply` `--reads` `--repair` |
 | `assay scan` | `assay_scan` | Read the project and report what can and cannot be audited. | `--target/-t` `--dialect` |
-| `assay semantics` | `assay_semantics` | Why is that filter there, and does the description still describe the code? | `--target/-t` `--select/-s` `--families` `--print-state` `--limit/-n` `--store` `--config` |
+| `assay semantics` | `assay_semantics` | Why is that filter there, and does the description still describe the code? | `--target/-t` `--select/-s` `--families` `--print-state` `--limit/-n` `--store` `--config` `--dry-run` |
 | `assay skill <which>` | `assay_skill` | Emit an agent procedure. | `--write` |
 | `assay stale` | `assay_stale` | Judged answers that are about SQL which has since changed. | `--target/-t` `--store` `--config` `--dialect` `--exact` `--cost` `--limit/-n` `--json` |
 | `assay suggest` | `assay_suggest` | What this project should configure, drawn from what the checks actually found. | `--target/-t` `--config` `--store` `--section` `--limit/-n` `--out` `--json` |

@@ -1,6 +1,7 @@
 """`assay` -- the command. The package is dbt-assay so it is findable; the command is short to type."""
 from __future__ import annotations
 
+import contextlib
 import json as _json
 import time
 import uuid
@@ -42,6 +43,34 @@ from .store import Store
 
 app = typer.Typer(add_completion=False, help="Recover the semantics your warehouse never wrote down.")
 console = Console()
+
+
+def _default_ticker():
+    """Every judged command says it is alive, whether or not its call site knows its total.
+
+    A plain line every thirty seconds of judged work, and nothing at all for a command that
+    finishes sooner. A call site that knows its total replaces this with `_judging`.
+    """
+    import time as _t
+    seen = {"n": 0, "sent": 0, "t0": None, "last": None}
+
+    def tick(sent: bool, client) -> None:
+        now = _t.monotonic()
+        if seen["t0"] is None:
+            seen["t0"] = seen["last"] = now
+        seen["n"] += 1
+        seen["sent"] += bool(sent)
+        if now - seen["last"] >= 30:
+            seen["last"] = now
+            console.print(f"[dim]judged {seen['n']:,} so far · {seen['sent']:,} sent · "
+                          f"${client.spent_usd:.4f} · {_n(int(now - seen['t0']))}s[/]")
+    return tick
+
+
+@app.callback()
+def _main() -> None:
+    from . import jev as _jev
+    _jev.ON_DECIDE = _default_ticker()
 
 
 def _n(v) -> str:
@@ -166,6 +195,78 @@ def _report_vocab_drops() -> None:
     console.print(f"[dim]{_n(len(drops))} state(s) did not carry a scoped term: {named}"
                   f"{' ...' if len(per) > 4 else ''}. "
                   f"`applies_to` in audit.yml decides where a word is true.[/]")
+
+
+@contextlib.contextmanager
+def _judging(label: str, total: int, plan=None):
+    """A live line for a judged loop: done of total, answered from the store, sent, spent, left.
+
+    *** A SILENT PROCESS IS INDISTINGUISHABLE FROM A HUNG ONE. ***
+    Reported from the field (25.10): `semantics` printed its plan and then nothing for 43
+    minutes, was killed 502 calls into 540, and the only way to tell working from hung was `ps`
+    and `lsof`. It hangs off `jev.ON_DECIDE`, so every `decide` ticks it and no call site has to
+    remember to. Off a terminal -- an agent's shell, CI, an MCP job -- it prints a plain line every
+    thirty seconds instead, because that is where the field run was.
+    """
+    import time as _t
+
+    from . import jev as _jev
+    seen = {"done": 0, "sent": 0, "cached": 0, "client": None}
+    t0 = _t.monotonic()
+    last = [t0]
+    per_call = (plan.seconds / plan.calls) if plan and plan.seconds and plan.calls else None
+    to_send = plan.calls if plan else None
+
+    def text() -> str:
+        spent = seen["client"].spent_usd if seen["client"] is not None else 0.0
+        bits = [f"{label} {seen['done']:,}" + (f"/{total:,}" if total else "")]
+        if seen["cached"]:
+            bits.append(f"{seen['cached']:,} from the store")
+        bits.append(f"{seen['sent']:,} sent · ${spent:.4f}")
+        el = _t.monotonic() - t0
+        rate = (el / seen["sent"]) if seen["sent"] >= 3 else per_call
+        left = ((to_send - seen["sent"]) if to_send is not None
+                else (total - seen["done"]) if total else None) if rate else None
+        if rate and left is not None and left > 0:
+            bits.append(f"about {_jev._duration(rate * left)} left")
+        return " · ".join(bits)
+
+    live = console.status(text()) if console.is_terminal else None
+
+    def tick(sent: bool, client) -> None:
+        seen["done"] += 1
+        seen["sent" if sent else "cached"] += 1
+        seen["client"] = client
+        if live is not None:
+            live.update(text())
+        elif _t.monotonic() - last[0] >= 30 or seen["done"] == total:
+            last[0] = _t.monotonic()
+            console.print(f"[dim]{text()}[/]")
+
+    prev = _jev.ON_DECIDE
+    _jev.ON_DECIDE = tick
+    try:
+        if live is not None:
+            with live:
+                yield
+        else:
+            yield
+    finally:
+        _jev.ON_DECIDE = prev
+
+
+def _plan_line(store, recs: list, caller: str):
+    """Print what a judged command will do, net of the cache, and return the plan.
+
+    *** THE PLAN LINE WAS WRONG BY 6x IN THE CHEAP DIRECTION. ***
+    Reported from the field (25.10): after a killed run, the re-run printed "301 calls" again and
+    made 48 in seventeen seconds; a person just burned by 43 minutes reads 301 and does not start
+    it. `recs` is [(recipe, questions, prompt_version)] -- the same lookup `decide` answers from.
+    """
+    from .jev import plan as _plan
+    p = _plan(store, recs, caller)
+    console.print(f"[dim]{p.line()}[/]")
+    return p
 
 
 def _state_ctx(project, digests, schema, store, cfg, entries=None):
@@ -820,7 +921,7 @@ def _onboard_judge(project, digests, schema, findings, config_path: str, store_p
         return None if has_key else False
 
     stale, asked = [], 0
-    with console.status(f"judging {len(picked)} description(s)..."):
+    with _judging("descriptions", len(picked)):
         st_store = Store(store_path)
         ctx = _state_ctx(project, digests, schema, st_store, cfg, entries=None)
         for sub in picked:
@@ -1476,7 +1577,7 @@ def claims(
         raise typer.Exit(1)
 
     rows, kinds = [], Counter()
-    with console.status(f"classifying {n_new} sentence(s)..."):
+    with _judging("sentences", sum(-(-len(cs) // claims_mod.CHUNK) for cs in todo.values())):
         for uid, cs in todo.items():
             for chunk in [cs[i:i + claims_mod.CHUNK]
                           for i in range(0, len(cs), claims_mod.CHUNK)]:
@@ -1580,7 +1681,7 @@ def verify(
 
     console.print(f"[bold]{len(rows)}[/] claim(s) to check")
     out, counts, unanswerable = [], Counter(), []
-    with console.status(f"checking {len(rows)} claim(s)..."):
+    with _judging("claims", len(rows)):
         for r in rows:
             ev = claims_mod.evidence_for(r["subject"], project, digests, schema, observed,
                                          claim_text=r["text"])
@@ -1693,7 +1794,7 @@ def traverse(
 
     ctx = _state_ctx(project, digests, schema, store, cfg)
     counts, bad = Counter(), []
-    with console.status(f"judging {len(cands)} edge(s)..."):
+    with _judging("edges", len(cands)):
         for f in cands:
             rec = states.make("edge", ctx, key=f"{f.child}::edge::{f.parent}",
                               inputs={"parent": f.parent, "child": f.child})
@@ -2499,23 +2600,6 @@ def banks(
     raise typer.Exit(1 if errs or (strict and warns) else 0)
 
 
-def _estimate(subs, q: dict) -> float:
-    """What asking every one of these would cost, from the real states rather than a guess.
-
-    Sampled and extrapolated: serialising 3,540 states to count them exactly would be slower than
-    the thing it is protecting you from.
-    """
-    from .jev import USD_PER_INPUT_TOKEN
-    if not subs:
-        return 0.0
-    sample = subs[:25]
-    overhead = len(_json.dumps({"questions": {q.get("id_prefix", "x"): {
-        "type": q.get("type"), "instructions": q.get("instructions"),
-        "criteria": q.get("criteria")}}}, default=str))
-    per = sum(len(_json.dumps(x.state, default=str)) + overhead for x in sample) / len(sample)
-    return per / 4 * USD_PER_INPUT_TOKEN * len(subs)
-
-
 @app.command()
 def ask(
     target: str = typer.Option(None, "--target", "-t"),
@@ -2583,12 +2667,23 @@ def ask(
         # against 82 for `window`. That is $0.35 to ask one question project-wide, and the number
         # worth printing is the one you see BEFORE running it without `--select`. A cap that fires
         # after the spend is not a cap, and neither is an estimate.
-        est = _estimate(subs, q)
-        console.print(f"\n[bold]{name}[/]  [dim]{q['subject']} · {len(subs)} subject(s) · "
-                      f"~${est:.4f}[/]")
+        # Priced from the recipes that will be SENT, net of the store (25.2, 25.10).
+        ctx = _state_ctx(project, digests, schema, store, cfg)
+        work = []
+        for sub in subs:
+            rec = states.make("subject", ctx, key=sub.key,
+                              inputs={"kind": q["subject"], "key": sub.key,
+                                      "subject_state": q.get("subject_state", "full")})
+            if rec is not None:
+                work.append((sub, rec))
+        qs = {q["id_prefix"]: choice_q(name)}
+        console.print(f"\n[bold]{name}[/]  [dim]{q['subject']} · {len(subs)} subject(s)[/]")
+        plan_ = _plan_line(store, [(rec, qs, q["prompt_version"]) for _s, rec in work],
+                           f"assay.ask.{name}")
+        est = plan_.usd
         if dry_run:
-            if subs:
-                console.print(f"  [dim]{_json.dumps(subs[0].state, default=str)[:400]}...[/]")
+            if work:
+                console.print(f"  [dim]{_json.dumps(work[0][1].state, default=str)[:400]}...[/]")
             continue
         if est > cfg.max_spend_usd:
             console.print(f"  [red]refused before spending anything:[/] ~${est:.2f} exceeds the "
@@ -2605,19 +2700,12 @@ def ask(
         want = q.get("finding_when")
         want = [want] if isinstance(want, str) else (want or [])
         counts, hits = Counter(), []
-        with console.status(f"asking {name} about {len(subs)} subject(s)..."):
-            ctx = _state_ctx(project, digests, schema, store, cfg)
-            for sub in subs:
-                rec = states.make("subject", ctx, key=sub.key,
-                                  inputs={"kind": q["subject"], "key": sub.key,
-                                          "subject_state": q.get("subject_state", "full")})
-                if rec is None:
-                    continue
+        with _judging(name, len(work), plan_):
+            for sub, rec in work:
                 try:
                     # so the answer records the checksum of the SQL it was computed from
                     store.use_project(project)
-                    ans = decide(store, client, rec,
-                                 {q["id_prefix"]: choice_q(name)},
+                    ans = decide(store, client, rec, qs,
                                  contexts={q["id_prefix"]: f"{sub.name}"},
                                  prompt_version=q["prompt_version"],
                                  caller=f"assay.ask.{name}")
@@ -2692,7 +2780,7 @@ def regress(
     for row in confirmed:
         by_family.setdefault(row["family"], []).append(row)
 
-    with console.status("replaying..."):
+    with _judging("replaying", sum(len(v) for v in by_family.values())):
         for fam, rows in by_family.items():
             resolved = _resolve_family(fam, banks)
             q = banks.get(resolved) if resolved else None
@@ -3621,7 +3709,7 @@ def _judge_volume(project, digests, schema, store, store_path, cfg, rep, thresho
     hits, counts = [], Counter()
     want = q.get("finding_when") or []
     want = [want] if isinstance(want, str) else list(want)
-    with console.status(f"asking about {len(subjects)} pair(s)..."):
+    with _judging("pairs", len(subjects)):
         for i, (uid, vol, claim) in enumerate(subjects):
             st = elem.claim_state(project, uid, vol, claim, entries.get(uid),
                                   vocab_ctx.vocab_for(uid))
@@ -5522,12 +5610,23 @@ def read(
     if limit:
         subs = subs[:limit]
     q = reads_mod.bank()
-    est = _estimate(subs, q)
+    qs = {q["id_prefix"]: choice_q(reads_mod.FAMILY)}
+    # *** PRICED FROM THE STATE THAT IS SENT. ***
+    # Reported from the field (25.2): the quote was $0.0276 and the run cost $0.0522, because it
+    # priced the subject's own state while the builder sends a fuller one. The plan now prices
+    # these recipes, at this store's measured tokens per state, net of what is already answered.
+    work = []
+    for sub in subs:
+        rec = states.make("subject", ctx, key=sub.key, inputs={"kind": "finding", "key": sub.key})
+        if rec is not None:
+            work.append((sub, rec))
     console.print(f"[bold]{len(subs)}[/] card(s) to read of {len(cards)} unruled "
-                  f"[dim]({len(have)} already in {out}) · ~${est:.4f}[/]")
+                  f"[dim]({len(have)} already in {out})[/]")
+    plan_ = _plan_line(store, [(rec, qs, q["prompt_version"]) for _s, rec in work], "assay.read")
+    est = plan_.usd
     if dry_run:
-        if subs:
-            console.print(f"[dim]{_json.dumps(subs[0].state, default=str)[:600]}...[/]")
+        if work:
+            console.print(f"[dim]{_json.dumps(work[0][1].state, default=str)[:600]}...[/]")
         store.close()
         return
     if not subs:
@@ -5546,15 +5645,11 @@ def read(
         raise typer.Exit(1)
     got = dict(have)
     tally = Counter()
-    with console.status(f"reading {len(subs)} card(s)..."):
-        for sub in subs:
-            rec = states.make("subject", ctx, key=sub.key,
-                              inputs={"kind": "finding", "key": sub.key})
-            if rec is None:
-                continue
+    with _judging("read", len(work), plan_):
+        for sub, rec in work:
             try:
                 store.use_project(project)
-                ans = decide(store, client, rec, {q["id_prefix"]: choice_q(reads_mod.FAMILY)},
+                ans = decide(store, client, rec, qs,
                              contexts={q["id_prefix"]: sub.name},
                              prompt_version=q["prompt_version"], caller="assay.read")
             except BudgetExceeded as e:
@@ -5930,6 +6025,10 @@ def semantics(
     limit: int = typer.Option(0, "--limit", "-n", help="stop after N models"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     config_path: str = typer.Option(".", "--config"),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="say how many calls it would make net of what the store "
+                                      "already answers, what they cost and how long they take. "
+                                      "Spends nothing."),
 ):
     """Why is that filter there, and does the description still describe the code?
 
@@ -5954,10 +6053,11 @@ def semantics(
 
     do_pred = families in ("both", "predicates")
     do_desc = families in ("both", "descriptions")
-    n_pred = sum(len(sem_mod.chunks(s.predicates)) for s in subs if s.predicates) if do_pred else 0
     n_desc = sum(1 for s in subs if s.purpose) if do_desc else 0
+    # The CALLS are said by the plan below, net of the store. Counted here from the work alone
+    # they were the field report's 6x overstatement.
     console.print(f"[bold]{len(subs)}[/] models · "
-                  f"{sum(len(s.predicates) for s in subs)} filters in {n_pred} calls · "
+                  f"{sum(len(s.predicates) for s in subs)} filters · "
                   f"{n_desc} descriptions to check")
 
     if print_state:
@@ -5971,15 +6071,13 @@ def semantics(
             store.close()
         raise typer.Exit(0)
 
-    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
-    if not client.available:
-        console.print("[yellow]no API key.[/] --print-state shows what would be sent.")
-        raise typer.Exit(1)
-
-    if store is None:
-        store = Store(store_path)
-    ctx = _state_ctx(project, digests, schema, store, cfg, entries=entries)
-    intents, stale = {}, []
+    # *** EVERY RECIPE FIRST, THEN THE PLAN, THEN THE CALLS. ***
+    # The plan has to be net of the store to be worth reading, and only a built state can be
+    # looked up in it. Building is local and fast; it is the calls that take the time.
+    fresh = store is None
+    work_store = Store(":memory:") if fresh and dry_run else (store or Store(store_path))
+    ctx = _state_ctx(project, digests, schema, work_store, cfg, entries=entries)
+    work: list = []                 # (kind, subject, chunk, recipe, questions, version)
     for s in subs:
         if do_pred and s.predicates:
             for chunk in sem_mod.chunks(s.predicates):
@@ -5987,40 +6085,49 @@ def semantics(
                     "predicates", ctx,
                     key=f"{s.uid}::pred::{states.digest_of(chunk)}",
                     inputs={"uid": s.uid, "predicates": list(chunk)})
-                if rec is None:
-                    continue
-                try:
-                    # so the answer records the checksum of the SQL it was computed from
-                    store.use_project(project)
-                    ans = decide(store, client, rec, sem_mod.predicate_questions(chunk),
-                                 contexts={f"pred__{i}": f"{s.name}: {p}"
-                                           for i, p in enumerate(chunk)},
-                                 prompt_version=sem_mod.PRED_VERSION, caller="assay.semantics")
-                except BudgetExceeded as e:
-                    console.print(f"[yellow]stopped: {e}[/]")
-                    do_pred = do_desc = False
-                    break
+                if rec is not None:
+                    work.append(("pred", s, chunk, rec, sem_mod.predicate_questions(chunk),
+                                 sem_mod.PRED_VERSION))
+        if do_desc and s.purpose:
+            rec = states.make("description", ctx, key=f"{s.uid}::desc",
+                              inputs={"uid": s.uid})
+            if rec is not None:
+                work.append(("desc", s, None, rec, sem_mod.description_question(),
+                             sem_mod.DESC_VERSION))
+    plan_ = _plan_line(work_store, [(w[3], w[4], w[5]) for w in work], "assay.semantics")
+    if dry_run:
+        work_store.close()
+        raise typer.Exit(0)
+    store = work_store
+
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if not client.available:
+        console.print("[yellow]no API key.[/] --print-state shows what would be sent.")
+        raise typer.Exit(1)
+
+    intents, stale = {}, []
+    with _judging("semantics", len(work), plan_):
+        for kind, s, chunk, rec, qs, pv in work:
+            try:
+                # so the answer records the checksum of the SQL it was computed from
+                store.use_project(project)
+                ans = decide(store, client, rec, qs,
+                             contexts=({f"pred__{i}": f"{s.name}: {p}"
+                                        for i, p in enumerate(chunk)} if kind == "pred" else None),
+                             prompt_version=pv, caller="assay.semantics")
+            except BudgetExceeded as e:
+                console.print(f"[yellow]stopped: {e}[/]")
+                break
+            if kind == "pred":
                 for i, p in enumerate(chunk):
                     a = ans.get(f"pred__{i}")
                     if a:
                         intents.setdefault(a["answer"], []).append(
                             (s.name, p, a.get("confidence")))
-        if do_desc and s.purpose:
-            rec = states.make("description", ctx, key=f"{s.uid}::desc",
-                              inputs={"uid": s.uid})
-            if rec is None:
-                continue
-            try:
-                # so the answer records the checksum of the SQL it was computed from
-                store.use_project(project)
-                ans = decide(store, client, rec, sem_mod.description_question(),
-                             prompt_version=sem_mod.DESC_VERSION, caller="assay.semantics")
-            except BudgetExceeded as e:
-                console.print(f"[yellow]stopped: {e}[/]")
-                break
-            a = ans.get("desc")
-            if a and float(a["answer"]) >= 0.6:
-                stale.append((s.name, float(a["answer"])))
+            else:
+                a = ans.get("desc")
+                if a and float(a["answer"]) >= 0.6:
+                    stale.append((s.name, float(a["answer"])))
 
     console.print(f"\n[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
