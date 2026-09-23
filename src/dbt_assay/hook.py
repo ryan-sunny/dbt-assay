@@ -78,8 +78,8 @@ def looks_like_a_model_file(path: str, project_root: Path) -> str | None:
         doc = yaml.safe_load((project_root / "dbt_project.yml").read_text()) or {}
         roots = [str(r).strip("/") for r in (doc.get("model-paths") or doc.get("source-paths")
                                               or roots)]
-    except Exception:                                            # noqa: BLE001
-        pass
+    except Exception:                                            # noqa: BLE001, S110
+        pass                                  # no readable dbt_project.yml: dbt's default, models/
     return p.stem if any(rel.startswith(r + "/") for r in roots) else None
 
 
@@ -121,8 +121,8 @@ def scoped_check(name: str, target: str, store: str, config: str,
 def reason(model: str, doc: dict) -> str:
     """What the agent reads as the reason it may not move on."""
     fs = doc.get("findings") or []
-    lines = [f"assay: this edit to `{model}` introduced {len(fs)} finding(s) that the last full "
-             f"`assay check` did not have."]
+    lines = [(f"assay: this edit to `{model}` introduced {len(fs)} finding(s) that the last "
+              f"full `assay check` did not have.")]
     for f in fs[:12]:
         lines.append(f"- {f['check']}: {f['summary']}")
         if f.get("detail"):
@@ -151,8 +151,8 @@ def hook_command(assay_cmd: str, target: str, store: str, config: str,
         parts += ["--profiles-dir", profiles_dir]
     # $CLAUDE_PROJECT_DIR, because a hook runs from wherever the session is and every path here
     # is relative to the directory the hook was installed from.
-    return 'cd "$CLAUDE_PROJECT_DIR" && ' + " ".join(
-        p if p.startswith("uvx ") or p == assay_cmd else shlex.quote(p) for p in parts)
+    quoted = " ".join(p if p == assay_cmd else shlex.quote(p) for p in parts)
+    return 'cd "$CLAUDE_PROJECT_DIR" && ' + quoted
 
 
 def install(settings_path: Path, command: str) -> str:

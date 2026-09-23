@@ -441,7 +441,7 @@ Generated from the app itself, so it cannot drift from what is installed.
 | `assay banks` | Every question assay will ask, where it came from, and whether its shape is sound. | `--lint` `--strict` `--judge` `--config` `--store` |
 | `assay calibrate` | Measure the grain judgment against the keys this project already declares. | `--target/-t` `--limit/-n` `--store` `--config` |
 | `assay calibration` | When this thing is confident, is it right more often than when it is not? | `--store` `--source` |
-| `assay check` | Run the structural checks. | `--target/-t` `--json` `--store` `--limit/-n` `--check` `--config` `--dialect` `--verify` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` |
+| `assay check` | Run the structural checks. | `--target/-t` `--json` `--store` `--limit/-n` `--check` `--config` `--dialect` `--verify` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--select/-s` `--new-only` |
 | `assay claims` | What this project ASSERTS about its models, as data you can read, edit and rule on. | `--target/-t` `--store` `--config` `--extract` `--select/-s` `--limit/-n` `--min-confidence` `--write` `--model/-m` |
 | `assay columns` | Judge each column's role and what a NULL in it would mean. | `--target/-t` `--print-state` `--limit/-n` `--store` `--config` `--with-null` `--dialect` `--control` |
 | `assay completeness` | Do we have all of it? Coverage of what this project itself declares. | `--target/-t` `--store` `--config` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--verify` `--dialect` `--json` |
@@ -454,6 +454,7 @@ Generated from the app itself, so it cannot drift from what is installed.
 | `assay export <directory>` | Put assay's tables in your warehouse, as data your own models can join to. | `--store` `--format` `--no-docs` |
 | `assay feeds` | Has a feed changed its mind while its schema held still? | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--sample` `--limit/-n` `--store` `--config` |
 | `assay guide <topic>` | How to SET ASSAY UP, for somebody who has never used it. | — |
+| `assay hook <action>` | The edit gate. | `--target/-t` `--store` `--config` `--project-dir` `--dbt/--dbt-bin` `--profiles-dir` `--compile` `--dialect` `--settings` `--assay-cmd` |
 | `assay infer` | Infer each model's grain. | `--target/-t` `--print-state` `--limit/-n` `--store` `--config` |
 | `assay init` | Write an audit. | `--force` |
 | `assay inventory` | What every model in this project actually IS. | `--target/-t` `--model/-m` `--store` `--json` `--html` `--write` `--include-unadjudicated` `--limit/-n` `--dialect` |

@@ -171,6 +171,7 @@ def collect(project, entries, probe_mod, project_dir: str, profiles_dir: str | N
     have, unknown = which_have_failures([r for _t, r in candidates.values()], probe_mod,
                                         project_dir, profiles_dir, dbt_bin)
 
+    readable = []
     for t, rel in candidates.values():
         if rel in unknown:
             skipped.append((t.name, "the audit table could not be read; NOT counted as clean"))
@@ -178,9 +179,13 @@ def collect(project, entries, probe_mod, project_dir: str, profiles_dir: str | N
         if rel not in have:
             skipped.append((t.name, "the audit table is empty: this test stored no failures"))
             continue
-        got = probe_mod.run_sql(f"select * from {rel}", project_dir, profiles_dir, dbt_bin,
-                                limit=limit_per_test, caller="assay.rows.collect",
-                                kind="metadata", relation=rel)
+        readable.append((t, rel))
+    # One read per audit table holding rows, batched: each was its own dbt startup.
+    from .practices import _read_all
+    answers = _read_all(probe_mod, [rel for _t, rel in readable], project_dir, profiles_dir,
+                        dbt_bin, limit_per_test, getattr(project, "dialect", "duckdb"),
+                        caller="assay.rows.collect")
+    for (t, rel), got in zip(readable, answers):
         if got.failed or not got.rows:
             # The count above said this table holds rows, so either reading them failed or they
             # went away between the two statements. Both are "not read", and neither is clean.

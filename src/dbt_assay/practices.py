@@ -119,13 +119,14 @@ def collect(project, entries, probe_mod, project_dir: str, profiles_dir: str | N
             db = n.get("database")
             break
     flags, missing = [], []
-    for check, cat in sorted(cats.items()):
-        if cat == "off":
-            continue
-        rel = ".".join(p for p in (db, schema_name, check) if p)
-        got = probe_mod.run_sql(f"select * from {rel}", project_dir, profiles_dir, dbt_bin,
-                                limit=per_check, caller="assay.practices.collect",
-                                kind="metadata", relation=rel)
+    wanted = [(check, cat, ".".join(p for p in (db, schema_name, check) if p))
+              for check, cat in sorted(cats.items()) if cat != "off"]
+    # One read per evaluator table was one dbt startup per table. They are independent, so they go
+    # through the batching door, and each still answers -- or fails -- on its own.
+    answers = _read_all(probe_mod, [rel for _c, _k, rel in wanted], project_dir, profiles_dir,
+                        dbt_bin, per_check, getattr(project, "dialect", "duckdb"),
+                        caller="assay.practices.collect")
+    for (check, cat, rel), got in zip(wanted, answers):
         if got.failed:
             # *** A PARTIAL EVALUATOR BUILD READ AS A CLEAN PROJECT. ***
             # Reported from the field: five fct_ models of many were built, and the categories
@@ -148,6 +149,19 @@ def collect(project, entries, probe_mod, project_dir: str, profiles_dir: str | N
                           "reads": e.reads[:8] if e else []},
             ))
     return flags, missing
+
+
+def _read_all(probe_mod, relations: list[str], project_dir: str, profiles_dir: str | None,
+              dbt_bin: str, limit: int, dialect: str, caller: str) -> list:
+    """`select *` from each relation, batched when the probe module can batch."""
+    many = getattr(probe_mod, "run_many", None)
+    if many is None:
+        return [probe_mod.run_sql(f"select * from {rel}", project_dir, profiles_dir, dbt_bin,
+                                  limit=limit, caller=caller, kind="metadata", relation=rel)
+                for rel in relations]
+    return many([probe_mod.Statement(f"select * from {rel}", caller=caller, kind="metadata",
+                                     limit=limit, relation=rel) for rel in relations],
+                project_dir, profiles_dir, dbt_bin, dialect)
 
 
 def build_state(flag: Flag, vocab: dict | None = None) -> dict:

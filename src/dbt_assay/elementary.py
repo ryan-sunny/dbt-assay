@@ -328,7 +328,16 @@ def read(runner, schema: str, *, stale_after_days: int = STALE_AFTER_DAYS,
     if reach.failed or not reach.rows:
         rep.readings = [Reading(rel, UNREACHABLE, detail=reach.why) for rel in RELATIONS]
         return rep
-    for rel in RELATIONS:
+    # *** THREE PASSES, EACH ONE BATCH, WHERE THERE WERE THREE STATEMENTS PER RELATION. ***
+    # Counts for every relation, then the reads for the ones holding rows, then their write
+    # histories. Each statement still comes back as its own Result with its own failure, so the
+    # five states below are told apart exactly as they were one statement at a time.
+    from .probe import ask_many
+    counts = ask_many(runner, [(f"select count(*) as n from {schema}.{rel}", 1)
+                               for rel in RELATIONS])
+    holding: list[tuple[str, int]] = []
+    order: dict = {}
+    for rel, counted in zip(RELATIONS, counts):
         # *** AN ABSENT TABLE AND AN EMPTY ONE ARE NOT THE SAME FACT, AND `dbt show` HIDES IT. ***
         # A failed statement and an empty result both come back as `[]`, so a reader that selects
         # rows and finds none cannot tell a missing package from a package that has not run --
@@ -338,7 +347,7 @@ def read(runner, schema: str, *, stale_after_days: int = STALE_AFTER_DAYS,
         # `select count(*)` separates them: one row on an empty table, nothing at all when the
         # relation does not exist. One cheap statement, and the distinction is exact rather than
         # inferred.
-        counted = runner(f"select count(*) as n from {schema}.{rel}", 1)
+        order[rel] = len(order)
         if counted.failed or not counted.rows:
             rep.readings.append(Reading(rel, ABSENT, detail=counted.why))
             continue
@@ -349,7 +358,10 @@ def read(runner, schema: str, *, stale_after_days: int = STALE_AFTER_DAYS,
         if n == 0:
             rep.readings.append(Reading(rel, NEVER_RUN))
             continue
-        got = runner(_query(schema, rel), limit)
+        holding.append((rel, n))
+    reads = ask_many(runner, [(_query(schema, rel), limit) for rel, _n in holding])
+    histories = ask_many(runner, [(_history_sql(schema, rel), 5000) for rel, _n in holding])
+    for (rel, n), got, hist in zip(holding, reads, histories):
         rows = got.rows
         if got.failed:
             # *** COUNTED, THEN UNREADABLE. THAT IS NOT "NEVER RUN". ***
@@ -378,7 +390,8 @@ def read(runner, schema: str, *, stale_after_days: int = STALE_AFTER_DAYS,
         # version gave them one. What is late for this relation is longer than this relation has
         # normally gone between writes; the project's build cadence is only the fallback for one
         # without enough history of its own.
-        own = write_history(runner, schema, rel)
+        own = _cadence_of(_days(hist), f"`{rel}`'s own write history",
+                          unreadable=hist.failed, detail=hist.why)
         limit_days, from_ = own.derived_staleness_days, own
         if limit_days is None and fallback is not None:
             limit_days, from_ = fallback.derived_staleness_days, fallback
@@ -396,6 +409,7 @@ def read(runner, schema: str, *, stale_after_days: int = STALE_AFTER_DAYS,
             rep.volumes = _volumes(rows, now)
         elif rel == TEST_RESULTS:
             rep.tests = _tests(rows, now)
+    rep.readings.sort(key=lambda r: order.get(r.relation, len(order)))
     _mark_one_bucket(rep)
     return rep
 
@@ -698,6 +712,13 @@ def _days(res, key: str = "assay_day") -> list:
     return [d for d in (_as_dt(r.get(key)) for r in res.rows) if d]
 
 
+def _history_sql(schema: str, rel: str) -> str:
+    col = {TEST_RESULTS: "detected_at", METRICS: "created_at",
+           FRESHNESS: "created_at"}.get(rel, "created_at")
+    return (f"select distinct cast({col} as date) as assay_day from {schema}.{rel} "
+            f"where {col} is not null")
+
+
 def write_history(runner, schema: str, rel: str, limit: int = 5000) -> Cadence:
     """How often this relation is written, measured from the distinct DAYS it was written on.
 
@@ -708,10 +729,7 @@ def write_history(runner, schema: str, rel: str, limit: int = 5000) -> Cadence:
     Returns the Cadence rather than the raw days, because a FAILED statement and a table with no
     history produce the same empty list and only the Cadence can carry which one happened.
     """
-    col = {TEST_RESULTS: "detected_at", METRICS: "created_at",
-           FRESHNESS: "created_at"}.get(rel, "created_at")
-    res = runner(f"select distinct cast({col} as date) as assay_day from {schema}.{rel} "
-                 f"where {col} is not null", limit)
+    res = runner(_history_sql(schema, rel), limit)
     return _cadence_of(_days(res), f"`{rel}`'s own write history",
                        unreadable=res.failed, detail=res.why)
 
@@ -739,11 +757,13 @@ def test_coverage(runner, schema: str, limit: int = 40000) -> dict:
     warehouse: 1,317 tests declared, 858 with any result -- 459 that have never fired -- and 1,587
     skipped results.
     """
-    declared = runner(f"select count(*) as n from {schema}.{DBT_TESTS}", 1)
-    ran = runner(f"select count(distinct test_unique_id) as n from {schema}.{TEST_RESULTS} "
-                 f"where test_type = 'dbt_test'", 1)
-    skipped = runner(f"select count(*) as n from {schema}.{TEST_RESULTS} "
-                     f"where test_type = 'dbt_test' and status = 'skipped'", 1)
+    from .probe import ask_many
+    declared, ran, skipped = ask_many(runner, [
+        (f"select count(*) as n from {schema}.{DBT_TESTS}", 1),
+        ((f"select count(distinct test_unique_id) as n from {schema}.{TEST_RESULTS} "
+          f"where test_type = 'dbt_test'"), 1),
+        ((f"select count(*) as n from {schema}.{TEST_RESULTS} "
+          f"where test_type = 'dbt_test' and status = 'skipped'"), 1)])
 
     def one(res):
         """None when the statement did not run. A coverage figure built from a failed count

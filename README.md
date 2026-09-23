@@ -334,7 +334,16 @@ build, because the label can itself be the thing that is wrong.
 ```bash
 assay watch --compile --project-dir transform   # a pane that stays quiet until meaning moves
 assay mcp                                       # assay as tools an agent can call
+assay hook install --dbt "uv run dbt"           # the edit gate, written into .claude/settings.json
 ```
+
+`hook` is the one that is not advisory. After an agent edits a model, Claude Code runs
+`assay hook post-edit`: it compiles that model, runs `assay check --select <model> --new-only`
+against the last full `check` in the store, and if the edit introduced a finding the agent is
+stopped with the finding as the reason. Findings that were already there do not block an edit, and
+a file that is not a model passes untouched. It cannot undo a write; it makes the agent deal with
+what it wrote before moving on. `assay onboard --agent` installs it, and it needs one full
+`assay check` to compare against — until there is one it refuses edits rather than passing them.
 
 `watch` diffs your working tree against a snapshot taken when it started, so a reformat, a renamed
 CTE or a join rewritten as a subquery says **nothing**. Break something and fix it before the next

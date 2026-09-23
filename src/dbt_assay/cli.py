@@ -3101,9 +3101,8 @@ def volume(
     schema_name = schema_name or opts.get("schema") or _default_elementary_schema(project)
     stale_days = int(opts.get("stale_after_days") or elem.STALE_AFTER_DAYS)
 
-    def runner(sql: str, n: int):
-        return probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=n,
-                                 caller="assay.elementary", kind="metadata")
+    runner = probe_mod.many_runner(project_dir, profiles_dir, dbt_bin, project.dialect,
+                                   caller="assay.elementary")
 
     mon = getattr(cfg, "monitoring", None) or {}
     # *** `--json` IS FOR A MACHINE AND A TABLE IN THE MIDDLE OF IT IS NOT JSON. ***
@@ -3337,9 +3336,8 @@ def _monitoring_findings(project, cfg, verify: bool, project_dir: str, profiles_
         return []
     schema_name = opts.get("schema") or _default_elementary_schema(project)
 
-    def runner(sql: str, n: int):
-        return probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=n,
-                                 caller="assay.elementary", kind="metadata")
+    runner = probe_mod.many_runner(project_dir, profiles_dir, dbt_bin, project.dialect,
+                                   caller="assay.elementary")
 
     try:
         cad = elem.build_cadence(runner, schema_name)
@@ -5624,19 +5622,28 @@ def feeds(
         store = Store(store_path)
     ctx = _state_ctx(project, digests, schema, store, cfg)
     sentinels, findings = [], []
-    for t in tg:
-        cols = feeds_mod.columns_to_sample(schema, t.uid, t.columns)
-        prof_rows = probe_mod.run_sql(probe_mod.profile_sql(t.relation, cols, project.dialect),
-                                      project_dir, profiles_dir, dbt_bin, limit=1,
-                                      caller="assay.feeds.profile", kind="profile",
-                                      relation=t.relation, columns=cols)
+    # *** 47 SECONDS PER SOURCE, OF WHICH THE WAREHOUSE SAW UNDER A TENTH OF ONE. ***
+    # Two statements per source, each its own dbt startup: 210 sources was ~2.7 hours of dbt
+    # starting. Every profile and every sample is independent, so they go through the door that
+    # batches, and each still comes back as its own Result with its own failure.
+    tcols = [feeds_mod.columns_to_sample(schema, t.uid, t.columns) for t in tg]
+    stmts = []
+    for t, cols in zip(tg, tcols):
+        stmts.append(probe_mod.Statement(
+            probe_mod.profile_sql(t.relation, cols, project.dialect), limit=1,
+            caller="assay.feeds.profile", kind="profile", relation=t.relation, columns=cols))
+        stmts.append(probe_mod.Statement(
+            probe_mod.sample_sql(t.relation, cols, sample, project.dialect), limit=sample,
+            caller="assay.feeds.sample", kind="sample", relation=t.relation, columns=cols,
+            sample_rows=sample))
+    with console.status(f"counting and sampling {len(tg)} source(s)..."):
+        answered = probe_mod.run_many(stmts, project_dir, profiles_dir, dbt_bin,
+                                      project.dialect)
+    for k, (t, cols) in enumerate(zip(tg, tcols)):
+        prof_rows, got = answered[2 * k], answered[2 * k + 1]
         profile = prof_rows.rows[0] if prof_rows.rows else {}
         sent = probe_mod.sentinel_findings(t.relation, cols, profile)
         sentinels += [(t.relation, c, v, w) for c, v, w in sent]
-        got = probe_mod.run_sql(probe_mod.sample_sql(t.relation, cols, sample, project.dialect),
-                                project_dir, profiles_dir, dbt_bin, limit=sample,
-                                caller="assay.feeds.sample", kind="sample",
-                                relation=t.relation, columns=cols, sample_rows=sample)
         rows = got.rows
         if got.failed or not rows:
             continue

@@ -204,6 +204,9 @@ class Result:
     # is therefore a truer number than the wall clock around the subprocess.
     adapter: dict = field(default_factory=dict)
     engine_ms: int | None = None
+    # How many statements shared the dbt invocation this came from. `wall_ms` is that invocation's,
+    # so a batched Result's wall clock is the batch's and says so.
+    batched: int = 1
 
     def __bool__(self):
         """*** DELIBERATELY UNUSABLE, BECAUSE `if not got:` IS THE BUG. ***
@@ -1032,6 +1035,209 @@ def run_sql(sql: str, project_dir: str, profiles_dir: str | None = None,
     _record(sql, res, caller=caller, kind=kind, relation=relation, columns=columns,
             sampled=sampled, sample_rows=sample_rows)
     return res
+
+
+# *** THE BATCHING WENT IN AT ONE CALL SITE, AND EVERY OTHER CALLER KEPT PAYING. ***
+# 0.49.0 batched `probe`'s key scans: 271 invocations became 23 and 88 minutes became 10. Every
+# other caller got nothing, because the batching lived in `probe.py` and not at the door. Measured
+# on `feeds`: 47 seconds per source, of which the warehouse saw 12-96ms. The rest is dbt starting.
+#
+# `run_many` is the door for a caller holding several independent statements. Their SHAPES differ
+# -- a profile, a sample, a count -- so they cannot be unioned as they stand. Each is wrapped so its
+# rows come back as one JSON value under a literal label, which a union of any shapes can carry, and
+# the labels split the result back out. A label and not a position, because a union does not
+# promise an order.
+#
+# The three rules `run_batch` established hold here too:
+#   BOUNDED WIDTH  -- a statement too wide hits an engine limit, and a failed batch is a shrug.
+#   ISOLATED FAILURE -- a failed batch is retried in halves, so the one bad statement ends up alone
+#                       with ITS error, and its neighbours still answer.
+#   LABELLED ROWS  -- every row goes back to the statement that produced it, by name.
+#
+# *** AND ON BIGQUERY THIS BUYS TIME, NEVER MONEY. ***
+# A batched statement scans everything each arm scans. Batching removes dbt startups, which is
+# what seconds are billed on; it removes no bytes.
+BATCH_STATEMENTS = 12        # statements in one batch
+BATCH_ROWS = 60000           # the sum of their row limits, so one batch cannot return a flood
+BATCH_CHARS = 200_000        # the statement text, well under any engine's parser limit
+
+# The one expression that turns a whole row into one value, per engine. An engine not here runs
+# its statements one at a time, exactly as before, rather than with a guessed-at function.
+_ROW_AS_JSON = {
+    "duckdb": "to_json(assay_t)",
+    "postgres": "row_to_json(assay_t)::text",
+    "bigquery": "to_json_string(assay_t)",
+    "snowflake": "to_json(object_construct_keep_null(*))",
+    "databricks": "to_json(struct(*))",
+    "spark": "to_json(struct(*))",
+}
+
+
+@dataclass
+class Statement:
+    """One statement a caller wants answered, and how the ledger should file it."""
+    sql: str
+    caller: str = "assay.unattributed"
+    kind: str = "metadata"
+    limit: int = 50
+    relation: str = ""
+    columns: list[str] | None = None
+    sampled: bool = False
+    sample_rows: int | None = None
+    timeout: int = 300
+
+
+def batchable(dialect: str | None) -> bool:
+    return (dialect or "").lower() in _ROW_AS_JSON
+
+
+def wrap_many(stmts: list[Statement], dialect: str) -> str:
+    """One statement answering several, each row labelled with the statement it came from."""
+    expr = _ROW_AS_JSON[(dialect or "").lower()]
+    arms = []
+    for i, s in enumerate(stmts):
+        inner = s.sql.strip().rstrip(";")
+        # `row_number() over ()` inside the arm keeps each statement's own order: its rows are
+        # numbered as the arm produced them, and read back in that order.
+        arms.append(f"select 's{i}' as assay_stmt, row_number() over () as assay_ord, "
+                    f"{expr} as assay_row from (select * from ({inner}) as assay_q "
+                    f"limit {int(s.limit)}) as assay_t")
+    return " union all ".join(arms)
+
+
+def unwrap_many(rows: list[dict], n: int) -> list[list[dict]]:
+    """Split a wrapped result back into one row list per statement, in each statement's order."""
+    out: list[list[tuple]] = [[] for _ in range(n)]
+    for r in rows:
+        label = str(r.get("assay_stmt") or r.get("ASSAY_STMT") or "")
+        if not label.startswith("s"):
+            continue
+        try:
+            i = int(label[1:])
+        except ValueError:
+            continue
+        if not 0 <= i < n:
+            continue
+        raw = r.get("assay_row", r.get("ASSAY_ROW"))
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except ValueError:
+                continue
+        if not isinstance(raw, dict):
+            continue
+        try:
+            ordinal = int(r.get("assay_ord", r.get("ASSAY_ORD")) or 0)
+        except (TypeError, ValueError):
+            ordinal = 0
+        out[i].append((ordinal, raw))
+    return [[row for _o, row in sorted(part, key=lambda x: x[0])] for part in out]
+
+
+def plan_statements(stmts: list[Statement]) -> list[list[int]]:
+    """Indexes of `stmts`, grouped into batches no engine should refuse."""
+    out: list[list[int]] = []
+    cur: list[int] = []
+    rows = chars = 0
+    for i, s in enumerate(stmts):
+        if cur and (len(cur) >= BATCH_STATEMENTS or rows + s.limit > BATCH_ROWS
+                    or chars + len(s.sql) > BATCH_CHARS):
+            out.append(cur)
+            cur, rows, chars = [], 0, 0
+        cur.append(i)
+        rows += s.limit
+        chars += len(s.sql)
+    if cur:
+        out.append(cur)
+    return out
+
+
+def run_many(stmts: list[Statement], project_dir: str, profiles_dir: str | None = None,
+             dbt_bin: str = "dbt", dialect: str = "duckdb") -> list[Result]:
+    """One `Result` per statement, in order, from as few dbt invocations as the bounds allow.
+
+    Every `Result` is exactly what `run_sql` would have returned for that statement alone: its
+    rows, or `failed` with ITS reason. A statement that fails is isolated by halving and re-run on
+    its own, so the reason is the warehouse's reason about that statement, not about a batch.
+    """
+    if not stmts:
+        return []
+    if len(stmts) == 1 or not batchable(dialect):
+        return [run_sql(s.sql, project_dir, profiles_dir, dbt_bin, limit=s.limit,
+                        timeout=s.timeout, caller=s.caller, kind=s.kind, relation=s.relation,
+                        columns=s.columns, sampled=s.sampled, sample_rows=s.sample_rows)
+                for s in stmts]
+    out: list[Result | None] = [None] * len(stmts)
+    for idx in plan_statements(stmts):
+        _run_group([stmts[i] for i in idx], idx, out, project_dir, profiles_dir, dbt_bin,
+                   dialect)
+    return [r if r is not None else Result(failed=True, why="not run") for r in out]
+
+
+def _run_group(group: list[Statement], idx: list[int], out: list, project_dir: str,
+               profiles_dir: str | None, dbt_bin: str, dialect: str) -> None:
+    if len(group) == 1:
+        s = group[0]
+        out[idx[0]] = run_sql(s.sql, project_dir, profiles_dir, dbt_bin, limit=s.limit,
+                              timeout=s.timeout, caller=s.caller, kind=s.kind,
+                              relation=s.relation, columns=s.columns, sampled=s.sampled,
+                              sample_rows=s.sample_rows)
+        return
+    sql = wrap_many(group, dialect)
+    timeout = min(sum(s.timeout for s in group), 3 * max(s.timeout for s in group))
+    res = _execute(sql, project_dir, profiles_dir, dbt_bin,
+                   limit=sum(s.limit for s in group) + 1, timeout=timeout, measure=measuring())
+    kinds = {s.kind for s in group}
+    # One ledger row per statement SENT, which is the batch. Its caller is the members' shared
+    # prefix -- `assay.feeds` for a profile and a sample together -- so `assay cost` still says which
+    # command spent it, and its kind says `mixed` rather than naming one member's.
+    _record(sql, res, caller=_shared_caller([s.caller for s in group]),
+            kind=kinds.pop() if len(kinds) == 1 else "mixed",
+            sampled=any(s.sampled for s in group))
+    if not res.failed:
+        parts = unwrap_many(res.rows, len(group))
+        for i, rows in zip(idx, parts):
+            out[i] = Result(rows=rows, wall_ms=res.wall_ms, batched=len(group))
+        return
+    mid = len(group) // 2
+    _run_group(group[:mid], idx[:mid], out, project_dir, profiles_dir, dbt_bin, dialect)
+    _run_group(group[mid:], idx[mid:], out, project_dir, profiles_dir, dbt_bin, dialect)
+
+
+def _shared_caller(callers: list[str]) -> str:
+    parts = [c.split(".") for c in callers]
+    common = []
+    for bits in zip(*parts):
+        if len(set(bits)) != 1:
+            break
+        common.append(bits[0])
+    return ".".join(common) if len(common) > 1 else "assay.batch"
+
+
+def many_runner(project_dir: str, profiles_dir: str | None, dbt_bin: str, dialect: str,
+                caller: str, kind: str = "metadata"):
+    """A `runner(sql, limit)` for modules handed a connection, with `.many([(sql, limit)])`.
+
+    Elementary and practices take a runner rather than a project, so assay never holds a
+    credential. `.many` is how they send independent statements together.
+    """
+    def runner(sql: str, n: int) -> Result:
+        return run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=n, caller=caller,
+                       kind=kind)
+
+    def many(pairs: list[tuple[str, int]]) -> list[Result]:
+        return run_many([Statement(sql, caller=caller, kind=kind, limit=n) for sql, n in pairs],
+                        project_dir, profiles_dir, dbt_bin, dialect)
+    runner.many = many
+    return runner
+
+
+def ask_many(runner, pairs: list[tuple[str, int]]) -> list[Result]:
+    """`runner.many` when the runner has it, else one at a time. Test doubles need not batch."""
+    many = getattr(runner, "many", None)
+    if many is not None:
+        return many(pairs)
+    return [runner(sql, n) for sql, n in pairs]
 
 
 # Far-future or far-past dates, and the numeric placeholders feeds reach for instead of NULL.
