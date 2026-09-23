@@ -928,8 +928,14 @@ def test_the_page_reaches_out_to_nothing(tmp_path):
             "unconfigured": [], "effectiveness": [], "moved": {}}
     doc = explorer.explorer_html(data, "<html></html>")
     shell = doc.split('<script id="assay-data"')[0]
-    for scheme in ("http://", "https://", "//cdn", "<img"):
+    # *** AN `xmlns` IS AN IDENTIFIER, NOT A REQUEST. ***
+    # The inline mark declares the SVG namespace, which no browser has ever fetched. Stripping it
+    # keeps the guard pointed at things that actually go out over a wire.
+    shell = shell.replace('xmlns="http://www.w3.org/2000/svg"', "")
+    for scheme in ("http://", "https://", "//cdn", "<img", "fetch(", "XMLHttpRequest"):
         assert scheme not in shell, f"the page shell reaches out to {scheme}"
+    # And the favicon is the mark's own bytes, not a file beside the page.
+    assert 'rel="icon"' in doc and "data:image/svg+xml;base64," in doc
 
 
 

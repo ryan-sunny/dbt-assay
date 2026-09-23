@@ -248,3 +248,36 @@ def test_a_description_cannot_inject_anything(tmp_path, project_dir):
             assert not fired, f"a description executed: {fired}"
         finally:
             browser.close()
+
+
+def test_the_mark_renders_in_both_headers(page_file, tmp_path, project_dir):
+    """An inline SVG that a browser refuses is a blank square, and no static check sees it."""
+    from playwright.sync_api import sync_playwright
+
+    form = tmp_path / "review.html"
+    assert CliRunner().invoke(app, ["review", "--emit", str(form), "--target", str(project_dir),
+                                    "--store", str(tmp_path / "r.duckdb")]).exit_code == 0
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            errors: list[str] = []
+            for f in (page_file, form):
+                page = browser.new_page()
+                errors.clear()
+                page.on("pageerror", lambda e: errors.append(str(e)))
+                page.goto(f.as_uri())
+                page.wait_for_timeout(80)
+                box = page.eval_on_selector(
+                    "h1 > svg",
+                    "el => { const r = el.getBoundingClientRect();"
+                    "        return {w: r.width, h: r.height, wells: el.querySelectorAll('circle')"
+                    ".length}; }")
+                assert box["wells"] == 16, f"{f.name}: the plate lost wells"
+                assert 14 <= box["w"] <= 40 and 14 <= box["h"] <= 40, (
+                    f"{f.name}: the mark rendered at {box['w']}x{box['h']}, which is not header "
+                    f"size -- an unsized flex SVG collapses or fills the row")
+                assert not errors, "\n".join(errors[:3])
+                page.close()
+        finally:
+            browser.close()

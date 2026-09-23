@@ -32,8 +32,15 @@ CSS = """
 body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 color:var(--ink);background:var(--bg)}
 header{padding:18px 24px 0;border-bottom:1px solid var(--line);background:var(--card)}
-h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.01em}
-h1 span{font-weight:400;color:var(--dim);font-size:14px;margin-left:8px}
+h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.01em;
+display:flex;align-items:center;gap:9px}
+/* The mark sits on the text's optical centre rather than its baseline, and never shrinks: a
+   flex item with a long project name beside it would otherwise be squeezed. */
+h1 > svg{width:23px;height:23px;flex:none}
+.hname{flex:none}
+h1 span{font-weight:400;color:var(--dim);font-size:14px;margin-left:0}
+/* The project name keeps the h1's own weight; only the strapline beside it goes quiet. */
+h1 span.hname{font-weight:650;color:var(--ink);font-size:19px}
 .sub{color:var(--dim);font-size:12.5px;margin:3px 0 14px}
 .rule{font-size:11.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;
   margin:14px 0 6px}
@@ -497,6 +504,7 @@ def explorer_html(data: dict, record_html: str) -> str:
     # round-trip guard caught exactly this the first time a section was added, which is the whole
     # reason that guard compares bytes rather than rendering.
     from .explore import _LINES, _WHOLE
+    from .mark import FAVICON, MARK_SVG
     filled = {n: [] for n in _LINES}
     filled.update({n: empty() for n, empty in _WHOLE})
     data = {**filled, **data, "record": record_html}
@@ -544,9 +552,10 @@ def explorer_html(data: dict, record_html: str) -> str:
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{e(meta['project'])} &middot; assay</title>
+<link rel="icon" href="{FAVICON}">
 <style>{CSS}</style></head><body>
 <header>
-<h1>{e(meta['project'])}<span>everything assay knows</span></h1>
+<h1>{MARK_SVG}<span class="hname">{e(meta['project'])}</span><span>everything assay knows</span></h1>
 <div class="sub">{meta['models']} models &middot; {meta['sources']} sources &middot;
 manifest generated {e(str(meta['generated_at']))} &middot;
 <span title="A hash of the code that rendered this page. The version is what the package says it is; this is what the rendering code actually IS, so two pages claiming one version and differing here came from two different installs.">assay {e(meta['version'])} &middot; build {e(build_fingerprint())}</span>{form_link}</div>

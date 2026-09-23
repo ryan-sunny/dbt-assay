@@ -1,5 +1,7 @@
 # assay, in plain words
 
+<img src="assay-mark.svg" align="right" width="96" alt="">
+
 A lead data engineer in your warehouse, working next to your coding agent.
 
 ---

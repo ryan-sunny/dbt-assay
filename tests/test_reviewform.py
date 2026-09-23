@@ -169,6 +169,9 @@ def test_the_page_reaches_out_to_nothing():
     """Self-contained is the delivery model. On `file://` a blocked request fails silently."""
     from dbt_assay import reviewform as rf
     html = rf.form_html([], {}, "p", "x", "0")
+    # An `xmlns` is an identifier, not a request: the inline mark declares the SVG namespace and
+    # no browser has ever fetched it.
+    html = html.replace('xmlns="http://www.w3.org/2000/svg"', "")
     for bad in ("http://", "https://", "<img", "fetch(", "XMLHttpRequest"):
         assert bad not in html, bad
 

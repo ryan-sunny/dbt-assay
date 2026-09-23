@@ -560,8 +560,11 @@ body{margin:0;font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
 color:var(--ink);background:var(--bg)}
 header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);
 padding:14px 24px}
-h1{margin:0;font-size:17px}
-h1 span{font-weight:400;color:var(--dim);font-size:13px;margin-left:8px}
+h1{margin:0;font-size:17px;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+/* The mark sits on the text's optical centre and never shrinks beside a long project name. */
+h1 > svg{width:22px;height:22px;flex:none}
+h1 span{font-weight:400;color:var(--dim);font-size:13px;margin-left:0}
+h1 span.hname{font-weight:600;color:var(--ink);font-size:17px;flex:none}
 .bar{display:flex;align-items:center;gap:14px;margin-top:8px;flex-wrap:wrap}
 .tabgap{flex:1 1 auto}
 .task{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--ink);
@@ -1138,6 +1141,7 @@ openPane(SAVED_PANE && (SAVED_PANE in PANES) ? SAVED_PANE
 def form_html(card_list: list, sql: dict, project: str, generated_at: str, version: str,
               ctx: dict | None = None, report: str = "") -> str:
     """One self-contained file. No server, no fetch, no network."""
+    from .mark import FAVICON, MARK_SVG
     e = html.escape
     ctx = ctx or {"words": [], "explanations": [], "waivers": [], "settings": []}
     blob = json.dumps({"project": project, "cards": card_list, "sql": sql, "no_read": NO_READ,
@@ -1154,9 +1158,10 @@ def form_html(card_list: list, sql: dict, project: str, generated_at: str, versi
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{e(project)} &middot; assay review</title>
+<link rel="icon" href="{FAVICON}">
 <style>{_CSS}</style></head><body>
 <header>
-<h1>{e(project)}<span>{len(card_list)} to rule on &middot; {len(ctx.get("words") or [])} word(s) &middot; {withread} carry a reading &middot;
+<h1>{MARK_SVG}<span class="hname">{e(project)}</span><span>{len(card_list)} to rule on &middot; {len(ctx.get("words") or [])} word(s) &middot; {withread} carry a reading &middot;
 assay {e(version)} &middot; manifest {e(str(generated_at))}{report_link}</span></h1>
 <!-- *** WHAT YOU DO WITH THE WHOLE FORM SITS WITH THE TAB STRIP, NOT INSIDE A TAB. ***
      Your name and the download button used to share a row with the findings pager, so switching
