@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import time
@@ -400,6 +401,44 @@ def _record(sql: str, res: Result, *, caller: str, kind: str, relation: str = ""
         led.unrecorded += 1
 
 
+class WarehouseUnreachable(RuntimeError):
+    """dbt could not answer `select 1` here, so nothing this command counts would be real."""
+
+
+# *** A COMMAND THAT CANNOT REACH THE WAREHOUSE MUST SAY SO, NOT REPORT WHAT IT DID NOT SEE. ***
+# `practices` run without `--project-dir`/`--dbt` printed "23 of 23 standard check(s) were NOT
+# LOOKED AT" in the shape of a finding about the project, and it was read as one. `backtest
+# --compile` failing the same way died with a traceback, which was the right behaviour. So the
+# first statement any command sends is preceded, once per (dir, dbt, profiles), by `select 1`; if
+# that fails, the command stops with dbt's own words.
+_REACHED: dict = {}
+
+
+def _reach(project_dir: str, profiles_dir: str | None, dbt_bin: str) -> None:
+    key = (os.path.abspath(project_dir or "."), profiles_dir or "", dbt_bin)
+    if key in _REACHED:
+        if _REACHED[key]:
+            raise WarehouseUnreachable(_REACHED[key])
+        return
+    cmd = [*dbt_bin.split(), "show", "--inline", "select 1 as assay_reachable", "--output",
+           "json", "--limit", "1"]
+    if profiles_dir:
+        cmd += ["--profiles-dir", profiles_dir]
+    try:
+        p = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, timeout=180,
+                           check=False)
+        ok = p.returncode == 0 and parse_dbt_show(p.stdout or "") is not None
+        why = "" if ok else (p.stderr or p.stdout or "no output")[-600:].strip()
+    except (OSError, subprocess.TimeoutExpired) as e:
+        why = str(e)[:600]
+    _REACHED[key] = (f"could not reach the warehouse: `{dbt_bin} show` in `{project_dir}` "
+                     f"failed, so nothing counted here would be real. Pass --project-dir (the "
+                     f"dbt project) and --dbt (how dbt runs, e.g. \"uv run dbt\").\n{why}"
+                     if why else "")
+    if _REACHED[key]:
+        raise WarehouseUnreachable(_REACHED[key])
+
+
 def _execute(sql: str, project_dir: str, profiles_dir: str | None = None,
              dbt_bin: str = "dbt", limit: int = 50, timeout: int = 300,
              measure: bool = False) -> Result:
@@ -411,6 +450,7 @@ def _execute(sql: str, project_dir: str, profiles_dir: str | None = None,
     `measure` asks dbt for its adapter's own numbers, which needs JSON logging at debug level --
     slow, and enormous, so it is off unless `cost.measure_bytes` is set.
     """
+    _reach(project_dir, profiles_dir, dbt_bin)
     cmd = [*dbt_bin.split(), "show", "--inline", sql, "--output", "json", "--limit", str(limit)]
     if profiles_dir:
         cmd += ["--profiles-dir", profiles_dir]

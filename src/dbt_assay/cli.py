@@ -3144,9 +3144,17 @@ def volume(
     # parse. The human output is suppressed rather than the JSON being printed somewhere else.
     say = (lambda *a, **k: None) if as_json else console.print
     with console.status(f"reading {schema_name}..."):
-        cad = elem.build_cadence(runner, schema_name)
-        rep = elem.read(runner, schema_name, stale_after_days=stale_days, fallback=cad)
-        cov = elem.test_coverage(runner, schema_name) if rep.reachable else {}
+        try:
+            cad = elem.build_cadence(runner, schema_name)
+            rep = elem.read(runner, schema_name, stale_after_days=stale_days, fallback=cad)
+            cov = elem.test_coverage(runner, schema_name) if rep.reachable else {}
+        except probe_mod.WarehouseUnreachable as e:
+            # `volume` has always said this in its own report rather than stopping, because a
+            # report saying "nothing here was measured" is the useful thing to print.
+            cad, cov = None, {}
+            rep = elem.Report(schema=schema_name, stale_after_days=stale_days,
+                              readings=[elem.Reading(r, elem.UNREACHABLE, detail=str(e))
+                                        for r in elem.RELATIONS])
     # *** ONE NUMBER, DELIBERATELY CHOSEN, OVERRIDING EVERY DERIVED ONE. ***
     # Without it each relation carries a threshold derived from its own write history, which is
     # what `read` already did above.
@@ -3343,8 +3351,12 @@ def volume(
     _judge_volume(project, digests, schema, store, store_path, cfg, rep, threshold, limit,
                   dry_run)
     from . import monitoring_bank as mb
-    _judge_monitoring(project, digests, schema, store, cfg, rep,
-                      mb.ran_test_ids(runner, schema_name), threshold, limit, dry_run)
+    try:
+        ran = mb.ran_test_ids(runner, schema_name)
+    except probe_mod.WarehouseUnreachable:
+        ran = None
+    _judge_monitoring(project, digests, schema, store, cfg, rep, ran, threshold, limit,
+                      dry_run)
 
 
 def _judge_monitoring(project, digests, schema, store, cfg, rep, ran, threshold, limit,
@@ -3601,12 +3613,16 @@ def main() -> None:
     broken" rather than "this path is wrong". The entry point names them and exits 1.
     """
     from .jev import NoProvider
+    from .probe import WarehouseUnreachable
     from .store import StoreUnwritable
     try:
         app()
     except (StoreUnwritable, NoProvider) as e:
         console.print(f"[red]{e}[/]")
         raise SystemExit(1) from e
+    except WarehouseUnreachable as e:
+        console.print(f"[red]{e}[/]", markup=False)
+        raise SystemExit(2) from e
 
 
 

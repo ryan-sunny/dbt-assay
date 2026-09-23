@@ -52,9 +52,10 @@ def test_a_missing_count_is_unknown_never_a_verdict():
     assert not any(x.is_unique_key for x in o)
 
 
-def test_a_failed_probe_records_unknown_not_not_unique(tmp_path):
+def test_a_failed_probe_records_unknown_not_not_unique(tmp_path, monkeypatch):
     """A read-only role that cannot see a schema, read as a duplicate key, is a guard that cannot
-    see with the sign flipped."""
+    see with the sign flipped. The warehouse answers; this one statement does not."""
+    monkeypatch.setattr(probe, "_reach", lambda *_a, **_k: None)
     obs, sql = probe.run_via_dbt(T, str(tmp_path), dbt_bin="definitely-not-a-real-binary")
     assert sql
     assert all(o.status == "unknown" for o in obs)
@@ -118,3 +119,25 @@ def test_a_relation_with_several_observed_unique_columns_is_not_guessed_at(proje
     d[uid].group_by_columns = []
     d[uid].from_relations = [sch.relation[drv]]
     assert contracts.candidates(uid, p, d, sch, {}, {}, observed) is None
+
+
+def test_a_warehouse_that_cannot_answer_select_1_stops_the_command(tmp_path, monkeypatch):
+    """*** BLIND IS NOT CLEAN. *** `practices` without a connection reported "23 of 23 NOT
+    LOOKED AT" in the shape of a finding. Now the first statement is preceded by `select 1`, and a
+    warehouse that cannot answer it stops the command with dbt's own words."""
+    import pytest
+    monkeypatch.setattr(probe, "_REACHED", {})
+    with pytest.raises(probe.WarehouseUnreachable, match="--project-dir"):
+        probe.run_sql("select 1", str(tmp_path), dbt_bin="definitely-not-a-real-binary")
+
+
+def test_the_practices_command_exits_2_without_a_connection(project_dir, tmp_path, monkeypatch):
+    from dbt_assay.cli import main
+    monkeypatch.setattr(probe, "_REACHED", {})
+    monkeypatch.setattr("sys.argv", ["assay", "practices", "-t", str(project_dir),
+                                     "--dbt", "definitely-not-a-real-binary",
+                                     "--store", str(tmp_path / "s.duckdb")])
+    import pytest
+    with pytest.raises(SystemExit) as e:
+        main()
+    assert e.value.code == 2

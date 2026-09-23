@@ -127,6 +127,8 @@ def _fake_warehouse(monkeypatch, rows_for):
         # thing `dbt show` reports when a relation is not there.
         return Result(rows=got) if got else Result(failed=True, why="no such relation")
     monkeypatch.setattr(probe_mod, "run_sql", run_sql)
+    # A warehouse that answers answers `select 1` too.
+    monkeypatch.setattr(probe_mod, "_reach", lambda *_a, **_k: None)
 
 
 def _elementary_rows(sql: str, limit: int):
