@@ -105,7 +105,7 @@ def changes_since(baseline: Snapshot, state: LiveState) -> list:
     return diff.compare(baseline.entries, state.entries, state.project, state.digests)
 
 
-def all_findings(project, digests, schema, entries=None,
+def all_findings(project, digests, schema, entries=None, *,
                  threshold: float = 0.8, store=None) -> list:
     """Every finding, structural and judged, from ONE place.
 
@@ -123,6 +123,12 @@ def all_findings(project, digests, schema, entries=None,
 
     `entries` carries the judged stream. Without a store there are no judged answers, so the
     structural half stands alone -- which is correct, not a truncation.
+
+    *** `threshold` AND `store` ARE KEYWORD-ONLY, BECAUSE FIVE CALLERS HAD THEM SWAPPED. ***
+    `plan`, `suggest`, `review --emit`, `read` and the resolved-cluster count passed the store as
+    the threshold and 0.8 as the store. The key-change comparison below then raised on a float,
+    the `except` read that as an old store, and `key_stopped_holding` -- the failure that
+    corrupts a warehouse -- never reached any of them, silently.
     """
     # *** WITH THE SCHEMA, OR A DERIVED COLUMN IS INVISIBLE. ***
     # Reported from the field (25.13): `onboard` said 208 `column_has_no_description` and `check`

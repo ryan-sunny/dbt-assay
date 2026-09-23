@@ -382,7 +382,7 @@ def check(
     _cfg_pre = Config.load(config_path)
     _st_pre = Store(store_path) if Path(store_path).exists() else None
     findings = live.all_findings(project, digests, schema, _entries,
-                                 _cfg_pre.row_loss_threshold, store=_st_pre)
+                                 threshold=_cfg_pre.row_loss_threshold, store=_st_pre)
     if _st_pre is not None:
         _st_pre.close()
     # *** IS THE PROJECT BEING WATCHED, AND IS THE WATCHER ALIVE? ***
@@ -1812,8 +1812,8 @@ def effectiveness(
         st2 = Store(store_path)
         try:
             entries = inv_mod.build(project, digests, schema, st2, probe_mod.read(st2))
-            live = sug.live_pairs(live_mod.all_findings(project, digests, schema, entries, st2,
-                                                        cfg2.row_loss_threshold))
+            live = sug.live_pairs(live_mod.all_findings(project, digests, schema, entries, store=st2,
+                                                        threshold=cfg2.row_loss_threshold))
             gone = sug.resolved_clusters(st2, cfg2, live)
         finally:
             st2.close()
@@ -2039,8 +2039,8 @@ def completeness(
                                       dbt_bin, schema=schema)
         counted["empty_models"] = sorted(n for n, c in held.items() if c[0] == 0)
 
-    fs = live.all_findings(project, digests, schema, entries, cfg.row_loss_threshold,
-                            store=store)
+    fs = live.all_findings(project, digests, schema, entries,
+                            threshold=cfg.row_loss_threshold, store=store)
     if store:
         store.close()
     from .checks.sources import completeness_checks
@@ -2187,8 +2187,8 @@ def page(
     facts, _ = relate.run_all(project, digests, schema)
     entries = inv_mod.build(project, digests, schema, store,
                             probe_mod.read(store) if store else {}, facts=facts)
-    fs = live.all_findings(project, digests, schema, entries, cfg.row_loss_threshold,
-                            store=store)
+    fs = live.all_findings(project, digests, schema, entries,
+                            threshold=cfg.row_loss_threshold, store=store)
 
     ruled_keys: set = set()
     agent_n, eff, moved = 0, [], {}
@@ -3839,8 +3839,8 @@ def suggest(
         # defect this tool checks other people's warehouses for.
         entries = inv_mod.build(project, digests, schema, store,
                                 probe_mod.read(store) if store else {})
-        _fs = live_mod.all_findings(project, digests, schema, entries, store,
-                                    cfg.row_loss_threshold)
+        _fs = live_mod.all_findings(project, digests, schema, entries, store=store,
+                                    threshold=cfg.row_loss_threshold)
         firing = {f.check for f in _fs}
         # *** AND WHICH SUBJECT, NOT ONLY WHICH CHECK. ***
         # A rule that asks "is this still true" needs the subject. With only the check name, a
@@ -4034,8 +4034,8 @@ def plan(
     cfg = Config.load(config_path)
     store = Store(store_path) if Path(store_path).exists() else None
     entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store) if store else {})
-    findings = live_mod.all_findings(project, digests, schema, entries, store,
-                                     cfg.row_loss_threshold)
+    findings = live_mod.all_findings(project, digests, schema, entries, store=store,
+                                     threshold=cfg.row_loss_threshold)
     rows = plan_mod.build(findings, store)
 
     if json_out:
@@ -4738,8 +4738,8 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
     project, digests, _f, schema, _s = _load(tdir, dialect)
     cfg = Config.load(config_path)
     entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store))
-    findings = live_mod.all_findings(project, digests, schema, entries, store,
-                                     cfg.row_loss_threshold)
+    findings = live_mod.all_findings(project, digests, schema, entries, store=store,
+                                     threshold=cfg.row_loss_threshold)
     reads = {}
     if reads_path:
         reads = _json.loads(Path(reads_path).read_text())
@@ -5453,8 +5453,8 @@ def read(
     cfg = Config.load(config_path)
     store = Store(store_path)
     entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store))
-    findings = live_mod.all_findings(project, digests, schema, entries, store,
-                                     cfg.row_loss_threshold)
+    findings = live_mod.all_findings(project, digests, schema, entries, store=store,
+                                     threshold=cfg.row_loss_threshold)
     cards, _sql = reviewform.cards(findings, store, Path(tdir).parent)
     keys = {c["key"] for c in cards}
     have: dict = {}
