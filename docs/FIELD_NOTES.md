@@ -3625,3 +3625,25 @@ Verify that somebody actually ran.
 and it is not free: every deferral announces itself, names what it is resting on, and says what
 breaks if that thing did not run. A tool that goes quiet on someone else's promise has to check
 the promise, or say out loud that it cannot.
+
+## The build queue: two "still open" bugs that were already closed, checked on the real store
+
+The queue carried two items from the field report as open. Both were fixed before 0.48.0 in
+a6ac819, and both were checked against the production store rather than taken from the report.
+
+**`(unversioned)` finding rulings.** The report measured 70 of 136 human rows with an empty
+`prompt_version`, all of them `::finding::` subjects. Queried read-only on the box at 0.49.1:
+**zero** unversioned rows. `_record_one_verdict` writes the per-finding row with the model row's
+version, and `_backfill_verdict_versions` gave the old 70 theirs from `runs` on the next open.
+
+**`assay.0.20.0` on five agent rulings with no 0.20.0 run.** Not a lost row and not a second
+stamping rule. The MCP `rule` tool stamps the version of the assay that is RUNNING, the same rule the
+CLI applies to a structural finding. The five rulings are timestamped 19:48:04 on 2026-09-20; the
+0.20.0 commit is 19:48:06 that day. An MCP server on that checkout wrote them, and no `check` ran at
+0.20.0 to leave a `runs` row. The tag is true.
+
+One thing found on the way and left alone: `adjudications.decided_at` and `runs.started_at` are
+naive `TIMESTAMP`s written by machines in different time zones (a laptop in Mountain time, a box
+whose DuckDB session reports Europe/Berlin). The version backfill compares the two with `<=`, so a
+verdict made within a few hours of a run can resolve to the neighbouring version. Nothing measured
+was wrong because of it; it is recorded here rather than silently changed.
