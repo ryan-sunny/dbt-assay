@@ -119,3 +119,46 @@ line boundaries does not know where a literal ends; it corrupted seven strings i
 produced a well-formed Python file and a well-formed dead page. A multi-edit script that asserts
 between replacements loses every earlier edit when one fails, silently — that shipped `elem.cadence`
 into 0.46.0. One concern per edit, write immediately.
+
+---
+
+## What shipped
+
+All eleven sections, in order, between 0.47.2 and 0.48.0. What follows is only what VERIFICATION
+or the real page changed about the plan above — the rest landed as written.
+
+**§10.5 was reachable after all.** `dbt show --log-format json --log-level debug` on dbt-core 1.11
+emits a `Q025 NodeFinished` event carrying `run_result.adapter_response`. Measured against
+dbt-duckdb, whose response has no bytes because DuckDB has none to report; the BigQuery adapter
+puts `bytes_processed` and `bytes_billed` on the same object. So step 5 shipped with steps 1–4
+rather than after them, opt-in behind `cost.measure_bytes`, and `bytes_billed` wins over
+`bytes_processed` because BigQuery bills a 10MB minimum.
+
+**7.7 took a type, not a flag.** `run_sql` returns a `Result` whose `__bool__` RAISES. Thirteen
+call sites had to change and a truthiness test that silently kept working would have shipped the
+fix as a no-op.
+
+**4.5 was not a bug.** The prose in a SUBJECT cell is a claim extracted from `ops_assay_debt`'s
+own documentation, which quotes assay. The extractor was right; the COLUMN was showing two kinds
+of thing, because `subject` fell back to the decision's context when it could not resolve a model
+name. Settled by looking at the rendered page.
+
+**3.1 was out by 12px, on every tab.** The pane height was `calc(100vh - 210px)`, counted once by
+hand. Driving the real 12MB page in a browser found the document scrolling 12px everywhere. No
+static check can see that. The shell is a flex column now and a browser test measures it at two
+window sizes.
+
+**The lint rule for 7.5 had to match backticks.** Matching the bare field name flagged three
+shipped questions — "a claim about a column" is English, not a reference to the `column` key. A
+rule that fires on almost every question is one somebody switches off, and then the one that
+mattered goes with it.
+
+**§6.1 added the loudest check on the page.** `column_has_no_description` fires 129 times on
+sunny_data and `models_disagree_about_a_column` 73, which changes what the Overview's ranked bar
+leads with. Both are one finding per model rather than per column, and the non-ingestion case is
+base 1 so it sorts last by weight.
+
+Two things carried forward as non-negotiable both held. `node --check` stayed green throughout,
+and the Playwright load caught three defects nothing else could: the pointer capture eating node
+clicks (watched it fail with the regression reintroduced), the 12px overflow, and a prose cell
+pushing the confidence column off the pane.
