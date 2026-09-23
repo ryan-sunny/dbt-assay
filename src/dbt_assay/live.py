@@ -124,7 +124,13 @@ def all_findings(project, digests, schema, entries=None,
     `entries` carries the judged stream. Without a store there are no judged answers, so the
     structural half stands alone -- which is correct, not a truncation.
     """
-    fs = structural_checks(project, digests)
+    # *** WITH THE SCHEMA, OR A DERIVED COLUMN IS INVISIBLE. ***
+    # Reported from the field (25.13): `onboard` said 208 `column_has_no_description` and `check`
+    # said 129 on the same manifest. The report took the stored 129 for the truth; it was the
+    # wrong one. Without the schema a model's columns are only the DECLARED ones, so the 79
+    # models whose undocumented columns are derived from SQL fell out of `check`, MCP and every
+    # surface reading this stream, while `onboard` -- which passed it -- saw them.
+    fs = structural_checks(project, digests, schema)
     fs += relate.run_all(project, digests, schema)[1]
     if entries:
         from . import judged as judged_mod

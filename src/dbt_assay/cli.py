@@ -32,7 +32,7 @@ from . import semantics as sem_mod
 from . import subjects as subjects_mod
 from . import testing as testing_mod
 from . import versioning as ver_mod
-from .checks import run_all, unevaluable_tests
+from .checks import unevaluable_tests
 from .config import DEFAULT_YML, Config
 from .infer import Schema, derive_columns
 from .jev import BudgetExceeded, Client, NoProvider, decide
@@ -908,9 +908,10 @@ def onboard(
     _schema_panel(schema, sstats)
 
     console.print("\n[bold]3. what it found, with no key and no spend[/]")
-    _facts, edge_findings = relate.run_all(project, digests, schema)
-    findings = run_all(project, digests, schema) + edge_findings
-    findings.sort(key=lambda f: -f.weight)
+    # The SAME stream `check` reads, so the first number a person sees and the second agree. Built
+    # here with its own copy it skipped the dedupe, and one window walked twice counted twice:
+    # `arbitrary_pick` 37 against `check`'s 33 on the field warehouse.
+    findings = live.all_findings(project, digests, schema)
     blind = unevaluable_tests(project, digests)
     if blind:
         console.print(f"   [yellow]{len(blind)} test(s) cannot be evaluated[/] "
