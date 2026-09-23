@@ -338,13 +338,25 @@ class Project:
 
     def coverage(self) -> dict:
         readable = [m for m in self.models.values() if m.readable]
+        # *** AN INSTALLED PACKAGE'S MODELS ARE NOT A GAP IN YOUR AUDIT. ***
+        # Reported from the field (25.5): `completeness` said "30 models assay could not read --
+        # not audited, and not a pass", and all 30 were Elementary's. A reader takes that for
+        # thirty of their own models outside the audit. `unreadable` is YOURS; the packages are
+        # counted beside it, by name, so nothing is hidden and nothing is misattributed.
+        theirs = [m for m in self.models.values()
+                  if not m.readable and m.is_installed_package]
+        by_pkg: dict = {}
+        for m in theirs:
+            by_pkg[m.package] = by_pkg.get(m.package, 0) + 1
         return {
             "models": len(self.models),
             "sources": len(self.sources),
             "tests": len(self.tests),
             "edges": len(self.edges),
             "readable": len(readable),
-            "unreadable": len(self.models) - len(readable),
+            "unreadable": len(self.models) - len(readable) - len(theirs),
+            "installed_unreadable": len(theirs),
+            "installed_packages": dict(sorted(by_pkg.items())),
             "from_disk": sum(1 for m in readable if m.compiled_from == "disk"),
             "from_manifest": sum(1 for m in readable if m.compiled_from == "manifest"),
             "from_stripped": sum(1 for m in readable if m.compiled_from == "stripped"),

@@ -236,6 +236,8 @@ def _coverage_panel(project, digests, failures, show_errors: bool = True) -> Non
         t.add_row("[yellow]not read at all[/]",
                   f"[yellow]{cov['unreadable']} model(s) have no SQL assay could reach, so they "
                   f"are absent from everything below.[/]")
+    if cov.get("installed_unreadable"):
+        t.add_row("[dim]installed packages[/]", f"[dim]{_packages_line(cov)}[/]")
     t.add_row("parsed", f"{_n(ok)}/{_n(len(digests))}" + (f"   [yellow]{len(failures)} failed[/]" if failures else ""))
     # *** SQL THAT EXISTS AND IS NOT THE REAL THING, SAID BEFORE ANY FINDING. ***
     from . import compilecheck
@@ -639,6 +641,13 @@ def check(
 
     if failing:
         raise typer.Exit(1)
+
+
+def _packages_line(cov: dict) -> str:
+    """"30 model(s) from installed packages (elementary 30), not yours to audit and not counted"."""
+    pk = ", ".join(f"{k} {v}" for k, v in (cov.get("installed_packages") or {}).items())
+    return (f"{cov['installed_unreadable']} model(s) from installed packages ({pk}) have no "
+            f"compiled SQL here. Not yours to audit, and not counted as a gap above.")
 
 
 def _project_dir_for(target: Path) -> Path | None:
@@ -2068,7 +2077,8 @@ def completeness(
     cov = project.coverage()
     doc = {
         "assay_can_read": {"models": cov["models"], "readable": cov["readable"],
-                           "not_audited": cov["models"] - cov["readable"]},
+                           "not_audited": cov["unreadable"],
+                           "installed_packages_not_counted": cov["installed_packages"]},
         **{k: [{"subject": f.subject_name, "summary": f.summary, "evidence": f.evidence}
                for f in v] for k, v in sorted(buckets.items())},
         **({"empty_models": counted.get("empty_models", []),
@@ -2080,8 +2090,11 @@ def completeness(
 
     t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
     t.add_column("what"); t.add_column("n", justify="right"); t.add_column("meaning")
-    t.add_row("models assay could not read", _n(cov["models"] - cov["readable"]),
+    t.add_row("models assay could not read", _n(cov["unreadable"]),
               "[dim]not audited, and not a pass[/]")
+    if cov.get("installed_unreadable"):
+        t.add_row("installed package models", _n(cov["installed_unreadable"]),
+                  f"[dim]{_packages_line(cov)}[/]")
     for check, label in (
             ("source_reaches_nothing", "sources nothing reads"),
             ("seed_reaches_nothing", "seeds nothing reads"),
@@ -2234,7 +2247,7 @@ def page(
         "source_freshness_stale", "hop_drops_most_rows")}
     cov = project.coverage()
     completeness = [
-        ("models assay could not read", cov["models"] - cov["readable"],
+        ("models assay could not read", cov["unreadable"],
          "not audited, and an absent audit is not a pass"),
         ("sources nothing reads", counts["source_reaches_nothing"],
          "declared, loaded every run, no model and no test refers to it"),
@@ -2247,6 +2260,9 @@ def page(
         ("hops that lose most of the parent", counts["hop_drops_most_rows"],
          "needs --verify; no filter, no group by, no collapse"),
     ]
+    if cov.get("installed_unreadable"):
+        completeness.insert(1, ("installed package models", cov["installed_unreadable"],
+                                _packages_line(cov)))
 
     # *** WHAT IS ONE ROW OF THIS -- AND WHO SAID SO. ***
     # A grain a person declared and one a judgment reached at 0.53 are not the same fact, so the
