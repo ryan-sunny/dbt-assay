@@ -51,3 +51,14 @@ def test_a_counted_grain_is_reported_with_its_date(project_dir, tmp_path):
     be = Backend(str(project_dir), store_path=store, config_path=str(tmp_path))
     h = be.contract("int_bad_unique")["health"]
     assert h["grain_measured"][0]["status"] == "unique" and h["grain_measured"][0]["rows"] == 10
+
+
+def test_the_cli_contract_is_the_tools_contract(project_dir, tmp_path):
+    r = runner.invoke(app, ["inventory", "-t", str(project_dir), "--model", "int_bad_unique",
+                            "--json", "--store", str(tmp_path / "none.duckdb"),
+                            "--config", str(tmp_path)])
+    assert r.exit_code == 0, r.output
+    doc = json.loads(r.output)
+    want = Backend(str(project_dir), config_path=str(tmp_path)).contract("int_bad_unique")
+    assert doc == json.loads(json.dumps(want, default=str))
+    assert "health" in doc

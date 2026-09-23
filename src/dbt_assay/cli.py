@@ -4912,6 +4912,9 @@ def inventory(
     model: str = typer.Option(None, "--model", "-m", help="render one model as a document"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     json_out: bool = typer.Option(False, "--json"),
+    config_path: str = typer.Option(".", "--config",
+                                    help="with --model --json: the audit.yml whose waivers and "
+                                         "policy the model's health is read through"),
     html_out: str = typer.Option(None, "--html",
                                  help="write a self-contained page you can open, commit and diff"),
     write: str = typer.Option(None, "--write",
@@ -4944,6 +4947,16 @@ def inventory(
             store.close()
         raise typer.Exit(0)
 
+    if model and json_out:
+        # *** THE SKILL SAID THIS WAS `contract(model)` AND IT PRINTED NO JSON AT ALL. ***
+        # `--model` ignored `--json` and rendered the document. It is now the contract tool's own
+        # answer, health included, from the one method both surfaces call.
+        if store:
+            store.close()
+        c = mcp_server.Backend(str(tdir), store_path if Path(store_path).exists() else None,
+                               config_path).contract(model)
+        print(_json.dumps(c, indent=2, default=str))
+        raise typer.Exit(1 if "error" in c else 0)
     if model:
         e = next((x for x in entries if x.name == model), None)
         if not e:

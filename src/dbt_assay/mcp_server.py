@@ -107,6 +107,16 @@ class Backend:
 
     # ---- the tools ----
 
+    def run_cli(self, command: str, args: str = "", wait_seconds: float = 90) -> dict:
+        """Any CLI command, as the CLI runs it. See `cli_tools`."""
+        from . import cli_tools
+        known = {c["name"]: c for c in cli_tools.commands()}
+        if command not in known:
+            return {"error": f"no command {command!r}. Commands: {sorted(known)}"}
+        accepts = {f for fl in known[command]["flags"] for f in fl.split("/")}
+        return cli_tools.run(command, args, self.target, self.store_path, wait_seconds,
+                             accepts)
+
     def contract(self, model: str) -> dict:
         """The model's shape AND its health: what is open on it, what is waived, what is counted.
 
@@ -1027,6 +1037,10 @@ class Backend:
 
 
 TOOLS = [
+    ("job_status", ("A command that outlasted its wait came back as a job id. This returns how "
+                    "far it has got and, once it ends, its whole output or JSON.")),
+    ("job_stop", "End a running job, and return what it had printed."),
+    ("jobs", "Every job this server started, and whether each is still running."),
     ("contract", ("What a model IS: grain, columns, roles, where each value comes from -- and "
                   "its HEALTH: open findings with who ruled on them, what is waived or "
                   "accepted, and whether the grain was ever counted. Call it before an edit.")),
@@ -1169,6 +1183,11 @@ def server_class():
 
 
 def serve(target: str, store_path: str | None = None) -> None:
+    build_app(target, store_path).run()
+
+
+def build_app(target: str, store_path: str | None = None):
+    """The server with every tool registered, not yet running -- so a test can list them."""
     # *** THE SDK RENAMED ITS SERVER CLASS AT v2. ***
     # `FastMCP` became `MCPServer`. Importing only one spelling means this command dies on
     # whichever major the user happens to have, with a traceback instead of an explanation, so
@@ -1276,4 +1295,26 @@ def serve(target: str, store_path: str | None = None) -> None:
                  limit: int = 5) -> str:
         return _out(be.evidence(decision_key, question, subject, limit))
 
-    app.run()
+    # *** AND EVERY COMMAND, SO NOTHING THE CLI DOES IS OUT OF A TOOL'S REACH. ***
+    from . import cli_tools
+    for cmd in cli_tools.commands():
+        def _make(name: str):
+            def tool(args: str = "", wait_seconds: int = 90) -> str:
+                return _out(be.run_cli(name, args, wait_seconds))
+            return tool
+        app.tool(name=cli_tools.tool_name(cmd["name"]),
+                 description=cli_tools.description(cmd))(_make(cmd["name"]))
+
+    @app.tool(description=_desc("job_status"))
+    def job_status(job: str) -> str:
+        return _out(cli_tools.status(job))
+
+    @app.tool(description=_desc("job_stop"))
+    def job_stop(job: str) -> str:
+        return _out(cli_tools.stop(job))
+
+    @app.tool(description=_desc("jobs"))
+    def jobs() -> str:
+        return _out(cli_tools.listing())
+
+    return app

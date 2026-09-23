@@ -693,7 +693,7 @@ def test_every_mcp_tool_is_described_by_its_own_name():
     import re
 
     from dbt_assay import mcp_server
-    src = inspect.getsource(mcp_server.serve)
+    src = inspect.getsource(mcp_server.build_app)
     registered = set(re.findall(r'@app\.tool\(description=_desc\("(\w+)"\)\)', src))
     assert registered, "the registration reader found nothing; it is broken"
     described = {name for name, _d in mcp_server.TOOLS}

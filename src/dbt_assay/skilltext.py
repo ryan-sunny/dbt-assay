@@ -313,6 +313,8 @@ and nothing is lost:
 | `stale(exact)` | `assay stale`, `assay stale --exact`, `assay stale --cost` |
 | `vocabulary()` | `assay config --target <target/>` |
 | `monitoring(volume_json)` | `assay volume --json --project-dir <dbt project> --dbt "<dbt>" > volume.json` |
+| `job_status(job)`, `job_stop(job)`, `jobs()` | none needed: in a shell the command runs in the foreground |
+| `assay_<command>(args)` | `assay <command> <args>`, the same command |
 
 The one difference worth knowing: the MCP tools reload when the manifest moves, and a CLI run
 reads whatever `target/` holds at that moment. Run `dbt compile` first if you have edited SQL.
@@ -744,10 +746,16 @@ def _command_reference() -> str:
     out = ["", "## Every command, and every flag it takes", "",
            "Generated from the app itself, so it cannot drift from what is installed.",
            "`assay <command> --help` has the long form of any of these.", "",
-           "| command | what it answers | flags |", "|---|---|---|"]
+           "**Every command is also an MCP tool**, `assay_<command>` (a dash becomes `_`),",
+           "taking the flags as one string: `assay_check(args=\"--new-only --json\")`. It runs",
+           "the real command, so the two cannot disagree. A run longer than `wait_seconds`",
+           "comes back as a job: `job_status(job)` follows it, `job_stop(job)` ends it, `jobs()`",
+           "lists them. Only `review -i` has no tool form: it waits for keypresses.", "",
+           "| command | tool | what it answers | flags |", "|---|---|---|---|"]
     for name, args, first, opts in sorted(rows):
         flags = " ".join(f"`{o}`" for o in opts) or "—"
-        out.append(f"| `assay {name}{(' ' + args) if args else ''}` | {first} | {flags} |")
+        out.append(f"| `assay {name}{(' ' + args) if args else ''}` | "
+                   f"`assay_{name.replace('-', '_')}` | {first} | {flags} |")
     out.append("")
     return "\n".join(out)
 

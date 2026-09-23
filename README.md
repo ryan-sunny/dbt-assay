@@ -366,7 +366,10 @@ CTE or a join rewritten as a subquery says **nothing**. Break something and fix 
 save and it never speaks, because nothing ended up different. A file that does not parse is "still
 typing", never a finding.
 
-`mcp` serves `contract`, `lineage`, `blast_radius`, `findings`, `changed_contracts` and `rebase`.
+`mcp` serves `contract`, `lineage`, `blast_radius`, `findings`, `changed_contracts` and `rebase` --
+and every command besides, as `assay_<command>` with its flags as one string, so an agent with no
+shell can run all of assay. A tool runs the real command; a run longer than its wait comes back as
+a job to follow with `job_status`.
 A contract is fifteen lines where the SQL is two hundred, so an agent can hold a project's meaning
 in about what reading four models costs it now. `changed_contracts` is the self-check to run after
 an edit and before moving on: *did that change what anything MEANS?*

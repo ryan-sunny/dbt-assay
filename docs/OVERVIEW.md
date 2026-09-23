@@ -1164,7 +1164,10 @@ a column is, what the grain is, and what would break before it writes a line. Th
 it the **obligation** — without it an agent checks when it remembers, and with it, checking is the
 procedure.
 
-Twenty-one tools. Most report; nine do something else:
+Twenty-four tools, and beside them every command as a tool of its own: `assay_<command>` takes the
+command's flags as one string and runs the real command, so an agent with no shell can run all of
+assay. A run longer than its wait comes back as a job, which `job_status`, `job_stop` and `jobs`
+follow. Of the twenty-four, most report; nine do something else:
 
 | tool | what it is for |
 |---|---|
