@@ -147,6 +147,14 @@ def _report_vocab_drops() -> None:
     working, and it is also the shape of the feature being broken, so it is counted and said. It
     prints nothing when nothing was dropped.
     """
+    from .jev import NONFINITE
+    if NONFINITE:
+        # Said with the rest of the what-was-changed-before-sending, for the same reason.
+        n = sum(k for _c, k in NONFINITE)
+        console.print(f"[yellow]{_n(n)} value(s) were inf or NaN[/] [dim]in {_n(len(NONFINITE))} "
+                      f"request(s) and were sent as null: JSON cannot carry them. They are in "
+                      f"your data, not a fault in the provider.[/]")
+        NONFINITE.clear()
     drops = states.VOCAB_DROPS
     if not drops:
         return

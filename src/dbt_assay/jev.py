@@ -279,7 +279,16 @@ class Client:
 
         _name, spec, key = self._conn()
         model = self.model or spec["model"]
-        body = {"model": model, "state": state, "questions": questions}
+        # *** A WAREHOUSE HOLDS `inf` AND `NaN`, AND JSON HAS NO WAY TO SAY EITHER. ***
+        # Reported from the field (25.17): `feeds` sampled a source holding an `inf`, the request
+        # body could not be built, and the command died with "jev failed after 3 attempts" --
+        # which sends a person to their key, their network and the provider's status page for a
+        # float in their own data. Coerced to null HERE, the one place every family sends
+        # through, and counted so the command says it happened.
+        clean, n_bad = finite(state)
+        if n_bad:
+            NONFINITE.append((caller, n_bad))
+        body = {"model": model, "state": clean, "questions": questions}
         # *** SENT, AND NOT CLAIMED. ***
         # OpenRouter documents the `provider` object for CHAT COMPLETIONS. assay posts to
         # `/api/alpha/decisions`, a different endpoint that proxies TypeSafe's wire format, and
@@ -298,10 +307,19 @@ class Client:
                 f"would exceed the ${self.max_spend_usd:.2f} cap "
                 f"(spent ${self.spent_usd:.4f}). Raise jev.max_spend_usd in audit.yml.")
 
+        # Encoded ONCE, outside the retries. An encoding failure is assay's own bug, it happens
+        # before anything reaches a provider, and retrying it only waits nine seconds to blame
+        # the wrong component.
+        try:
+            payload = json.dumps(body, allow_nan=False, default=str)
+        except ValueError as e:
+            raise RuntimeError(
+                f"assay could not encode the request for {caller} ({e}). Nothing was sent to the "
+                f"provider; this is a bug in assay, not in your key or your network.") from e
         last = None
         for attempt in range(self.retries):
             try:
-                r = httpx.post(spec["url"], json=body, timeout=self.timeout,
+                r = httpx.post(spec["url"], content=payload, timeout=self.timeout,
                                headers={"Authorization": f"Bearer {key}",
                                         "Content-Type": "application/json"})
                 out = r.json()
@@ -334,6 +352,32 @@ class Client:
                 if attempt < self.retries - 1:
                     time.sleep(1.5 * (attempt + 1))
         raise RuntimeError(f"jev failed after {self.retries} attempts: {last}")
+
+
+# (caller, how many values) for every request that carried a non-finite float, coerced to null.
+# Read and printed by the command, the way `states.VOCAB_DROPS` is.
+NONFINITE: list = []
+
+
+def finite(obj) -> tuple:
+    """(obj with every non-finite float replaced by None, how many were replaced)."""
+    import math
+    if isinstance(obj, float):
+        return (None, 1) if not math.isfinite(obj) else (obj, 0)
+    if isinstance(obj, dict):
+        out, n = {}, 0
+        for k, v in obj.items():
+            out[k], m = finite(v)
+            n += m
+        return out, n
+    if isinstance(obj, list | tuple):
+        out_l, n = [], 0
+        for v in obj:
+            c, m = finite(v)
+            out_l.append(c)
+            n += m
+        return out_l, n
+    return obj, 0
 
 
 def key_headroom(provider: str = "auto") -> dict:
