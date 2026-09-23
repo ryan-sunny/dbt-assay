@@ -346,3 +346,20 @@ def skip_reasons(replays: list[Replay]) -> dict:
             key = r.skipped.split(":")[0][:60]
             out[key] = out.get(key, 0) + 1
     return dict(sorted(out.items(), key=lambda kv: -kv[1]))
+
+
+def dark_models(replays: list[Replay]) -> list[tuple[str, int, int]]:
+    """(model, unreadable replays, every replay of it), most unreadable first.
+
+    *** "26 OF 85 COULD NOT BE READ" CANNOT BE ACTED ON. ***
+    Reported from the field (25.24d): on a real repo that 31% was four much-edited provenance
+    models, jinja-heavy because they enumerate sources -- not a broad blind spot. A blind spot is
+    only judgeable when its shape is visible, which is assay's own argument pointed at itself.
+    """
+    total: dict = {}
+    dark: dict = {}
+    for r in replays:
+        total[r.model] = total.get(r.model, 0) + 1
+        if r.verdict == "unparseable":
+            dark[r.model] = dark.get(r.model, 0) + 1
+    return sorted(((m, n, total[m]) for m, n in dark.items()), key=lambda x: (-x[1], x[0]))

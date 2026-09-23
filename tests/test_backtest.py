@@ -146,3 +146,14 @@ def test_a_relative_repo_links_packages_that_resolve(tmp_path, monkeypatch):
     c._link_packages()                     # the second commit: must not raise
     link = os.path.join(c.dir, "transform", "dbt_packages")
     assert os.path.islink(link) and os.path.isdir(link), "the link must resolve"
+
+
+def test_the_unreadable_replays_are_named_by_model():
+    """*** "26 OF 85 COULD NOT BE READ" CANNOT BE ACTED ON; "THESE FOUR MODELS" CAN. ***"""
+    from dbt_assay.backtest import dark_models
+    rs = [Replay("a", "s", "water_provenance", "p.sql", skipped="parse error"),
+          Replay("b", "s", "water_provenance", "p.sql", skipped="parse error"),
+          Replay("c", "s", "water_provenance", "p.sql"),
+          Replay("d", "s", "stg_x", "x.sql", skipped="parse error"),
+          Replay("e", "s", "new_model", "n.sql", skipped="added or removed here")]
+    assert dark_models(rs) == [("water_provenance", 2, 3), ("stg_x", 1, 1)]

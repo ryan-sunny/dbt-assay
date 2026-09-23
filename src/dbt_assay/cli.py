@@ -2106,8 +2106,13 @@ def completeness(
         t.add_row(label, f"[red]{_n(n)}[/]" if n else "[dim]0[/]",
                   f"[dim]{_COMPLETENESS_MEANING[check]}[/]")
     if verify:
-        t.add_row("models that are EMPTY", _n(len(counted.get("empty_models", []))),
-                  "[dim]a uniqueness test on one passes for the wrong reason[/]")
+        # *** A COUNT THE READER CANNOT CLOSE. *** Reported from the field (25.11): "3" here and
+        # two names in `practices --keys-only`, with no way to find the third but a hand query.
+        empty = counted.get("empty_models", [])
+        t.add_row("models that are EMPTY", _n(len(empty)),
+                  "[dim]a uniqueness test on one passes for the wrong reason[/]"
+                  + (f"\n{', '.join(empty[:8])}" + (f" and {len(empty) - 8} more" if len(empty) > 8
+                                                     else "") if empty else ""))
     console.print(t)
 
     for check in ("hop_drops_most_rows", "source_freshness_stale", "source_reaches_nothing"):
@@ -5366,6 +5371,11 @@ def backtest(
         console.print(f"\n[yellow]{len(unread)} of {len(pairs)} comparable replays could not be "
                       f"read[/] [dim]({len(unread) / max(len(pairs), 1):.0%}), and are not counted "
                       f"as clean. A Jinja strip is not a compile.[/]")
+        dark = backtest_mod.dark_models(replays)
+        for model, n, of in dark[:show]:
+            console.print(f"  [bold]{model}[/]  [dim]{n} of its {of} replay(s) unreadable[/]")
+        if len(dark) > show:
+            console.print(f"  [dim]... {len(dark) - show} more model(s). --show to see them.[/]")
 
 
 @app.command()
