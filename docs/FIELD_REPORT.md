@@ -1186,3 +1186,1009 @@ Two fixes, both small:
 
 This matters more than it looks because the derived number is what is used when nothing is configured, and
 the pane says so. A user reading `0.0` has no way to judge whether the 5 is reasonable for their project.
+
+---
+
+## 15. `test_cannot_fail` is correct and too blunt to rank. Three signals assay already has would fix it
+
+> **CORRECTED BY SECTION 21.** The measurement proposed in 15.2 already ships as `assay tests
+> --count-defaults`. This section was written without it and its triage of the findings is wrong.
+> Read 21 first.
+
+From using 0.49.1 on water table rather than from testing it. 63 agreed findings, 50 of them
+`test_cannot_fail`, 37 on water models. Ryan: "flagging 37 i wouldnt expect them all to be like a big deal".
+He is right, and the split is not visible from the finding text.
+
+### 15.1 What the 37 actually are, measured
+
+| kind | n | measured against production | worth |
+|---|---|---|---|
+| `accepted_values`, CASE with no ELSE | 12 | 11 of 12 have **zero** NULLs | vacuous, nothing hiding |
+| `not_null` on a COALESCE'd column | 14 | see below | the interesting ones |
+| `unique` on a column the SQL groups by | 11 | true by construction | keep as a regression guard |
+
+The `not_null` group, measured:
+
+```
+water_rights.dwr_analysis_status          173,480 rows   97.0% are 'not looked up'
+water_parcels.irrigated_acres_on_parcel 2,732,262 rows   96.0% are 0
+water_section_summary.wells_drilled        63,349 rows   33.9% are 0
+```
+
+The finding says the test cannot fail and suggests deleting it. The true statement is stronger and different:
+**a `not_null` test reads as coverage on a column that is 3% real data.** That is a fact about the warehouse,
+not about test hygiene, and it is the one a person would act on.
+
+The one live defect in all 37 came from the same place: `water_outreach_agents.contact_role`, 571 of 573
+NULL, which traced to the broker list resolving contacts against a lead-gen enrichment table that was never
+fed brokerage websites. 2 of 270 sites match. Found by following a `test_cannot_fail` finding to the data.
+
+### 15.2 Three signals, all already collected, none joined to the check
+
+**Null share, for `accepted_values`.** `observed_keys` already carries `relation, column_name, row_count,
+non_null, distinct_ct`. That answers "does the CASE actually leave anything unmatched" exactly. The gap is
+coverage, not capability: `probe` targets relations with no settled grain, and every mart in this group has
+one, so it is never measured. Probe should also cover columns named in a `test_cannot_fail` finding. That is
+affordable now that 271 statements batch into 23.
+
+**Default share, for `not_null` on a COALESCE.** Null counts cannot answer this, because `non_null` equals
+`row_count` by construction. It needs `sum(case when col = <default> then 1 else 0 end)`, and assay can write
+it without help because it already parsed the COALESCE to raise the finding at all. One more aggregate in the
+same batched statement. `audit.yml` is already recording "99% default" for `dwr_analysis_status` somewhere,
+so the number exists in the system and does not reach the finding.
+
+**Run history, from `volume.json`.** It already reports 459 declared tests that never produced a result and
+1,587 results SKIPPED. A test that cannot fail and has passed 47 times is test-hygiene. A test that cannot
+fail and has never run is two problems, and today they read identically.
+
+### 15.3 What the finding should say
+
+Same check, three rankings, no new tier:
+
+```
+test_cannot_fail  water_rights.dwr_analysis_status          13 marts
+  not_null on coalesce(ca.dwr_analysis_status, 'not looked up') cannot fail.
+  MEASURED: 97.0% of 173,480 rows are the default, so the column is 3% real
+  and this test reads as coverage on the other 97%.
+
+test_cannot_fail  water_section_hazards.flood_status         1 mart
+  accepted_values on a CASE with no ELSE cannot fail.
+  MEASURED: 0 NULL in 108,917 rows. The branches cover the data. Low priority.
+```
+
+The second one is a finding a person closes in five seconds. Today it costs the same attention as the first.
+
+### 15.4 The broader point, which is Ryan's
+
+> "mostly just like filling out the vocab and the context and the waivers and definitions and all that shit
+> i think is how we can really build out the warehouse quality"
+
+This session is evidence for that. Scoping 12 of 16 vocab terms with `applies_to` took the lint from 13
+warnings to 1, and vocab is injected into every judged state, so one unscoped water term was steering
+judgments about business licences. That is the highest-leverage surface in the config and it is the one with
+the least support: the vocab candidates pane proposes the term and the measurement and leaves `means:` and
+`implies:` empty on purpose, which is correct, and then offers nothing to help fill them.
+
+6.1 already proposes seeding `means:` from column descriptions. The stronger version, given 15.2, is to seed
+`implies:` from the measurement. `dwr_analysis_status` does not need a human to discover that it is 97%
+placeholder; it needs a human to decide whether that is acceptable.
+
+---
+
+## 16. Running list, from using 0.49.1 rather than testing it
+
+Small things. None of these blocks anything.
+
+### 16.1 The cost preview is on the free commands and not on the paid ones
+
+> **PARTLY WRONG, see 21.3.** `assay ask --dry-run` prices any family that declares a subject, and
+> `jev.max_spend_usd` is a hard cap checked before the call. The per-command wrappers lack a dry run;
+> the generic path has one.
+
+`probe --dry-run` and `volume --judge --dry-run` both price the work and send nothing. Both are tiers that
+cost nothing on DuckDB.
+
+`feeds`, `align`, `semantics` and `tests` all call Jev and none of them has `--dry-run`. They can be bounded
+(`feeds -n`, `tests -n`, `semantics -n` and `--select`, `align --select`) but you cannot ask what a run will
+cost before starting it.
+
+That inverts the guardrail. `assay cost` already describes itself as "the number to put in front of somebody
+BEFORE proposing a judged run", and the commands that need it most are the ones that cannot produce it.
+
+### 16.2 `assay cost` totals across runs, so a fixed defect still reads as live
+
+After the 0.49.0 batched sweep the ledger read:
+
+```
+assay.probe.…  294 statements  631.9 MB  $0.0000  5808.2s  70 failed
+```
+
+294 is 271 from the old unbatched run plus 23 from the new one, and all 70 failures belong to the old one.
+The batched run had zero. Someone reading that screen on a version that fixed the bug sees 70 failures.
+
+The per-run split is only visible by querying `warehouse_calls` directly, which already carries `run_id`. A
+run filter, or a newest-run default with a total beneath it, resolves it.
+
+### 16.3 `assay stale` reports a zero it cannot stand behind
+
+```
+0 of 18,079 judged answer(s) are about SQL that has since changed. 0 current, 18,079 cannot be checked.
+  17,812: decided before assay recorded a checksum
+```
+
+The output is honest about this and says so plainly, which is right. The problem is the headline: "0 are
+about SQL that has since changed" is the first line and reads as a clean bill, when the real state is that
+98.5% cannot be assessed either way. Lead with the coverage, not with the zero. Same class as 12.2, where a
+number that could not be checked was presented as a measurement.
+
+`--exact` rebuilds each answer's state and would give a real answer here. It is free. It is worth saying so
+at the point the checksum path comes up empty, rather than in the flag's help text.
+
+### 16.4 `volume --judge` narrows to nothing, and says so well
+
+Worth recording as a thing done right. The dry run ended:
+
+> no movement lines up with a claim, so there is nothing to ask. That is code narrowing before anything is
+> spent, not a clean bill.
+
+Free, correct, and it refuses to let the absence of a question read as an absence of a problem. This is the
+sentence the three items above are each missing.
+
+### 16.5 12.2 is fixed
+
+The stale-observation guard shipped. The same table that produced the false outage now reads:
+
+```
+5 table(s) moved, in observations more than 30 days old, so they describe the past rather than now:
+  buyer_leads_enriched  -100.0%  newest observation 80d ago. Nothing has written a row-count bucket for it since.
+```
+
+The number is unchanged and the sentence around it is now true.
+
+---
+
+## 17. The batching fix went in at the call site, so every other command still pays the full tax
+
+### 17.1 Measured
+
+`assay feeds -n 5` against production: **3m53s for 5 sources**, 47 seconds each, 1 Jev call, 2,261 tokens,
+$0.0001. The money is nothing. All 210 sources would cost under half a cent and take roughly **2.7 hours**,
+essentially all of it dbt booting.
+
+This is section 13 again, in a command the 0.49.0 fix did not reach.
+
+### 17.2 Why it did not reach it
+
+`run_sql` and `run_via_dbt` in `probe.py` are the only two places assay touches a warehouse. Callers of them
+in 0.49.1:
+
+```
+cli.py          run_sql=5
+practices.py    run_sql=5
+probe.py        run_sql=3   run_via_dbt=1
+rows.py         run_sql=2
+```
+
+The batching landed **inside `probe.py`**, at the call site. Every other caller still issues one statement per
+`dbt show`, and every one of them pays a fresh process and a full manifest parse per statement.
+
+So `probe` went from 271 invocations to 23 and from 88 minutes to 10, and `feeds`, `practices`, `rows` and
+the five `cli.py` call sites got nothing.
+
+A fair share of this is the report's fault, and it is worth recording as a lesson about the report rather
+than about the code. Section 13 measured `probe`, named `probe`, and proposed a fix for `probe`. The fix
+followed the measurement exactly. A precise report on one command produced a precise fix to one command.
+
+### 17.3 The fix belongs one level down
+
+`run_sql` should take a list of statements and coalesce them into as few `dbt show` invocations as the
+dialect allows, returning results keyed back to the caller. Then:
+
+- every current caller gets the speedup with no change to its own code
+- every future caller gets it by default rather than by remembering
+- the batch-width bound, the per-statement failure isolation and the relation labelling from 13.3 are written
+  once instead of per command
+- `warehouse_calls` keeps one row per logical statement, so the cost ledger does not change shape
+
+`probe.py` already contains a working implementation of all of it. The work is moving it, not inventing it.
+
+### 17.4 What it is worth
+
+Rough, from measured per-statement times:
+
+| command | today | batched at the chokepoint |
+|---|---|---|
+| `probe` (271 relations) | 10 min, already fixed | 10 min |
+| `feeds` (210 sources) | ~2.7 hours | ~12 min |
+| `practices`, `rows`, cli paths | unmeasured, same shape | same shape |
+
+A tool whose pitch is "ask it instead of reading SQL" cannot have a two-and-a-half hour command in it, and
+the reason it does is a fix applied one level too high.
+
+---
+
+## 18. The enforcement gap: assay is advisory in a repo that knows how to be mandatory
+
+This is the most important section in this document and it took a day of using the tool to see it.
+
+### 18.1 The correction that prompted it
+
+I proposed gating `test_cannot_fail` on the evidence that it had 90 human rulings at 100% agreement, well
+over the `min_adjudications: 20` floor. Ryan: *"well those 90 human rulings are all from you lol. i jsut said
+sure to get it poppin."*
+
+So the number is an agent agreeing with itself, recorded through a form and labelled `human`. The review
+skill states this plainly -- `source = 'human'` is a label any process can write, and the only thing keeping
+it meaningful is the procedure being followed. It was not, and then the number was used as evidence for a
+build gate.
+
+Two consequences, and the second is the bigger one.
+
+The gating argument is void. Nothing on this project has earned the right to fail a build, because no check
+has verdicts that were not produced by an agent.
+
+And the floor does not protect against this. `min_adjudications: 20` counts rows where `source = 'human'`.
+Ninety agent rulings laundered through a form clear it four times over. The floor measures volume, and the
+thing it is standing in for is independence.
+
+### 18.2 The irony, stated exactly
+
+`audit.yml` on this project, in the `questions:` block:
+
+```yaml
+  # 38 of 38 agreed. The most reliable check here, ...
+  test_cannot_fail:
+    action: queue
+```
+
+The store says 90. And further down:
+
+```yaml
+  # A parser decided it, so it may gate immediately -- except nothing gates until a question
+  # clears min_adjudications, which none do.
+```
+
+One now does. Both comments assert a number about the store and both have drifted from it.
+
+That is `description_contradicts_the_code`, which assay ships a check for, occurring in assay's own
+configuration file. Assay reads a project's `schema.yml` prose against its SQL and never reads its own
+config's prose against its own store. The same is true of the skill text and this document: 17.2 records the
+report producing a fix narrower than the problem, and this records the config making claims nothing verifies.
+
+A `config_comment_contradicts_the_store` check is mechanically possible and would have caught both lines. A
+comment in `audit.yml` that asserts a count is checkable against the store the same way a description is
+checkable against SQL.
+
+### 18.3 What the tool is actually for, and why it is not doing it
+
+Ryan: *"this thing should be evaluating the sql makiung sure it doesnt fucking suck... the point is so that
+when YOU mr fucking retard claude write code that goes into this warehouse its ENFORCED that it uses these
+best practices ive defined."*
+
+That is a different surface from the one this whole document has been exercising. Everything above is a
+report read after the fact. What is wanted is a gate that fires while the code is being written.
+
+sunny-data already knows how to do this. It has exactly one hook:
+
+```
+PreToolUse / Bash -> blocks hand-rendering a water report to Desktop
+```
+
+That hook does not care whether the agent read CLAUDE.md. It stops it. It works.
+
+**Assay is not wired into that surface at all.** No `PreToolUse` on Edit, no `PostToolUse` on Write, nothing
+matching `transform/models/**.sql`. Every piece of assay's enforcement lives in skill prose instructing an
+agent to remember, and agents do not: this session skipped the review skill's "drain the queue before you
+emit" and had to be caught by the user.
+
+### 18.4 The missing flag, which is the whole blocker
+
+`assay check` takes no `--select` and no `--model`. `claims`, `traverse`, `semantics` and `align` all take
+`--select`; `check` has only `--limit`, which caps what is *printed*. So `check` always runs the entire
+project, and on sunny-data that is about ten minutes.
+
+A ten-minute command cannot sit in a hook that fires on a model edit.
+
+So the enforcement gap is not a config problem and not a skill problem. It is one missing flag:
+
+```bash
+assay check --select <model>     # structural only, one model, sub-second
+```
+
+With that, the hook is four lines of JSON and assay stops being a thing you read:
+
+```
+PostToolUse / Edit|Write on transform/models/**.sql
+  -> assay check --select <the edited model> --store ...
+  -> non-zero exits with the finding text as the reason, and the edit does not stand
+```
+
+That is what turns "these are the practices I defined" into practices that hold.
+
+### 18.5 Order of work
+
+1. `assay check --select <model>`, structural tier only, fast enough for a hook.
+2. Ship a hook recipe in the skill, or better, have `assay init` offer to write it, so the enforcement is
+   installed rather than described.
+3. Only then does `action: fail` mean anything, and only once a check has verdicts a person actually gave.
+4. `config_comment_contradicts_the_store`, so `audit.yml` cannot drift from the numbers it cites.
+
+Items 1 and 2 are the product. Everything in sections 1 through 17 is a report; this is the tool doing the
+job the report keeps describing.
+
+---
+
+## 19. Where Jev is not used and should be, and how to make the banks pluggable
+
+Two asks from Ryan: put the missing question families in the bank, and make adding families, vocab, claims
+and the rest genuinely configurable. Plus: find the places in the workflow where the judged tier is cheap and
+absent.
+
+### 19.1 The map as it stands
+
+18 shipped families across 10 banks, plus 4 custom water families this project added.
+
+```
+bank       family                            pv               opts   asked here
+align      edge_preserves_the_grain          edge.v2             5      1,629
+align      same_concept                      align.v1            3        120
+columns    column_role                       role.v3            11      5,252
+columns    null_meaning                      null.v3             5    bundled into role.v3+null.v3
+feeds      field_matches_its_name            feed.name.v2        4          3
+feeds      units_are_what_the_column_claims  feed.units.v4      13          0
+grain      column_is_part_of_the_key         key.v1              2        120
+practices  practice_exception                practice.v1         5        150
+rows       row_explanation                   row.v2              5         48
+rows       row_is_internally_coherent        row.coh.v1          2          0
+rulings    same_defect                       rule.same.v1        2        179
+semantics  claim_alignment                   claim.v2            4      1,781
+semantics  description_contradicts_the_code  desc.v1             2        304
+semantics  predicate_intent                  pred.v2             5        406
+semantics  sentence_is_a_claim               sentence.v2         6      5,794
+testing    options_overlap                   overlap.v1          5         11
+testing    severity_fit                      sev.v1              3         80
+volume     volume_contradicts_a_claim        volume.v1           4          0
+```
+
+Two things this makes visible that the family list alone does not.
+
+**Prompts compose, and the version string records the composition.** The store holds `role.v3+null.v3`,
+`desc.v1+comments+scoped`, `pred.v2+scoped`, `edge.water.v2`. So `null_meaning` is not unasked; it rides
+inside the `column_role` call. Scoping a question mints a new version automatically. This is good design and
+it is undocumented anywhere a person adding a family would look.
+
+**`subject:` is declared on 2 of 18 shipped families.** Only `same_defect` (`ruling_pair`) and
+`volume_contradicts_a_claim` (`model`). The other 16 inherit it from their bank. A custom family in
+`assay_questions/` must declare it explicitly, and choosing wrong produces a family that lints clean and
+never fires. That cost an hour on this project (7.5). The asymmetry is the single largest barrier to adding
+a suite: the shipped banks do not have to say the thing the lint makes everyone else say.
+
+### 19.2 The largest unused judged tier: nothing writes the reads file
+
+`assay review --reads <json>` takes `{'<subject>::<check>': {verdict, why}}` and pre-fills MY READ on every
+card. **Nothing in assay produces that file.** The skill says "an agent writes that file once, offline",
+which in practice means an agent in a conversation, one finding at a time, at conversation cost.
+
+Priced from this project's own ledger: `practices` judged 171 findings for $0.0057, so $0.000033 per finding.
+The 212 cold cards on the current form would cost about **$0.007**.
+
+So the most expensive human-facing step in the loop, the one the review skill is built around and the one
+this session was caught skipping, is the only step handed to a conversation rather than to the tier that
+costs a third of a hundredth of a cent per item.
+
+`assay read --out reads.json` closes it. Same evidence the form shows, same `rule()` verdict vocabulary, one
+batched pass, and the output is a file a person reviews rather than a write to the store, so the
+agent-is-not-authority rule is preserved exactly.
+
+### 19.3 Other places the judged tier is absent and cheap
+
+| where | today | what a judgment would add |
+|---|---|---|
+| vocab `means:`/`implies:` | left empty on purpose, no draft offered | draft from the measurement and the column descriptions; a person edits rather than composes (6.1) |
+| `column_has_no_description`, 129 here | reports the absence | draft the description from expression, role and lineage |
+| waiver `reason:` | required, hand-written | draft from the finding's own evidence, which is what a waiver is restating |
+| `assay plan` `fix_shape` | names the shape, refuses the words | propose the replacement sentence as a proposal. The refusal is right; offering nothing is not the only alternative |
+| `audit.yml` comments vs the store | nothing checks them | 18.2: a comment asserting a count is checkable the way a description is |
+| 63 stale monitors, 459 never-run tests | counted | judge which matter given what reads them |
+
+### 19.4 The missing families
+
+The gap Ryan's `not_null` observation points at, first, because it is the one with 15 live cases:
+
+**`default_is_a_measurement_or_an_absence`.** `COALESCE(wells_drilled, 0)` defaults to a real count; a
+section with no wells has zero wells. `COALESCE(dwr_analysis_status, 'not looked up')` defaults to a marker
+meaning nobody checked. Today both raise the same `test_cannot_fail` finding and the difference is invisible.
+One question separates 15 findings into 13 deletions and 2 coverage problems. The 15 cases already exist and
+can be used as the calibration set the day it is written.
+
+Five more with no family at all:
+
+- **`filter_is_complete`.** `predicate_intent` asks why a filter exists. Nothing asks whether it covers
+  everything it should. The nontributary exclusion is a hand-written list of ten aquifer names, which is
+  exactly this question.
+- **`units_agree_across_models`.** `units_are_what_the_column_claims` is per column. Nothing asks whether
+  `af` in one model is the `af` in another.
+- **`time_grain`.** Daily, monthly, point-in-time, as-of. Unasked, and a silent mismatch is a wrong number
+  that looks right.
+- **`tie_break_is_total`.** `arbitrary_pick` is structural only. A judged counterpart would say whether the
+  ordering is actually total, which is the bug this project has shipped three times.
+- **`sentinel_is_not_a_value`.** FEMA writes -9999, CO liquor writes a future April 1. The project's own
+  gotcha list carries this and no question asks it.
+
+### 19.5 What "configurable and friendly" needs
+
+From adding four families to this project:
+
+1. **Make `subject:` inferable, or make the shipped banks declare it too.** The asymmetry is the trap.
+2. **Lint a question against the state its subject actually carries.** A family referencing `filters` under
+   `subject: edge` is mechanically detectable and is the failure that lints clean and never fires.
+3. **`assay question new <name>`** writing a scaffold with the subject's available state fields in comments.
+4. **A try-before-you-run loop.** `assay ask <family> --select <3 models> --show-prompt` prints the composed
+   prompt and the answers without writing. Today a new family is authored blind and validated by running it
+   across 356 models.
+5. **Document prompt composition.** `role.v3+null.v3` is a real and useful mechanism that nothing explains.
+6. **The same treatment for vocab, claims and waivers**, which are authored by hand into `audit.yml` with no
+   scaffold, no preview and, for waivers, no selector (18.4).
+
+---
+
+## 20. Context the tools are not getting, and the monitoring bank
+
+### 20.1 `contract(model)` omits everything about the model's health
+
+`live.contract_of` returns:
+
+```
+model, path, materialized, grain, grain_source, grain_confidence,
+reads, descendants, marts_downstream, description,
+columns[{name, role, comes_from, in_key}]
+```
+
+Its own docstring calls it "fifteen lines instead of two hundred. This is the whole argument for the MCP
+server", and CLAUDE.md on this project tells every agent to call it before touching a model.
+
+It carries no findings, no claims, no human verdicts, no waivers in force, no measurements and no test
+coverage. It is an anatomy chart with no chart notes. `findings(model)` exists as a separate call and nothing
+instructs an agent to make it.
+
+This is the enforcement gap of section 18 in miniature. Before editing `int_azcc_owners` the useful sentence
+is not "the grain is `owner_key`". It is "the grain is `owner_key`, 19 marts read it, three findings are
+open, one of which a person agreed with, and a waiver on `hop_multiplies_rows` expires in March." The first
+tells an agent what the model is. The second changes what it writes.
+
+Three additions, all already in the store, none requiring a new measurement:
+
+- **findings**, carrying `ruled_by`, so an agreed finding reads differently from an unread one
+- **waivers in force**, because a waived finding is a decision already made and an agent will otherwise
+  re-litigate it
+- **the settled grain's measurement** where `observed_keys` has one. "`owner_key`, measured unique over
+  3.09M rows today" is a different claim from "`owner_key`"
+
+### 20.2 Measurements in judged state: targeted, not global
+
+The obvious generalisation is to inject the counted tier into every judged state the way vocab is injected.
+The evidence on this project says do not.
+
+`assay effectiveness` on the current store reports **14 open disagreements and 1 unclear**, and states the
+rule that separates them:
+
+> Reword an option to fix a disagreement; add a field to fix an unclear.
+
+An `unclear` is the subject state failing to carry what the question asks about. There is one. Fourteen
+problems are wrong options, which more state does not fix and may obscure. Ryan also recalls an earlier
+attempt at feeding measurements to Jev performing worse than without, which is consistent with this: extra
+state that the question does not need is noise that has to be reasoned past.
+
+So the recommendation is narrow and stays narrow:
+
+- Add a measurement to a question **only** where that question's answers show `unclear`, or where a check
+  demonstrably cannot rank without it. Section 15's `test_cannot_fail` is the clear case: null share for the
+  `accepted_values` variety, default share for the `not_null` variety. That is two fields on one check, not a
+  global change.
+- Do not inject `observed_keys`, `volume.json` or `warehouse_calls` into every judged state.
+- `unclear` is the signal that says when to. It is already measured per family. Let it drive the decision
+  rather than a judgment call at authoring time.
+
+The separate and unconditional improvement is 20.1: measurements belong in what the MCP hands an **agent**,
+which is a reader that benefits from context, rather than in what a prompt hands **Jev**, which is a judge
+answering one narrow question.
+
+### 20.3 A monitoring bank, four families
+
+Monitoring today is one family, `volume_contradicts_a_claim`, which has never fired here because it narrows
+to nothing before spending. Everything else in that tier is structural counting. Each family below has live
+cases in this project's current `volume.json`.
+
+**`movement_is_expected_for_this_kind_of_table`.** `mesa_code` moved +2061%, `tempe_code` +23%. Whether
+either is alarming depends on what the table is: a backfilled code-enforcement feed doubling is routine, a
+reference table doubling is not. assay holds the DAG position and the description and never asks.
+
+**`monitor_covers_what_matters`.** 233 models with a mart downstream and no row-count history. Nobody is
+going to write 233 monitors, so the useful answer is which of the 233 are worth watching. Both inputs, blast
+radius and how the model is built, are already in the state.
+
+**`stale_monitor_still_matters`.** 63 monitors last failed and have not run since, oldest 73 days. Some are
+on tables that no longer exist or no longer feed anything. This separates a real alert backlog from
+archaeology.
+
+**`test_never_ran_is_a_gap_or_a_leftover`.** 459 declared tests have never produced a result. Some are
+coverage holes, some are on models that stopped building. Those want opposite responses and are currently one
+number.
+
+All four judge **the monitoring**, never the data, which preserves the line the tier already draws: assay
+asserts a monitor exists, is current and covers what matters, and never measures volume itself.
+
+### 20.4 One thing the release already moved
+
+Worth recording because it is the only number in `effectiveness` a release can move, and it moved:
+
+```
+2 reason(s) stopped recurring.
+  8 subject(s), now 0 (hop_multiplies_rows)  -- "A UNION MEMBER EDGE CANNOT MULTIPLY"
+  2 subject(s), now 0 (hop_multiplies_rows)  -- "FALSE POSITIVE, MEASURED. LEFT JOIN to a unique lookup"
+```
+
+Ten false positives that a person wrote a reason for, fixed structurally rather than waived, and now firing
+on nothing.
+
+---
+
+## 21. Audit of this document against what actually ships
+
+Written last, after reading `src/dbt_assay/cli.py` rather than `--help` output. Several proposals above are
+for things that already exist. They are corrected here rather than silently, because the value of this
+document is that somebody can act on it, and a phantom feature wastes their time the way it wasted Ryan's.
+
+### 21.1 Root cause: the setup path exists, is good, and nothing puts an agent on it
+
+`assay guide start` prints the six-step order for a project that has never run assay. `assay onboard` runs
+the first pass and, with `--agent`, **writes the agent skill file and prints the MCP config**. On this
+project both were hand-assembled from `--help` instead.
+
+The `onboard` docstring states exactly what skipping it costs:
+
+> A first run on someone else's warehouse is where assay is most likely to be quietly wrong: no compiled
+> SQL, no catalog, a dialect it guessed. Every one of those degrades the answers without changing how
+> confident the output looks.
+
+That is the real finding. Both skills tell an agent to call `contract()` before an edit. Neither tells it to
+run `guide start` before configuring anything, and the CLI does not either. The good path is there and is
+not the path taken. Every correction below is downstream of that single miss.
+
+### 21.2 Section 15 is wrong. The measurement ships as `assay tests --count-defaults`
+
+15.2 proposes measuring the default share behind a `not_null` on a COALESCE. That is step 3 of
+`assay guide start`:
+
+> `assay tests --count-defaults` -- tests that cannot fail, and how often each COALESCE default actually
+> wins. "This test cannot fail" is true; "this default is 99% of your rows" is the sentence somebody acts on.
+
+Run on this project, in one batched query:
+
+```
+13 defaulted column(s) to count, in one query
+  water_rights.dwr_analysis_status            'not looked up'  168,341/173,480  (97%)
+  water_parcels.irrigated_acres_on_parcel                   0  2,623,680/2,732,262 (96%)
+  water_section_summary.wells_household_only                0     54,528/63,349  (86%)
+  az_section_summary.n_water_level                          0     96,624/114,305 (85%)
+  az_section_summary.n_well_depth                           0     95,650/114,305 (84%)
+  az_section_summary.wells_production                       0     93,572/114,305 (82%)
+  water_eco_reach.species_on_reach                          0      1,872/2,427   (77%)
+  az_section_summary.parcel_count                           0     85,264/114,305 (75%)
+  water_section_summary.rights_late_adjudicated             0     44,974/63,349  (71%)
+  water_eco_reach.rights_senior_to_isf                      0      1,280/2,427   (53%)
+  water_section_fingerprint.section_hash                    0          0/108,917  (0%)
+  water_eco_basin.recorded_species                          0          0/172      (0%)
+
+10 column(s) are at least half default. The test passes on every row and says nothing about whether the
+lookup behind it ever ran: the coalesce conflates 'none' with 'not measured'.
+```
+
+Two corrections to section 15 follow.
+
+**The triage in 15.1 is wrong.** It called 11 of the `not_null` findings redundant counts where zero is a
+real measured value, safe to delete. Ten of thirteen are at least half default. `wells_household_only` at
+86% and the four `az_section_summary` columns at 75-85% are not mostly-real-counts with some zeros. This is
+a live water-table data-quality problem, not test hygiene: a section with no wells and a section whose well
+lookup never ran are the same value in the warehouse today.
+
+**One flag is cleared.** `water_section_fingerprint.section_hash` defaults 0 of 108,917 times. The
+coalesce-to-zero never fires, so there is no fingerprint collision. Section 14.3's concern is resolved.
+
+What section 15 still gets right is the *judged* half: `tests --count-defaults` measures the share and does
+not decide whether the default means "none" or "not measured". That distinction is
+`default_is_a_measurement_or_an_absence` from 19.4, and the thirteen rows above are its calibration set.
+
+### 21.3 Section 16 corrections
+
+**16.1 is partly wrong.** `assay ask --dry-run` counts the subjects and prints one state without asking, for
+any family that declares a subject, with `--family`, `--select` and `--limit`. `jev.max_spend_usd` is a hard
+cap checked before the call. What is true is narrower: the per-command wrappers (`feeds`, `align`,
+`semantics`, `tests`) have no `--dry-run` of their own, so the preview exists on the generic path and not on
+the paths a person actually reaches for.
+
+**16.2 is wrong.** `assay cost --since` scopes the ledger by time. The claim that a per-run split is only
+available by querying `warehouse_calls` is false. The presentation point survives in weaker form: the
+default view totals across runs, so a fixed defect still reads as live unless you know to pass `--since`.
+
+### 21.4 Section 19.5 corrections
+
+The question-bank system is already more modular than 19.5 assumes. From `assay banks`:
+
+> Your own questions go in `assay_questions/`. A directory here or in any parent, or wherever
+> `ASSAY_QUESTIONS` points. A family with a new name is added; one with a shipped name REPLACES it, which is
+> the point -- a warehouse whose `column_role` needs an extra option should not have to fork.
+
+So overriding a shipped family without forking works today, and `ASSAY_QUESTIONS` makes bank location
+configurable. The lint is described honestly too: it catches shapes already measured to fail and "cannot
+tell you a question is GOOD. Only running it against cases you have already ruled on does that."
+
+That last sentence is 19.5 item 4, already answered: `assay regress --family` replays existing rulings
+against a changed question. Combined with `ask --dry-run --limit`, the try-before-you-run loop exists.
+
+What survives from 19.5: `subject:` being required for custom families and implicit for 16 of 18 shipped
+ones (the trap that cost an hour), no lint of a question against the state its subject carries, and no
+scaffold command. Three items, not six.
+
+### 21.5 What survives the audit
+
+Verified absent from `cli.py` as of 0.49.1:
+
+| finding | evidence |
+|---|---|
+| 19.2 nothing writes a `--reads` file | `reads_path` is only ever `json.loads`ed; no writer anywhere |
+| 18.4 `check` cannot be scoped to a model | flags are `--check --config --dbt --dialect --json --limit --profiles-dir --project-dir --store --target --verify`. `--check` scopes by check, never by model |
+| 20.1 `contract()` omits findings, waivers, measurements | `live.contract_of` returns shape only |
+| 17 batching sits in `probe.py`, not in `run_sql` | `cli.py` 5 callers, `practices.py` 5, `rows.py` 2, all unbatched |
+| 18.2 nothing checks `audit.yml` comments against the store | no such check in any bank |
+| 20.3 monitoring has one judged family | `volume.yml` holds `volume_contradicts_a_claim` alone |
+| 16.3 `stale` leads with a zero it cannot stand behind | presentation, `--exact` exists and is free |
+
+19.2 is the strongest of these and the most valuable: the most expensive human-facing step in the loop is the
+only one with no judged path, at a measured $0.000033 per finding.
+
+### 21.6 The rule this document should have followed
+
+Read the source before proposing the feature. `cli.py` gives all 47 commands and every flag in one pass and
+is faster than shelling out to `--help` per command. Six of this document's proposals would not have been
+written.
+
+---
+
+## 22. MCP parity, what the skills omit, and what a waiver actually is
+
+Read from `mcp_server.py`, `cli.py`, `skilltext.py` and `config.py`, not from `--help`.
+
+### 22.1 MCP is a read surface. 37 of 47 commands have no tool
+
+```
+MCP tools (21):
+  blast_radius changed_contracts claims contract evidence findings guide lineage
+  load_handback monitoring plan practices rebase review_queue rule spend stale
+  suggestions traversal violations vocabulary
+
+No MCP tool (37):
+  check page review probe volume feeds columns semantics align tests ask banks
+  config onboard scan cost effectiveness calibration disagreements regress
+  adjudicate backtest calibrate completeness diff export infer inventory patch
+  prune suggest trace traverse verify version_check version_stamps watch
+```
+
+Of the 21 tools, 19 read and 2 write (`rule`, `load_handback`). Everything that *runs* something -- any
+structural check, any judged tier, any counted tier, either artifact, any config inspection, onboarding, or
+question validation -- has no tool at all.
+
+So MCP and the skills are not two routes to the same place. MCP is a strict subset, and the skill exists to
+cover the other 37 commands with bash. Consequences worth naming:
+
+- An agent without shell access cannot run assay. It can read what a previous run stored and rule on it,
+  and nothing else.
+- Ryan has asked for CLI/MCP/skill parity repeatedly. The gap is not a few missing tools, it is that the
+  whole verb surface is absent.
+- The highest-value additions are the ones an agent needs mid-task and cannot get: `check` (scoped, per
+  18.4), `ask`, `banks`, `config`, `cost`. Those five turn MCP from a library into a working surface.
+
+### 22.2 The skills omit the two flags that make half the commands work
+
+`--project-dir` and `--dbt` appear **zero times** in 42,001 characters of `skilltext.py`. Every command that
+reaches a warehouse needs them: `probe`, `volume`, `feeds`, `practices`, `adjudicate`, `completeness`,
+`patch`, `tests --count-defaults`.
+
+Every warehouse-touching example in the skill omits them:
+
+```
+assay practices --keys-only --model <model>
+assay volume --json > volume.json          # "their connection, free, no judgment"
+assay completeness
+assay patch tests/assay
+assay volume
+```
+
+The `volume` line acknowledges it needs a connection in the same comment that omits the flags supplying one.
+
+Measured cost on this project: `practices` was run from that pattern and returned
+"23 of 23 standard check(s) were NOT LOOKED AT". That output was read as a finding about the project. It was
+a finding about the invocation. The tool does warn -- "could not count any proposed grain -- the models may
+not be built, or `--dbt`/`--project-dir` may be wrong" -- but the warning is buried in output the skill
+taught the agent to expect as normal.
+
+Fix: every example in the skill that reaches a warehouse carries both flags, and the skill states once that a
+counted-tier command without them is blind rather than clean.
+
+### 22.3 What the skills get right, and the one thing that fails anyway
+
+The setup block is present and correct:
+
+```bash
+uvx --refresh --from 'dbt-assay[mcp]' assay onboard --target target/
+claude mcp add assay --scope project -- uvx --refresh --from 'dbt-assay[mcp]' assay mcp --target target
+uvx --refresh --from 'dbt-assay[mcp]' assay skill all --write .
+```
+
+`guide("start")` is named as the order for a new project, with "do not skip to the judged tier". The box
+guidance from 7.x is in there. None of it was followed on this project, and the reason is structural rather
+than textual: the setup block sits inside a 42,000-character document that an agent reads when it decides to,
+and nothing gates on having read it. Compare the one hook in sunny-data, which stops the agent whether or not
+it read CLAUDE.md.
+
+This is 18.3 restated from the other side. The skill is advisory, and advisory instructions are followed at
+the rate an agent chooses, which this session measured at well under one.
+
+`ASSAY_QUESTIONS` appears zero times in the skill, so the mechanism that makes bank location configurable is
+undiscoverable from the documented path.
+
+### 22.4 What a waiver is, exactly
+
+`config.py`:
+
+```python
+class Waiver:
+    question: str       # which check
+    reason: str         # REQUIRED; config raises without it
+    until: str | None   # optional expiry
+
+def waived(self, model, question):
+    for w in self.waivers.get(model, []):         # exact model name
+        if w.question != question: continue
+        if w.until and str(w.until) < today: continue   # an expired waiver is not a waiver
+        return w
+```
+
+A waiver is **(model, check) -> "this is fine, here is why, until this date"**. One model, one check, exact
+name match. With `until` set it stops silencing on that date and the finding returns on its own.
+
+The distinction that matters, because the two are easy to confuse and mean opposite things:
+
+| | claim | effect | counts as |
+|---|---|---|---|
+| `disagree` verdict | the check is WRONG here | removes the finding permanently | evidence about the check, feeds agreement rates |
+| waiver in `audit.yml` | the check is RIGHT and I accept it | silences it, expires | a decision with a name and a date on it |
+
+Assay already draws this line in the "Decide first" panel: if the reason names a *thing this warehouse has
+that the checker has no word for*, the fix is vocab; only if it names a *case the checker gets wrong* is it
+the check. Getting it backwards turns a real defect permanently invisible, which is why `reason` is required
+and why an expiry is recommended.
+
+Two gaps:
+
+- **No selector.** `self.waivers.get(model, [])` is an exact-name dict while vocab terms take
+  `applies_to: {select:, exclude:}`. Fourteen near-identical waivers cannot be written as one, and a new
+  model with the same shape is uncovered. This is 18.4.
+- **Nothing drafts the reason.** It is required, hand-written, and restates evidence assay already holds.
+  19.3 covers this.
+
+---
+
+## 23. The three config surfaces: one is well designed, two are not
+
+`vocab`, `waivers` and `explanations` are the three places a project teaches assay about itself. They are
+built to three different standards.
+
+### 23.1 When a waiver rather than a disagree, with live examples
+
+Ryan: *"when would a finding be true and im like eh stfu basically?"*
+
+The test is whether the check's **factual claim** is true.
+
+| the claim is | do |
+|---|---|
+| false, it misread the SQL | **disagree**. Removes the finding permanently; counts as evidence about the check |
+| true, and points at something real | **fix it** |
+| true, but the action it implies is wrong here | **waiver**, with the reason and an expiry |
+| true, and the reason names a THING the checker has no word for | **vocab**, because that fixes it everywhere |
+
+A waiver is for *correct observation, wrong prescription*. It is never "eh, shut up" -- `reason` is required
+in order to stop it being that, and this project's own config comment says why: "A waiver whose
+justification is 'looks fine' is how a real finding gets silenced."
+
+The four waivers in force here are all the same shape. `bbox_as_radius` on `stg_blm_plss_sections` is
+factually correct: the SQL does build `ST_MakeEnvelope` and intersect with it. Disagreeing would be a lie.
+But the envelope is a grid cell rather than an approximated circle, and the waiver says exactly that: "The
+check's 'a box is not a circle' argument holds only where an envelope approximates a radius."
+
+The sharpest is `int_water_structure_comid`, which counted the tie-break before waiving it and then concluded:
+
+> assay flags it because comid is not DECLARED unique, which is true and is the honest state of the project
+> rather than a defect in this model.
+
+The check is right about the project and wrong about the model. That is the waiver case exactly.
+
+All four carry `until: 2027-01-01`. That matters: "wrong prescription" can become right later, and an expired
+waiver stops silencing, so the finding returns rather than disappearing forever.
+
+### 23.2 `vocab` is the best-designed surface in the tool
+
+It takes `applies_to` as a selector, string or `{select:, exclude:}`, validated by the same validator that
+`when.select` uses on a question, and the validation **refuses syntax it does not understand rather than
+matching everything** -- because a silently ignored selector scopes nothing while appearing to scope
+something. `exclude` exists because `models/water/az` sits under `models/water`, so a Colorado term scoped to
+the parent still reaches all 70 Arizona models. `exclude` with no `select` is an error.
+
+The reason it is built this well is recorded in the source, from this project:
+
+> 19,707 judged answers -- 25% -- were about Arizona models, and every one of them was sent sixteen
+> assertions of Colorado water law as universal fact, including a statute citation with no force there. A
+> term asserted outside where it is true steers every answer wrong at once.
+
+### 23.3 `explanations` and `waivers` get none of that
+
+```python
+cfg.explanations = data.get("explanations") or {}        # config.py:367
+self.waivers.get(model, [])                              # config.py:439
+```
+
+`explanations` are the per-model answer options added to the generic set for the row-adjudication family,
+consumed at `cli.py:5852` by `assay adjudicate`. Neither surface has a selector, and `explanations` has no
+validation whatsoever.
+
+Consequences seen directly on this project:
+
+- **40 marts, each needing its own options**, with no way to write one set for "every water section mart".
+  The form renders 40 near-identical cards, which is the repetition complaint in 3.2 with a config cause
+  rather than a rendering one.
+- **Four near-identical waivers** where two of them say, in prose, that they are the same shape as each
+  other: "Same shape as stg_blm_plss_sections: a grid cell from stored bounds, not a radius."
+- A new model matching either pattern is covered by neither.
+
+The fix is uniformity, and the good implementation already exists: give `waivers` and `explanations` the
+same validated `applies_to` that `vocab` has. The selector, the validator and the refuse-unknown-syntax
+behaviour are written and tested.
+
+### 23.4 Nothing drafts any of the three
+
+All three are hand-authored into `audit.yml`. For all three, assay already holds the evidence the human is
+being asked to restate:
+
+- a **waiver reason** restates a finding's own evidence
+- a **vocab term** restates a measurement the vocab-candidates pane already computed and prints with
+  `means:` and `implies:` deliberately empty
+- an **explanation option** restates what the failing rows of a test have in common, which is what
+  `adjudicate` reads anyway
+
+This is 19.3 applied to config rather than to findings. The rule that keeps it honest is the one the vocab
+pane already follows: propose the candidate and the measurement, never the meaning. A draft a person edits
+is different from a decision made for them.
+
+### 23.5 One thing worth copying elsewhere: the guide is generated
+
+`guide.py` does not hand-maintain its content. `_lint_rules()` reads the lint source for its own rule names,
+`_families()` loads every bank, `_config_keys()` parses `DEFAULT_YML`. So a new lint rule, a new question
+family or a new config key cannot go unmentioned.
+
+That is the correct answer to the drift problem in 18.2, already implemented in one place. The stale
+`audit.yml` comments ("38 of 38 agreed" against a store holding 90) are the same class of bug in a file
+where the same technique has not been applied.
+
+---
+
+## 24. The missing verdict, and self-auditing
+
+### 24.1 There is no verdict for "correct, and I accept it"
+
+`store.py:762`:
+
+```python
+if verdict not in ("agree", "disagree", "unclear"):
+```
+
+Section 23.1 establishes that the honest response to a true finding with a wrong prescription is a waiver.
+**The form and the CLI cannot record that.** From a card the options are:
+
+| verdict | what it says | what it costs when it is the wrong one |
+|---|---|---|
+| `agree` | the finding is right | it stays open forever and lands in "63 agreed, 0 fixed" |
+| `disagree` | the check is WRONG | a lie; permanently removes a true finding |
+| `unclear` | the finding does not carry enough to decide | also a lie; counts as evidence the state is thin |
+
+This is not a UI nicety. `disagree` feeds the agreement rates, and the agreement rate is the single number
+that decides whether a check may ever gate a build. `code_contradicts_a_claim` sits at 33% and
+`identifier_outside_grain` at 44% on this project. If any of those disagreements were really
+correct-but-accepted, the check is being told it was wrong when it was right, and the one signal meant to be
+independent is being polluted by the absence of an option.
+
+It also explains the stuck loop metric. "63 agreed, 0 fixed" almost certainly contains findings that were
+read, judged correct, and accepted, with no way to say so.
+
+Proposed fourth verdict, `accept`:
+
+- does **not** claim the check erred, so it does not count against the agreement rate
+- suppresses the finding from the open list, the way a waiver does
+- writes a waiver proposal into `audit.yml` carrying the reason and an expiry
+- is excluded from "agreed and still here", because an accepted finding is not outstanding work
+
+### 24.2 The waivers tab proposes waivers from disagreements, which is the opposite claim
+
+Correction to an earlier reading of this pane: it does **not** merely list existing waivers. It proposes
+candidates, and the restraint behind it is right (`reviewform.py:530`):
+
+> A waiver written from a ruling is the one kind assay can propose honestly: the reason is not generated, it
+> is the sentence the person typed when they disagreed.
+
+The problem is the source. It selects rulings where `verdict == "disagree"`. A disagreement says the check
+was wrong; a waiver says the check was right and is accepted. Turning one into the other records the
+opposite of what the person said.
+
+With 24.1 in place this resolves itself: waiver candidates come from `accept` verdicts, which is exactly what
+an `accept` means, and the pane stops converting a claim into its negation.
+
+Two smaller form notes:
+
+- **Tab order.** Current: words, explanations, waivers, monitoring, settings, findings. Settings should be
+  last; it is currently fifth of six.
+- **A waiver candidate should be visible from the finding**, not only in a separate pane. The card is where
+  the evidence is and where the decision is made.
+
+### 24.3 What `claims` and `verify` get right, and why it matters here
+
+The strongest design principle in the tool, from `assay claims`:
+
+> Extraction is SELECTION, never generation: code splits the prose, and a judgment says what job each
+> sentence is doing. The model never writes a claim, so every one points at the file and line where a person
+> wrote it.
+
+And the measurement that forced it: "Boulder commercial building permits, residential filtered out" judged as
+one claim split 0.51/0.47 and flipped between runs. Atomised, the sharpest claim read `contradicts` at 0.82.
+
+This is the rule that should govern every drafting proposal in this document. 19.3 and 23.4 propose drafting
+vocab meanings, column descriptions and waiver reasons. Each must be a **proposal a person edits**, keyed to
+the evidence it came from, never a value written into config unattended. `claims` already shows the shape:
+select, point at the source, ask one narrow question, never generate.
+
+### 24.4 Self-auditing: more exists than expected, and one class is missing
+
+Already shipped:
+
+| command | audits |
+|---|---|
+| `config --check --strict` | what assay resolved: config file, provider, where the key came from, the cap |
+| `banks --strict` | every question's shape, against lint rules measured to fail |
+| `effectiveness` | agreement per family per version; disagreements still open; unclears |
+| `calibration` | whether confidence predicts correctness |
+| `backtest` | replays the repo's own git history and measures whether the checks catch what it already fixed |
+| `version-check`, `version-stamps` | whether a version bump is owed; whether each row records the logic that produced it |
+| `guide.py` | generated from source: lint rules, families and config keys are read, never typed |
+
+`config`'s docstring records exactly why self-inspection earns its place: "NO API KEY FOUND was wrong for
+weeks and nothing could show it... A capability check that can be wrong needs a way to see what it decided."
+
+**The missing class is prose drift in assay's own artifacts.** Three instances found in this session:
+
+1. `audit.yml` says "38 of 38 agreed" against a store holding 90, and "nothing gates until a question clears
+   min_adjudications, which none do" when one now does (18.2).
+2. `skilltext.py` contains seven example invocations of warehouse-touching commands and **none** carries
+   `--project-dir` or `--dbt` (22.2). This produced a blind `practices` run that was read as a finding.
+3. This document proposed six features that already ship (21).
+
+All three are mechanically checkable, and `guide.py` already demonstrates the technique:
+
+- **Validate every example command in the skill against the real CLI signature.** Parse `assay <cmd> <flags>`
+  out of `skilltext.py`, check each flag exists and that warehouse-touching commands carry a connection.
+  Catches 22.2 exactly, in CI, forever.
+- **`config_comment_contradicts_the_store`.** A comment in `audit.yml` asserting a count is checkable against
+  the store the same way a `schema.yml` description is checkable against SQL. It is the tool's own flagship
+  check pointed at its own config.
+- **Run assay on assay.** The repo is not a dbt project, so the dbt-specific tiers do not apply, but the
+  prose-versus-code family is exactly what `description_contradicts_the_code` does and it has never been
+  pointed inward.
+
+The first of these is the cheapest and would have prevented the most expensive mistake in this session.
