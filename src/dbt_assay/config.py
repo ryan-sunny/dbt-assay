@@ -261,6 +261,60 @@ def _date_or_none(v) -> str | None:
     return str(v)
 
 
+def _options(where: str, body) -> dict:
+    """{option: meaning} from a mapping, or from the list-of-one-key-mappings the guide once showed.
+
+    *** THE GUIDE SHOWED A LIST AND THE CODE CALLED `.items()` ON IT. ***
+    `assay guide explanations` documented `- genuinely_wrong: "..."`, and `rows.options_for` read
+    the value as a mapping -- so following the guide crashed `assay adjudicate`. Both spellings
+    mean the same thing, so both are read, and anything else is refused by name.
+    """
+    if isinstance(body, dict):
+        items = list(body.items())
+    elif isinstance(body, list) and all(isinstance(x, dict) and len(x) == 1 for x in body):
+        items = [next(iter(x.items())) for x in body]
+    else:
+        raise ThresholdError(f"explanations `{where}`: options are `name: what it means`, as a "
+                             f"mapping or a list of one-line mappings, not {type(body).__name__}")
+    out = {}
+    for k, v in items:
+        if not isinstance(v, (str, dict)) or not str(k).strip():
+            raise ThresholdError(f"explanations `{where}`: option `{k}` needs a sentence saying "
+                                 f"what that kind of row is")
+        out[str(k)] = v
+    return out
+
+
+def _explanations(raw: dict) -> tuple[dict, list]:
+    """(per-model options, named sets). A named set is `{applies_to:, options:}`.
+
+    *** FORTY MARTS, FORTY NEAR-IDENTICAL CARDS. ***
+    Per-model options were the only shape, so one set of answers true of "every water section
+    mart" was written forty times, and a forty-first mart got none. A named set takes the same
+    validated selector a vocab term and a waiver take, and a model-keyed set still overrides it
+    where a mart genuinely differs.
+    """
+    from .selector import SelectorError, validate_scope
+    per_model, sets = {}, []
+    for key, body in (raw or {}).items():
+        if isinstance(body, dict) and ("applies_to" in body or "options" in body):
+            unknown = set(body) - {"applies_to", "options"}
+            if unknown:
+                raise ThresholdError(f"explanations `{key}`: unknown key(s) {sorted(unknown)}. "
+                                     f"A named set takes `applies_to` and `options`.")
+            if not body.get("applies_to"):
+                raise ThresholdError(f"explanations `{key}`: a named set needs `applies_to`, "
+                                     f"the models its options are true of.")
+            try:
+                validate_scope(body["applies_to"], f"explanations `{key}`")
+            except SelectorError as e:
+                raise ThresholdError(str(e)) from e
+            sets.append((str(key), body["applies_to"], _options(key, body.get("options") or {})))
+        else:
+            per_model[str(key)] = _options(key, body or {})
+    return per_model, sets
+
+
 def _named_waiver(name: str, meta: dict) -> Waiver:
     from .selector import SelectorError, validate_scope
     what = f"waiver `{name}`"
@@ -293,7 +347,9 @@ class Config:
     vocab: dict = field(default_factory=dict)
     # Per-mart options for the row-adjudication family. THE OPTIONS ARE THE DOMAIN KNOWLEDGE and
     # there is one set per mart; this is the part of the file worth maintaining.
-    explanations: dict = field(default_factory=dict)
+    explanations: dict = field(default_factory=dict)       # model name -> {option: meaning}
+    # Named sets, each covering what its `applies_to` selects: [(name, applies_to, options)].
+    explanation_sets: list = field(default_factory=list)
     # Per-check overrides for the standard-practice split: enforce | recommend | adjudicate | off.
     practices: dict = field(default_factory=dict)
     # Where Elementary built its tables, and how long a monitor may go unwritten before assay
@@ -396,7 +452,7 @@ class Config:
                 validate_scope(sel, f"vocab `{term}`")
             except SelectorError as e:
                 raise ThresholdError(str(e)) from e
-        cfg.explanations = data.get("explanations") or {}
+        cfg.explanations, cfg.explanation_sets = _explanations(data.get("explanations") or {})
         cfg.practices = data.get("practices") or {}
 
         for name, q in (data.get("questions") or {}).items():
@@ -484,6 +540,25 @@ class Config:
         rather than inferred.
         """
         return [(c, shipped_action(c)) for c in sorted(firing - set(self.questions))]
+
+    def explanations_for(self, model: str, project=None, uid: str = "") -> dict:
+        """The options for one model: every named set that covers it, then its own on top."""
+        out: dict = {}
+        if project is not None and uid:
+            cache = self.__dict__.setdefault("_scope_cache", {})
+            for _name, sel, opts in self.explanation_sets:
+                k = repr(sel)
+                if k not in cache:
+                    from .selector import scope_of
+                    cache[k] = scope_of(project, sel) or set()
+                if uid in cache[k]:
+                    out.update(opts)
+        else:
+            for _name, sel, opts in self.explanation_sets:
+                if sel == model:
+                    out.update(opts)
+        out.update(self.explanations.get(model) or {})
+        return out
 
     def waived(self, model: str, question: str, project=None, uid: str = "") -> Waiver | None:
         """The waiver in force for this model and check, if any.
@@ -670,12 +745,16 @@ cost: {}
 practices: {}
 #  fct_model_fanout: recommend
 
-# explanations: options for the row-adjudication family, per model. The generic set is always
-# available; these are added to it, and they are where the domain knowledge lives.
+# explanations: options for the row-adjudication family. The generic set is always available;
+# these are added to it, and they are where the domain knowledge lives.
 explanations: {}
-#  water_rights:
+#  water_rights:                          # a model name -> its own options
 #    conditional_right: >-
 #      a claim on water not yet diverted, so its structure legitimately does not exist yet
+#  section_marts:                         # or a name -> options for every model it selects
+#    applies_to: {select: "path:models/marts/sections", exclude: "section_debug"}
+#    options:
+#      upstream_late: "the source had not published when this ran"
 
 # vocab: what the words mean here. Injected into state for EVERY question, which is why it improves
 # answers to questions you never wrote.

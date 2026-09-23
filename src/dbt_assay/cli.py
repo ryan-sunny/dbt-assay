@@ -6210,7 +6210,6 @@ def adjudicate(
         store = Store(store_path)
 
     verdicts, incoherent = {}, []
-    explanations = getattr(cfg, "explanations", None) or {}
     ctx = _state_ctx(project, {}, None, store, cfg, entries=entries)
     for i, fr in enumerate(rows):
         rec = states.make("failing_row", ctx, key=f"{fr.model_uid}::row::{i}",
@@ -6221,7 +6220,9 @@ def adjudicate(
         try:
             # so the answer records the checksum of the SQL it was computed from
             store.use_project(project)
-            ans = decide(store, client, rec, rows_mod.questions_for(fr, explanations),
+            ans = decide(store, client, rec,
+                         rows_mod.questions_for(fr, {fr.model: cfg.explanations_for(
+                             fr.model, project, fr.model_uid)}),
                          prompt_version=rows_mod.EXPL_VERSION, caller="assay.adjudicate")
         except BudgetExceeded as e:
             console.print(f"[yellow]stopped: {e}[/]")

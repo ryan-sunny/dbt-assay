@@ -321,11 +321,18 @@ EXPLANATIONS = """\
 
 ```yaml
 explanations:
-  water_rights:
-    - genuinely_wrong: "The value cannot be true of the real world."
-    - upstream_late: "The source had not published when this ran."
-    - test_too_strict: "The row is fine and the assertion is wrong."
+  water_rights:                       # one model's own options
+    genuinely_wrong: "The value cannot be true of the real world."
+    upstream_late: "The source had not published when this ran."
+    test_too_strict: "The row is fine and the assertion is wrong."
+  section_marts:                      # or one set for every model a selector covers
+    applies_to: {select: "path:models/marts/sections", exclude: "section_debug"}
+    options:
+      upstream_late: "The source had not published when this ran."
 ```
+
+A named set takes the same `applies_to` a vocab term and a waiver take, and refuses a selector it
+does not understand. A model's own options are added on top of any set that covers it.
 
 **THE OPTIONS ARE THE DOMAIN KNOWLEDGE.** This is the part of the config worth maintaining. When
 a dbt test fails, `assay adjudicate` samples the failing rows and asks which of YOUR options

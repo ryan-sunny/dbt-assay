@@ -454,7 +454,7 @@ def context(store, project, cfg, findings=None, volume_json: dict | None = None)
         "words": words,
         "more_candidates": more,
         "monitoring": monitoring_rows(cfg, volume_json),
-        "explanations": _explanation_rows(cfg, findings or []),
+        "explanations": _explanation_rows(cfg, findings or [], project),
         "waivers": _waiver_rows(store, cfg, findings or [], project),
         "settings": settings_rows(cfg),
     }
@@ -528,11 +528,22 @@ def _suggested_scope(issues: list, project=None) -> str:
     return ""
 
 
-def _explanation_rows(cfg, findings) -> list:
-    """One row per mart that has failing-row adjudication to do, with what is configured now."""
+def _explanation_rows(cfg, findings, project=None) -> list:
+    """One row per named set, then one per mart no set covers, with what is configured now.
+
+    A mart a named set already covers gets no card of its own: forty cards saying the same thing
+    is the repetition a set exists to remove.
+    """
     have = getattr(cfg, "explanations", None) or {}
-    out = []
-    for mart in sorted({f.subject_name for f in findings} | set(have)):
+    sets = getattr(cfg, "explanation_sets", None) or []
+    out, covered = [], set()
+    for name, sel, opts in sets:
+        out.append({"mart": name, "named": True, "applies_to": _scope_text(sel),
+                    "options": [{"name": k, "means": v} for k, v in sorted(opts.items())]})
+        if project is not None:
+            from .selector import scope_of
+            covered |= {project.name_of(u) for u in (scope_of(project, sel) or set())}
+    for mart in sorted(({f.subject_name for f in findings} | set(have)) - covered):
         opts = have.get(mart) or {}
         out.append({"mart": mart, "options": [{"name": k, "means": v} for k, v in
                                               sorted(opts.items())]})
@@ -1139,9 +1150,13 @@ function explanationsTab(host) {
   for (const x of CTX.explanations.slice(_p.from, _p.to)) {
     const row = el('div', {class: 'wrow'});
     row.append(el('h3', {text: x.mart}));
+    /* A named set covers every model its selector selects, so its options sit one level down,
+       under `options`, and the card says what it covers. */
+    const base = x.named ? ['explanations', x.mart, 'options'] : ['explanations', x.mart];
+    if (x.named) row.append(el('div', {class: 'measured', text: 'covers ' + x.applies_to}));
     for (const o of (x.options || []))
-      row.append(field(o.name, ['explanations', x.mart, o.name], o.means, '', 1));
-    row.append(field('(new option name)', ['explanations', x.mart, '__new'], '',
+      row.append(field(o.name, [...base, o.name], o.means, '', 1));
+    row.append(field('(new option name)', [...base, '__new'], '',
                      'e.g. backorder: an order placed for stock that has not arrived', 1));
     bits.push(row);
   }
