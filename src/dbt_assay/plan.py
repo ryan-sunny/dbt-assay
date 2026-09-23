@@ -32,6 +32,12 @@ SHAPES: dict[str, tuple[str, str]] = {
     # *** THE MONITORING CHECKS FIX THE MONITOR, NEVER THE DATA. ***
     # assay asserts that a monitor exists, is current and covers what matters. Every fix here is
     # a change to how the project is WATCHED; none of them touches a model.
+    # *** A STALE COMMENT IS FIXED IN THE COMMENT. ***
+    "config_comment_contradicts_the_store": (
+        "correct the number, or date it",
+        ("A comment in audit.yml states a count the store no longer holds. Write the number the "
+         "store holds now, or say when the old one was true -- \"38 of 38 agreed at 0.37\" is "
+         "history and is not checked. Nothing in the warehouse changes.")),
     "monitor_declared_but_never_run": (
         "build the monitor",
         ("The monitor is configured and has never produced a result: installed is not built. Run "

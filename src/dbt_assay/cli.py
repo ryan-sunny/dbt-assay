@@ -383,6 +383,14 @@ def check(
     # deferral nobody is told about is a check that stopped looking, which is the 0.38.1 rule.
     findings += _monitoring_findings(project, _cfg_pre, verify, project_dir, profiles_dir,
                                      dbt_bin, json_out)
+    # *** AND THE CONFIG'S OWN PROSE, READ AGAINST THE STORE IT DESCRIBES. ***
+    if Path(store_path or "").exists():
+        from . import selfaudit
+        _sa = Store(store_path)
+        try:
+            findings += selfaudit.config_findings(config_path, _sa, _cfg_pre)
+        finally:
+            _sa.close()
     # *** 7,656 DROPPED DECISIONS PRINTED AS "246 resolved". ***
     # The count existed and was read in exactly one place, inside an MCP tool. `check` is where
     # somebody watches a number move, so it is where a number moving for a reason that is not

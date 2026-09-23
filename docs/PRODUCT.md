@@ -149,6 +149,12 @@ Anything that needs the warehouse goes **through your own dbt**, so assay never 
 - `assay check --verify` counts each flagged hop's join key. A join onto a key that is unique **in
   the data** cannot fan out, and dbt only knows which keys are *declared* unique.
 
+### Its own config, read against its own store
+
+| check | what it catches |
+|---|---|
+| `config_comment_contradicts_the_store` | a comment in `audit.yml` that states a count -- "38 of 38 agreed", "which none do" -- and the store no longer bears it out. A claim dated to a version is history and is left alone |
+
 ### Completeness: do we have all of it?
 
 `assay completeness`. Coverage of what the project itself declares, and nothing more.

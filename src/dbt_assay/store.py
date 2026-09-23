@@ -994,10 +994,15 @@ class Store:
         # Counting rows would then let ONE subject ruled twice look like two verdicts, and a gate
         # floor is meant to measure how many SUBJECTS somebody read, not how many times they
         # pressed a key. Ruling the same model again is not more evidence about the question.
-        q = "select family, subject, question from adjudications"
+        # *** AND NOT THE PER-FINDING ROWS, WHICH ARE THE SAME KEYPRESS. ***
+        # One verdict on a card writes a model-level row and one `<uid>::finding::<id>` row per
+        # finding the card covered, so a card over eight findings counted NINE toward the floor.
+        # Every human write path writes the model-level row, so it is the one counted.
+        q = ("select family, subject, question from adjudications "
+             "where subject not like '%::finding::%'")
         args: list = []
         if source != "all":
-            q += " where source = ?"
+            q += " and source = ?"
             args.append(source)
         out: dict = {}
         for fam, _subj, _q in {tuple(r) for r in self.con.execute(q, args).fetchall()}:

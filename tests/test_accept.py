@@ -135,3 +135,13 @@ def test_a_named_waiver_covers_what_its_selector_selects(project_dir):
 def test_a_named_waiver_refuses_what_it_cannot_honour(body, needle):
     with pytest.raises(ThresholdError, match=needle):
         Config.from_dict({"waivers": {"w": body}})
+
+
+def test_one_keypress_is_one_verdict_toward_the_gate(tmp_path):
+    """A card over three findings writes four rows, and the floor counts one."""
+    from dbt_assay.cli import _record_one_verdict
+    s = Store(str(tmp_path / "s.duckdb"))
+    _record_one_verdict(s, "model.p.m", "test_cannot_fail", "agree", "", "real", "me",
+                        findings=["a", "b", "c"])
+    assert s.adjudication_counts()["test_cannot_fail"] == 1
+    s.close()

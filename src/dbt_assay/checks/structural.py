@@ -51,7 +51,10 @@ BBOX_FUNCS = {"ST_MAKEENVELOPE", "ST_EXPAND", "ST_ENVELOPE"}
 # `one_of_each` is a READING AID: one example per variant, so a reader sees what differs. It is
 # rebuilt from the descriptions every run and must not move the finding's identity, which is what
 # every ruling on it is filed under.
-_MEASURED = frozenset({"downstream", "marts", "probability", "confidence", "one_of_each"})
+# `store` is what the store held when a config comment was checked against it: it moves every
+# time somebody rules, and the finding is the same comment being wrong.
+_MEASURED = frozenset({"downstream", "marts", "probability", "confidence", "one_of_each",
+                       "store"})
 
 
 def _identity(evidence: dict) -> str:
