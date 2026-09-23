@@ -33,7 +33,9 @@ flag.
 ## Before you touch a model
 
 1. `contract(model)` — what one row is, what each column does, where each value comes from.
-   Fifteen lines instead of two hundred of SQL.
+   Fifteen lines instead of two hundred of SQL. Its `health` says what is already decided: open
+   findings and who ruled on each, what is waived or accepted (a decision already made -- do not
+   re-litigate it), and whether the grain was counted in the data or only inferred.
 2. `blast_radius(model)` — who reads it, and how many marts are downstream. If this number is
    large, say so before you change anything.
 3. `claims(model)` — **what this project SAYS this model does**, sentence by sentence, with what

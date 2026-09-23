@@ -108,8 +108,81 @@ class Backend:
     # ---- the tools ----
 
     def contract(self, model: str) -> dict:
-        c = live.contract_of(self.state(), model)
-        return c or {"error": f"no model named {model}"}
+        """The model's shape AND its health: what is open on it, what is waived, what is counted.
+
+        *** AN ANATOMY CHART WITH NO CHART NOTES. ***
+        The project's CLAUDE.md tells every agent to call this before editing a model, and it
+        returned grain, columns and reads -- nothing about the three open findings, the waiver on
+        `hop_multiplies_rows` that expires in March, or whether the grain was ever counted. "The
+        grain is owner_key" tells an agent what a model is; "owner_key, measured unique over 3.09M
+        rows today, one finding a person agreed with still open" changes what it writes.
+        Everything here was already in the store; nothing is measured to answer this.
+        """
+        st = self.state()
+        c = live.contract_of(st, model)
+        if not c:
+            return {"error": f"no model named {model}"}
+        c["health"] = self._health(model, c)
+        return c
+
+    def _health(self, model: str, contract: dict) -> dict:
+        from .config import Config
+        from .judged import apply_policy
+        from .probe import read as read_observed
+        st = self.state()
+        uid = next((u for u, m in st.project.models.items() if m.name == model), None)
+        try:
+            cfg = Config.load(self.config_path)
+        except Exception as e:                                      # noqa: BLE001
+            return {"error": f"audit.yml could not be read: {e}"}
+        store = self._open_store()
+        try:
+            every = live.findings_for(st, model, store)
+            kept, waived = apply_policy(every, cfg, store, st.project)
+            ruled: dict = {}
+            observed: dict = {}
+            if store is not None:
+                for subj, verdict, who, src, at in store.con.execute(
+                        """select subject, verdict, decided_by, source, decided_at from (
+                               select *, row_number() over (partition by subject, source
+                                                            order by decided_at desc) rn
+                               from adjudications where subject like ?)
+                           where rn = 1""", [f"{uid}::finding::%"]).fetchall():
+                    fid = str(subj).split("::finding::")[1]
+                    # A person's ruling outranks an agent's; the agent's is shown as the agent's.
+                    if src == "human" or fid not in ruled:
+                        ruled[fid] = {"verdict": verdict, "by": who, "as": src,
+                                      "at": str(at)[:10]}
+                observed = read_observed(store)
+        finally:
+            if store is not None:
+                store.close()
+        open_ = [{"finding": f.id, "check": f.check, "summary": f.summary,
+                  "action": a, "ruled_by": ruled.get(f.id)} for f, a, _w in kept]
+        in_force = [{"finding": f.id, "check": f.check, "why": why} for f, why in waived]
+        # *** THE GRAIN, AND WHETHER ANYBODY COUNTED IT. ***
+        grain = contract.get("grain") or []
+        rel = (st.schema.relation.get(uid) or "").replace('"', "").lower() if uid else ""
+        seen = observed.get(rel) or {}
+        measured = []
+        for col in [*grain, ", ".join(grain)] if len(grain) > 1 else grain:
+            o = seen.get(col)
+            if o is not None:
+                measured.append({"columns": col, "status": o.status, "rows": o.row_count,
+                                 "observed_at": str(o.observed_at)[:10],
+                                 "sampled": bool(o.sampled), "detail": o.detail})
+        agreed_open = sum(1 for f in open_ if (f["ruled_by"] or {}).get("verdict") == "agree"
+                          and (f["ruled_by"] or {}).get("as") == "human")
+        return {
+            "open_findings": open_,
+            "waived_or_accepted": in_force,
+            "grain_measured": measured or None,
+            "grain_note": (None if measured or not grain else
+                           "the grain has not been counted in the data. `assay probe` counts it "
+                           "through your own dbt."),
+            "summary": (f"{len(open_)} open finding(s), {agreed_open} a person agreed with; "
+                        f"{len(in_force)} waived, accepted or dismissed"),
+        }
 
     def lineage(self, model: str, column: str) -> dict:
         from . import provenance
@@ -954,8 +1027,9 @@ class Backend:
 
 
 TOOLS = [
-    ("contract", ("What a model IS: grain, columns, roles, where each value comes from. "
-                  "Fifteen lines instead of reading the SQL.")),
+    ("contract", ("What a model IS: grain, columns, roles, where each value comes from -- and "
+                  "its HEALTH: open findings with who ruled on them, what is waived or "
+                  "accepted, and whether the grain was ever counted. Call it before an edit.")),
     ("lineage", "Follow a column back through the DAG to the hop that produced its value."),
     ("blast_radius", "Who consumes this model, and how many marts are downstream."),
     ("findings", ("Contradictions assay currently sees, optionally for one model or one `check`. "
