@@ -4444,7 +4444,12 @@ def review(
     limit: int = typer.Option(20, "--limit", "-n"),
     subject: str = typer.Option(None, "--subject", help="the decision key to rule on"),
     question: str = typer.Option(None, "--question"),
-    verdict: str = typer.Option(None, "--verdict", help="agree | disagree | unclear"),
+    verdict: str = typer.Option(None, "--verdict", help="agree | disagree | unclear | accept"),
+    finding: str = typer.Option(None, "--finding",
+                                help="rule on one finding by its id, as `check --json` prints "
+                                     "it. What `accept` is for."),
+    until: str = typer.Option("", "--until",
+                              help="with accept: the date it stops suppressing, YYYY-MM-DD"),
     correction: str = typer.Option("", "--correction", help="what it should have been"),
     note: str = typer.Option("", "--note"),
     who: str = typer.Option("", "--by"),
@@ -4504,9 +4509,46 @@ def review(
         _review_loop(store, limit, target, dialect)
         store.close()
         raise typer.Exit(0)
+    if verdict and finding:
+        # *** `accept` IS ABOUT ONE FINDING, SO IT IS RECORDED AGAINST ONE. ***
+        # The finding's own row in the latest run says which model and check it is, so this needs
+        # no manifest: the id is enough, and an id the store has never seen is refused.
+        hit = store.con.execute(
+            "select subject, check_name, subject_name from findings where finding_id = ? "
+            "order by run_id desc limit 1", [finding]).fetchone()
+        if hit is None:
+            # Not in a recorded run -- `check --json` prints ids without writing one. The project
+            # itself says what is firing now, the same way the MCP `rule` tool resolves an id.
+            try:
+                tdir = _find_target(target)
+                project, digests, _f, schema, _s = _load(tdir, dialect)
+                now = live.all_findings(project, digests, schema, None, store=store)
+                f = next((x for x in now if x.id == finding), None)
+                hit = (f.subject, f.check, f.subject_name) if f else None
+            except typer.BadParameter:
+                hit = None
+        if hit is None:
+            console.print(f"[red]no finding {finding!r} in the store or firing in the project "
+                          f"now.[/] It may have been fixed. `assay check --json` lists the "
+                          f"current ids; pass --target if the manifest is not in ./target.")
+            raise typer.Exit(1)
+        try:
+            fam = _record_one_verdict(store, hit[0], hit[1], verdict, correction, note, who,
+                                      findings=[finding], until=until)
+        except ValueError as e:
+            console.print(f"[red]{e}[/]")
+            raise typer.Exit(1) from e
+        what = {"accept": "accepted: it stays out of the open list"
+                          + (f" until {until}" if until else "") + " and counts as correct",
+                "disagree": "dismissed: `check` will not raise it again",
+                "agree": "confirmed real: it stays, and `check` reports when a fix removes it",
+                }.get(verdict, "recorded")
+        console.print(f"{hit[2]} / {hit[1]}: {what}.")
+        store.close()
+        raise typer.Exit(0)
     if verdict:
         if not (subject and question):
-            console.print("[red]--verdict needs --subject and --question[/]")
+            console.print("[red]--verdict needs --subject and --question, or --finding[/]")
             raise typer.Exit(1)
         row = store.con.execute(
             "select answer, prompt_version, model_version from model_decisions "
@@ -4538,7 +4580,8 @@ def review(
     for key, q, ans, conf, pv, about, mv in rows:
         cf = f"  conf {conf:.2f}" if conf is not None else ""
         console.print(f"  [dim]{about or key.split('.')[-1]}[/]  {q} = [bold]{ans}[/]{cf}")
-    console.print("\n[dim]assay review --subject <key> --question <q> --verdict agree|disagree[/]")
+    console.print("\n[dim]assay review --subject <key> --question <q> --verdict agree|disagree, "
+                  "or --finding <id> --verdict accept --note <why> --until <date>[/]")
     store.close()
 
 
@@ -4658,7 +4701,7 @@ def _load_verdicts(store, path: str, who: str) -> None:
     # verified, and the skill says so -- `source='human'` is set by this code path, not by
     # anything about who ran it.
     by = who or (payload.get("by") if isinstance(payload, dict) else "") or "unknown"
-    fams, dismissed, agreed = Counter(), 0, 0
+    fams, dismissed, agreed, accepted_n = Counter(), 0, 0, 0
     for r in rows:
         # *** AND A `disagree` HAS TO ACTUALLY REMOVE THE THING. ***
         # The model-level verdict is the measurement -- it is what `calibration` and
@@ -4673,12 +4716,16 @@ def _load_verdicts(store, path: str, who: str) -> None:
         # which of that model's findings was the real one.
         #
         # Both writes go through ONE function, so they cannot disagree about the version again.
-        fids = list(r.get("findings") or []) if r["verdict"] in ("disagree", "agree") else []
+        fids = (list(r.get("findings") or [])
+                if r["verdict"] in ("disagree", "agree", "accept") else [])
         fams[_record_one_verdict(store, r["subject"], r["question"], r["verdict"],
-                                 r["correction"], r["note"], by, findings=fids)] += 1
+                                 r["correction"], r["note"], by, findings=fids,
+                                 until=r.get("until", ""))] += 1
         for _fid in fids:
             if r["verdict"] == "disagree":
                 dismissed += 1
+            elif r["verdict"] == "accept":
+                accepted_n += 1
             else:
                 agreed += 1
     console.print(f"recorded [bold]{len(rows)}[/] verdict(s) as `{by}`.")
@@ -4686,6 +4733,11 @@ def _load_verdicts(store, path: str, who: str) -> None:
         console.print(f"   [bold]{agreed} finding(s) confirmed real[/] [dim]-- they stay, and "
                       f"`assay check` now reports how many of them a fix has actually removed. "
                       f"That is the only number that measures the LOOP rather than the tool.[/]")
+    if accepted_n:
+        console.print(f"   [bold]{accepted_n} finding(s) accepted[/] [dim]-- correct, and left as "
+                      f"they are on purpose. They leave the open list, count as the check being "
+                      f"right, and come back when their `until` passes. The waivers tab proposes "
+                      f"each one for audit.yml, so the decision is in git and not only here.[/]")
     if dismissed:
         console.print(f"   [green]{dismissed} finding(s) dismissed[/] [dim]-- read and called "
                       f"wrong, so `assay check` will not raise them again. A dismissal is keyed "
@@ -4707,7 +4759,8 @@ def _load_verdicts(store, path: str, who: str) -> None:
 
 
 def _record_one_verdict(store, subject: str, question: str, verdict: str, correction: str,
-                        note: str, who: str, row=None, findings: list | None = None) -> str:
+                        note: str, who: str, row=None, findings: list | None = None,
+                        until: str = "") -> str:
     """Write ONE human verdict, and return the family it landed in.
 
     *** `--verdict` AND `--load` MUST NOT BE TWO SPELLINGS OF THIS. ***
@@ -4742,11 +4795,11 @@ def _record_one_verdict(store, subject: str, question: str, verdict: str, correc
     model_version = row[2] if row else ""
     store.adjudicate(subject, question, fam, row[0] if row else "",
                      verdict, correction, note, who,
-                     prompt_version=version, model_version=model_version)
+                     prompt_version=version, model_version=model_version, until=until)
     for fid in findings or []:
         store.adjudicate(f"{subject}::finding::{fid}", question, fam, "",
                          verdict, "", note or f"read and called {verdict} in the review form",
-                         who, prompt_version=version, model_version=model_version)
+                         who, prompt_version=version, model_version=model_version, until=until)
     return fam
 
 

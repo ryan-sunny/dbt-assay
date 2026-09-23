@@ -124,16 +124,8 @@ class Ctx:
         nothing for the case that motivated it. `applies_to` therefore takes either a selector or
         `{select:, exclude:}`, which is the shape dbt's own `--select`/`--exclude` already has.
         """
-        from .selector import resolve
-
-        def build():
-            if isinstance(sel, dict):
-                keep = resolve(self.project, str(sel.get("select") or "")) or set()
-                drop = resolve(self.project, str(sel.get("exclude") or "")) if sel.get("exclude") \
-                    else set()
-                return keep - (drop or set())
-            return resolve(self.project, str(sel))
-        return self.once(f"scope::{term}", build)
+        from .selector import scope_of
+        return self.once(f"scope::{term}", lambda: scope_of(self.project, sel))
 
     def vocab_for(self, *uids) -> dict:
         """The terms that are true about EVERY subject in this state.

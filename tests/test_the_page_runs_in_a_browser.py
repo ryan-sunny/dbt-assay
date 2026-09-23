@@ -339,3 +339,61 @@ def test_no_tab_scrolls_the_document(page_file):
                 page.close()
         finally:
             browser.close()
+
+
+def test_accept_on_a_card_and_a_waiver_from_the_tab_reach_the_handback(tmp_path, project_dir):
+    """*** A VERDICT THE FORM CANNOT HAND BACK DOES NOT EXIST. ***
+
+    `accept` is recorded from the card, with the date it lapses, and a finding already accepted
+    shows up on the Waivers tab as one complete named waiver -- never as loose fields audit.yml
+    cannot load, which is what that tab used to write.
+    """
+    import json
+
+    from playwright.sync_api import sync_playwright
+    store = str(tmp_path / "s.duckdb")
+    r = CliRunner().invoke(app, ["check", "-t", str(project_dir), "--store", store, "--json"])
+    fid = json.loads(r.output)["findings"][0]["finding"]
+    r = CliRunner().invoke(app, ["review", "--store", store, "-t", str(project_dir),
+                                 "--finding", fid, "--verdict", "accept",
+                                 "--note", "a grid cell, not a radius", "--until", "2999-01-01"])
+    assert r.exit_code == 0, r.output
+    out = tmp_path / "review.html"
+    r = CliRunner().invoke(app, ["review", "--emit", str(out), "--target", str(project_dir),
+                                 "--store", store])
+    assert r.exit_code == 0, r.output
+
+    errors: list[str] = []
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(accept_downloads=True)
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(out.as_uri())
+            page.click('button[data-pane="findings"]')
+            card = page.locator(".card").first
+            until = card.locator("input.until")
+            assert until.is_hidden(), "the date only belongs to an accept"
+            card.locator('input[value="accept"]').check()
+            assert until.is_visible()
+            until.fill("2027-06-01")
+            card.locator("input.note").fill("intended: the model is a lookup")
+
+            page.click('button[data-pane="waivers"]')
+            page.locator("label.write input[type=checkbox]").first.check()
+            with page.expect_download() as dl:
+                page.click("#dl")
+            doc = json.loads(open(dl.value.path()).read())
+            assert not errors, "\n".join(errors[:5])
+        finally:
+            browser.close()
+
+    v = [x for x in doc["verdicts"] if x["verdict"] == "accept"]
+    assert v and v[0]["until"] == "2027-06-01" and v[0]["note"]
+    waivers = [c for c in doc["config"] if c["path"][0] == "waivers"]
+    assert len(waivers) == 1 and len(waivers[0]["path"]) == 2
+    body = waivers[0]["value"]
+    assert body["reason"] == "a grid cell, not a radius" and body["until"] == "2999-01-01"
+    assert body["question"] and body["applies_to"]
+    from dbt_assay.config import Config
+    Config.from_dict({"waivers": {waivers[0]["path"][1]: body}})       # and it loads

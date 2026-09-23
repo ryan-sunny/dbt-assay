@@ -305,7 +305,7 @@ def _clusters(store, cfg) -> dict:
     seen: dict = defaultdict(list)
     for subj, q, note in store.con.execute(
             "select subject, question, note from adjudications "
-            "where verdict = 'disagree' and note is not null and note <> '' "
+            "where verdict in ('disagree', 'accept') and note is not null and note <> '' "
             f"and source in ({', '.join('?' * len(_WROTE_A_REASON))}) "
             "order by subject, question", list(_WROTE_A_REASON)).fetchall():
         sh = _shape(note)
@@ -405,31 +405,45 @@ def _repeated_reasons(store, cfg, live: set | None) -> list[Suggestion]:
 
 # --------------------------------------------------------------------------- waivers
 
-def _waivers_from_disagreements(store, cfg) -> list[Suggestion]:
-    """A `disagree` ruling is a reason somebody already wrote; a waiver needs one and an expiry."""
-    already = {(m, getattr(w, "question", ""))
-               for m, ws in (cfg.waivers or {}).items() for w in ws}
-    out = []
-    for subj, q, note, src, when in store.con.execute(
-            "select subject, question, note, source, decided_at from adjudications "
-            "where verdict = 'disagree' and note is not null and note <> '' "
-            f"and source in ({', '.join('?' * len(_WROTE_A_REASON))}) "
-            "order by subject, question, decided_at", list(_WROTE_A_REASON)).fetchall():
-        name = str(subj).split(".")[-1]
-        if (name, q) in already or (subj, q) in already:
+def _waivers_from_acceptances(store, cfg) -> list[Suggestion]:
+    """An `accept` is a waiver somebody already decided, with the reason they wrote.
+
+    *** THIS PROPOSED WAIVERS FROM `disagree` RULINGS, WHICH SAY THE OPPOSITE. ***
+    A disagreement is "the check misread the SQL": the fix is the check, or the dismissal the
+    verdict already is. A waiver is "the check is right and I accept it". Drafting the second from
+    the first wrote into audit.yml the negation of what the person said. Only a person's `accept`
+    proposes a waiver, because an agent's is a reading, not a decision.
+    """
+    already = set()
+    for key, ws in (cfg.waivers or {}).items():
+        for w in ws:
+            already.add((key if getattr(w, "applies_to", None) is None
+                         else str(w.applies_to), getattr(w, "question", "")))
+    out, seen = [], set()
+    for subj, q, note, when, until in store.con.execute(
+            """select subject, question, note, decided_at, coalesce(until, '') from (
+                   select *, row_number() over (partition by subject
+                                                order by decided_at desc) rn
+                   from adjudications where source = 'human')
+               where rn = 1 and verdict = 'accept' and coalesce(note, '') <> ''
+               order by subject, question, decided_at""").fetchall():
+        name = str(subj).split("::finding::")[0].split(".")[-1]
+        if (name, q) in already or (name, q) in seen:
             continue
+        seen.add((name, q))
         out.append(Suggestion(
             section="waivers", key=f"{name}:{q}", rank=1.0,
-            basis="a disagree ruling, whose reason is already written",
-            headline=f"{name} needs a waiver for `{q}` -- somebody ruled this check wrong "
-                     f"here and wrote why, and nothing records that decision",
-            measured=[f"ruled by {src or 'unrecorded'}"
-                      + (f" on {str(when)[:10]}" if when else ""),
-                      f"reason as given: {str(note)[:300]}"],
-            draft=f"waivers:\n  {name}:\n    - question: {q}\n"
-                  f"      reason: >\n        {str(note)[:400]}\n"
-                  f"      until: \"\"   # REQUIRED. A waiver with no expiry is a deletion.\n"
-                  f"                 # Pick the date you would want to be asked again."))
+            basis="an accept ruling, whose reason is already written",
+            headline=f"{name}: `{q}` was accepted -- correct, and left on purpose -- and only the "
+                     f"store records it. A waiver puts the decision in git",
+            measured=[f"accepted on {str(when)[:10]}" if when else "accepted",
+                      f"reason as given: {str(note)[:300]}"]
+                     + ([f"until {until}"] if until else []),
+            draft=f"waivers:\n  {name}__{q}:\n    question: {q}\n    applies_to: {name}\n"
+                  f"    reason: >\n      {str(note)[:400]}\n"
+                  + (f"    until: {until}\n" if until else
+                     "    until: \"\"   # A waiver with no expiry is a deletion. Pick the date "
+                     "you would want to be asked again.\n")))
     return out
 
 
@@ -672,7 +686,7 @@ def build(store, cfg, firing: set, run_id: str | None = None, live: set | None =
         out += _vocab_from_joins(store, cfg, run_id)
         out += _vocab_from_contradicted_names(store)
         out += _repeated_reasons(store, cfg, live)
-        out += _waivers_from_disagreements(store, cfg)
+        out += _waivers_from_acceptances(store, cfg)
         out += _questions_from_agreement(store, cfg)
         out += _explanations(store)
     out += _questions_unconfigured(cfg, firing)

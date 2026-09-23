@@ -78,3 +78,40 @@ def resolve(project, expr: str | None) -> set[str] | None:
     for tok in expr.split():
         out |= _one(project, tok)
     return out
+
+
+def validate_scope(sel, what: str) -> None:
+    """An `applies_to`: a selector string, or `{select:, exclude:}`. Raises `SelectorError`.
+
+    *** ONE VALIDATOR FOR EVERY SURFACE THAT SCOPES SOMETHING. ***
+    `vocab` had this and `waivers` and `explanations` did not, so the same project wrote one
+    carefully scoped term and fourteen near-identical waivers beside it. The three surfaces are one
+    idea -- this is true HERE -- and they refuse bad syntax the same way.
+    """
+    if isinstance(sel, dict):
+        unknown = set(sel) - {"select", "exclude"}
+        if unknown:
+            raise SelectorError(f"{what}: `applies_to` takes `select` and `exclude`, not "
+                                f"{sorted(unknown)}")
+        if not sel.get("select"):
+            raise SelectorError(f"{what}: `applies_to` given as a mapping needs a `select`. An "
+                                f"`exclude` with nothing to subtract from scopes it to nothing.")
+        exprs = [sel.get("select"), sel.get("exclude")]
+    elif isinstance(sel, str) and sel.strip():
+        exprs = [sel]
+    else:
+        raise SelectorError(f"{what}: `applies_to` must be a selector or {{select:, exclude:}}")
+    for expr in [x for x in exprs if x]:
+        try:
+            validate(str(expr))
+        except SelectorError as e:
+            raise SelectorError(f"{what}: {e}") from e
+
+
+def scope_of(project, sel) -> set[str] | None:
+    """The unique_ids an `applies_to` covers. None only for an empty selector (everything)."""
+    if isinstance(sel, dict):
+        keep = resolve(project, str(sel.get("select") or "")) or set()
+        drop = resolve(project, str(sel.get("exclude") or "")) if sel.get("exclude") else set()
+        return keep - (drop or set())
+    return resolve(project, str(sel))

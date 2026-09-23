@@ -131,6 +131,8 @@ Rules for that block:
   overturning, which is fast; weighing an open question is not.
 - `agree` means the finding is RIGHT. `disagree` means the finding is WRONG. Say which way round in
   the first one of a session, because it inverts on a false positive and that trips people.
+- `accept` means the finding is RIGHT and they are leaving it on purpose. If they say "yes, but
+  that's intended", that is `accept`, not `disagree` -- and it needs their reason.
 
 ### 3. Record exactly what they said
 
@@ -142,6 +144,14 @@ assay review \
   --note "<their reason, or yours if they agreed with your read>" \
   --by "<their name>" \
   --target <target/> --store assay.duckdb
+```
+
+An `accept` is about one finding, so it names the finding (the id `check --json` prints):
+
+```bash
+assay review --finding <id> --verdict accept \
+  --note "<why it is correct and still stays>" --until <YYYY-MM-DD> \
+  --by "<their name>" --target <target/> --store assay.duckdb
 ```
 
 Then go straight to the next finding. No summary between items, no "great, that's recorded!" — the
@@ -174,6 +184,11 @@ Say this the first time, because it changes how carefully somebody answers.
 - **`unclear` removes nothing and gates nothing.** It is evidence the QUESTION could not be
   answered from what it was given, which is fixed by adding to the state rather than by rewording
   an option.
+- **`accept` removes the finding from the open list, and counts as the check being right.** The
+  finding is correct; they are leaving it on purpose. It needs a reason, takes an `--until` after
+  which the finding comes back, never lands in "agreed and still here", and the form's Waivers tab
+  proposes it for audit.yml so the decision is in git. Recording a correct finding as `disagree`
+  to make it go away tells a working check it was wrong -- that is what `accept` is for.
 
 Agreeing and then later dismissing the same finding does not count as fixed. That is a retraction,
 and it is excluded on purpose: the one honest number on the board must not be movable by changing

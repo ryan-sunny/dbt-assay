@@ -118,7 +118,7 @@ evidence instead of an opinion:
   means the check is wrong. On the project this was built against the answer was the second one,
   and the fix was structural rather than a third waiver. **Call it with a target.** Without one
   it cannot tell a live cluster from one that was already repaired, and it will say so;
-- `disagree` rulings that nothing waives, with the reason already written by whoever ruled;
+- `accept` rulings that nothing waives yet, with the reason already written by whoever accepted;
 - per-check actions backed by measured agreement, and an explicit "no measurement here" where
   there is none. **Do not propose an action from the shipped default alone** -- it reads as
   measured and is not.
@@ -467,7 +467,7 @@ Generated from the app itself, so it cannot drift from what is installed.
 | `assay probe` | Count what the SQL cannot settle. | `--target/-t` `--project-dir` `--profiles-dir` `--dialect` `--dbt/--dbt-bin` `--dry-run` `--emit` `--load` `--limit/-n` `--store` `--config` `--sample` |
 | `assay prune` | Drop old runs from the tables a parser can regenerate. | `--keep/-k` `--store` `--dry-run` |
 | `assay regress` | Re-ask every question a person already agreed with, and report what moved. | `--target/-t` `--store` `--config` `--family/-f` |
-| `assay review` | List judgments nobody has ruled on, or record a verdict. | `--store` `--interactive/-i` `--from-labels` `--target/-t` `--dialect` `--limit/-n` `--subject` `--question` `--verdict` `--correction` `--note` `--by` `--config` `--emit` `--load` `--report` `--monitoring` `--apply` `--reads` `--repair` |
+| `assay review` | List judgments nobody has ruled on, or record a verdict. | `--store` `--interactive/-i` `--from-labels` `--target/-t` `--dialect` `--limit/-n` `--subject` `--question` `--verdict` `--finding` `--until` `--correction` `--note` `--by` `--config` `--emit` `--load` `--report` `--monitoring` `--apply` `--reads` `--repair` |
 | `assay scan` | Read the project and report what can and cannot be audited. | `--target/-t` `--dialect` |
 | `assay semantics` | Why is that filter there, and does the description still describe the code? | `--target/-t` `--select/-s` `--families` `--print-state` `--limit/-n` `--store` `--config` |
 | `assay skill <which>` | Emit an agent procedure. | `--write` |

@@ -245,6 +245,44 @@ class Waiver:
     question: str
     reason: str
     until: str | None = None
+    # None: the waiver is keyed by a model name and covers that model. Otherwise a selector, the
+    # same as a vocab term's, and the key is the waiver's own name.
+    applies_to: object = None
+
+
+def _date_or_none(v) -> str | None:
+    if v in (None, ""):
+        return None
+    from datetime import date
+    try:
+        date.fromisoformat(str(v))
+    except ValueError:
+        raise ThresholdError(f"`until: {v}` is not a date. Write YYYY-MM-DD.") from None
+    return str(v)
+
+
+def _named_waiver(name: str, meta: dict) -> Waiver:
+    from .selector import SelectorError, validate_scope
+    what = f"waiver `{name}`"
+    unknown = set(meta) - {"question", "reason", "until", "applies_to"}
+    if unknown:
+        raise ThresholdError(f"{what}: unknown key(s) {sorted(unknown)}. A named waiver takes "
+                             f"question, applies_to, reason and until.")
+    if not meta.get("question"):
+        raise ThresholdError(f"{what}: names no `question`, so it would silence nothing.")
+    if not meta.get("reason"):
+        raise ThresholdError(f"{what}: has no reason. A waiver without one is where findings go "
+                             f"to die.")
+    if not meta.get("applies_to"):
+        raise ThresholdError(f"{what}: a named waiver needs `applies_to`, the models it covers. "
+                             f"Without one it would cover everything, which is disabling the "
+                             f"check -- `enabled: false` under questions says that honestly.")
+    try:
+        validate_scope(meta["applies_to"], what)
+    except SelectorError as e:
+        raise ThresholdError(str(e)) from e
+    return Waiver(str(meta["question"]), str(meta["reason"]), _date_or_none(meta.get("until")),
+                  applies_to=meta["applies_to"])
 
 
 @dataclass
@@ -346,24 +384,18 @@ class Config:
                 raise ValueError(f"cost.{key} must not be negative, got {rate}")
             cfg.cost[key] = rate
         cfg.vocab = data.get("vocab") or {}
+        from .selector import SelectorError, validate_scope
         for term, body in cfg.vocab.items():
             sel = (body or {}).get("applies_to") if isinstance(body, dict) else None
             if not sel:
                 continue
-            from .selector import validate as _validate
             # A string, or {select:, exclude:} -- because the exception often lives INSIDE the
             # rule: `models/water/az` sits under `models/water`, so a term about Colorado law
             # scoped to `path:models/water` would still reach all 70 Arizona models.
-            if isinstance(sel, dict) and not sel.get("select"):
-                raise ThresholdError(
-                    f"vocab `{term}`: `applies_to` given as a mapping needs a `select`. An "
-                    f"`exclude` with nothing to subtract from scopes the term to nothing.")
-            exprs = ([sel.get("select"), sel.get("exclude")] if isinstance(sel, dict) else [sel])
-            for expr in [x for x in exprs if x]:
-                try:
-                    _validate(str(expr))
-                except Exception as e:
-                    raise ThresholdError(f"vocab `{term}`: {e}") from e
+            try:
+                validate_scope(sel, f"vocab `{term}`")
+            except SelectorError as e:
+                raise ThresholdError(str(e)) from e
         cfg.explanations = data.get("explanations") or {}
         cfg.practices = data.get("practices") or {}
 
@@ -396,14 +428,33 @@ class Config:
         checks = known_checks()
         cfg.unknown_questions = sorted(set(cfg.questions) - checks)
 
+        # *** TWO SHAPES, AND THE SECOND ONE SCOPES. ***
+        #   waivers:
+        #     stg_blm_plss_sections:              # a model name -> a list, as it always was
+        #       - {question: bbox_as_radius, reason: ..., until: 2027-01-01}
+        #     grid_cells_are_not_radii:           # a NAME -> one waiver, scoped like a vocab term
+        #       question: bbox_as_radius
+        #       applies_to: {select: "path:models/water/staging", exclude: "stg_az_wells"}
+        #       reason: ...
+        # Fourteen near-identical waivers, two of which said in prose that they were "the same
+        # shape as" another, are one waiver with a selector -- and a new model of that shape is
+        # covered instead of silently not.
         for model, meta in (data.get("waivers") or {}).items():
+            if isinstance(meta, dict):
+                cfg.waivers[model] = [_named_waiver(model, meta)]
+                continue
             out = []
             for w in meta or []:
+                if not isinstance(w, dict):
+                    raise ThresholdError(
+                        f"waiver under `{model}` is {w!r}. Under a model name, waivers are a "
+                        f"list of {{question, reason, until}}; a named waiver is one mapping "
+                        f"with `question`, `applies_to` and `reason`.")
                 if not w.get("reason"):
                     raise ThresholdError(
                         f"waiver on `{model}` for `{w.get('question')}` has no reason. A waiver "
                         f"without one is where findings go to die.")
-                out.append(Waiver(w["question"], w["reason"], w.get("until")))
+                out.append(Waiver(w["question"], w["reason"], _date_or_none(w.get("until"))))
             cfg.waivers[model] = out
         # A waiver naming no real check silences nothing, and a waiver is exactly the place
         # someone believes a finding has been dealt with. assay's own example waived
@@ -434,15 +485,35 @@ class Config:
         """
         return [(c, shipped_action(c)) for c in sorted(firing - set(self.questions))]
 
-    def waived(self, model: str, question: str) -> Waiver | None:
+    def waived(self, model: str, question: str, project=None, uid: str = "") -> Waiver | None:
+        """The waiver in force for this model and check, if any.
+
+        A model-keyed waiver matches by name. A named one matches when the model is inside its
+        `applies_to`, which needs the project; without one it matches only a selector that is
+        exactly this model's name, rather than guessing what a path or a tag would have covered.
+        """
         from datetime import datetime, timezone
-        for w in self.waivers.get(model, []):
-            if w.question != question:
-                continue
-            today = datetime.now(timezone.utc).date().isoformat()
-            if w.until and str(w.until) < today:
-                continue                        # an expired waiver is not a waiver
-            return w
+        today = datetime.now(timezone.utc).date().isoformat()
+        for key, ws in self.waivers.items():
+            for w in ws:
+                if w.question != question:
+                    continue
+                if w.until and str(w.until) < today:
+                    continue                        # an expired waiver is not a waiver
+                if w.applies_to is None:
+                    if key == model:
+                        return w
+                    continue
+                if project is not None and uid:
+                    cache = self.__dict__.setdefault("_scope_cache", {})
+                    k = repr(w.applies_to)
+                    if k not in cache:
+                        from .selector import scope_of
+                        cache[k] = scope_of(project, w.applies_to) or set()
+                    if uid in cache[k]:
+                        return w
+                elif w.applies_to == model:
+                    return w
         return None
 
 
@@ -617,10 +688,16 @@ vocab: {}
 #      select:  "path:models/water"
 #      exclude: "path:models/water/az"
 
-# waivers: reason required, expiry optional but recommended.
+# waivers: the check is RIGHT here and you accept it. Reason required, expiry recommended.
+# (If the check misread the SQL, that is a `disagree` in `assay review`, not a waiver.)
 waivers: {}
-#  int_water_conditional:
+#  int_water_conditional:                  # a model name, and a list for that model
 #    - question: description_contradicts_the_code   # a CHECK name, as in `questions:` above
 #      reason: "the summary is deliberately short; the file comment carries the detail"
 #      until: 2027-01-01
+#  grid_cells_are_not_radii:               # or a name, scoped like a vocab term
+#    question: bbox_as_radius
+#    applies_to: {select: "path:models/staging", exclude: "stg_legacy_radius"}
+#    reason: "the envelope is a grid cell from stored bounds, not an approximated circle"
+#    until: 2027-01-01
 """

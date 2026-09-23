@@ -1807,7 +1807,8 @@ function configTab(host) {
     for (const m of Object.keys(c.waivers).sort())
       for (const w of [].concat(c.waivers[m])) rows.push({model: m, w: w});
     bits.push(section('waivers (' + rows.length + ')', grid(rows, [
-      {key: 'model', label: 'model', mono: 1, val: r => r.model, cell: r => link(r.model)},
+      {key: 'model', label: 'model, or a named waiver', mono: 1, val: r => r.model,
+       cell: r => link(r.model)},
       {key: 'w', label: 'waived, and why', val: r => JSON.stringify(r.w), cell: r => kvAny(r.w)},
     ], {placeholder: 'filter waivers...', cap: 400})));
     bits.push(el('p', {class: 'note', text: 'A waived finding never reaches the findings table, '

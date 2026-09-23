@@ -454,12 +454,19 @@ def apply_policy(findings, cfg, store, project=None) -> tuple[list, list]:
     # Without this the review loop does not compound: 115 findings ruled false are 115 findings
     # again tomorrow, and the only thing that ever removed one was a hand-written waiver. A flag
     # you cannot dispose of is a tax, not a question.
-    dismissed = {}
+    dismissed, accepted = {}, {}
     if store is not None:
         try:
             dismissed = store.dismissed()
         except Exception:                                        # noqa: BLE001
             dismissed = {}
+        # *** A FINDING A PERSON CALLED CORRECT AND CHOSE TO LEAVE IS NOT OUTSTANDING. ***
+        # Suppressed the way a waiver suppresses, with the name, the reason and the date it
+        # lapses. An expired acceptance is not returned at all, so the finding comes back.
+        try:
+            accepted = store.accepted()
+        except Exception:                                        # noqa: BLE001
+            accepted = {}
 
     kept, waived = [], []
     scope_cache: dict = {}
@@ -472,11 +479,18 @@ def apply_policy(findings, cfg, store, project=None) -> tuple[list, list]:
                               + (f" on {str(when)[:10]}" if when else "")
                               + (f": {note[:160]}" if note else "")))
             continue
+        a = accepted.get(f.id)
+        if a:
+            who, when, note, until = a
+            waived.append((f, f"accepted by {who}"
+                              + (f" until {until}" if until else "")
+                              + (f": {note[:160]}" if note else "")))
+            continue
         q = cfg.for_question(f.check)
         if not q.enabled:
             waived.append((f, "disabled in audit.yml"))
             continue
-        w = cfg.waived(f.subject_name, f.check)
+        w = cfg.waived(f.subject_name, f.check, project, f.subject)
         if w:
             waived.append((f, f"waived: {w.reason}"))
             continue

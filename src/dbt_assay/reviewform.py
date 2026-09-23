@@ -172,9 +172,21 @@ def load(payload) -> tuple[list, list]:
         if not subj or not q:
             bad.append(f"row {i} names no subject or question")
             continue
-        if v not in ("agree", "disagree", "unclear"):
+        if v not in ("agree", "disagree", "unclear", "accept"):
             bad.append(f"{subj.split('.')[-1]} / {q}: verdict is {v or 'empty'}, not recorded")
             continue
+        until = str(r.get("until", "") or "").strip()
+        if v == "accept" and not str(r.get("note", "") or "").strip():
+            bad.append(f"{subj.split('.')[-1]} / {q}: accepted with no reason, not recorded. "
+                       f"An accept is a waiver with a name on it and needs the waiver's why.")
+            continue
+        if until:
+            try:
+                from datetime import date
+                date.fromisoformat(until)
+            except ValueError:
+                bad.append(f"{subj.split('.')[-1]} / {q}: until is {until!r}, not a date")
+                continue
         ok.append({"subject": subj, "question": q, "verdict": v,
                    "note": str(r.get("note", "") or ""),
                    "correction": str(r.get("correction", "") or ""),
@@ -183,7 +195,8 @@ def load(payload) -> tuple[list, list]:
                    # for measuring a question and deliberately too coarse to delete evidence with
                    # -- one model carries eight findings of one check. The card knows exactly
                    # which ones it showed, so the dismissal lands on those and no others.
-                   "findings": [str(x) for x in (r.get("findings") or []) if x]})
+                   "findings": [str(x) for x in (r.get("findings") or []) if x],
+                   "until": until if v == "accept" else ""})
     # A total order, so loading the same file twice writes the same rows in the same sequence.
     ok.sort(key=lambda r: (r["subject"], r["question"]))
     return ok, bad
@@ -442,7 +455,7 @@ def context(store, project, cfg, findings=None, volume_json: dict | None = None)
         "more_candidates": more,
         "monitoring": monitoring_rows(cfg, volume_json),
         "explanations": _explanation_rows(cfg, findings or []),
-        "waivers": _waiver_rows(store, cfg, findings or []),
+        "waivers": _waiver_rows(store, cfg, findings or [], project),
         "settings": settings_rows(cfg),
     }
 
@@ -526,28 +539,44 @@ def _explanation_rows(cfg, findings) -> list:
     return out[:40]
 
 
-def _waiver_rows(store, cfg, findings) -> list:
-    """Findings somebody already said were fine, with the reason they gave.
+def _waiver_rows(store, cfg, findings, project=None) -> list:
+    """Findings a PERSON called correct and chose to leave, with the reason they gave.
 
-    A waiver written from a ruling is the one kind assay can propose honestly: the reason is not
-    generated, it is the sentence the person typed when they disagreed.
+    *** A WAIVER SAYS THE CHECK WAS RIGHT. THESE CAME FROM RULINGS SAYING IT WAS WRONG. ***
+    This pane proposed waivers from `disagree` rulings, which records the opposite of what the
+    person said: a disagreement is "the check misread the SQL", a waiver is "the check is right
+    and I accept it". With `accept` a verdict of its own, the candidates are exactly those, and
+    the reason is still not generated -- it is the sentence the person typed when they accepted.
+
+    One row per (model, check), because that is what a waiver covers. Proposed as a named waiver
+    scoped to the model, so the decision lands in audit.yml -- which is in git -- and not only in
+    a store that is not.
     """
     if store is None:
         return []
     try:
-        ruled = store.agent_rulings() + [dict(r) for r in []]
+        rows = store.con.execute(
+            """select subject, question, decided_by, note, coalesce(until, '') from (
+                   select *, row_number() over (partition by subject
+                                                order by decided_at desc) rn
+                   from adjudications
+                   where source = 'human' and subject like '%::finding::%')
+               where rn = 1 and verdict = 'accept' order by decided_at""").fetchall()
     except Exception:                                            # noqa: BLE001
         return []
-    waived = getattr(cfg, "waivers", None) or {}
-    out = []
-    for r in ruled:
-        if str(r.get("verdict")) != "disagree" or not (r.get("note") or "").strip():
+    names = {f.subject: f.subject_name for f in findings}
+    today = __import__("datetime").date.today().isoformat()
+    out, seen = [], set()
+    for subj, check, who, note, until in rows:
+        uid = str(subj).split("::finding::")[0]
+        model = names.get(uid) or uid.split(".")[-1]
+        if (model, check) in seen or (until and str(until) < today):
             continue
-        model = str(r.get("subject", "")).split("::")[0].split(".")[-1]
-        if model in waived:
-            continue
-        out.append({"model": model, "check": r.get("family") or r.get("question") or "",
-                    "reason": r["note"], "source": r.get("source", "")})
+        seen.add((model, check))
+        if cfg.waived(model, check, project, uid):
+            continue                                  # already a waiver: nothing to propose
+        out.append({"model": model, "check": check, "reason": note or "", "by": who or "",
+                    "until": until or "", "name": f"{model}__{check}"})
     return out[:40]
 
 
@@ -810,15 +839,30 @@ function card(c) {
   ]));
 
   const ans = el('div', {class: 'ans'});
-  for (const v of ['agree', 'disagree', 'unclear']) {
+  /* *** `accept`: THE FINDING IS RIGHT, AND IT STAYS. ***
+     Without it a correct-but-intended finding had two answers and both were wrong: `agree` left
+     it outstanding forever, and `disagree` told a working check it was mistaken. An accept needs
+     the reason a waiver needs, and takes the date it lapses. */
+  const untilBox = el('input', {type: 'text', class: 'until',
+                                placeholder: 'accepted until YYYY-MM-DD (optional)'});
+  untilBox.value = a.until || '';
+  untilBox.hidden = a.verdict !== 'accept';
+  untilBox.oninput = () => {
+    answers[c.key] = Object.assign({}, answers[c.key], {until: untilBox.value.trim()}); save();
+  };
+  for (const v of ['agree', 'disagree', 'unclear', 'accept']) {
     const r = el('input', {type: 'radio', name: 'v-' + c.key, value: v});
     if (a.verdict === v) r.checked = true;
     r.onchange = () => {
       answers[c.key] = Object.assign({}, answers[c.key], {verdict: v});
+      untilBox.hidden = v !== 'accept';
       box.classList.add('done'); save(); tick();
     };
-    ans.append(el('label', {}, [r, el('span', {text: v})]));
+    ans.append(el('label', {title: v === 'accept'
+      ? 'correct, and left as it is on purpose: it leaves the open list and counts as the check '
+        + 'being right. Needs a reason.' : ''}, [r, el('span', {text: v})]));
   }
+  ans.append(untilBox);
   const note = el('input', {type: 'text', class: 'note',
                             placeholder: 'why (optional, and the most useful thing here)'});
   note.value = a.note || '';
@@ -913,8 +957,9 @@ function download() {
   for (const c of D.cards) {
     const a = answers[c.key];
     if (!a || !a.verdict) continue;      // never an answer nobody gave
-    out.push({subject: c.subject, question: c.question, verdict: a.verdict,
-              note: a.note || '', model: c.model, findings: c.findings.map(f => f.id)});
+    out.push(Object.assign({subject: c.subject, question: c.question, verdict: a.verdict,
+              note: a.note || '', model: c.model, findings: c.findings.map(f => f.id)},
+              a.verdict === 'accept' && a.until ? {until: a.until} : {}));
   }
   out.sort((x, y) => (x.subject + x.question < y.subject + y.question ? -1 : 1));
   const body = JSON.stringify(
@@ -1107,8 +1152,9 @@ function explanationsTab(host) {
 
 function waiversTab(host) {
   const bits = [el('p', {class: 'measured', text:
-    'Findings somebody already said were fine, with the reason THEY gave. A waiver needs a reason '
-    + 'and an expiry is worth having; nothing here is written until you apply it.'})];
+    'Findings somebody ACCEPTED: correct, and left as they are on purpose, with the reason they '
+    + 'gave. Tick one to write it into audit.yml as a waiver, so the decision is in git and not '
+    + 'only in the store. Nothing here is written until you apply it.'})];
   const _p = pageOf('waivers');
   for (const w of CTX.waivers.slice(_p.from, _p.to)) {
     const row = el('div', {class: 'wrow'});
@@ -1119,15 +1165,34 @@ function waiversTab(host) {
     const h = el('h3', {text: w.model});
     h.append(el('span', {class: 'tag', text: w.check}));
     row.append(h);
-    row.append(el('div', {class: 'measured', text: 'they said: ' + w.reason}));
-    row.append(field('reason', ['waivers', w.model, 'reason'], w.reason, '', 1));
-    row.append(field('until', ['waivers', w.model, 'until'], '', 'YYYY-MM-DD, optional'));
+    row.append(el('div', {class: 'measured', text: 'accepted' + (w.by ? ' by ' + w.by : '')
+                          + (w.until ? ', until ' + w.until : '') + ': ' + w.reason}));
+    /* *** ONE COMPLETE WAIVER, OR NOTHING. ***
+       This wrote `waivers.<model>.reason` as loose fields -- no check named, and a shape audit.yml
+       cannot load, so applying it broke the next run. A waiver is four fields that only mean
+       something together, so it is emitted whole, as a named waiver scoped to the model. */
+    const key = ['waivers', w.name].join('\u001f');
+    const cur = edits[key] || null;
+    const reason = el('textarea', {});
+    reason.value = cur ? cur.reason : w.reason;
+    const until = el('input', {placeholder: 'YYYY-MM-DD, optional and worth having'});
+    until.value = cur ? (cur.until || '') : w.until;
+    const on = el('input', {type: 'checkbox'});
+    on.checked = !!cur;
+    const emit = () => setEdit(key, on.checked && reason.value.trim() ? Object.assign(
+      {question: w.check, applies_to: w.model, reason: reason.value.trim()},
+      until.value.trim() ? {until: until.value.trim()} : {}) : null);
+    on.onchange = emit; reason.oninput = () => { if (on.checked) emit(); };
+    until.oninput = () => { if (on.checked) emit(); };
+    row.append(el('label', {class: 'write'}, [on, el('span', {text: ' write this waiver'})]));
+    row.append(el('div', {}, [el('label', {text: 'reason'}), reason]));
+    row.append(el('div', {}, [el('label', {text: 'until'}), until]));
     bits.push(row);
   }
   if (!CTX.waivers.length)
     bits.push(el('p', {class: 'measured', text:
-      'Nothing proposed. A waiver assay proposes comes from a reason already written in a '
-      + 'ruling -- it never invents one.'}));
+      'Nothing proposed. A waiver assay proposes comes from a finding somebody accepted, with '
+      + 'the reason they gave -- it never invents one.'}));
   host.replaceChildren(...bits);
 }
 

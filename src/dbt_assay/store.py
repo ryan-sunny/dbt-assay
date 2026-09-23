@@ -24,6 +24,19 @@ import duckdb
 
 from .jev import DDL as JEV_DDL
 
+# `accept`: the finding is CORRECT and the person chose to leave it. Not `agree`, which leaves it
+# outstanding forever, and not `disagree`, which is a lie that tells a working check it was wrong.
+VERDICTS = ("agree", "disagree", "unclear", "accept")
+
+
+def _valid_date(s: str) -> str:
+    from datetime import date
+    try:
+        date.fromisoformat(str(s))
+    except ValueError as e:
+        raise ValueError(f"until must be a date, YYYY-MM-DD, not {s!r}") from e
+    return str(s)
+
 
 def _shipping_versions() -> set:
     """Every prompt_version any loaded bank currently ships. A SET, so nothing has to guess which
@@ -85,7 +98,7 @@ create table if not exists adjudications (
     question     varchar,     -- the question id, e.g. role__amount
     family       varchar,     -- the bank entry, e.g. column_role
     answered     varchar,     -- what assay said
-    verdict      varchar,     -- agree | disagree | unclear
+    verdict      varchar,     -- agree | disagree | unclear | accept
     correction   varchar,     -- what it should have been, when known
     note         varchar,
     decided_by   varchar,
@@ -121,6 +134,7 @@ create table if not exists adjudications (
     -- calibrate. A calibration report must exclude them by construction, not treat them as a gap.
     decision_key varchar default '',
     decided_at   timestamp,
+    until        varchar default '',   -- an `accept` lapses on this date
     primary key (subject, question, prompt_version)
 );
 -- *** WHAT THE MODEL WAS SHOWN, NOT ONLY WHAT IT SAID. ***
@@ -301,7 +315,9 @@ class Store:
     # a column-count error on somebody's machine rather than on mine. Columns added since are
     # applied on open; adding a column is cheap, safe and keeps every row that was already there.
     ADDED_COLUMNS: ClassVar[dict] = {
-        "adjudications": [("source", "varchar"), ("decision_key", "varchar")],
+        # `until`: an `accept` stops suppressing on this date, the way a waiver's expiry does.
+        "adjudications": [("source", "varchar"), ("decision_key", "varchar"),
+                          ("until", "varchar")],
         "findings": [("finding_id", "varchar")],
         "model_decisions": [("input_tokens", "integer"), ("context", "varchar"),
                             ("file_checksum", "varchar"), ("state_builder", "varchar"),
@@ -758,9 +774,17 @@ class Store:
                    verdict: str, correction: str = "", note: str = "",
                    who: str = "", source: str = "human",
                    prompt_version: str = "", model_version: str = "",
-                   decision_key: str = "") -> None:
-        if verdict not in ("agree", "disagree", "unclear"):
-            raise ValueError("verdict must be agree, disagree or unclear")
+                   decision_key: str = "", until: str = "") -> None:
+        if verdict not in VERDICTS:
+            raise ValueError("verdict must be agree, disagree, unclear or accept")
+        # *** `accept` IS A WAIVER WITH A NAME ON IT, SO IT NEEDS THE WAIVER'S REASON. ***
+        # A waiver whose justification is "looks fine" is how a real finding gets silenced, which
+        # is why `audit.yml` refuses one without a reason. The same rule, at the same strength.
+        if verdict == "accept" and not (note or "").strip():
+            raise ValueError("an `accept` needs a reason: what makes this correct finding the "
+                             "right thing to leave as it is")
+        if until:
+            _valid_date(until)
         if source not in ("human", "label", "replay", "agent"):
             raise ValueError("source must be human, label, replay or agent")
         # *** NAME THE COLUMNS. ***
@@ -769,11 +793,12 @@ class Store:
         self.con.execute(
             """insert or replace into adjudications
                (subject, question, family, answered, verdict, correction, note,
-                decided_by, source, prompt_version, model_version, decision_key, decided_at)
-               values (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                decided_by, source, prompt_version, model_version, decision_key, decided_at,
+                until)
+               values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [subject, question, family, answered, verdict, correction, note,
              who or "unknown", source, prompt_version or "", model_version or "",
-             decision_key or "", datetime.now(timezone.utc)])
+             decision_key or "", datetime.now(timezone.utc), until or ""])
 
     def save_claims(self, rows: list) -> None:
         """Named columns, never positional. Positional inserts broke twice after a migration."""
@@ -829,20 +854,48 @@ class Store:
                 for r in self.con.execute(q + " order by decided_at desc", args).fetchall()]
 
     def ruled_findings(self, verdict: str) -> dict:
-        """`{finding_id: (who, when, why)}` a PERSON ruled `verdict` on, finding by finding.
+        """`{finding_id: (who, when, why)}` whose LATEST human ruling is `verdict`.
 
         Both halves of the loop read this. `disagree` is a dismissal: the finding is wrong and
         does not come back. `agree` is the opposite and removes nothing -- it is the record that
         somebody read this and said it was real, which is the only thing that makes "did fixing it
-        work" a question anybody can ask.
+        work" a question anybody can ask. `accept` says it is real AND it stays: suppressed like a
+        waiver, never counted as outstanding, and lapsing on its `until`.
+
+        *** THE LATEST RULING, BECAUSE A PERSON CAN CHANGE THEIR MIND. ***
+        This returned every ruling ever made, so a finding agreed and later accepted sat in
+        "agreed and still here" forever, and one dismissed and later agreed with stayed dismissed.
         """
         self.con.execute(DDL)
+        today = datetime.now(timezone.utc).date().isoformat()
         out = {}
-        for subj, who, when, note in self.con.execute(
-                "select subject, decided_by, decided_at, note from adjudications "
-                "where source = 'human' and verdict = ? "
-                "and subject like '%::finding::%' order by decided_at", [verdict]).fetchall():
+        for subj, v, who, when, note, until in self.con.execute(
+                """select subject, verdict, decided_by, decided_at, note, coalesce(until, '')
+                   from (select *, row_number() over (partition by subject
+                                                      order by decided_at desc) rn
+                         from adjudications
+                         where source = 'human' and subject like '%::finding::%')
+                   where rn = 1 order by decided_at""").fetchall():
+            if v != verdict:
+                continue
+            # An expired acceptance is not an acceptance: the finding comes back on its own.
+            if v == "accept" and until and str(until) < today:
+                continue
             out[str(subj).split("::finding::")[1]] = (who or "someone", when, note or "")
+        return out
+
+    def accepted(self) -> dict:
+        """`{finding_id: (who, when, why, until)}` a PERSON called correct and chose to leave."""
+        self.con.execute(DDL)
+        live = self.ruled_findings("accept")
+        out = {}
+        for subj, until in self.con.execute(
+                "select subject, coalesce(until, '') from adjudications where source = 'human' "
+                "and verdict = 'accept' and subject like '%::finding::%' "
+                "order by decided_at").fetchall():
+            fid = str(subj).split("::finding::")[1]
+            if fid in live:
+                out[fid] = (*live[fid], until)
         return out
 
     def dismissed(self) -> dict:
@@ -915,7 +968,7 @@ class Store:
                   select *, row_number() over (
                       partition by subject, question order by decided_at desc) as rn
                   from adjudications where source = 'human') t
-              where rn = 1 and verdict = 'agree'""")
+              where rn = 1 and verdict in ('agree', 'accept')""")
         args: list = []
         if family:
             q += " and family = ?"
@@ -980,25 +1033,30 @@ class Store:
                    count(*) filter (where a.verdict = 'disagree' and not exists (
                        select 1 from adjudications b
                        where b.subject = a.subject and b.question = a.question
-                         and b.verdict = 'agree'
+                         and b.verdict in ('agree', 'accept')
                          and b.prompt_version <> a.prompt_version
-                         and b.decided_at > a.decided_at)) as still_open
+                         and b.decided_at > a.decided_at)) as still_open,
+                   count(*) filter (where a.verdict = 'accept') as accept
             from adjudications a
             {where}
             group by 1, 2, 3
             order by 1, 2, 3""", args).fetchall()
         cols = ("family", "prompt_version", "model_version", "n", "agree", "disagree",
-                "unclear", "open_disagreements")
+                "unclear", "open_disagreements", "accept")
         out = []
         for r in rows:
             d = dict(zip(cols, r, strict=True))
-            decided = d["agree"] + d["disagree"]
+            # *** AN `accept` SAYS THE CHECK WAS RIGHT. ***
+            # It is counted as correct, because it is: the finding was true and the person chose
+            # to leave it. Recording it as `disagree` was the only other option and told a working
+            # check it was wrong.
+            decided = d["agree"] + d["accept"] + d["disagree"]
             # *** `unclear` IS NOT A DISAGREEMENT AND MUST NOT BE IN THE DENOMINATOR. ***
             # They say different things and they need different fixes. A family people DISAGREE
             # with has wrong criteria. A family they cannot rule on has a state problem, which is
             # exactly what seventeen unclears on one warehouse turned out to be. Averaging them
             # together hides which repair to make.
-            d["agreement"] = (d["agree"] / decided) if decided else None
+            d["agreement"] = ((d["agree"] + d["accept"]) / decided) if decided else None
             out.append(d)
         return out
 
@@ -1025,8 +1083,10 @@ class Store:
             if want and pv != want:
                 continue
             d = tally.setdefault(fam, {"agree": 0, "disagree": 0})
-            if verdict in d:
-                d[verdict] += n
+            if verdict in ("agree", "accept"):                   # accept: the check was right
+                d["agree"] += n
+            elif verdict == "disagree":
+                d["disagree"] += n
         return {fam: (d["agree"] / (d["agree"] + d["disagree"]), d["agree"] + d["disagree"])
                 for fam, d in tally.items() if (d["agree"] + d["disagree"])}
 
@@ -1044,9 +1104,10 @@ class Store:
             q += " where " + " and ".join(where)
         rows = dict(self.con.execute(q + " group by 1", args).fetchall())
         n = sum(rows.values())
+        right = rows.get("agree", 0) + rows.get("accept", 0)
         return {"n": n, "agree": rows.get("agree", 0), "disagree": rows.get("disagree", 0),
-                "unclear": rows.get("unclear", 0),
-                "agreement": (rows.get("agree", 0) / n) if n else None}
+                "unclear": rows.get("unclear", 0), "accept": rows.get("accept", 0),
+                "agreement": (right / n) if n else None}
 
     def live_decisions(self, where: str, args: list,
                        columns: str = "question, answer, confidence, probabilities, context",

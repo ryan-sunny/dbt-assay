@@ -293,7 +293,8 @@ class Backend:
                         f"review_queue() and pass back the `finding` id, which is exact.")
 
     def rule(self, verdict: str, why: str, finding: str = "", subject: str = "",
-             question: str = "", correction: str = "", decided_by: str = "") -> dict:
+             question: str = "", correction: str = "", decided_by: str = "",
+             until: str = "") -> dict:
         """*** RULINGS ARE THE ONLY THING IN THIS SYSTEM THAT DO NOT COMPOUND. ***
 
         More checks find more. Better states judge better. The warehouse accrues. None of that
@@ -329,8 +330,14 @@ class Backend:
 
         `review_queue()` and `findings()` both return a `finding` id. Pass it back.
         """
-        if verdict not in ("agree", "disagree", "unclear"):
-            return {"error": "verdict must be agree, disagree or unclear"}
+        if verdict not in ("agree", "disagree", "unclear", "accept"):
+            return {"error": "verdict must be agree, disagree, unclear or accept"}
+        if until:
+            from .store import _valid_date
+            try:
+                _valid_date(until)
+            except ValueError as e:
+                return {"error": str(e)}
         if not (why or "").strip():
             return {"error": "a reason is required. A ruling nobody can check is not evidence."}
         if not (finding or subject):
@@ -387,7 +394,7 @@ class Backend:
                           answered, verdict, correction=correction, note=why.strip(),
                           who=f"agent, relaying {who}" if who else "agent", source="agent",
                           prompt_version=pv, model_version=mv,
-                          decision_key=locals().get("dkey", ""))
+                          decision_key=locals().get("dkey", ""), until=until)
             human = len(st.ruled_subjects())
             mine = len(st.agent_rulings())
         finally:
@@ -451,9 +458,10 @@ class Backend:
             findings_ruled = 0
             for r in rows:
                 fids = (list(r.get("findings") or [])
-                        if r["verdict"] in ("disagree", "agree") else [])
+                        if r["verdict"] in ("disagree", "agree", "accept") else [])
                 fam = _record_one_verdict(store, r["subject"], r["question"], r["verdict"],
-                                          r["correction"], r["note"], who, findings=fids)
+                                          r["correction"], r["note"], who, findings=fids,
+                                          until=r.get("until", ""))
                 fams[fam] = fams.get(fam, 0) + 1
                 findings_ruled += len(fids)
             out = {"recorded": len(rows), "by": who, "as": "human",
@@ -1137,8 +1145,9 @@ def serve(target: str, store_path: str | None = None) -> None:
 
     @app.tool(description=_desc("rule"))
     def rule(verdict: str, why: str, finding: str = "", subject: str = "", question: str = "",
-             correction: str = "", decided_by: str = "") -> str:
-        return _out(be.rule(verdict, why, finding, subject, question, correction, decided_by))
+             correction: str = "", decided_by: str = "", until: str = "") -> str:
+        return _out(be.rule(verdict, why, finding, subject, question, correction, decided_by,
+                            until))
 
     @app.tool(description=_desc("violations"))
     def violations(model: str = "") -> str:

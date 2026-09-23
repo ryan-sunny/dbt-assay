@@ -270,6 +270,20 @@ being decided.
 
 The evidence is on screen because a verdict nobody can reach in five seconds does not get given.
 
+A finding has a fourth answer, and it is the one a correct-but-intended finding needs:
+
+```bash
+assay review --finding <id> --verdict accept --note "why it stays" --until 2027-01-01
+```
+
+`accept` says the finding is **right** and you are leaving it on purpose. It leaves the open list,
+counts as the check being correct, never sits in "agreed and still here", and comes back on its
+own when `--until` passes. Without it the only ways to clear a true finding were `agree`, which
+leaves it outstanding forever, or `disagree`, which tells a working check it was wrong and pulls
+down the agreement rate that decides whether that check may ever gate. The form offers it on every
+card, and its Waivers tab proposes each accept as a waiver for `audit.yml`, so the decision is in
+git and not only in the store.
+
 ### ...or all of them, away from the terminal
 
 One keypress each is still one turn each, and a backlog of 159 is 159 turns nobody sits through.
