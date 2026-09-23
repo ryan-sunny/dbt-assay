@@ -1111,6 +1111,24 @@ class Store:
                order by started_at desc limit 1""", [project_name, before]).fetchone()
         return r[0] if r else None
 
+    def baseline_findings(self, project_name: str) -> tuple[dict | None, list[tuple]]:
+        """The latest full `check` run for this project, and the findings it recorded.
+
+        *** A SCOPED RUN NEVER WRITES A RUN, SO IT CAN NEVER BECOME ITS OWN BASELINE. ***
+        If it could, a hook that blocked an edit once would read its own blocked run as the
+        baseline on the next edit, and the finding it introduced would stop being new without
+        anyone fixing it.
+        """
+        r = self.con.execute(
+            """select run_id, started_at, assay_version from runs where project = ?
+               order by started_at desc limit 1""", [project_name]).fetchone()
+        if not r:
+            return None, []
+        rows = self.con.execute(
+            "select finding_id, check_name, subject from findings where run_id = ?",
+            [r[0]]).fetchall()
+        return {"run_id": r[0], "started_at": str(r[1]), "assay_version": r[2]}, rows
+
     def diff(self, run_a: str, run_b: str) -> dict:
         """What appeared and what went away between two runs."""
         q = """select check_name, subject_name, summary from findings where run_id = ?"""

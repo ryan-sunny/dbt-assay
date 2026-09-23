@@ -68,6 +68,38 @@ def _load(target):
     return project, digests, failures, schema
 
 
+def new_findings(findings: list, baseline_rows: list[tuple]) -> list:
+    """The findings the baseline run did not have. `baseline_rows` is (finding_id, check, subject).
+
+    *** AN ID THAT MOVED IS NOT A NEW DEFECT. ***
+    A finding's id hashes its summary, and a summary carries names and counts: editing a
+    description can re-word `section_id is described 16 different ways` into 17 ways without
+    anything new being wrong. So an exact id match settles most, and the rest are matched by
+    COUNT per (check, subject): a model that had two `test_cannot_fail` findings and still has
+    two has none new, whatever their wording. A third one is new, and which of the unmatched
+    ones is reported as new is the one listed last, which is arbitrary and says so here rather
+    than pretending the count identifies it.
+    """
+    ids = {r[0] for r in baseline_rows}
+    had: dict = {}
+    for _fid, check, subject in baseline_rows:
+        had[(check, subject)] = had.get((check, subject), 0) + 1
+    matched: dict = {}
+    for f in findings:
+        if f.id in ids:
+            matched[(f.check, f.subject)] = matched.get((f.check, f.subject), 0) + 1
+    out = []
+    for f in findings:
+        if f.id in ids:
+            continue
+        k = (f.check, f.subject)
+        if matched.get(k, 0) < had.get(k, 0):
+            matched[k] = matched.get(k, 0) + 1
+            continue
+        out.append(f)
+    return out
+
+
 def changes_since(baseline: Snapshot, state: LiveState) -> list:
     """Only what MOVED. A reformat, a renamed CTE, a join rewritten as a subquery: nothing."""
     return diff.compare(baseline.entries, state.entries, state.project, state.digests)

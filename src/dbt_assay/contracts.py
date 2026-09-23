@@ -19,6 +19,7 @@ path is ever used for is a label in the output.
 """
 from __future__ import annotations
 
+import copy
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +30,14 @@ from .jev import noul
 from .parse import Digest
 
 
+# *** 3,620 YAML PARSES IN ONE `assay check`, 13 OF ITS 22 SECONDS. ***
+# `Store.live_decisions` asks which prompt versions still ship, once per model, and each ask
+# re-read all ten banks. A file is parsed once per (path, mtime, size): an edited bank is re-read,
+# an unchanged one is not. Callers get a deep copy, because a cached dict handed out by reference
+# is one caller's mutation showing up in every later caller.
+_BANK_CACHE: dict = {}
+
+
 def _load_bank(path: Path) -> dict:
     """Normalize YAML's boolean keys back to strings.
 
@@ -36,11 +45,20 @@ def _load_bank(path: Path) -> dict:
     quotes loads with {True: ..} and every lookup by "true" raises. assay ships quoted keys, but a
     USER's bank will not always, and failing on their file is a worse outcome than accepting it.
     """
+    try:
+        st = path.stat()
+        key = (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key is not None and key in _BANK_CACHE:
+        return copy.deepcopy(_BANK_CACHE[key])
     data = yaml.safe_load(path.read_text()) or {}
     for q in data.values():
         if isinstance(q, dict) and isinstance(q.get("criteria"), dict):
             q["criteria"] = {("true" if k is True else "false" if k is False else k): v
                              for k, v in q["criteria"].items()}
+    if key is not None:
+        _BANK_CACHE[key] = copy.deepcopy(data)
     return data
 
 

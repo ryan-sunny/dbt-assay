@@ -299,6 +299,13 @@ def check(
     project_dir: str = typer.Option(".", "--project-dir"),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
     dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
+    select: str = typer.Option(None, "--select", "-s",
+                               help="only findings about these models, in dbt's selector syntax "
+                                    "(e.g. \"stg_orders\", \"stg_orders+\"). A scoped run is "
+                                    "never written to the store as a run."),
+    new_only: bool = typer.Option(False, "--new-only",
+                                  help="only findings the latest full `check` run did not have, "
+                                       "and exit 1 if there are any. This is the edit gate."),
 ):
     """Run the structural checks. No network, no API key, no spend."""
     tdir = _find_target(target)
@@ -377,6 +384,24 @@ def check(
     _verified = {"hops_retired_by_counting": n_retired} if verify else {}
     if check_name:
         findings = [f for f in findings if f.check == check_name]
+    # *** THE FLAG THAT WAS THE WHOLE BLOCKER ON ENFORCEMENT. ***
+    # Without it `check` always ran the entire project and printed everything, so it could not sit
+    # in a hook that fires on one model's edit. The parse is still whole-project -- a model's
+    # columns come from its parents, and all of it takes seconds -- but what is REPORTED, compared
+    # and gated on is the selection.
+    scope = None
+    if select:
+        from . import selector as selector_mod
+        try:
+            scope = selector_mod.resolve(project, select)
+        except selector_mod.SelectorError as e:
+            console.print(f"[red]{e}[/]")
+            raise typer.Exit(2) from e
+        if not scope:
+            # A selector matching nothing would report "no findings" about nothing at all.
+            console.print(f"[red]--select {select!r} matches no model in this project.[/]")
+            raise typer.Exit(2)
+        findings = [f for f in findings if f.subject in scope]
 
     # *** audit.yml NOW DOES SOMETHING. ***
     # Thresholds, plain actions, waivers and scoping are applied here to BOTH streams. A config
@@ -391,8 +416,35 @@ def check(
     findings = [f for f, _a, _w in policed]
     actions = {(f.check, f.subject): a for f, a, _w in policed}
 
+    baseline = None
+    if new_only:
+        if not Path(store_path or "").exists():
+            console.print(f"[red]--new-only needs a baseline and there is no store at "
+                          f"{store_path!r}.[/] Run a full `assay check` once, before the edits "
+                          f"it should compare against.")
+            raise typer.Exit(2)
+        _sb = Store(store_path)
+        try:
+            baseline, base_rows = _sb.baseline_findings(project.project_name)
+        finally:
+            _sb.close()
+        if baseline is None:
+            # *** NO BASELINE IS NOT A CLEAN BASELINE. ***
+            # Treating it as empty would call every finding new; treating it as a pass would be a
+            # gate that cannot see. Neither is true, so it stops and says what is missing.
+            console.print(f"[red]--new-only: the store holds no full `check` run for "
+                          f"{project.project_name!r}, so there is nothing to compare against.[/] "
+                          f"Run a full `assay check` once, before the edits it should judge.")
+            raise typer.Exit(2)
+        findings = live.new_findings(findings, base_rows)
+        _keep = {id(f) for f in findings}
+        policed = [p for p in policed if id(p[0]) in _keep]
+
     if json_out:
         print(_json.dumps({
+            **({"select": select, "scope": sorted(project.models[u].name for u in scope
+                                                  if u in project.models)} if scope else {}),
+            **({"baseline": baseline} if baseline else {}),
             "coverage": project.coverage(),
             "parse_failures": [{"model": n, "error": e} for _, n, _, e in failures],
             "unevaluable_tests": [{"model": m, "test": t, "column": c, "why": w}
@@ -407,7 +459,7 @@ def check(
                           "descendants": f.descendants, "marts": f.marts, "evidence": f.evidence}
                          for f in findings],
         }, indent=2))
-        raise typer.Exit(0)
+        raise typer.Exit(1 if new_only and findings else 0)
 
     _report_moved_question_ids()
     _report_refused_claim_findings()
@@ -432,7 +484,9 @@ def check(
                       f"[dim]and are NOT a pass. Most common reason: "
                       f"{Counter(w for _m, _t, _c, w in blind).most_common(1)[0][0]}[/]")
 
-    if not findings:
+    if not findings and new_only:
+        pass                                  # said below, against the baseline it was measured on
+    elif not findings:
         console.print("\n[green]no structural findings[/]"
                       + ("  [dim](but see above: some tests could not be looked at)[/]"
                          if blind else ""))
@@ -474,6 +528,21 @@ def check(
     failing = [f for f, a, _w in policed if a == "fail"]
     if failing:
         console.print(f"\n[red]{len(failing)} finding(s) configured to fail.[/]")
+
+    if new_only:
+        console.print(f"\n[dim]compared against the full run {baseline['run_id']} "
+                      f"({baseline['started_at'][:16]}, assay {baseline['assay_version']}).[/]")
+        if findings:
+            console.print(f"[red]{len(findings)} finding(s) the baseline did not have.[/]")
+            raise typer.Exit(1)
+        console.print("[green]nothing new.[/]")
+        raise typer.Exit(1 if failing else 0)
+    if scope is not None:
+        # A scoped run is never recorded: the next full run's "vs previous run" would otherwise
+        # report every finding outside the selection as resolved.
+        if failing:
+            raise typer.Exit(1)
+        return
 
     if store_path:
         run_id = uuid.uuid4().hex[:12]
@@ -858,6 +927,23 @@ def onboard(
         # would print an install line that installs no mcp.
         console.print(f"   MCP: claude mcp add assay --scope project -- uvx --from 'dbt-assay[mcp]' "
                       f"assay mcp --target {tdir}", style="dim", markup=False)
+        # *** THE GATE IS INSTALLED, NOT DESCRIBED. ***
+        # A skill file is advice an agent follows when it chooses to. The hook fires on every
+        # model edit whether or not anything was read.
+        from . import hook as hook_mod
+        cmd = hook_mod.hook_command(f"uvx --from dbt-assay=={__version__} assay", str(tdir),
+                                    store_path, config_path, None, dbt_bin, profiles_dir)
+        try:
+            what = hook_mod.install(Path(".claude/settings.json"), cmd)
+            console.print(f"   {what} the edit gate in [bold].claude/settings.json[/] [dim](after "
+                          f"an agent edits a model: compile it, and stop the agent on any finding "
+                          f"the edit introduced)[/]")
+            console.print(f"   [dim]it compares against the last full run, and until there is one "
+                          f"it refuses every model edit rather than passing it: "
+                          f"[bold]assay check --target {tdir} --store {store_path}[/bold] "
+                          f"sets it.[/]")
+        except ValueError as e:
+            console.print(f"   [yellow]{e}[/]", markup=False)
 
     # *** WHAT THEY HAVE ALREADY SPENT, AND WHAT THEIR OWN WORDS ARE DOING. ***
     # Two things a first run could never see and both of them accrue: the ledger only means
@@ -5130,6 +5216,100 @@ def watch(
     finally:
         if store:
             store.close()
+
+
+@app.command()
+def hook(
+    action: str = typer.Argument("post-edit",
+                                 help="post-edit (what the hook runs), install, or print"),
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config", help="directory holding audit.yml"),
+    project_dir: str = typer.Option(None, "--project-dir",
+                                    help="the dbt project; found from --target by default"),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin", help='e.g. "uv run dbt"'),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    compile_first: bool = typer.Option(True, "--compile/--no-compile",
+                                       help="compile the edited model before checking it. Off "
+                                            "means assay reads whatever SQL was compiled last."),
+    dialect: str = typer.Option(None, "--dialect"),
+    settings: str = typer.Option(".claude/settings.json", "--settings",
+                                 help="install: the Claude Code settings file to merge into"),
+    assay_cmd: str = typer.Option(None, "--assay-cmd",
+                                  help="install: how the hook invokes assay. Default: this exact "
+                                       "version through uvx."),
+):
+    """The edit gate. After an agent writes a model, stop it on anything the edit introduced.
+
+    `install` merges a PostToolUse hook into .claude/settings.json. `post-edit` is what that hook
+    runs: it reads Claude Code's payload on stdin, compiles the edited model, runs
+    `check --select <model> --new-only` against the last full run, and exits 2 with the findings
+    as the reason if there are any. A file that is not a model passes untouched.
+    """
+    import sys as _sys
+
+    from . import hook as hook_mod
+
+    if action in ("install", "print"):
+        tdir = _find_target(target)
+        cmd = hook_mod.hook_command(
+            assay_cmd or f"uvx --from dbt-assay=={__version__} assay", str(tdir), store_path,
+            config_path, project_dir, dbt_bin, profiles_dir)
+        if action == "print":
+            print(_json.dumps({"hooks": {"PostToolUse": [hook_mod.settings_entry(cmd)]}},
+                              indent=2))
+            return
+        try:
+            what = hook_mod.install(Path(settings), cmd)
+        except ValueError as e:
+            console.print(f"[red]{e}[/]", markup=False)
+            raise typer.Exit(2) from e
+        console.print(f"{what} the assay edit gate in [bold]{settings}[/]. [dim]It needs a full "
+                      f"`assay check` in the store to compare against; run one before the edits "
+                      f"it should judge.[/]")
+        return
+    if action != "post-edit":
+        raise typer.BadParameter("action is post-edit, install or print")
+
+    try:
+        payload = _json.loads(_sys.stdin.read() or "{}")
+    except ValueError:
+        payload = {}
+    path = hook_mod.edited_path(payload)
+    if not path:
+        raise typer.Exit(0)
+    tdir = _find_target(target)
+    root = Path(project_dir) if project_dir else _project_dir_for(tdir)
+    if root is None:
+        print(f"assay hook: no dbt_project.yml above {tdir}; pass --project-dir.", file=_sys.stderr)
+        raise typer.Exit(2)
+    name = hook_mod.looks_like_a_model_file(path, root)
+    if name is None:
+        raise typer.Exit(0)                         # not a model: not this gate's business
+    if compile_first:
+        ok, out = hook_mod.compile_model(name, root, dbt_bin, profiles_dir)
+        if not ok:
+            print(f"assay: `dbt compile --select {name}` failed after this edit, so the model "
+                  f"does not compile and nothing downstream of it can be checked.\n{out}",
+                  file=_sys.stderr)
+            raise typer.Exit(2)
+    project = Project.load(tdir)
+    model = hook_mod.model_for(path, root, project)
+    if model is None:
+        if compile_first:
+            print(f"assay hook: {path} looks like a model but is not in the manifest after a "
+                  f"compile. Is it disabled, or under a different project?", file=_sys.stderr)
+            raise typer.Exit(2)
+        raise typer.Exit(0)
+    code, doc, raw = hook_mod.scoped_check(model, str(tdir), store_path, config_path, dialect)
+    if code == 0:
+        raise typer.Exit(0)
+    if code == 1 and doc is not None:
+        print(hook_mod.reason(model, doc), file=_sys.stderr)
+        raise typer.Exit(2)
+    # No baseline, a broken store, anything else: stopped and said, never passed silently.
+    print(f"assay hook could not judge this edit to `{model}`:\n{raw[-2000:]}", file=_sys.stderr)
+    raise typer.Exit(2)
 
 
 @app.command()
