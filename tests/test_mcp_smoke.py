@@ -58,3 +58,85 @@ def test_every_semantic_tool_answers_without_raising(project_dir, tmp_path):
             if "Traceback" in json.dumps(body):
                 broken.append(f"{t.name}: returned a traceback")
     assert not broken, "\n".join(broken)
+
+
+def _hold_lock(path):
+    """A second PROCESS holding the store, as `assay verify` did in the field. DuckDB lets a
+    second connection in the same process through, so an in-process lock proves nothing."""
+    import subprocess
+    import sys
+    code = ("import duckdb,sys,time; c=duckdb.connect(sys.argv[1]); "
+            "print('held', flush=True); time.sleep(60)")
+    p = subprocess.Popen([sys.executable, "-c", code, str(path)],
+                         stdout=subprocess.PIPE, text=True)
+    assert p.stdout.readline().strip() == "held"
+    return p
+
+
+def test_a_locked_store_is_said_on_every_tool_and_no_tool_breaks(project_dir, tmp_path,
+                                                                    monkeypatch):
+    """*** A LOCKED STORE PRESENTED AS TWELVE BROKEN TOOLS. ***
+
+    Reported from the field (25.20): with `assay verify` holding the store, twelve tools returned
+    "Error executing tool <name>" and five worked -- the five that do not open the store. The
+    cause was one store-open in `state()` with no handling, and a wrapper that dropped the text.
+    """
+    pytest.importorskip("mcp")
+    from dbt_assay.mcp_server import build_app
+    store = tmp_path / "s.duckdb"
+    r = CliRunner().invoke(cli_app, ["check", "-t", str(project_dir), "--store", str(store),
+                                     "--config", str(tmp_path)])
+    assert r.exit_code in (0, 1), r.output
+    monkeypatch.setenv("ASSAY_LOCK_TIMEOUT", "0")
+    holder = _hold_lock(store)
+    try:
+        server = build_app(str(project_dir), str(store))
+        for name, args in (("contract", {"model": "int_bad_unique"}),
+                           ("findings", {}), ("plan", {}), ("suggestions", {})):
+            res = asyncio.run(server.call_tool(name, args))
+            assert not (getattr(res, "isError", False) or getattr(res, "is_error", False)), name
+            body = json.loads(_content_text(res))
+            said = body.get("store_locked") or body.get("store") or body.get("error") or ""
+            assert "LOCKED" in str(said), (name, body)
+        # The shape still comes from the manifest while the store is held.
+        body = json.loads(_content_text(asyncio.run(
+            server.call_tool("contract", {"model": "int_bad_unique"}))))
+        assert body.get("grain") == ["section_id"], body
+    finally:
+        holder.kill()
+        holder.wait()
+    # And once the lock is gone, nothing was cached from the locked read.
+    body = json.loads(_content_text(asyncio.run(
+        server.call_tool("contract", {"model": "int_bad_unique"}))))
+    assert "store_locked" not in body, body
+
+
+def test_a_short_lock_is_waited_out_without_a_message(project_dir, tmp_path, monkeypatch):
+    """A CLI command holds the store for seconds; the default wait absorbs it."""
+    pytest.importorskip("mcp")
+    import threading
+    import time
+
+    from dbt_assay.mcp_server import build_app
+    store = tmp_path / "s.duckdb"
+    CliRunner().invoke(cli_app, ["check", "-t", str(project_dir), "--store", str(store),
+                                 "--config", str(tmp_path)])
+    monkeypatch.delenv("ASSAY_LOCK_TIMEOUT", raising=False)
+    holder = _hold_lock(store)
+    threading.Thread(target=lambda: (time.sleep(1.0), holder.kill()), daemon=True).start()
+    server = build_app(str(project_dir), str(store))
+    body = json.loads(_content_text(asyncio.run(
+        server.call_tool("contract", {"model": "int_bad_unique"}))))
+    holder.wait()
+    assert "store_locked" not in body and body.get("grain") == ["section_id"], body
+
+
+def test_an_unexpected_failure_names_the_exception_not_just_the_tool(project_dir, monkeypatch):
+    pytest.importorskip("mcp")
+    from dbt_assay import mcp_server
+    monkeypatch.setattr(mcp_server.Backend, "blast_radius",
+                        lambda self, m: (_ for _ in ()).throw(KeyError("boom")))
+    server = mcp_server.build_app(str(project_dir))
+    body = json.loads(_content_text(asyncio.run(
+        server.call_tool("blast_radius", {"model": "x"}))))
+    assert "KeyError" in body["error"] and "boom" in body["error"] and body["raised_at"]

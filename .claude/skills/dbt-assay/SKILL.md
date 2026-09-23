@@ -43,6 +43,12 @@ and should stand, tell the person; your own ruling does not clear it.
 they run dbt in the wrong place and report "NOT LOOKED AT" -- which is a fact about the
 invocation, never about the project.
 
+**A result carrying `store_locked` is not a broken server.** Another process -- usually a person's
+sweep -- is writing the store, and DuckDB allows one writer. The message names the process and
+since when. What comes from the manifest (grain, columns, lineage) is still right; what comes from
+the store (rulings, counts, judged answers) is absent from that one result. Carry on, and call
+again once it finishes. Never conclude the tools are broken from a lock.
+
 ## Before you touch a model
 
 1. `contract(model)` — what one row is, what each column does, where each value comes from.

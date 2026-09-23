@@ -13,11 +13,16 @@ Requires the optional `mcp` extra. The rest of assay does not depend on it.
 """
 from __future__ import annotations
 
+import functools
 import json
+import traceback
 from pathlib import Path
 
 from . import live
 from .store import Store, StoreLocked, _is_lock_error, lock_message
+
+# Seconds a tool waits for another process to release the store before saying who holds it.
+MCP_LOCK_WAIT = 5.0
 
 
 class Backend:
@@ -28,6 +33,10 @@ class Backend:
         self.store_path = store_path
         # Where audit.yml lives, for the tools that read their words and their policy.
         self.config_path = config_path
+        # When a lock was last seen, so one sweep holding the store does not cost every tool
+        # call the full wait. And the lock message for THIS call, stamped on its result.
+        self._lock_seen = 0.0
+        self._store_locked = ""
         self._state: live.LiveState | None = None
         self._stamp: float = 0.0
         self.baseline: live.Snapshot | None = None
@@ -54,7 +63,7 @@ class Backend:
             return None, (f"there is no store at {self.store_path}. Run any judged command once "
                           f"(`assay infer --judge`) to create one.")
         try:
-            st = Store(self.store_path)
+            st = self._connect()
         except StoreLocked as e:
             # duckdb names the holding PID in its own error; the store reads it out and says who,
             # since then, and what they are running. "Waiting on PID 70034 since 19:42" is a
@@ -75,6 +84,30 @@ class Backend:
         self._new_store = st.new_store_warning()
         return st, ""
 
+    def _connect(self) -> Store:
+        """The store, waiting out a SHORT lock. Raises `StoreLocked` with the sentence to act on.
+
+        *** AN AGENT BESIDE A PERSON RUNNING A SWEEP IS THE NORMAL CASE, NOT THE EDGE CASE. ***
+        A CLI command holds the store for seconds; waiting that out costs nothing and needs no
+        message at all. A 40-minute sweep will not be waited out, so once a lock has been seen the
+        next half minute of calls do not wait again -- they say who holds it, immediately.
+        `ASSAY_LOCK_TIMEOUT` still wins when it is set, the same knob every command reads.
+        """
+        import os
+        import time
+        env = os.environ.get("ASSAY_LOCK_TIMEOUT")
+        try:
+            wait = float(env) if env not in (None, "") else MCP_LOCK_WAIT
+        except ValueError:
+            wait = MCP_LOCK_WAIT
+        if time.monotonic() - self._lock_seen < 30:
+            wait = 0.0
+        try:
+            return Store(self.store_path, timeout=wait)
+        except StoreLocked:
+            self._lock_seen = time.monotonic()
+            raise
+
     def _note_new_store(self, out: dict) -> dict:
         """Add `new_store` to a tool result when the store has nothing in it yet.
 
@@ -83,6 +116,11 @@ class Backend:
         why = getattr(self, "_new_store", "")
         if why and isinstance(out, dict):
             out["new_store"] = why
+        # *** A LOCKED STORE IS SAID ON THE RESULT, NOT LEFT TO LOOK LIKE AN EMPTY ONE. ***
+        # The model's shape is read from the manifest and is still right; what the store adds
+        # (rulings, measurements, judged answers) is absent for this call, and the reason is here.
+        if self._store_locked and isinstance(out, dict) and "error" not in out:
+            out["store_locked"] = self._store_locked
         return out
 
     def _manifest_mtime(self) -> float:
@@ -92,10 +130,23 @@ class Backend:
     def state(self) -> live.LiveState:
         m = self._manifest_mtime()
         if self._state is None or m != self._stamp:
-            store = Store(self.store_path) if self.store_path and Path(
-                self.store_path).exists() else None
+            # *** A LOCKED STORE PRESENTED AS TWELVE BROKEN TOOLS. ***
+            # Reported from the field (25.20): this second store-open had none of the handling
+            # `_store_or_why` has, so `StoreLocked` reached the SDK, which printed "Error executing
+            # tool contract" for every tool that reaches `state()` -- and an agent reading twelve
+            # of those concludes the server is broken and goes back to guessing. The lock is now
+            # said, and the state is built from the manifest without the store and NOT cached, so
+            # the next call after the lock clears reads the store again.
+            store, locked = None, ""
+            if self.store_path and Path(self.store_path).exists():
+                try:
+                    store = self._connect()
+                except StoreLocked as e:
+                    locked = str(e)
+            if locked:
+                self._store_locked = locked
             self._state = live.read(self.target, store)
-            self._stamp = m
+            self._stamp = m if not locked else -1.0
             if store:
                 # Refreshed here as well as in `_store_or_why`, because every tool reaches
                 # `state()` and only some of them take a writable store.
@@ -1209,92 +1260,120 @@ def build_app(target: str, store_path: str | None = None):
         return json.dumps(be._note_new_store(obj) if isinstance(obj, dict) else obj, default=str)
     app = Server("assay")
 
-    @app.tool(description=_desc("contract"))
+    def tool(name: str | None = None, description: str | None = None):
+        """Register a tool whose failure is a sentence, never a bare tool name.
+
+        *** "Error executing tool contract" IS NOT SOMETHING AN AGENT CAN ACT ON. ***
+        The SDK drops the exception's text when a tool raises. Caught here, once, so no tool added
+        later can forget: a locked store comes back as who holds it and since when, and anything
+        else as the exception and where it was raised -- a bug report rather than a mystery.
+        """
+        def register(fn):
+            label = name or fn.__name__
+
+            @functools.wraps(fn)
+            def guarded(*a, **k):
+                be._store_locked = ""
+                try:
+                    return fn(*a, **k)
+                except StoreLocked as e:
+                    return json.dumps({"error": str(e), "store_locked": True})
+                except Exception as e:                           # noqa: BLE001
+                    tb = traceback.extract_tb(e.__traceback__)
+                    where = f"{Path(tb[-1].filename).name}:{tb[-1].lineno}" if tb else ""
+                    return json.dumps({"error": f"`{label}` failed: {type(e).__name__}: {e}",
+                                       "raised_at": where,
+                                       "note": "a bug in assay, not in your project. The CLI "
+                                               "form of this tool may still work."})
+            return app.tool(name=name, description=description or _desc(label))(guarded)
+        return register
+
+    @tool()
     def contract(model: str) -> str:
         return _out(be.contract(model))
 
-    @app.tool(description=_desc("guide"))
+    @tool()
     def guide(topic: str = "") -> str:
         # Markdown, not JSON: it is prose for the agent to read and act on, and wrapping prose in
         # a JSON string only makes it harder to read for no gain.
         from .guide import guide as _guide
         return _guide(topic)
 
-    @app.tool(description=_desc("lineage"))
+    @tool()
     def lineage(model: str, column: str) -> str:
         return _out(be.lineage(model, column))
 
-    @app.tool(description=_desc("blast_radius"))
+    @tool()
     def blast_radius(model: str) -> str:
         return _out(be.blast_radius(model))
 
-    @app.tool(description=_desc("findings"))
+    @tool()
     def findings(model: str = "", limit: int = 20, check: str = "") -> str:
         return _out(be.findings(model or None, limit, check))
 
-    @app.tool(description=_desc("changed_contracts"))
+    @tool()
     def changed_contracts() -> str:
         return _out(be.changed_contracts())
 
-    @app.tool(description=_desc("practices"))
+    @tool()
     def practices(model: str = "") -> str:
         return _out(be.practices(model))
 
-    @app.tool(description=_desc("rule"))
+    @tool()
     def rule(verdict: str, why: str, finding: str = "", subject: str = "", question: str = "",
              correction: str = "", decided_by: str = "", until: str = "") -> str:
         return _out(be.rule(verdict, why, finding, subject, question, correction, decided_by,
                             until))
 
-    @app.tool(description=_desc("violations"))
+    @tool()
     def violations(model: str = "") -> str:
         return _out(be.violations(model))
 
-    @app.tool(description=_desc("claims"))
+    @tool()
     def claims(model: str = "") -> str:
         return _out(be.claims(model))
 
-    @app.tool(description=_desc("traversal"))
+    @tool()
     def traversal(model: str) -> str:
         return _out(be.traversal(model))
 
-    @app.tool(description=_desc("review_queue"))
+    @tool()
     def review_queue(limit: int = 20) -> str:
         return _out(be.review_queue(limit))
 
-    @app.tool(description=_desc("load_handback"))
+    @tool()
     def load_handback(path: str, apply: bool = False, by: str = "") -> str:
         return _out(be.load_handback(path, apply, by))
 
-    @app.tool(description=_desc("rebase"))
+    @tool()
     def rebase() -> str:
         return _out(be.rebase())
 
-    @app.tool(description=_desc("plan"))
+    @tool()
     def plan(limit: int = 25) -> str:
         return _out(be.plan(limit))
 
-    @app.tool(description=_desc("suggestions"))
+    @tool()
     def suggestions(section: str = "", limit: int = 15) -> str:
         return _out(be.suggestions(section, limit))
 
-    @app.tool(description=_desc("spend"))
+    @tool()
     def spend() -> str:
         return _out(be.spend())
 
-    @app.tool(description=_desc("stale"))
+    @tool()
     def stale(exact: bool = False) -> str:
         return _out(be.stale(exact))
 
-    @app.tool(description=_desc("vocabulary"))
+    @tool()
     def vocabulary() -> str:
         return _out(be.vocabulary())
 
-    @app.tool(description=_desc("monitoring"))
+    @tool()
     def monitoring(volume_json: str = "") -> str:
         return _out(be.monitoring(volume_json))
 
-    @app.tool(description=_desc("evidence"))
+    @tool()
     def evidence(decision_key: str = "", question: str = "", subject: str = "",
                  limit: int = 5) -> str:
         return _out(be.evidence(decision_key, question, subject, limit))
@@ -1303,21 +1382,21 @@ def build_app(target: str, store_path: str | None = None):
     from . import cli_tools
     for cmd in cli_tools.commands():
         def _make(name: str):
-            def tool(args: str = "", wait_seconds: int = 90) -> str:
+            def run(args: str = "", wait_seconds: int = 90) -> str:
                 return _out(be.run_cli(name, args, wait_seconds))
-            return tool
-        app.tool(name=cli_tools.tool_name(cmd["name"]),
-                 description=cli_tools.description(cmd))(_make(cmd["name"]))
+            return run
+        tool(name=cli_tools.tool_name(cmd["name"]),
+             description=cli_tools.description(cmd))(_make(cmd["name"]))
 
-    @app.tool(description=_desc("job_status"))
+    @tool()
     def job_status(job: str) -> str:
         return _out(cli_tools.status(job))
 
-    @app.tool(description=_desc("job_stop"))
+    @tool()
     def job_stop(job: str) -> str:
         return _out(cli_tools.stop(job))
 
-    @app.tool(description=_desc("jobs"))
+    @tool()
     def jobs() -> str:
         return _out(cli_tools.listing())
 
