@@ -492,6 +492,20 @@ group by 1 order by 2 desc
 A report is read once. A table accrues: a probability per question per model per commit is
 something you can chart and diff.
 
+And it comes back. The store is not in git, so a fresh checkout -- a CI runner -- starts with no
+verdicts and no floor cleared. The export is in git:
+
+```bash
+assay import transform/seeds/assay --store ci.duckdb    # the verdicts and runs from git
+assay check --store ci.duckdb --target target/          # structural, gated on those verdicts
+```
+
+`import` adds only what the store does not already hold, matches columns by name, and keeps each
+verdict's `source`, so a `human` ruling gates in CI exactly as it did where it was made -- which
+makes that file's history the thing to trust. `check` also says, before any finding, when compiled
+SQL looks rendered without a warehouse connection: a macro that asks the warehouse for columns
+writes NULL for every one of them when nothing answers, which is valid SQL that is not the model.
+
 ## Install
 
 ```bash

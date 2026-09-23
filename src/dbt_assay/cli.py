@@ -5577,6 +5577,54 @@ def _worth_testing(tdir, store, dialect, limit: int, json_out: bool) -> None:
                   "no human verdicts yet. Write the test where you agree with the reason.[/]")
 
 
+@app.command("import")
+def import_cmd(
+    directory: str = typer.Argument(..., help="what `assay export` wrote, e.g. "
+                                              "transform/seeds/assay"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    tables: str = typer.Option(None, "--tables",
+                               help="comma-separated, e.g. adjudications,runs. Default: every "
+                                    "table export writes."),
+):
+    """Load an export back into a store: the verdicts in git, in a fresh checkout's store.
+
+    The inverse of `assay export`. Rows the store already holds are left alone, so running it
+    twice adds nothing the second time. A verdict keeps its `source`: a `human` row in git counts
+    toward `min_adjudications` in CI exactly as it did where it was made, which is the point -- and
+    is only as trustworthy as that file's history.
+    """
+    if not Path(directory).is_dir():
+        console.print(f"[red]no directory {directory!r}.[/] `assay export <dir>` writes one.")
+        raise typer.Exit(2)
+    store = Store(store_path)
+    try:
+        got = export_mod.from_dir(store, directory,
+                                  [t.strip() for t in tables.split(",")] if tables else None)
+    except ValueError as e:
+        store.close()
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(2) from e
+    if not got:
+        store.close()
+        console.print(f"[yellow]nothing to import:[/] no {export_mod.PREFIX}<table>.csv or "
+                      f".parquet in {directory}.")
+        raise typer.Exit(1)
+    t = Table(title="imported", header_style="bold")
+    t.add_column("table"); t.add_column("in the file", justify="right")
+    t.add_column("added", justify="right"); t.add_column("already here", justify="right")
+    for g in got:
+        t.add_row(g.table, _n(g.in_file), _n(g.added), _n(g.in_file - g.added))
+    console.print(t)
+    for g in got:
+        if g.ignored_columns:
+            console.print(f"[dim]{g.table}: {len(g.ignored_columns)} column(s) this store does "
+                          f"not have, ignored: {', '.join(g.ignored_columns[:6])}[/]")
+    human = sum(store.adjudication_counts("human").values())
+    store.close()
+    console.print(f"[dim]{human} human verdict(s) in {store_path} now. `assay check --store "
+                  f"{store_path}` gates on them the way it would where they were made.[/]")
+
+
 @app.command()
 def hook(
     action: str = typer.Argument("post-edit",

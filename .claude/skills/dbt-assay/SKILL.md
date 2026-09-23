@@ -480,6 +480,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay feeds` | `assay_feeds` | Has a feed changed its mind while its schema held still? | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--sample` `--limit/-n` `--store` `--config` |
 | `assay guide <topic>` | `assay_guide` | How to SET ASSAY UP, for somebody who has never used it. | — |
 | `assay hook <action>` | `assay_hook` | The edit gate. | `--target/-t` `--store` `--config` `--project-dir` `--dbt/--dbt-bin` `--profiles-dir` `--compile` `--dialect` `--settings` `--assay-cmd` |
+| `assay import <directory>` | `assay_import` | Load an export back into a store: the verdicts in git, in a fresh checkout's store. | `--store` `--tables` |
 | `assay infer` | `assay_infer` | Infer each model's grain. | `--target/-t` `--print-state` `--limit/-n` `--store` `--config` |
 | `assay init` | `assay_init` | Write an audit. | `--force` |
 | `assay inventory` | `assay_inventory` | What every model in this project actually IS. | `--target/-t` `--model/-m` `--store` `--json` `--config` `--html` `--write` `--include-unadjudicated` `--limit/-n` `--dialect` |

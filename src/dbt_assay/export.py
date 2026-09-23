@@ -56,7 +56,7 @@ COLUMN_DOCS = {
     "prompt_version": "Bumped whenever a question's wording changes; a reworded question is a "
                       "different question.",
     "model_version": "What ANSWERED, never what was asked for.",
-    "verdict": "agree | disagree | unclear",
+    "verdict": "agree | disagree | unclear | accept",
     "row_count": "How many rows the probe saw, so an observation can be weighed.",
     "observed_at": "When it was counted. An observation ages; a declaration does not.",
     "weight": "base severity lifted by reach. Arithmetic over the DAG, never a judgment.",
@@ -290,3 +290,67 @@ group by 1
 order by distinct_keysets desc, hops desc
 ''',
 }
+
+
+# --------------------------------------------------------------------------------- import
+
+@dataclass
+class Imported:
+    table: str
+    path: Path
+    in_file: int
+    added: int
+    ignored_columns: list
+
+
+def from_dir(store, directory: str | Path, tables: list[str] | None = None) -> list[Imported]:
+    """Load what `to_seeds` or `to_parquet` wrote back into a store. The inverse of export.
+
+    *** THE VERDICTS WERE IN GIT, AND NOTHING COULD READ THEM BACK. ***
+    `export` wrote every table as seeds and the field project committed them -- 145 KB of verdicts
+    under `transform/seeds/assay/` -- and a fresh checkout still started from an empty store,
+    cleared no `min_adjudications` floor, and could never gate. Export was one-way.
+
+    *** ADD, NEVER OVERWRITE, AND MATCH BY NAME. ***
+    A row the store already holds is left exactly as it is: the store's own history wins, and an
+    import run twice adds nothing the second time. Columns are matched by NAME, because a CSV
+    written by an older assay has fewer columns and a positional load writes one field into
+    another. Every value is read as text and cast to the store's own type, and the empty string
+    `to_seeds` writes for NULL becomes NULL again.
+    """
+    d = Path(directory)
+    store.con.execute("select 1")
+    out = []
+    for table in tables or list(TABLES):
+        if table not in TABLES:
+            raise ValueError(f"`{table}` is not a table assay exports. Tables: {sorted(TABLES)}")
+        csv_p, pq_p = d / f"{PREFIX}{table}.csv", d / f"{PREFIX}{table}.parquet"
+        src = csv_p if csv_p.exists() else pq_p if pq_p.exists() else None
+        if src is None:
+            continue
+        have = store.con.execute(
+            "select column_name, data_type from information_schema.columns "
+            "where table_name = ? order by ordinal_position", [table]).fetchall()
+        if not have:
+            continue
+        reader = (f"read_csv('{src}', header = true, all_varchar = true)" if src.suffix == ".csv"
+                  else f"(select * from read_parquet('{src}'))")
+        file_cols = [r[0] for r in store.con.execute(f"describe select * from {reader}")
+                     .fetchall()]
+        types = dict(have)
+        cols = [c for c in file_cols if c in types]
+        if not cols:
+            continue
+        casts = ", ".join(f"try_cast(nullif(cast(\"{c}\" as varchar), '') as {types[c]}) "
+                          f"as \"{c}\"" for c in cols)
+        n_file = store.con.execute(f"select count(*) from {reader}").fetchone()[0]
+        before = store.con.execute(f"select count(*) from {table}").fetchone()[0]
+        names = ", ".join(f'"{c}"' for c in cols)
+        store.con.execute(
+            f"insert or ignore into {table} ({names}) "
+            f"select * from (select {casts} from {reader}) "
+            f"except select {names} from {table}")
+        after = store.con.execute(f"select count(*) from {table}").fetchone()[0]
+        out.append(Imported(table, src, n_file, after - before,
+                            [c for c in file_cols if c not in types]))
+    return out
