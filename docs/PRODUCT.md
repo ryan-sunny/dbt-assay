@@ -1,6 +1,6 @@
 # assay, in plain words
 
-<img src="assay-mark.svg" align="right" width="96" alt="">
+<img src="cuts/furnace.gif" align="right" width="170" alt="">
 
 A lead data engineer in your warehouse, working next to your coding agent.
 

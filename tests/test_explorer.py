@@ -6,6 +6,7 @@ this repo while the thing it guarded was broken, more than once, so none of thes
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -315,7 +316,18 @@ def _tiny():
             "suggestions": [{"section": "vocab", "key": "section_id", "headline": "h",
                              "measured": ["65 join hops"], "draft": "vocab:\n  section_id:",
                              "basis": "joined in many hops, absent from vocab", "rank": 1.0,
-                             "decide": ""}]}
+                             "decide": ""}],
+            # Whether anything is WATCHING, which is a file somebody passed in rather than
+            # anything derived from the store. A real shape, so the round trip exercises it.
+            "monitoring": {"cadence": {"runs": 54, "explain": "54 writes over 79 days",
+                                       "derived_staleness_days": 1, "floored": False,
+                                       "configured": False},
+                           "readings": [{"relation": "elementary_test_results", "state": "live",
+                                         "rows": 10, "newest": "2026-09-19", "age_days": 1.0,
+                                         "says": ""}],
+                           "test_coverage": {"declared": 12, "ever_ran": 10,
+                                             "skipped_results": 3},
+                           "stale_failures": [], "unwatched": [], "monitoring": []}}
 
 
 def test_the_artifact_is_one_line_per_entity(tmp_path):
@@ -564,42 +576,30 @@ def test_box_text_can_neither_overflow_its_box_nor_be_cut_without_saying_so():
     assert "Math.max(cols * (BW + GAPX) + GAPX, MINW)" in v
 
 
-def test_no_view_switch_floats_above_the_table_it_switches():
-    """*** A BUTTON ABOVE THE TABLE IS A ROW OF FURNITURE, NOT A CONTROL. ***
+def test_the_view_switch_is_in_the_same_place_in_every_state():
+    """*** IT WAS A BUTTON FLOATING OVER THE TABLE, THEN A SELECT, AND NOW IT IS A CHIP. ***
 
-    Reported from the field twice, one tab apart: eleven check chips on Findings, then
-    `the 113 contradicted, across every model ->` on Claims. Both spent a row of the page on
-    something the filter bar already had room for. Both are a select in that bar now.
+    The property has never changed: whatever switches the view lives where every other filter
+    lives, is visible in every state, and can be undone from where it lands you. Reported from
+    the field the first time: "I'd greatly prefer that dropdown to remain so it's flipping between
+    the two, rather than different UI."
 
-    And the control owns no state the view disagrees with: coming back to the groups resets it,
-    because a select reading "contradicted" over a table of every model is one fact with two
-    spellings, which is the defect this whole tool is about.
+    Now that the groups themselves are chips, a dropdown beside them is a second grammar for one
+    idea -- so it is a chip, and being a chip it COMBINES with a group instead of replacing it.
+    Picking `contradicted` from the old select threw away whichever model you were looking at.
     """
     v = explorer._VIEWS
-    cb = v[v.index("function claimsTab"):]
-    cb = cb[:cb.index("\n/* ---")]
-    assert "el('select')" in cb, "the claims view switch is not a select"
-    assert "controls: [view]" in cb, "it is not in the filter bar"
-    assert "onGroups: () =>" in cb, "the control keeps a state the view can contradict"
-    assert "class: 'back'" not in cb, "a floating button is back on Claims"
+    cb = v[v.index("function claimsTab"):v.index("function findingsTab")]
+    assert "el('select')" not in cb, "the view switch is a dropdown again"
+    assert "toggles:" in cb, "claims has no way to see only the contradicted ones"
+    assert "c.contradicted != null" in cb
 
-    # *** AND THE SWITCH STAYS PUT, SO IT IS A FLIP RATHER THAN A DIFFERENT PAGE. ***
-    # The first version showed it only over the groups, so choosing the other view left you
-    # somewhere with no way to choose again. Reported from the field: "I'd greatly prefer that
-    # dropdown to remain so it's flipping between the two, rather than different UI."
-    db = v[v.index("function drill(opts)"):]
-    db = db[:db.index("\nfunction conf(")]
-    assert db.count("controls: opts.controls") == 2, \
-        "the switch is not carried into BOTH views"
-    assert "drilled" in db, "the way back shows in a view the switch can already undo"
-    assert "opts.label(g)" in db, "the crumb no longer says what you drilled into"
-    # the same shape on findings
-    fb = v[v.index("function findingsTab"):]
-    fb = fb[:fb.index("function answersTab")]
-    assert "controls: [pickCheck]" in fb and "class: 'chips'" not in fb
+    db = v[v.index("function drill(opts)"):v.index("\nfunction conf(")]
+    # A toggle filters the rows; it never swaps the list for a different one.
+    assert "out = out.filter(p => t.where(p[0]))" in db
+    # and it is painted with the group chips, in the one chip row
+    assert db.count("chips.append") >= 2, "the toggle is not in the chip row with the groups"
 
-
-# --------------------------------------------------- 0.27.0: whose model, and where a value came from
 
 def test_a_package_model_is_separated_by_owner_and_never_by_whether_it_parsed():
     """*** A FILTER ON `unreadable` WOULD HIDE THE ONE THING YOU WANT TO SEE. ***
@@ -761,17 +761,19 @@ def test_the_card_says_what_the_model_is_before_you_go_there():
     assert "center the graph here" in card and "open in Models" in card
 
 
-def test_a_group_of_claims_says_what_its_model_is():
-    """349 names and two counts makes you click to find out whether you care. Reported from the
-    field: "in claims, since it's by model, it should also show the model description so it's
-    easier to know before clicking in"."""
+def test_a_claim_row_says_which_model_it_belongs_to():
+    """*** A LIST OF 5,794 SENTENCES WITH NO OWNER IS A FILING CABINET. ***
+
+    This used to be a screen of model names you clicked into. It is one list now, so every row
+    has to carry its model -- otherwise the chips are the only thing saying whose claim you are
+    reading, and they are a filter rather than a label.
+    """
     v = explorer._VIEWS
-    cb = v[v.index("function claimsTab"):]
-    cb = cb[:cb.index("\n/* ---")]
-    assert "desc:" in cb and "description || ''" in cb, "the group does not carry a description"
-    assert "label: 'what it is'" in cb, "the description is not a column"
-    assert "'no description'" in cb, "a model with none reads as blank rather than as absent"
-    assert "g.model + ' ' + (g.desc" in cb, "the filter box does not search descriptions"
+    cb = v[v.index("function claimsTab"):v.index("function findingsTab")]
+    assert "label: 'model'" in cb and "link(c.subject_name)" in cb, \
+        "the row no longer names, or no longer links, its model"
+    # and the chip is the model, so filtering to one is one click
+    assert "chip: g => g.model" in cb
 
 
 _CLAMP_RULE = (
@@ -832,27 +834,27 @@ def test_a_card_on_the_body_does_not_outlive_what_it_points_at():
     assert "closest('.pop')" in v, "a click on the card's own buttons would dismiss it first"
 
 
-def test_what_you_are_looking_at_is_a_heading_not_a_control():
-    """*** THE CRUMB WAS SQUEEZED INTO THE FILTER BAR. ***
+def test_the_pane_is_never_empty_and_one_click_changes_it():
+    """*** THREE SCREENS TO READ ONE THING, TWO OF THEM SHOWING "PICK SOMETHING". ***
 
-    Beside the row count and the view switch, so the one piece of text that says what this table
-    IS read as another widget. Reported from the field twice, on two tabs: "this can be treated
-    more as a title or something on a new line... and the back button in a better spot, to the
-    left of the new title row".
+    Reported exactly as it deserved: "what in the fuck was your decision process when you decided
+    this 3 step process was necessary to get any information... it needs to be rendering shit on
+    the right after a single click ALWAYS none of this empty bs."
 
-    So the bar holds only things you OPERATE, and the title row holds what you are looking at
-    with the way back immediately to its left.
+    So: the grouping is a filter rather than a screen, the list underneath is always the leaves,
+    and the right-hand pane is filled on arrival with the first row. One click changes what is on
+    the right, and there is never a second one.
     """
     v = explorer._VIEWS
-    db = v[v.index("function drill(opts)"):]
-    db = db[:db.index("\nfunction conf(")]
-    assert "class: 'titlerow'" in db, "there is no title row"
-    assert "[back, el('h3', {class: 'crumb'" in db, "the way back is not left of the title"
-    # and neither of them may go back into the bar
-    rows = db[db.index("function showRows("):]
-    assert "extra.push(back)" not in rows, "the way back is in the filter bar again"
-    assert "controls: opts.controls || []" in rows, "the bar no longer holds the view switch"
-    assert "h3.crumb{" in explorer.CSS, "the title has no style of its own"
+    db = v[v.index("function drill(opts)"):v.index("\nfunction conf(")]
+    # no intermediate screen: there is one grid, and its pick goes straight to the detail
+    assert db.count("grid(") == 1, "drill builds more than one table, so it is still two screens"
+    assert "pick: p => showOne(p[0], p[1])" in db
+    # the pane is filled on arrival, and by CLICKING the row, so the list shows what is selected
+    assert "const first = $('tbody tr', list);" in db
+    assert "if (first) first.click();" in db, "the pane opens empty"
+    # and no caller is left able to ask for the old empty state
+    assert "Pick a" not in db, "the pane can still tell somebody to pick something"
 
 
 def test_the_overview_picks_its_form_from_the_data_and_its_color_last():
@@ -869,14 +871,15 @@ def test_the_overview_picks_its_form_from_the_data_and_its_color_last():
     design.
     """
     v = explorer._VIEWS
-    assert "const RAMP = {declared: '#184f95', derived: '#2a78d6', judged: '#86b6ef'" in v, \
+    assert "const RAMP = {declared: '#4a443d', derived: '#a8491a', judged: '#d2833a'" in v, \
         "the ordinal ramp is gone"
     assert "'#5a6a2f'" not in v and "'#2b5c7a'" not in v, "the failing pill colors are used as marks"
     # status never appears without its label
     ov = v[v.index("function understoodTab"):]
     assert "would FAIL the build" in ov and "queued for a person" in ov
-    # a ranking is one hue: color must not be assigned per row
-    assert "r.color || '#2a78d6'" in v, "ranked bars stopped using a single hue"
+    # a ranking is one hue: the fallback is ONE constant, never a colour picked per row
+    assert "r.color || BAR" in v, "ranked bars stopped using a single hue"
+    assert "const BAR = RAMP.derived;" in v, "the single hue is no longer one of the ramp's own"
 
 
 def test_no_chart_distorts_its_own_labels_or_clips_its_names():
@@ -933,10 +936,22 @@ def test_the_page_reaches_out_to_nothing(tmp_path):
     # The inline mark declares the SVG namespace, which no browser has ever fetched. Stripping it
     # keeps the guard pointed at things that actually go out over a wire.
     shell = shell.replace('xmlns="http://www.w3.org/2000/svg"', "")
-    for scheme in ("http://", "https://", "//cdn", "<img", "fetch(", "XMLHttpRequest"):
+    for scheme in ("http://", "https://", "//cdn", "fetch(", "XMLHttpRequest"):
         assert scheme not in shell, f"the page shell reaches out to {scheme}"
+    # *** THE GUARD IS ABOUT THE WIRE, NOT ABOUT THE TAG. ***
+    # It forbade `<img` outright, which was right while the page had no pictures. The plates are
+    # `data:` URIs and fetch nothing; an `<img src="cuts/x.gif">` is the thing that breaks the
+    # moment somebody emails the file. So: every img must carry a data URI, and no img may name
+    # a path.
+    imgs = re.findall(r'<img[^>]*>', shell)
+    for tag in imgs:
+        src = re.search(r'src="([^"]{0,24})', tag)
+        assert src and src.group(1).startswith("data:"), f"an image is fetched: {tag[:70]}"
+
     # And the favicon is the mark's own bytes, not a file beside the page.
-    assert 'rel="icon"' in doc and "data:image/svg+xml;base64," in doc
+    assert 'rel="icon"' in doc
+    from dbt_assay import assets
+    assert assets.FAVICON in doc, "the favicon is not embedded"
 
 
 
@@ -954,10 +969,15 @@ def test_every_css_variable_the_page_uses_is_defined():
 
     from dbt_assay import explorer
     src = Path(explorer.__file__).read_text()
-    root = src[src.index(":root{"):src.index(":root{") + 400]
-    defined = set(re.findall(r"--([a-z-]+)\s*:", root))
+    # *** TO THE CLOSING BRACE, NOT TO A FIXED 400 CHARACTERS. ***
+    # The reader used to slice a fixed length, so a `:root` block that grew past it dropped its
+    # last tokens and reported them as undefined. A guard that can only see part of the thing it
+    # guards is the shape this whole file exists to catch.
+    start = src.index(":root{")
+    root = src[start:src.index("}", start)]
+    defined = set(re.findall(r"--([a-z0-9-]+)\s*:", root))
     assert len(defined) > 5, "the token reader found almost nothing; it is broken"
-    used = set(re.findall(r"var\(--([a-z-]+)\)", src))
+    used = set(re.findall(r"var\(--([a-z0-9-]+)\)", src))
     assert used, "the usage reader found nothing; it is broken"
     assert not (used - defined), sorted(used - defined)
 

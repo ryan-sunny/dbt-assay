@@ -290,20 +290,26 @@ class RateCard:
                    nominal_variable_bytes=int(c.get("nominal_string_bytes")
                                               or NOMINAL_VARIABLE_BYTES))
 
-    def price(self, bytes_estimated: int | None, wall_ms: int | None = None) -> float | None:
+    def price(self, bytes_estimated: int | None, exec_ms: int | None = None) -> float | None:
         """Dollars, or None when nothing configured can justify a number.
 
         None is not zero. A BigQuery user who has not set a rate gets no dollar figure at all,
         because the alternative is assay inventing one and printing it next to a real measurement.
+
+        *** `exec_ms` IS THE ENGINE'S OWN TIME AND THE SUBPROCESS CLOCK IS NOT ALLOWED NEAR IT. ***
+        Measured on a production sweep: 18,000ms of wall clock around a statement the warehouse
+        ran in 30ms, because 99.7% of a `dbt show` is dbt starting up. Snowflake bills warehouse
+        seconds, so a credit estimate built on the wall clock is wrong by about 600x -- and wrong
+        in the direction that looks plausible, which is the direction nobody checks. With no
+        engine time, a time-priced card returns None and the surfaces print nothing.
         """
         if self.name == "duckdb.local" and self.usd_per_tb_scanned is None:
             return 0.0
         if self.usd_per_tb_scanned is not None and bytes_estimated is not None:
             return (bytes_estimated / USD_PER_TB) * self.usd_per_tb_scanned
-        # Snowflake bills the warehouse being awake, so the wall clock IS the measurement here
-        # rather than a proxy for one.
-        if self.usd_per_credit is not None and self.credits_per_hour and wall_ms is not None:
-            return (wall_ms / 3_600_000.0) * self.credits_per_hour * self.usd_per_credit
+        # Snowflake bills the warehouse being awake, so engine time IS the measurement here.
+        if self.usd_per_credit is not None and self.credits_per_hour and exec_ms is not None:
+            return (exec_ms / 3_600_000.0) * self.credits_per_hour * self.usd_per_credit
         return None
 
 
@@ -350,7 +356,7 @@ def warehouse_ledger(store, since: str | None = None, caller: str | None = None)
         args.append(caller)
     sql = ("select caller, statement_kind, relation, bytes_estimated, bytes_measured, "
            "usd_estimated, wall_ms, failed, estimate_basis, rate_card, "
-           "cast(called_at as date) as day from warehouse_calls")
+           "cast(called_at as date) as day, exec_ms from warehouse_calls")
     if where:
         sql += " where " + " and ".join(where)
     rows = store.con.execute(sql, args).fetchall()
@@ -359,12 +365,21 @@ def warehouse_ledger(store, since: str | None = None, caller: str | None = None)
     by_kind: dict = defaultdict(lambda: [0, 0, 0.0, 0, 0])
     by_day: dict = defaultdict(lambda: [0, 0, 0.0, 0, 0])
     total_bytes = total_ms = failed = unestimated = 0
+    # *** THE TWO CLOCKS ARE NEVER ADDED TOGETHER AND NEVER PRINTED UNDER ONE NAME. ***
+    # Measured on the baseline sweep: 5,256 seconds of subprocess wall clock against about 20
+    # seconds of actual querying -- 263x. Bytes got the honesty rule and time did not, and it is
+    # the number that becomes a Snowflake bill the moment somebody sets `cost.engine`.
+    total_exec_ms = 0
+    timed = 0
     measured = 0
     usd_terms: list = []
     bases: dict = defaultdict(int)
     cards: set = set()
 
-    for caller_, kind, _rel, est, meas, usd, ms, bad, basis, card, day in rows:
+    for caller_, kind, _rel, est, meas, usd, ms, bad, basis, card, day, ex in rows:
+        if ex is not None:
+            total_exec_ms += int(ex)
+            timed += 1
         bases[basis or "unknown"] += 1
         if card:
             cards.add(card)
@@ -397,7 +412,11 @@ def warehouse_ledger(store, since: str | None = None, caller: str | None = None)
         "bytes_estimated": total_bytes or None,
         "bytes_measured_calls": measured,
         "usd": sum(sorted(usd_terms)) if usd_terms else None,
+        # The subprocess round trip. Reported so a slow sweep is visible, NEVER as warehouse time.
         "wall_ms": total_ms,
+        # What the engine itself took, summed over the statements that reported one.
+        "exec_ms": total_exec_ms if timed else None,
+        "timed_calls": timed,
         "failed": failed,
         "unestimated": unestimated,
         "estimate_basis": dict(bases),

@@ -1998,6 +1998,12 @@ def page(
                              help="path to the review form, relative to this page, so the two "
                                   "link to each other. The report is read-only; the form owns "
                                   "every box you type into."),
+    monitoring_json: str = typer.Option(None, "--monitoring",
+                                        help="a file from `assay volume --json`, so the page "
+                                             "carries what is watching this warehouse: build "
+                                             "cadence, every monitor's freshness, what your "
+                                             "tests are actually doing, and which models have "
+                                             "nothing watching them at all."),
 ) -> None:
     """Everything assay knows about this warehouse, as one file you can open.
 
@@ -2146,9 +2152,19 @@ def page(
         doc = record
     else:
         from . import explore, explorer
+        vol = None
+        if monitoring_json:
+            try:
+                vol = _json.loads(Path(monitoring_json).read_text())
+            except (OSError, ValueError) as e:
+                # The same rule the form uses: a page without the numbers says so on its face; a
+                # page with wrong numbers does not.
+                console.print(f"[yellow]could not read {monitoring_json}: {e}[/] [dim]The page is "
+                              f"written without the monitoring numbers rather than with wrong "
+                              f"ones.[/]")
         data = explore.assemble(project, digests, schema, entries, fs, store, cfg,
                                 (project.raw.get("metadata") or {}).get("generated_at", "unknown"),
-                                __version__)
+                                __version__, monitoring=vol)
         # *** THE ARTIFACT IS THE THING WORTH COMMITTING, SO IT IS WRITTEN EVERY TIME. ***
         # Not behind a flag: a page and an artifact that can disagree is the two-spellings defect
         # this codebase keeps finding, and the only way they cannot is if one run writes both.
@@ -2763,9 +2779,15 @@ def _print_warehouse_spend(wh: dict) -> None:
         console.print("\n[dim]no warehouse statement has been recorded on this store. `assay "
                       "probe` and `assay check --verify` are what issue them.[/]")
         return
+    # *** 5,256 SECONDS OF "WAREHOUSE TIME" WAS 20 SECONDS OF QUERYING. ***
+    # 99.7% of a `dbt show` is dbt starting up, so the subprocess clock is 263x the engine's own
+    # on a real sweep. Both are printed and each is named, and only one of them is ever priced.
+    engine = (f"{wh['exec_ms'] / 1000:.1f}s in the warehouse over {wh['timed_calls']:,} "
+              f"statement(s) that reported it, " if wh.get("exec_ms") is not None else
+              "no statement reported its engine time, ")
     console.print(f"\n[bold]the warehouse[/] -- {wh['calls']:,} statement(s), "
-                  f"{_bytes(wh['bytes_estimated'])} scanned{_usd(wh['usd'])}, "
-                  f"{wh['wall_ms'] / 1000:.1f}s.")
+                  f"{_bytes(wh['bytes_estimated'])} scanned{_usd(wh['usd'])}. "
+                  f"{engine}{wh['wall_ms'] / 1000:.1f}s of wall clock around them.")
     t = Table(title="by caller", title_justify="left", title_style="bold", show_header=True,
               header_style="bold", box=None, padding=(0, 2))
     t.add_column(""); t.add_column("statements", justify="right")
@@ -2784,6 +2806,11 @@ def _print_warehouse_spend(wh: dict) -> None:
         notes.append(f"{wh['unestimated']:,} statement(s) could not be estimated and are not in "
                      f"the bytes. `dbt docs generate` gives assay the column types; `assay probe` "
                      f"gives it the row counts.")
+    if wh.get("exec_ms") is None and wh["calls"]:
+        notes.append("no statement reported how long the ENGINE took, so the wall clock is all "
+                     "there is here -- and it is mostly dbt starting up, not your warehouse. "
+                     "Nothing time-priced is estimated from it. `cost.measure_bytes` in "
+                     "audit.yml asks dbt for the adapter's own numbers.")
     if not wh["bytes_measured_calls"]:
         notes.append("every byte figure here is an ESTIMATE from declared types and a known row "
                      "count, never a number an adapter returned. `estimate_basis` on each row "
@@ -3102,7 +3129,16 @@ def volume(
         say(st)
 
     # ---- movement, ranked by what rests on it
-    moved = [v for v in rep.volumes if v.change is not None and abs(v.change) >= threshold]
+    # *** AN 80-DAY-OLD BUCKET IS NOT A MOVEMENT, AND THIS REPORT LED WITH ONE. ***
+    # `buyer_leads_enriched  -100.0%  rows now 0` on a table holding 281,286 rows. The newest
+    # bucket started eighty days before the run and the column was labelled `rows now`. Of 114
+    # relations with history, it was the only one over thirty days stale -- so this removes one
+    # false alarm and keeps every true one. Not silence: an abandoned monitor is itself a finding,
+    # and a more honest one than a fabricated outage.
+    STALE_OBS_DAYS = 30
+    interesting = [v for v in rep.volumes if v.change is not None and abs(v.change) >= threshold]
+    dead = [v for v in interesting if v.stale(STALE_OBS_DAYS)]
+    moved = [v for v in interesting if not v.stale(STALE_OBS_DAYS)]
     by_name = {m.name.lower(): u for u, m in project.models.items()}
     rows = []
     for v in sorted(moved, key=lambda v: -abs(v.change)):
@@ -3115,13 +3151,33 @@ def volume(
                       f"{threshold * 100:.0f}% or more, highest blast radius first")
         mt = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
         mt.add_column("table"); mt.add_column("change", justify="right")
-        mt.add_column("rows now", justify="right"); mt.add_column("marts", justify="right")
+        # *** IT SAID `rows now` AND MEANT `rows that landed in the last bucket assay saw`. ***
+        # Elementary's `row_count` metric is per bucket, and `bucket_duration_hours` is 24, so it
+        # is a day's arrivals. A reader who has not read Elementary's source assumes a table
+        # count, and the two differ by a factor of twenty on a real table.
+        mt.add_column("in that bucket", justify="right")
+        mt.add_column("observed", justify="right")
+        mt.add_column("marts", justify="right")
         mt.add_column("")
         for v, uid, radius in rows[:15]:
             mt.add_row(v.table, f"{v.change * 100:+.1f}%", _n(int(v.latest or 0)),
+                       f"{v.age_days:.0f}d ago" if v.age_days is not None else "undated",
                        _n(radius["marts"]),
                        "[dim]not a model in this project[/]" if uid is None else "")
         say(mt)
+        say("[dim]A bucket is a day of ARRIVALS, not the size of the table: Elementary's "
+            "`row_count` metric counts rows landing in the bucket. A quiet day is a small "
+            "number, not a shrinking table. For a real row count, `assay probe` counts it and "
+            "prices it first.[/]")
+    if dead:
+        # Reported rather than dropped: a monitor nobody has written to since July is a finding,
+        # and a truer one than the outage it was being mistaken for.
+        say(f"\n[yellow]{_n(len(dead))} table(s) moved, in observations more than "
+            f"{STALE_OBS_DAYS} days old[/], so they describe the past rather than now:")
+        for v in sorted(dead, key=lambda v: -(v.age_days or 0))[:8]:
+            say(f"  [dim]{v.table}  {v.change * 100:+.1f}%  newest observation "
+                f"{'undated' if v.age_days is None else f'{v.age_days:.0f}d ago'}. "
+                f"Nothing has written a row-count bucket for it since.[/]")
 
     # *** COVERAGE, BECAUSE 311 OF 358 MODELS BEING UNWATCHED IS NOT "NO VOLUME PROBLEMS". ***
     unwatched = elem.unwatched(rep, project)
@@ -3140,6 +3196,10 @@ def volume(
                                 "age_days": x.age_days} for x in stale],
             "unwatched": [{"model": n, "descendants": d, "marts": m} for _u, n, d, m in unwatched],
             "cadence": {"runs": cad.writes, "normal_gap_days": cad.normal_gap_days,
+                        # *** THE FORM READ `median_gap_days` AND NOTHING EVER EMITTED IT. ***
+                        # `(undefined || 0).toFixed(1)` is `0.0`, which is why the pane said this
+                        # project runs dbt every 0.0 days. One name, emitted and read.
+                        "gap_text": cad.gap_text(), "floored": cad.floored,
                         "derived_staleness_days": cad.derived_staleness_days,
                         # *** `runs: 0` MEANT BOTH "NOTHING BUILT" AND "THE QUERY FAILED". ***
                         "unreadable": cad.unreadable, "why": cad.detail,
@@ -4034,8 +4094,23 @@ def probe(
     """Count what the SQL cannot settle. Runs through YOUR dbt; assay never sees a credential."""
     cfg = Config.load(config_path)
     _tdir, project, digests, schema, declared, proposed = _grain_setup(target, store_path)
+    # *** `--dialect` DEFAULTS TO NONE AND EVERYTHING DOWNSTREAM TAKES A DIALECT. ***
+    # `_load` resolves it from the manifest for its own use and the local stayed None, so the
+    # catalog lookups matched no engine and `--sample` produced no clause -- both failing by
+    # doing nothing, which is the failure mode that does not announce itself.
+    dialect = dialect or getattr(project, "dialect", "duckdb") or "duckdb"
     known = {uid: [c.lower() for c in c_.columns] for uid, c_ in proposed.items()}
-    tg = probe_mod.targets(project, digests, schema, declared, known)
+    # *** ASK THE WAREHOUSE WHAT EACH RELATION HOLDS BEFORE ASKING IT TO COUNT ANYTHING. ***
+    # One metadata read, no scan. Without it, a source that declares no columns had its candidate
+    # list guessed from what its CHILDREN reference -- and 70 of 271 statements on a real
+    # warehouse counted a column that only ever existed in the child.
+    real_cols = {}
+    if not (emit or load):
+        real_cols = probe_mod.catalog_columns(project_dir, profiles_dir, dialect, dbt_bin)
+        if real_cols:
+            console.print(f"[dim]{len(real_cols):,} relation(s) read from the warehouse's own "
+                          f"column catalog, so nothing is counted that is not there.[/]")
+    tg = probe_mod.targets(project, digests, schema, declared, known, real_cols)
     n_all = len(tg)
     # Opened here rather than below, because the ORDER depends on what is already in it.
     store = Store(store_path)
@@ -4083,8 +4158,17 @@ def probe(
         # No credential and no warehouse: assay builds the SQL, so it knows the exact column list,
         # the manifest declares the types and `observed_keys` holds the row counts. That is every
         # input BigQuery's own pricing formula takes.
+        # *** THE CATALOG IS A METADATA READ, SO IT COSTS NOTHING AND IT IS THE POINT. ***
+        # 86% of a production dry run was unpriced because a byte estimate needs a row count and
+        # row counts only existed for relations a previous probe had already scanned -- so the
+        # feature failed at exactly the moment a new BigQuery user asks it. Every engine
+        # publishes row counts, and BigQuery publishes the bytes themselves.
+        cat = probe_mod.catalog_rows(project_dir, profiles_dir, dialect, dbt_bin)
+        if cat:
+            console.print(f"[dim]{len(cat):,} relation(s) sized from the engine's catalog, which "
+                          f"scans nothing.[/]")
         est = probe_mod.dry_run(tg, store, dialect=dialect, rate=rate,
-                                types=cost_mod.declared_types(project, schema))
+                                types=cost_mod.declared_types(project, schema), catalog=cat)
         for line in est["statements"][:8]:
             console.print(f"\n[bold]{line['relation']}[/]  [dim]{line['why']}[/]")
             console.print(f"  [dim]{line['sql'][:220]}[/]")
@@ -4109,25 +4193,40 @@ def probe(
 
     ok = unknown = 0
     found = []
-    for t_ in tg:
-        obs, _sql = probe_mod.run_via_dbt(t_, project_dir, profiles_dir, dialect,
-                                          dbt_bin=dbt_bin, caller="assay.probe.keys",
-                                          sample_pct=sample)
-        probe_mod.write(store, obs)
-        for o in obs:
-            if o.status == "unknown":
-                unknown += 1
-            else:
-                ok += 1
-            if o.is_unique_key:
-                found.append(o)
+    # *** ONE SHELL-OUT PER STATEMENT WAS 99.7% dbt STARTUP. ***
+    # Measured on the production sweep: 18 seconds of wall clock per statement against 12 to 96
+    # milliseconds of warehouse work. These are independent aggregates with no joins, so they
+    # union into far fewer invocations -- 271 relations become 23 statements, and about eighty
+    # minutes becomes under ten, with the same counts and the same credential handling.
+    batches = probe_mod.plan_batches(tg)
+    console.print(f"[dim]{len(batches)} statement(s) for {len(tg)} relation(s). Most of a "
+                  f"`dbt show` is dbt starting up, so they are batched; a batch that fails is "
+                  f"retried in halves until the relation that broke it is alone.[/]")
+    with console.status(f"counting {len(tg)} relation(s)...") as status:
+        for i, batch in enumerate(batches, 1):
+            status.update(f"statement {i} of {len(batches)}, {len(batch)} relation(s)")
+            by_rel = probe_mod.run_batch(batch, project_dir, profiles_dir, dialect,
+                                         dbt_bin=dbt_bin, caller="assay.probe.keys",
+                                         sample_pct=sample)
+            obs = [o for t_ in batch for o in by_rel.get(t_.relation, [])]
+            probe_mod.write(store, obs)
+            for o in obs:
+                if o.status == "unknown":
+                    unknown += 1
+                else:
+                    ok += 1
+                if o.is_unique_key:
+                    found.append(o)
     console.print(f"observed [bold]{ok}[/] columns, [yellow]{unknown} unknown[/] "
                   f"(a failure is recorded as unknown, never as 'not unique')")
     spent = cost_mod.warehouse_ledger(store, caller="assay.probe.keys")
     if spent["calls"]:
+        engine = ("" if spent.get("exec_ms") is None
+                  else f"{spent['exec_ms'] / 1000:.1f}s in the warehouse, ")
         console.print(f"[dim]{spent['calls']} statement(s), {_bytes(spent['bytes_estimated'])}"
-                      f"{_usd(spent['usd'])}, {spent['wall_ms'] / 1000:.1f}s of warehouse time. "
-                      f"`assay spend` has the whole ledger.[/]")
+                      f"{_usd(spent['usd'])}. {engine}"
+                      f"{spent['wall_ms'] / 1000:.1f}s of wall clock, most of which is dbt "
+                      f"starting up. `assay cost` has the whole ledger.[/]")
     for o in found[:15]:
         console.print(f"  [green]unique[/] {o.relation}.{o.column}  [dim]{o.detail}[/]")
     store.close()

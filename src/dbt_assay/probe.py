@@ -123,7 +123,15 @@ create table if not exists warehouse_calls (
     estimate_basis varchar,     -- declared_types | adapter | unknown. NOT optional, same reason.
     sampled        boolean,
     sample_rows    bigint,
+    -- *** THE SUBPROCESS ROUND TRIP. NEVER A COST BASIS. ***
+    -- Measured on the production sweep: 18,000ms of wall clock around a statement the warehouse
+    -- ran in 30ms, because 99.7% of it is dbt starting up and parsing a manifest. Snowflake bills
+    -- warehouse seconds, so pricing on this is wrong by roughly 600x -- and wrong in the
+    -- direction that looks plausible rather than absurd, so nobody catches it.
     wall_ms        integer,
+    -- What the ENGINE took, from the adapter response or dbt's own debug log. NULL when nothing
+    -- reported one, and a time-priced estimate is then not emitted at all: absent beats 600x.
+    exec_ms        integer,
     usd_estimated  double,      -- NULL when nothing configured can justify a number
     rate_card      varchar,     -- WHICH rate produced usd_estimated, stored, never derived later
     -- *** A FAILED STATEMENT AND AN EMPTY ONE ARE NOT THE SAME ROW. ***
@@ -363,22 +371,23 @@ def _record(sql: str, res: Result, *, caller: str, kind: str, relation: str = ""
         measured = adapter_bytes(res.adapter)
         if measured is not None:
             basis = "adapter"
-        # dbt's own execution time excludes its startup, so it prices a Snowflake second better
-        # than the wall clock around the subprocess does.
-        took = res.engine_ms if res.engine_ms is not None else res.wall_ms
+        # *** THE ENGINE'S OWN TIME, OR NOTHING. ***
+        # Falling back to `wall_ms` here is what makes a Snowflake estimate 600x wrong, so there
+        # is no fallback: `price` gets None and declines to produce a figure.
+        took = res.engine_ms
         led.store.con.execute(DDL)
         led.store.con.execute(
             """insert into warehouse_calls
                (call_id, run_id, caller, relation, statement_kind, dialect, columns_touched,
                 column_names, rows_returned, rows_scanned, bytes_estimated, bytes_measured,
-                estimate_basis, sampled, sample_rows, wall_ms, usd_estimated, rate_card,
-                failed, detail, called_at)
-               values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                estimate_basis, sampled, sample_rows, wall_ms, exec_ms, usd_estimated,
+                rate_card, failed, detail, called_at)
+               values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [hashlib.sha1(sql.encode("utf-8")).hexdigest()[:16],
              led.run_id, caller, relation, kind, rate.engine,
              len(cols) or None, json.dumps(cols) if cols else None,
              len(res.rows), scanned, est, measured, basis, bool(sampled), sample_rows,
-             res.wall_ms,
+             res.wall_ms, res.engine_ms,
              # Priced on the measured bytes when there are any: that is the invoice.
              rate.price(measured if measured is not None else est, took), rate.name,
              bool(res.failed), (res.why or "")[:300],
@@ -432,7 +441,8 @@ def _execute(sql: str, project_dir: str, profiles_dir: str | None = None,
     return Result(rows=list(data.get("show") or []), wall_ms=ms)
 
 
-def targets(project, digests, schema, declared, known_grain: dict) -> list[Target]:
+def targets(project, digests, schema, declared, known_grain: dict,
+            real_columns: dict | None = None) -> list[Target]:
     """Relations whose grain nothing can settle, and only the columns their children key on.
 
     Targeting is GRAPH POSITION, never a folder name: a project with every model in one flat
@@ -465,17 +475,37 @@ def targets(project, digests, schema, declared, known_grain: dict) -> list[Targe
             referenced.update(d.referenced_columns)
         have = [c.lower() for c in schema.columns(uid).names]
         have_set = set(have)
+        # *** WHAT THE WAREHOUSE SAYS THE RELATION HOLDS, WHERE IT WAS ASKED. ***
+        # The manifest may know nothing about a source. `information_schema` always does, and
+        # that read scans nothing.
+        actual = (real_columns or {}).get(rel.lower())
+        if actual:
+            have_set = actual
+            have = sorted(actual)
+        # *** WITH NOTHING TO CHECK AGAINST, `not have_set` LETS EVERY NAME THROUGH. ***
+        # Not only the `referenced` fallback below: a join key a child declares is accepted here
+        # unchecked too, and a child can join on a name it computed itself. Whenever nothing
+        # could say what this relation holds, the candidate list is a guess and says so.
+        unverified = not have_set
         cols = sorted(c for c in wanted if not have_set or c in have_set)
         why = f"{len(children)} models read it; grain unknown"
         if not cols and have:
             cols = [c for c in have if ID_LIKE.search(c)]
             why += "; no structural key hint, so id-like column names were counted"
         if not cols and not have and referenced:
-            # A SOURCE usually declares no columns anywhere, so the only evidence of what it holds
-            # is what its children read out of it.
+            # *** ONLY WHERE NOTHING COULD BE ASKED. ***
+            # A source declares no columns anywhere, so absent a catalog the only evidence of
+            # what it holds is what its children read out of it -- which is evidence of what the
+            # CHILD produces, and 70 of 271 statements on a real warehouse asked for a column
+            # that lived only in the child. Where the warehouse was reachable this branch is
+            # never taken; where it was not, the guess says it is one.
             cols = sorted(c for c in referenced if ID_LIKE.search(c))
-            why += "; columns inferred from what its children reference"
+            why += ("; columns GUESSED from what its children reference, because nothing could "
+                    "say what this relation actually holds")
         if cols:
+            if unverified and "GUESSED" not in why:
+                why += ("; columns UNVERIFIED -- nothing could say what this relation holds, so "
+                        "a name that exists only in a child may be counted here")
             out.append(Target(relation=rel, uid=uid, columns=cols[:12], why=why))
     return out
 
@@ -524,6 +554,151 @@ def build_sql(target: Target, dialect: str = "duckdb", sample_pct: float = 0.0) 
     rel = exp.to_table(target.relation).sql(dialect=dialect)
     clause = sample_clause(dialect, sample_pct)
     return f"select {', '.join(parts)} from {rel}" + (f" {clause}" if clause else "")
+
+
+# *** 99.7% OF THE SWEEP WAS dbt STARTING UP. ***
+# Measured on the production sweep: 5 dbt invocations in 90 seconds, so 18 seconds per statement,
+# while dbt's own debug log recorded the warehouse doing the work in 12 to 96 MILLISECONDS. 271
+# relations therefore took about eighty minutes to perform roughly twenty seconds of querying.
+#
+# The two constraints that produce this are both good and both stay. assay never holds a
+# credential, so every read goes out through the project's own dbt; and assay does not depend on
+# dbt-core, because dbt-core pins adapters and Python versions aggressively and depending on it
+# means breaking on every dbt release. Together they rule out `dbtRunner`, which would parse the
+# manifest once and invoke many times in one process.
+#
+# What neither constraint requires is ONE SHELL-OUT PER STATEMENT. These are independent
+# aggregates over single relations with no joins, so they union into one statement. 271
+# invocations become about 30, and eighty minutes becomes under ten, with the same counts, the
+# same credential handling and the same dependencies.
+#
+# *** THE WIDTH IS BOUNDED, BECAUSE THE FAILURE MODE IS A SHRUG. ***
+# A statement too wide hits a parser or planner limit on some engine, and a failed batch today
+# looks like `unknown` rows, which reads as "assay could not tell" rather than "assay asked
+# badly". So batches are small, and a failed batch is retried in halves the way `rows.py` already
+# retries -- the culprit ends up alone and is recorded as unknown, and its neighbours still count.
+#
+# *** AND ON BIGQUERY THIS BUYS TIME, NEVER MONEY. ***
+# A batched statement still scans every column in it. Same split as the cost model: batching helps
+# where seconds are billed and does nothing where bytes are.
+BATCH_COLUMNS = 340          # total count() expressions in one statement
+BATCH_RELATIONS = 12         # relations in one statement, whichever limit binds first
+
+
+def batch_sql(targets_: list[Target], dialect: str = "duckdb",
+              sample_pct: float = 0.0) -> str:
+    """One statement counting several relations, each row labelled with the relation it is about.
+
+    `interpret` reads one result row per target, so the label is what lets a batched result be
+    split back out. It is a literal rather than a positional guess, because a union does not
+    promise an order and reading these back by position is `first_match_pick` with extra steps.
+    """
+    # *** THE ARMS PAD TO THE WIDEST RELATION IN THIS BATCH, NOT TO THE GLOBAL CAP. ***
+    # Every arm of a union must have the same shape. Padding all of them to twelve columns when
+    # the batch's widest has three writes nine dead `cast(null)` pairs per arm into a statement
+    # that is already the thing being made smaller.
+    width = max((len(t.columns) for t in targets_), default=0)
+    parts = []
+    for t in targets_:
+        cols = ["count(*) as row_count"]
+        for i in range(width):
+            if i < len(t.columns):
+                col = sqlglot.parse_one(t.columns[i], dialect=dialect).sql(dialect=dialect)
+                cols.append(f"count({col}) as nn_{i}")
+                cols.append(f"count(distinct {col}) as dc_{i}")
+            else:
+                # Every arm of a union must have the same shape, so a relation with fewer
+                # candidates pads with NULLs -- which `interpret` already reads as `unknown` for
+                # a column that is not there to be asked about.
+                cols.append(f"cast(null as bigint) as nn_{i}")
+                cols.append(f"cast(null as bigint) as dc_{i}")
+        rel = exp.to_table(t.relation).sql(dialect=dialect)
+        clause = sample_clause(dialect, sample_pct)
+        lit = t.relation.replace("'", "''")
+        parts.append(f"select '{lit}' as assay_rel, {', '.join(cols)} from {rel}"
+                     + (f" {clause}" if clause else ""))
+    return " union all ".join(parts)
+
+
+def plan_batches(targets_: list[Target]) -> list[list[Target]]:
+    """Split targets into statements small enough that no engine refuses one."""
+    out: list[list[Target]] = []
+    cur: list[Target] = []
+    for t in targets_:
+        trial = [*cur, t]
+        # The real width, which is every arm padded to the widest one in the batch.
+        wide = max(len(x.columns) for x in trial)
+        if cur and (len(trial) > BATCH_RELATIONS
+                    or len(trial) * (1 + wide * 2) > BATCH_COLUMNS):
+            out.append(cur)
+            cur = []
+        cur.append(t)
+    if cur:
+        out.append(cur)
+    return out
+
+
+def run_batch(targets_: list[Target], project_dir: str, profiles_dir: str | None = None,
+              dialect: str = "duckdb", timeout: int = 600, dbt_bin: str = "dbt",
+              caller: str = "assay.probe.keys",
+              sample_pct: float = 0.0) -> dict:
+    """{relation: [Observation]} for a batch, halving on failure until the culprit is alone.
+
+    A relation that still fails alone is recorded as `unknown` with the reason, never as "not
+    unique" and never as absent: silence has to be distinguishable from absence, which is the
+    rule this whole module is built on.
+    """
+    if not targets_:
+        return {}
+    clause = sample_clause(dialect, sample_pct)
+    used_pct = sample_pct if clause else 0.0
+    sql = batch_sql(targets_, dialect, sample_pct)
+    res = _execute(sql, project_dir, profiles_dir, dbt_bin, limit=len(targets_) + 1,
+                   timeout=timeout, measure=measuring())
+    _record(sql, res, caller=caller, kind="key_scan",
+            relation=targets_[0].relation if len(targets_) == 1 else "",
+            columns=targets_[0].columns if len(targets_) == 1 else None,
+            sampled=bool(used_pct))
+    if not res.failed:
+        by_rel = {}
+        for row in res.rows:
+            key = str(row.get("assay_rel") or "")
+            if key:
+                by_rel[key.lower()] = row
+        out = {}
+        for t in targets_:
+            row = by_rel.get(t.relation.lower())
+            out[t.relation] = (interpret(t, row, used_pct) if row is not None else
+                               [Observation(t.relation, c, status="unknown",
+                                            detail="the batch returned no row for this relation")
+                                for c in t.columns])
+        return out
+    if len(targets_) == 1:
+        t = targets_[0]
+        # *** ONE BAD COLUMN NAME DISCARDED EVERY GOOD CANDIDATE FOR THAT RELATION. ***
+        # Measured on a real sweep: 548 candidate columns produced 242 `unknown` rows, because a
+        # statement counting twelve columns fails entirely if one of them does not exist, and the
+        # whole relation was then written off. The halving that isolates a bad RELATION works on
+        # columns too: keep splitting until the bad name is alone, and everything beside it is
+        # counted rather than shrugged at.
+        if len(t.columns) > 1:
+            mid = len(t.columns) // 2
+            out: dict = {t.relation: []}
+            for half in (t.columns[:mid], t.columns[mid:]):
+                part = Target(relation=t.relation, uid=t.uid, columns=half, why=t.why)
+                got = run_batch([part], project_dir, profiles_dir, dialect, timeout, dbt_bin,
+                                caller, sample_pct)
+                out[t.relation].extend(got.get(t.relation, []))
+            return out
+        why = res.why or "the query returned no row"
+        return {t.relation: [Observation(t.relation, c, status="unknown", detail=why)
+                             for c in t.columns]}
+    mid = len(targets_) // 2
+    out = run_batch(targets_[:mid], project_dir, profiles_dir, dialect, timeout, dbt_bin,
+                    caller, sample_pct)
+    out.update(run_batch(targets_[mid:], project_dir, profiles_dir, dialect, timeout, dbt_bin,
+                         caller, sample_pct))
+    return out
 
 
 def parse_dbt_show(stdout: str) -> dict | None:
@@ -882,8 +1057,108 @@ def sentinel_findings(relation: str, columns: list[str], profile: dict) -> list[
     return out
 
 
+# *** THE ESTIMATE COULD NOT PRICE A COLD STORE, WHICH IS WHEN IT IS ASKED FOR. ***
+# Measured on production: 271 statements, 38 estimated, 233 not -- 86% unpriced, because a byte
+# estimate needs a row count and row counts only existed for relations a previous probe had
+# already scanned. So `--dry-run` answered "what will this cost me" with a shrug at exactly the
+# moment a new BigQuery user asks it.
+#
+# Every engine publishes row counts as catalog metadata, and reading them scans nothing:
+#   duckdb     duckdb_tables().estimated_size
+#   bigquery   INFORMATION_SCHEMA.TABLE_STORAGE.total_rows, and total_logical_bytes, which is a
+#              BETTER basis than rows x declared widths because it is what the scan reads
+#   snowflake  INFORMATION_SCHEMA.TABLES.ROW_COUNT
+#
+# One metadata statement, and `estimate_basis` becomes `catalog` rather than `unknown`.
+_CATALOG_ROWS = {
+    "duckdb": ("select database_name || '.' || schema_name || '.' || table_name as assay_rel, "
+               "estimated_size as assay_rows, cast(null as bigint) as assay_bytes "
+               "from duckdb_tables()"),
+    "snowflake": ("select table_catalog || '.' || table_schema || '.' || table_name "
+                  "as assay_rel, row_count as assay_rows, bytes as assay_bytes "
+                  "from information_schema.tables where row_count is not null"),
+    "bigquery": ("select concat(project_id, '.', table_schema, '.', table_name) as assay_rel, "
+                 "total_rows as assay_rows, total_logical_bytes as assay_bytes "
+                 "from `region-us`.INFORMATION_SCHEMA.TABLE_STORAGE"),
+}
+
+
+# *** 70 OF 271 STATEMENTS ASKED FOR COLUMNS THAT DO NOT EXIST. ***
+# `nhdplus_flowline` has nine columns and assay asked it to count `basin_name`, which lives in a
+# CHILD. The hole is in `targets`: where a relation declares no columns anywhere -- which is the
+# normal case for a source -- every name a child referenced was accepted unchecked, on the theory
+# that what the children read is the only evidence of what the parent holds. It is evidence of
+# what the child PRODUCES, and those are different sets.
+#
+# The warehouse knows. `information_schema.columns` is a metadata read that scans nothing, and it
+# is the same trip the row counts already make.
+_CATALOG_COLS = {
+    "duckdb": ("select table_catalog || '.' || table_schema || '.' || table_name as assay_rel, "
+               "column_name as assay_col from information_schema.columns"),
+    "snowflake": ("select table_catalog || '.' || table_schema || '.' || table_name as assay_rel, "
+                  "column_name as assay_col from information_schema.columns"),
+    "postgres": ("select table_catalog || '.' || table_schema || '.' || table_name as assay_rel, "
+                 "column_name as assay_col from information_schema.columns"),
+}
+
+
+def catalog_columns(project_dir: str, profiles_dir: str | None = None, dialect: str = "duckdb",
+                    dbt_bin: str = "dbt", timeout: int = 180) -> dict:
+    """{relation_lower: {column_lower}} from the warehouse. Scans nothing.
+
+    `{}` for an engine assay has no statement for, which leaves the old behaviour in place: a
+    guess, said out loud as a guess, rather than a guess dressed as knowledge.
+    """
+    sql = _CATALOG_COLS.get((dialect or "").lower())
+    if not sql:
+        return {}
+    res = run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=400000, timeout=timeout,
+                  caller="assay.probe.catalog", kind="metadata")
+    if res.failed:
+        return {}
+    out: dict = {}
+    for row in res.rows:
+        rel = str(row.get("assay_rel") or "").strip().lower()
+        col = str(row.get("assay_col") or "").strip().lower()
+        if rel and col:
+            out.setdefault(rel, set()).add(col)
+    return out
+
+
+def catalog_rows(project_dir: str, profiles_dir: str | None = None, dialect: str = "duckdb",
+                 dbt_bin: str = "dbt", timeout: int = 120) -> dict:
+    """{relation_lower: (rows, bytes_or_None)} from the engine's catalog. Scans nothing.
+
+    An engine assay has no catalog statement for returns `{}`, which reads downstream as "no row
+    count", exactly as it did before -- an unpriced statement, said out loud, rather than a
+    number built from a guess.
+    """
+    sql = _CATALOG_ROWS.get((dialect or "").lower())
+    if not sql:
+        return {}
+    res = run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=20000, timeout=timeout,
+                  caller="assay.probe.catalog", kind="metadata")
+    if res.failed:
+        return {}
+    out: dict = {}
+    for row in res.rows:
+        rel = str(row.get("assay_rel") or "").strip()
+        if not rel:
+            continue
+        try:
+            n = int(row.get("assay_rows"))
+        except (TypeError, ValueError):
+            continue
+        try:
+            by = int(row.get("assay_bytes"))
+        except (TypeError, ValueError):
+            by = None
+        out[rel.lower()] = (n, by)
+    return out
+
+
 def dry_run(targets_: list[Target], store=None, dialect: str = "duckdb",
-            rate=None, types: dict | None = None) -> dict:
+            rate=None, types: dict | None = None, catalog: dict | None = None) -> dict:
     """Every statement a probe would issue, and what it would cost. Executes nothing.
 
     *** THE ARGUMENT FOR assay TO SOMEBODY WHO PAYS PER QUERY. ***
@@ -898,13 +1173,25 @@ def dry_run(targets_: list[Target], store=None, dialect: str = "duckdb",
     from . import cost as cost_mod
     rate = rate or cost_mod.RateCard.from_config({}, dialect)
     types = types or {}
+    catalog = catalog or {}
     led = _Ledger(store=store, dialect=dialect) if store is not None else None
     out: list[dict] = []
     total_bytes, total_usd, unpriced = 0, 0.0, 0
     for t in targets_:
-        rows = led.row_count(t.relation) if led is not None else None
-        est, basis = cost_mod.estimate([c.lower() for c in t.columns],
-                                       types.get(t.relation.lower(), {}), rows, rate)
+        cat = catalog.get(t.relation.lower())
+        # *** THE CATALOG'S OWN BYTES BEAT rows x DECLARED WIDTHS. ***
+        # BigQuery's `total_logical_bytes` is what the scan reads; a width table is a model of it.
+        # A relation the catalog sizes directly skips the estimate entirely and says `catalog`.
+        if cat and cat[1]:
+            est, basis, rows = int(cat[1]), "catalog", cat[0]
+        else:
+            rows = (cat[0] if cat else None)
+            if rows is None and led is not None:
+                rows = led.row_count(t.relation)
+            est, basis = cost_mod.estimate([c.lower() for c in t.columns],
+                                           types.get(t.relation.lower(), {}), rows, rate)
+            if est is not None and cat:
+                basis = "catalog"
         usd = rate.price(est, None)
         if est is None:
             unpriced += 1

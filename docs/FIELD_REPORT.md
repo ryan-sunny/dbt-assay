@@ -844,3 +844,345 @@ as they are.
 
 - The favicon, from the same SVG.
 - `docs/PRODUCT.md`, which is the page the README sends new readers to.
+
+---
+
+## 12. 0.48.0 on production: verified fixed, and one new bug in `assay volume`
+
+Run 2026-09-22 on the box, 0.48.0, against the real warehouse. Page `build 43b9e520adef`, which matches the
+checkout, so the stamp is evidence now rather than an assertion. That closes 7.4.
+
+### 12.1 Verified fixed against the real artifacts
+
+| item | evidence |
+|---|---|
+| 1.1 chain node clicks | 6 nodes drawn, 6 carry `clk`, a click opens a card. `setPointerCapture` no longer eats it |
+| 2.6 "severity decides" | now reads `not configured; warns, cannot fail a build` |
+| 3.1 document scroll | 0px overflow on all ten tabs, measured in a browser at 1440x900 |
+| 4.3 page and form link | `assay review --report` wires them |
+| 5.1 form header moves | download button holds `top: 50` across panes |
+| 10.7 `--sample` | shipped, exact is the default, help text carries the language |
+| monitoring deferral | names `assay volume` and ends "Nothing here says the monitoring is fine" |
+
+Both files pass `node --check` and drive with zero page errors.
+
+Findings went 264 to 468. `column_has_no_description` 129, `models_disagree_about_a_column` 73,
+`description_promises_what_the_code_does` 2. Loop metric unmoved: 63 agreed, 0 fixed, 56 of 253 models ruled
+on by a person.
+
+### 12.2 BUG. `assay volume` leads with a false outage
+
+The volume report's headline table, highest blast radius first:
+
+```
+table                     change    rows now    marts
+buyer_leads_enriched     -100.0%           0        6
+```
+
+`buyer_leads_enriched` has 281,286 rows right now. I checked the warehouse directly.
+
+Two separate faults produce that line, and both matter on their own.
+
+**Elementary's `row_count` is a per-bucket count, not a table row count.** `bucket_duration_hours` is 24, and
+the 126 buckets recorded for this table sum to 13,579 against a table holding 281,286 rows. So the metric
+counts rows landing in a day, not rows in the relation. A quiet day records 0. Comparing one bucket to the
+previous one and calling the result a percentage change in table size treats an ordinary quiet day as a table
+being emptied.
+
+**The observation is 80 days old and nothing checks that.** The newest `row_count` bucket for this table
+starts 2026-07-04. The column is labelled `rows now`. It is not now, it is July.
+
+The recency guard would have caught exactly this one: of 114 relations with `row_count` history, this is the
+only one whose newest observation is more than 30 days old. A single `max(bucket_start)` predicate removes the
+false alarm and keeps every true one.
+
+What makes this worth fixing rather than tuning: `volume` already knows to be careful about staleness
+elsewhere in the same report. It prints "63 monitors last FAILED and have not run since. A stale failure looks
+exactly like a live one." That is the correct instinct, applied to monitor results and not applied to the
+row-count observations directly above it.
+
+It is also the `arbitrary_pick` and `test_cannot_fail` bug class, which assay ships checks for. A number was
+read from a log without constraining which row it came from or how old it was.
+
+Suggested shape of the fix:
+
+1. Constrain to the latest bucket per relation and carry its age.
+2. Drop, or visibly mark as stale, anything whose newest observation is older than a threshold. Not silence:
+   an 80-day-old monitor is itself a finding, and a more honest one than a fake outage.
+3. Rename the column. It is `rows in the last observed bucket`, not `rows now`. If a real table row count is
+   wanted, that is a `count(*)`, which `probe` already knows how to cost.
+4. Say what the metric measures, since a reader who has not read Elementary's source will assume a table
+   count.
+
+### 12.3 The true findings underneath, which are good
+
+Stripping the false line, the rest of the report is real and useful:
+
+- 63 monitors last failed and have not run since, oldest 73 days.
+- 459 of 1,317 declared tests have never produced a result.
+- 1,587 test results are SKIPPED, which is not a pass. Related to the outage fixed in `b0577278`, where a
+  broken build skipped 108 models.
+- 233 models with a mart downstream have no row-count history at all, against 114 that do.
+
+The last one is the most useful sentence in the report, and it is phrased exactly right: "Nothing here covers
+those."
+
+### 12.4 BUG-adjacent. The cost estimate cannot price a cold store
+
+`probe --dry-run` on production:
+
+```
+271 statements, one scan each. Nothing was run.
+631.8 MB scanned, $0.0000 (duckdb, duckdb.local). 233 statement(s) could not be
+estimated and are not in this total.
+```
+
+Saying so rather than quietly totalling a partial number is correct and is what `estimate_basis` was for. But
+86% unestimated is a lot, and the cause is structural: the estimate needs a row count, and row counts only
+exist for relations a previous probe already scanned. The store holds 39 relations with a `row_count` and
+exactly 38 statements were estimated.
+
+So the feature cannot price a cold store, which is the exact moment a paying user wants the number. A new
+BigQuery user runs `--dry-run` first, and gets nothing.
+
+The fix needs no scan on any engine, because every engine publishes row counts as catalog metadata:
+
+- DuckDB: `duckdb_tables().estimated_size`
+- BigQuery: `INFORMATION_SCHEMA.TABLE_STORAGE.total_rows`, and `total_logical_bytes` is a better basis than
+  rows times type widths since it is what the scan actually reads
+- Snowflake: `INFORMATION_SCHEMA.TABLES.ROW_COUNT`
+
+All three are free metadata reads. `estimate_basis` then becomes `catalog` rather than `unknown`.
+
+### 12.5 Still open from the earlier sections
+
+- The form did not get the flex shell the page got. Document overflow per pane: words 6705px, findings 6059,
+  waivers 2834, explanations 2773, settings 1196, monitoring 0. Some of that is honest pagination, but the
+  words pane is 40 near-identical cards, which is 3.2 rather than pagination.
+- 197 of 339 form cards are a cold start. The mechanism shipped as `--reads <json>`; nothing generates the
+  file yet. This is 5.4 and it is a skill job, not a form job.
+
+---
+
+## 13. The probe sweep is 99.7% dbt startup, and what that does to the cost layer
+
+Found by measuring the production sweep rather than by reading code. 271 relations, launched on the box.
+
+### 13.1 The measurement
+
+Rate, sampled over 90 seconds of a live sweep: 5 dbt invocations, so 18 seconds per statement. The dbt debug
+log for those same statements:
+
+```
+SQL status: OK in 0.027 second
+SQL status: OK in 0.096 second
+SQL status: OK in 0.012 second
+SQL status: OK in 0.059 second
+```
+
+The warehouse work is 12 to 96 milliseconds. The wall time is 18,000. So 99.7% of the sweep is dbt process
+startup and manifest parse, and 271 statements take about 80 minutes to perform roughly 20 seconds of
+querying.
+
+### 13.2 Why it is built this way, which is not an accident
+
+Two hard constraints, both good, both documented in the code.
+
+`probe.py:376`: "Any read-only statement, through the project's own dbt. assay never holds a credential."
+That is why anyone can point assay at a production warehouse without handing it a secret. It should not be
+given up.
+
+`pyproject.toml`: assay does not depend on dbt-core, deliberately. The comment says why: "dbt-core pins
+adapters, Python versions and dependencies aggressively; depending on it means fighting every user's
+environment and breaking on every dbt release." Confirmed, nothing under `src/dbt_assay/` imports dbt.
+
+Those two together rule out the obvious fix. `dbt.cli.main.dbtRunner` would parse once and invoke many times
+in a single process, which is exactly what is wanted, and it requires importing dbt-core. So that door is
+closed on purpose.
+
+Given both constraints, shelling out to the user's dbt binary is the correct mechanism. What is not required
+by either constraint is **one shell-out per statement**. That is the part to fix.
+
+### 13.3 The fix that keeps both constraints
+
+The per-relation statements are independent aggregates with no joins. They can be combined into far fewer
+`dbt show` invocations:
+
+```sql
+select 'sunny.raw.co_addresses' as rel, count(*) as row_count, count(addr_id) as nn_0, ...
+union all
+select 'sunny.raw.elpaso_parcels' as rel, count(*) as row_count, ...
+```
+
+`interpret()` already parses a single result row per target, so it needs a relation label to split a batched
+result back out. Cutting 271 invocations to 30 takes the sweep from 80 minutes to under 10, changes nothing
+about what is measured, holds no credential and imports no dbt.
+
+Two cautions. Batch width has to be bounded, because a statement too wide will hit a parser or planner limit
+on some engine and the failure mode today is an `unknown` row that looks like a shrug. And on BigQuery a
+batched statement still scans every column in it, so batching is a wall-clock optimisation and never a bill
+optimisation. Which is the same split as 10.2: batching helps where time is billed, and does nothing where
+bytes are.
+
+There is already an escape hatch for people who want to run the SQL themselves: `probe --emit` writes the
+statements out and `--load` reads the results back. That path is manual today and is the right thing to point
+a large-warehouse user at until batching lands.
+
+### 13.4 The consequence for the cost layer, which is the serious part
+
+`wall_ms` recorded around `subprocess.run` reads about 18,000ms for a statement the warehouse ran in 30ms.
+
+Snowflake is billed on warehouse seconds. If `wall_ms` is the basis for a Snowflake estimate, the number is
+wrong by roughly 600x, and it is wrong in the direction that looks plausible rather than absurd, so nobody
+catches it.
+
+The fix is the one already built for bytes. `dbt show --log-format json --log-level debug` carries
+`run_result.adapter_response`, and the same debug log carries `SQL status: OK in N second`. Take execution
+time from the engine, never from the subprocess.
+
+Concretely, in the `warehouse_calls` schema from 10.4:
+
+- `wall_ms` keeps meaning what it says, the subprocess round trip, and is never a cost basis.
+- Add `exec_ms`, from the adapter response or the debug log, null when the adapter gives nothing.
+- `estimate_basis` governs `exec_ms` the same way it governs bytes. A Snowflake estimate built on `wall_ms`
+  must not be emitted at all; absent is better than 600x wrong.
+
+This is the same rule three times now: 1.7 (varchar declared over INTEGER), 12.2 (an 80-day-old bucket
+labelled `rows now`), and here. A column that mixes a measured value with a stand-in produces a number nobody
+can audit, and it always looks fine.
+
+---
+
+## 14. Baseline sweep results: the cost ledger works, and 26% of the sweep fails
+
+`assay probe` against the real warehouse, 0.48.0, 271 relations, about 88 minutes wall clock.
+
+```
+271 statement(s), 631.8 MB, $0.0000, 5256.0s of warehouse time.
+observed 548 columns, 242 unknown
+```
+
+### 14.1 What the cost layer got right
+
+`assay cost` now prints a warehouse section beside the Jev section, which is the symmetry from 10.4. Three
+lines in that output are doing exactly the job they were specced for:
+
+```
+70 statement(s) FAILED and are not in the money. A failed statement and an empty result are different facts here.
+247 statement(s) could not be estimated and are not in the bytes. `dbt docs generate` gives assay the column
+types; `assay probe` gives it the row counts.
+every byte figure here is an ESTIMATE from declared types and a known row count, never a number an adapter
+returned. `estimate_basis` on each row says which it is.
+```
+
+Failures excluded from the money, unestimated statements excluded from the bytes, and the basis stated rather
+than implied. That is the rule from 10.4 held three times in one screen.
+
+### 14.2 BUG. The same rule was not applied to time, and time is the Snowflake bill
+
+`5256.0s of warehouse time`, in a column headed `time`, with no qualifier anywhere.
+
+The warehouse did not spend 5,256 seconds. Per 13.1 the actual statements ran in 12 to 96 milliseconds, so
+271 of them is roughly 20 seconds. The recorded figure is subprocess wall clock, which is 99.7% dbt startup.
+
+On DuckDB nobody notices, because the money column reads $0.0000 either way. Set `cost.engine: snowflake` and
+a rate, which is what the last line of that output invites, and this becomes the bill. 5,256 seconds against
+20 actual is wrong by 263x, in the direction that looks plausible.
+
+The honesty rule was applied to bytes and not to time. Apply it to both:
+
+- `wall_ms` keeps meaning the subprocess round trip and is never a cost basis.
+- `exec_ms` comes from `run_result.adapter_response` or the `SQL status: OK in N second` line, null when the
+  adapter gives nothing.
+- A Snowflake estimate with no `exec_ms` is not emitted. Absent beats 263x wrong.
+
+### 14.3 BUG. 70 of 271 statements fail on columns that do not exist
+
+Every one of the 70 failures is the same error:
+
+```
+Binder Error: Referenced column ... not found in FROM clause!
+```
+
+Traced to a concrete case. `sunny.raw.nhdplus_flowline` holds exactly these columns:
+
+```
+comid, fcode, ftype, geom, gnis_id, gnis_name, length_km, reachcode, vpu
+```
+
+assay generated `count(basin_name)` against it. There is no `basin_name`. The dry-run output explains why in
+its own words: for a relation with no structural key hint, "columns inferred from what its children
+reference". A child model invents `basin_name` in its own SELECT list, and that name was attributed back to
+the parent.
+
+Two defects, and the second is the expensive one.
+
+**The candidate list is never validated.** `probe.py:248` already runs
+`select column_name from information_schema.columns` for another purpose. The inferred-from-children path
+does not use it. One predicate removes every one of these 70.
+
+**One bad column discards the whole relation.** The batching at `probe.py:156-162` is the design's central
+efficiency: one scan, every candidate column. The cost is that a single unbindable name fails the statement,
+so every good candidate for that relation is recorded `unknown` too. That is how 548 columns produce 242
+unknowns off 70 failed statements.
+
+A failed batch should drop the column named in the error and retry once. On DuckDB a bind error is free, but
+70 failures at 18 seconds each is 21 minutes of the 88, spent to learn nothing.
+
+This is the batching failure mode predicted in 13.3, arriving from a different direction than expected. It is
+also worth noting that `unknown` is the correct thing to record, and `probe.py` says so: "a failure is
+recorded as unknown, never as 'not unique'". The record is honest. The statement should not have failed.
+
+### 14.4 The real results, which are good
+
+179 columns settled as `unique` and 117 as `has_nulls`, on relations where nothing in the project declared a
+key:
+
+```
+unique sunny.raw.co_addresses.addr_id        2,779,592 rows, all non-null and distinct
+unique sunny.raw.business_entities._dlt_id   3,090,339 rows, all non-null and distinct
+unique sunny.raw.co_parcels_geom.pk            359,456 rows, all non-null and distinct
+```
+
+Those are facts about the data that no dbt test asserted and nothing in the repo wrote down, which is the
+point of the tier. Fixing 14.3 would add roughly 242 more.
+
+### 14.5 The monitoring pane fills correctly, and shows a derived cadence of 0.0 days
+
+`assay volume --json > volume.json` then `assay review --emit ... --monitoring volume.json` works end to end.
+The pane goes from "Nothing measured yet" to the real report, and the content is good:
+
+```
+monitor ran then stopped
+`dbt_source_freshness_results` has not been written to for 77 days, and a stopped monitor reads exactly
+like one that finds nothing
+
+volume is not being watched
+233 models with a mart downstream have no row-count history
+
+test skipped rather than passed
+1,587 test results are SKIPPED, which is not a pass
+```
+
+The 77-day figure independently confirms the source-freshness gap recorded in 7.7.
+
+One line in it is wrong:
+
+```
+assay measured: this project runs dbt every 0.0 day(s), across 44 run(s).
+Three missed runs is 5 day(s); nothing is configured, so the derived number is what is used.
+```
+
+A cadence of 0.0 days is not a cadence. This project runs dbt several times a day, so the median gap is
+sub-daily and rounds away. The second sentence then does not follow from the first: three missed runs at 0.0
+days apart is 0 days, not 5, so a floor is clearly being applied and is not being disclosed.
+
+Two fixes, both small:
+
+- Render a sub-daily cadence in hours. "every 7 hours, across 44 runs" is a true sentence; "every 0.0 days"
+  is not.
+- Say the floor out loud. "Three missed runs is 0.9 days, floored to the 5-day minimum" is honest and keeps
+  the derived number auditable, which is the same rule as `estimate_basis`.
+
+This matters more than it looks because the derived number is what is used when nothing is configured, and
+the pane says so. A user reading `0.0` has no way to judge whether the 5 is reasonable for their project.

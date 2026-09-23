@@ -71,8 +71,16 @@ def _json(s, empty):
 
 
 def assemble(project, digests, schema, entries, findings, store, cfg,
-             generated_at: str, version: str) -> dict:
-    """One object holding every fact assay has about this project."""
+             generated_at: str, version: str, monitoring: dict | None = None) -> dict:
+    """One object holding every fact assay has about this project.
+
+    *** THE MONITORING NUMBERS REACHED THE FORM AND NOT THE REPORT. ***
+    "why doesnt the main report talk about like testing and monitoring stuff and just the form?"
+    Because `assay volume` wrote a JSON that only `review --emit` read. The report is the artifact
+    a person opens to find out what is known about the warehouse, and whether anything is watching
+    it is exactly that -- so it takes the same file, by the same flag name, and renders it whole
+    rather than as the two numbers the form needed.
+    """
     by_uid = {e.uid: e for e in entries}
     # *** WHAT EACH FINDING WOULD DO ON A BUILD, NOT JUST THAT IT EXISTS. ***
     # `findings` says what is wrong; the policy says which of it stops CI. Deciding that by
@@ -201,6 +209,10 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         "effectiveness": _effectiveness(store),
         "moved": _moved(store, project),
         "unreadable": _unreadable(store, project),
+        # *** ABSENT AND FINE ARE DIFFERENT, AND `{}` HAS TO MEAN THE FIRST ONE. ***
+        # Empty here means nobody passed `--monitoring`, never that the monitoring is healthy.
+        # The tab says which, the same way `new_store` does for the store.
+        "monitoring": monitoring or {},
     }
 
 
@@ -615,7 +627,7 @@ _LINES = ("models", "edges", "claims", "findings", "decisions", "questions",
 # a list belongs, and `.length` on a dict is `undefined` rather than an error -- so the page would
 # have shown nothing and looked fine. Second time this class has appeared in this file.
 _WHOLE = (("meta", dict), ("config", dict), ("unconfigured", list),
-          ("moved", dict), ("cost", dict))
+          ("moved", dict), ("cost", dict), ("monitoring", dict))
 
 
 def write_data(data: dict, directory, record: str = "") -> list:

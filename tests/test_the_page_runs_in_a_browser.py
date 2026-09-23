@@ -288,14 +288,19 @@ def test_the_mark_renders_in_both_headers(page_file, tmp_path, project_dir):
                 page.goto(f.as_uri())
                 page.wait_for_timeout(80)
                 box = page.eval_on_selector(
-                    "h1 > svg",
+                    "h1 > .mark",
                     "el => { const r = el.getBoundingClientRect();"
-                    "        return {w: r.width, h: r.height, wells: el.querySelectorAll('circle')"
-                    ".length}; }")
-                assert box["wells"] == 16, f"{f.name}: the plate lost wells"
+                    "        return {w: r.width, h: r.height, drawn: e_natural(el)}; }"
+                    .replace("e_natural(el)", "el.naturalWidth || 0"))
+                assert box["drawn"] > 0, f"{f.name}: the mark failed to decode"
                 assert 14 <= box["w"] <= 40 and 14 <= box["h"] <= 40, (
                     f"{f.name}: the mark rendered at {box['w']}x{box['h']}, which is not header "
                     f"size -- an unsized flex SVG collapses or fills the row")
+                # and the plates actually decoded: a broken embed renders at zero
+                cuts = page.eval_on_selector_all(
+                    "img.cut, .taskcut img, .ticketcut img",
+                    "els => els.map(e => e.naturalWidth)")
+                assert all(w > 0 for w in cuts), f"{f.name}: a plate failed to decode"
                 assert not errors, "\n".join(errors[:3])
                 page.close()
         finally:

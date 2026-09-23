@@ -25,266 +25,339 @@ import hashlib
 import html
 import json
 
-CSS = """
-:root{--ink:#16232a;--dim:#6b7a80;--faint:#94a3aa;--line:#dfe6e8;--bg:#fbfcfc;
---card:#fff;--red:#9e2b20;--green:#5a6a2f;--blue:#2b5c7a;--amber:#8a6412;--lin-h:460px}
+CSS = """/* *** A PRINTED ASSAY REPORT, NOT A DASHBOARD. ***
+   The whole surface is paper, ink and rules. There are no cards, no shadows, no rounded corners
+   and no fills: a 17th-century plate book separates things with a line and with space, and that
+   is also the honest way to render a page whose content is text and numbers.
+
+   Colour does one job here and it is not decoration. The three forge tones mark a QUANTITY --
+   a bar, a band, a share -- and nothing else on the page is ever coloured, so colour always means
+   "this is a measurement" rather than "this is important". */
+:root{
+  --paper:#faf8f3;     /* laid paper */
+  --ink:#1a1714;       /* the ink, warmer than black, which is what printed black looks like */
+  --ash:#615a52;       /* secondary text */
+  --faint:#948c81;     /* tertiary, and anything absent */
+  --rule:#cec5b6;      /* hairline */
+  --rule2:#e3dbcd;     /* the lighter rule, between rows */
+  --rust:#a8491a;      /* the strongest measure */
+  --ember:#d2833a;     /* the middle */
+  --iron:#4a443d;      /* the weakest, and anything unsettled */
+  --lin-h:460px;
+}
 *{box-sizing:border-box}
-/* *** THE HEIGHT IS MEASURED, NOT GUESSED. ***
-   It was `calc(100vh - 210px)`, and 210 was a number somebody counted once: header plus nav plus
-   footer plus the paddings between them. Measured on a real page it was out by 12px, so EVERY
-   tab scrolled the document a little -- which is the complaint, and a magic constant is how it
-   comes back the next time the header gains a line. The body is a flex column instead: the
-   header and footer take what they need, `main` takes the rest, and nothing has to add up. */
-body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-color:var(--ink);background:var(--bg);
-display:flex;flex-direction:column;height:100vh;overflow:hidden}
+html{background:var(--paper)}
+body{margin:0;background:var(--paper);color:var(--ink);
+font:15px/1.55 "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+display:flex;flex-direction:column;height:100vh;overflow:hidden;
+-webkit-font-smoothing:antialiased}
 header,footer{flex:0 0 auto}
-header{padding:18px 24px 0;border-bottom:1px solid var(--line);background:var(--card)}
-h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.01em;
-display:flex;align-items:center;gap:9px}
-/* The mark sits on the text's optical centre rather than its baseline, and never shrinks: a
-   flex item with a long project name beside it would otherwise be squeezed. */
-h1 > svg{width:23px;height:23px;flex:none}
-.hname{flex:none}
-h1 span{font-weight:400;color:var(--dim);font-size:14px;margin-left:0}
-/* The project name keeps the h1's own weight; only the strapline beside it goes quiet. */
-h1 span.hname{font-weight:650;color:var(--ink);font-size:19px}
-.sub{color:var(--dim);font-size:12.5px;margin:3px 0 14px}
-.rule{font-size:11.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;
-  margin:14px 0 6px}
-.sug{border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:4px;
-  padding:10px 12px;margin:0 0 8px;background:var(--bg)}
-.sug-h{font-weight:600;margin-bottom:5px}
-.sug-m{margin:0 0 6px;padding-left:18px;color:var(--dim);font-size:12.5px}
-.sug-m li{margin:1px 0}
-.sug-d{white-space:pre-wrap;font-size:12.5px;border-left:2px solid var(--amber);
-  padding:5px 0 5px 9px;margin:6px 0;color:var(--ink)}
-.sug-y{white-space:pre-wrap;font-size:12px;background:var(--card);border:1px solid var(--line);
-  border-radius:3px;padding:8px 10px;margin:6px 0 0;overflow-x:auto}
-nav{display:flex;gap:2px;flex-wrap:wrap}
-nav button{appearance:none;border:1px solid transparent;border-bottom:none;background:none;
-font:inherit;font-size:13px;color:var(--dim);padding:7px 13px;cursor:pointer;
-border-radius:5px 5px 0 0;margin-bottom:-1px}
-nav button:hover{color:var(--ink);background:var(--bg)}
-nav button[aria-selected=true]{color:var(--ink);font-weight:600;background:var(--bg);
-border-color:var(--line);border-bottom:1px solid var(--bg)}
-nav button b{font-weight:500;color:var(--faint);margin-left:5px;font-size:11.5px}
-main{padding:18px 24px 24px;max-width:1500px;width:100%;flex:1 1 auto;min-height:0}
-/* *** THE SCROLL BELONGS TO THE PANEL, NOT THE DOCUMENT. ***
-   Every tab is now exactly as tall as the window, so the two-pane tabs line up and the long
-   single-column ones (Overview, Config, Spend) scroll INSIDE the same box rather than growing the
-   page behind a sticky header. Putting `overflow:hidden` on the body instead would have stranded
-   those three below the fold -- caught by asking which tabs are not two-pane before shipping it. */
+
+/* The masthead: the mark, the name, and a double rule under the whole thing. Nothing else. */
+header{padding:16px 26px 0;background:var(--paper);border-bottom:3px double var(--ink)}
+h1{margin:0;font-family:Fell,"Iowan Old Style",Georgia,serif;font-weight:400;font-size:27px;
+letter-spacing:.01em;display:flex;align-items:center;gap:11px}
+/* The mark is the cut itself, so it blends onto the paper rather than sitting on a
+   white field of its own. */
+h1 > .mark{width:26px;height:auto;flex:none;mix-blend-mode:multiply}
+h1 span.hname{flex:none;font-size:27px;color:var(--ink)}
+h1 span{font-size:15px;color:var(--ash);font-style:italic;font-family:Fell,Georgia,serif}
+.sub{font-size:12px;color:var(--faint);margin:3px 0 0;letter-spacing:.01em;
+font-family:Fell,Georgia,serif}
+.sub a{color:var(--rust)}
+
+/* The tab strip reads as a running head: small caps, generous tracking, a rule under the lot and
+   a heavy rule under the one you are on. */
+nav{display:flex;gap:0;flex-wrap:wrap;margin-top:11px}
+nav button{appearance:none;border:0;border-bottom:3px solid transparent;background:none;
+font-family:Fell,Georgia,serif;font-size:15px;letter-spacing:.06em;text-transform:uppercase;
+color:var(--ash);padding:7px 15px 6px;cursor:pointer;margin-bottom:-3px}
+nav button:hover{color:var(--ink)}
+nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink)}
+nav button b{font-weight:400;color:var(--faint);margin-left:6px;font-size:12px;
+letter-spacing:0;text-transform:none}
+
+main{padding:20px 26px 22px;max-width:1560px;width:100%;flex:1 1 auto;min-height:0}
 .panel{height:100%;overflow:auto}
-@media (max-height:640px){:root{--lin-h:320px}}
 .panel[hidden]{display:none}
-.bar{display:flex;gap:9px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
-input[type=search],select{font:inherit;font-size:13px;padding:6px 9px;border:1px solid var(--line);
-border-radius:6px;background:var(--card);color:var(--ink);min-width:150px}
-input[type=search]{min-width:290px}
-.count{color:var(--dim);font-size:12.5px}
-.big{font-size:22px;font-weight:650;letter-spacing:-.01em}
-table{border-collapse:collapse;width:100%;background:var(--card);font-size:13px}
-th{text-align:left;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
-color:var(--faint);padding:7px 9px;border-bottom:1px solid var(--line);position:sticky;top:0;
-background:var(--card);cursor:pointer;white-space:nowrap}
+@media (max-height:640px){:root{--lin-h:320px}}
+
+/* ---- the plates. A cut sits in the page the way it sits in a book: alone, centred in its
+   column, with a lettered caption under it in italic. */
+.cut{display:block;max-width:100%;height:auto;image-rendering:crisp-edges;
+mix-blend-mode:multiply}
+.plate{margin:0;text-align:center}
+.plate img{max-width:100%;height:auto}
+.plate figcaption{font-family:Fell,Georgia,serif;font-style:italic;font-size:12.5px;
+color:var(--faint);margin-top:5px}
+/* *** SET INTO THE TEXT BLOCK, NOT ABOVE IT. ***
+   A cut in its own row reserved 170px of height for a one-line sentence. Floated inside the
+   paragraph it costs the height of the line it sits on, and the sentence runs around it the way
+   it does in the books these came out of. */
+/* *** SET LIKE A DROP INITIAL, NOT STACKED ABOVE THE TEXT. ***
+   A cut in its own row reserved 170px of height for a one-line sentence, and shrinking it to fit
+   the line made it a speck. Floated at the head of the paragraph it is legible AND the sentence
+   runs around it, so the header costs the height of the cut and nothing more -- which is how a
+   plate is set into a page in the books these came out of. */
+.tabhead{margin:0 0 12px;display:flow-root;min-height:0}
+.tabcut{float:left;height:172px;width:auto;margin:0 26px 12px 0;mix-blend-mode:multiply}
+
+/* ---- controls. A search box is a ruled line, not a pill. */
+input[type=search],select,input[type=text]{font:inherit;font-size:14px;padding:5px 2px;
+border:0;border-bottom:1px solid var(--rule);background:none;color:var(--ink);min-width:160px;
+font-family:inherit}
+input[type=search]{min-width:250px}
+input[type=search]:focus,select:focus{outline:none;border-bottom-color:var(--ink)}
+select{font-family:Fell,Georgia,serif;font-size:14px;cursor:pointer}
+.bar{display:flex;gap:16px;align-items:baseline;margin-bottom:10px;flex-wrap:wrap}
+.count{color:var(--faint);font-size:12.5px;font-family:Fell,Georgia,serif}
+.big{font-size:24px;font-family:Fell,Georgia,serif}
+
+/* ---- tables. Hairlines, no fill, numbers in old-style figures where the face has them. */
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th{text-align:left;font-family:Fell,Georgia,serif;font-weight:400;font-size:12px;
+text-transform:uppercase;letter-spacing:.07em;color:var(--faint);padding:5px 10px 4px;
+border-bottom:1px solid var(--ink);position:sticky;top:0;background:var(--paper);cursor:pointer;
+white-space:nowrap}
 th:hover{color:var(--ink)}
-td{padding:6px 9px;border-bottom:1px solid #f0f4f5;vertical-align:top}
+td{padding:6px 10px;border-bottom:1px solid var(--rule2);vertical-align:top}
 tr.pick{cursor:pointer}
-tr.pick:hover td{background:#f4f8f9}
-tr.on td{background:#eef5f8}
+tr.pick:hover td{background:#f2efe7}
+tr.on td{background:#efe9dc;box-shadow:inset 3px 0 0 var(--ink)}
 .n{text-align:right;font-variant-numeric:tabular-nums}
-/* *** A PROSE CELL WILL TAKE THE WHOLE TABLE AND PUSH THE NUMBERS OFF THE PANE. ***
-   Measured on the real page: the confidence column -- which is the SORT KEY -- was clipped out
-   of sight by an `about` cell carrying 90 characters of a model's documentation. The full text
-   is in the detail pane; the cell is an index into it. */
-td.clip{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+td.clip{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
-/* *** FOUR TABS SHARED THIS TEMPLATE AND NONE OF THEM WERE THE SAME SIZE. ***
-   Both panes were `max-height`, so each box shrank to its own content: the right pane was tall on
-   Models and short on Questions, the two sides never lined up, and because the tall one grew the
-   page, the left list could be scrolled long past the end of itself into blank screen. One height
-   for both, on every tab, and the page itself does not scroll -- the panes do. */
-.wrap2{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,2.1fr);gap:16px;
+
+/* ---- the two-pane shell. Panes are separated by a rule, not by two boxes. */
+.wrap2{display:grid;grid-template-columns:minmax(300px,1fr) minmax(0,1.55fr);gap:0;
 align-items:stretch;height:100%}
-/* A left pane holding a three-column table is not a list of names. Same shell, more room, so a
-   `why it fired` cell is a line rather than five. */
-.wrap2.wide{grid-template-columns:minmax(380px,1.15fr) minmax(0,1.35fr)}
-.drillhost{display:flex;flex-direction:column;height:100%;min-height:0;gap:10px}
+.wrap2.wide{grid-template-columns:minmax(400px,1.1fr) minmax(0,1.3fr)}
+.wrap2 > *{min-height:0}
+.drillhost{display:flex;flex-direction:column;height:100%;min-height:0;gap:8px}
 .drilltop{flex:0 0 auto}
 .drilltop .note{margin:0}
 .drillhost > .wrap2{flex:1 1 auto;min-height:0}
-.wrap2 > *{min-height:0}
-/* *** THE FILTERS WERE NOT PART OF THE HEIGHT, SO THE WHOLE PAGE SCROLLED. ***
-   The left column is a search box, some dropdowns and a list, and only the LIST was bound to the
-   window. Bar plus list therefore came to more than the column, the column grew, and the document
-   scrolled underneath a header that was supposed to be fixed -- "the screen jankily scrolls down
-   when it shouldn't". A column is a flex stack now: the controls take what they need and the list
-   takes the rest, so the pane is exactly the window on every tab. */
-.md > :first-child{margin-top:0}
-.md > :last-child{margin-bottom:0}
-.mdh{margin:14px 0 5px;font-size:13.5px;font-weight:650}
-.mdlist{margin:6px 0;padding-left:20px;font-size:13px;color:var(--ink)}
-.mdlist li{margin:2px 0}
-.mdpre{white-space:pre-wrap;font-size:12px;background:var(--bg);border:1px solid var(--line);
-  border-radius:4px;padding:8px 10px;margin:8px 0;overflow-x:auto}
-.md code{font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:3px;
-  padding:0 3px}
-.newstore{background:#fdf6e3;border:1px solid var(--amber);border-radius:6px;
-padding:12px 14px;margin:0 0 18px;font-size:13px;color:var(--ink)}
 .gridhost{display:flex;flex-direction:column;height:100%;min-height:0}
 .gridhost > .bar{flex:0 0 auto}
 .gridhost > .list{flex:1 1 auto}
-.pane{display:flex;flex-direction:column;height:100%;min-height:0}
+.pane{display:flex;flex-direction:column;height:100%;min-height:0;padding-right:22px;
+border-right:1px solid var(--rule)}
 .pane > .panehead{flex:0 0 auto}
 .pane > .gridhost{flex:1 1 auto;min-height:0}
 .panebody{flex:1 1 auto;min-height:0;display:flex}
 .panebody > .gridhost{flex:1 1 auto;min-height:0;width:100%}
-.list{height:100%;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:8px}
-.detail{border:1px solid var(--line);border-radius:8px;background:var(--card);padding:16px 18px;
-height:100%;overflow:auto}
-.detail h2{margin:0 0 2px;font-size:17px}
-.detail h3{margin:20px 0 7px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
-color:var(--faint);font-weight:600}
-.detail .path{color:var(--dim);font-size:12px;margin-bottom:10px}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;font-size:13px}
-.kv dt{color:var(--dim)}
+.list{height:100%;min-height:0;overflow:auto}
+.detail{padding:2px 4px 20px 22px;height:100%;overflow:auto}
+.detail h2{margin:0 0 2px;font-family:Fell,Georgia,serif;font-weight:400;font-size:22px;
+letter-spacing:.01em}
+.detail h3{margin:20px 0 6px;font-family:Fell,Georgia,serif;font-size:12px;text-transform:uppercase;
+letter-spacing:.08em;color:var(--faint);font-weight:400;border-bottom:1px solid var(--rule2);
+padding-bottom:3px}
+.detail .path{color:var(--ash);font-size:12px;margin-bottom:12px;font-family:ui-monospace,
+SFMono-Regular,Menlo,monospace}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 18px;font-size:13.5px}
+.kv dt{color:var(--faint);font-family:Fell,Georgia,serif}
 .kv dd{margin:0}
-.pill{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:9px;
-border:1px solid var(--line);color:var(--dim);background:var(--bg);white-space:nowrap}
-.pill.declared{color:var(--green);border-color:#cfd9b8}
-.pill.derived{color:var(--blue);border-color:#c3d6e0}
-.pill.judged{color:var(--amber);border-color:#e2d3ab}
-.pill.observed{color:var(--blue);border-color:#c3d6e0}
-.pill.bad{color:var(--red);border-color:#e3c4c0}
-.pill.on{color:var(--green);border-color:#cfd9b8}
-.note{color:var(--dim);font-size:12.5px;margin:8px 0 0;max-width:none}
-.empty{color:var(--faint);padding:14px 9px;font-size:13px}
-.prose{white-space:pre-wrap;font-size:13px;color:#33454d;margin:0}
-details{margin:5px 0}
-summary{cursor:pointer;color:var(--dim);font-size:12.5px}
-pre{background:#f6f9fa;border:1px solid var(--line);border-radius:6px;padding:9px 11px;
-overflow:auto;font-size:11.5px;margin:6px 0;white-space:pre-wrap;word-break:break-word}
+
+/* ---- a pill is a lettered tag, the way a part is lettered on a plate. */
+.pill{display:inline-block;font-family:Fell,Georgia,serif;font-size:11.5px;padding:0 6px;
+border:1px solid var(--rule);color:var(--ash);white-space:nowrap;letter-spacing:.03em}
+.pill.declared,.pill.on{color:var(--iron);border-color:var(--iron)}
+.pill.derived,.pill.observed{color:var(--ash)}
+.pill.judged{color:var(--ember);border-color:var(--ember)}
+.pill.bad{color:var(--rust);border-color:var(--rust)}
+.note{color:var(--ash);font-size:13.5px;margin:8px 0 0;max-width:none}
+.empty{color:var(--faint);padding:12px 4px;font-size:13.5px;font-style:italic;
+font-family:Fell,Georgia,serif}
+.prose{white-space:pre-wrap;font-size:14px;color:var(--ink);margin:0}
 .tot{color:var(--faint)}
+.bad{color:var(--rust)}
+.ok{color:var(--iron)}
+.low{color:var(--ember)}
+a.lk{color:var(--rust);text-decoration:none;border-bottom:1px solid #e0c4b0}
+a.lk:hover{border-bottom-color:var(--rust)}
+details{margin:5px 0}
+summary{cursor:pointer;color:var(--ash);font-size:13px;font-family:Fell,Georgia,serif}
+pre{background:#f4f1e9;border:0;border-left:2px solid var(--rule);padding:8px 12px;
+overflow:auto;font-size:12px;margin:6px 0;white-space:pre-wrap;word-break:break-word}
+.quote{margin:4px 0 8px;padding-left:13px;border-left:2px solid var(--ink);color:var(--ink);
+font-size:14.5px;font-style:italic}
+
+/* ---- the assay ticket: the overview's three columns, ruled like an account. */
+.ticket{display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin:0;
+border-bottom:1px solid var(--ink)}
+.tcol{padding:2px 22px 16px 0}
+.tcol + .tcol{padding-left:22px;border-left:1px solid var(--rule)}
+.tlab{font-family:Fell,Georgia,serif;font-size:12px;text-transform:uppercase;letter-spacing:.11em;
+color:var(--faint);margin-bottom:6px}
+.tnum{font-family:Fell,Georgia,serif;font-size:50px;line-height:.95;letter-spacing:-.01em}
+.tunit{font-family:Fell,Georgia,serif;font-size:17px;color:var(--ash);margin-left:7px}
+.tsub{font-size:13px;color:var(--ash);margin-top:9px;padding-top:8px;
+border-top:1px solid var(--rule2)}
+.ticketwrap{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:30px;align-items:center;
+margin-bottom:22px}
+.ticketcut{width:215px;height:auto;display:block;mix-blend-mode:multiply}
+
+/* ---- a section in the overview */
+.ovblock{margin:0 0 28px}
+.ovblock h3{margin:0 0 4px;font-family:Fell,Georgia,serif;font-size:13px;text-transform:uppercase;
+letter-spacing:.1em;color:var(--ink);font-weight:400;border-bottom:1px solid var(--rule);
+padding-bottom:4px}
+.ovblock .note{margin:0 0 12px}
 .hero{display:flex;gap:26px;flex-wrap:wrap;margin:4px 0 22px}
 .herobig{flex:1 1 260px;min-width:240px}
-.herobig .lab{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);
-font-weight:600;margin-bottom:4px}
-.heron{font-size:46px;font-weight:700;letter-spacing:-.02em;line-height:1}
+.herobig .lab{font-family:Fell,Georgia,serif;font-size:12px;text-transform:uppercase;
+letter-spacing:.1em;color:var(--faint);margin-bottom:4px}
+.heron{font-family:Fell,Georgia,serif;font-size:46px;line-height:1}
 .heron.small{font-size:34px}
-.heroof{font-size:17px;color:var(--dim)}
-.tiles{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 24px}
-.tile{flex:1 1 150px;min-width:140px;border:1px solid var(--line);border-radius:8px;
-background:var(--card);padding:11px 13px}
-.tilebig{font-size:22px;font-weight:650;letter-spacing:-.01em}
-.tilebig.bad{color:var(--red)}
-.tilelab{font-size:12.5px;color:var(--ink);margin-top:1px}
-.tilenote{font-size:11.5px;color:var(--faint);margin-top:2px}
-.ovblock{margin:0 0 26px}
-.ovblock h3{margin:0 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
-color:var(--faint);font-weight:600}
-.ovblock .note{margin:0 0 10px;max-width:70ch}
-.sbar{display:flex;gap:2px;height:26px;width:100%}
-.sseg{border-radius:3px;display:flex;align-items:center;overflow:hidden;min-width:2px}
-.sval{font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;padding-left:7px;
-white-space:nowrap}
-.rank{display:grid;grid-template-columns:auto minmax(80px,1fr) auto;gap:3px 10px;
+.heroof{font-size:17px;color:var(--ash);font-family:Fell,Georgia,serif}
+
+/* ---- tiles become ruled entries in a column, not boxes */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0;margin:0 0 22px;
+border-top:1px solid var(--rule)}
+.tile{padding:10px 18px 12px 0;border-bottom:1px solid var(--rule2)}
+.tile + .tile{padding-left:18px;border-left:1px solid var(--rule2)}
+.tilebig{font-family:Fell,Georgia,serif;font-size:26px;line-height:1.05}
+.tilebig.bad{color:var(--rust)}
+.tilelab{font-size:13px;color:var(--ink);margin-top:3px}
+.tilenote{font-size:12px;color:var(--faint);margin-top:2px}
+
+/* ---- bars. The only colour on the page. */
+.sbar{display:flex;gap:1px;height:22px;width:100%}
+.sseg{display:flex;align-items:center;overflow:hidden;min-width:2px}
+.sval{font:400 12px Fell,Georgia,serif;color:var(--paper);padding-left:8px;white-space:nowrap}
+.rank{display:grid;grid-template-columns:auto minmax(80px,1fr) auto;gap:4px 12px;
 align-items:center}
 .rrow{display:contents}
 .rrow.clk{cursor:pointer}
-.rlab{font-size:12px;color:var(--ink);white-space:nowrap;text-align:right}
-.rsub{display:block;font-size:10.5px;color:var(--dim);font-weight:400}
+.rlab{font-size:12.5px;color:var(--ink);white-space:nowrap;text-align:right;
+font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.rsub{display:block;font-size:11px;color:var(--faint);font-family:Fell,Georgia,serif}
+.rtrack{height:12px;display:block;border-bottom:1px solid var(--rule2)}
+.rfill{display:block;height:12px}
+.rrow.clk:hover .rfill{opacity:.8}
+.rval{font-size:12.5px;color:var(--ash);white-space:nowrap;font-variant-numeric:tabular-nums}
 .days{display:flex;align-items:flex-end;gap:3px;height:92px;margin:6px 0 14px;overflow-x:auto}
 .day{display:flex;flex-direction:column;justify-content:flex-end;align-items:center;
-     min-width:22px;flex:1 1 22px;height:100%}
+min-width:22px;flex:1 1 22px;height:100%}
 .daytrack{width:100%;height:68px;display:flex;align-items:flex-end;
-          background:var(--line);border-radius:2px}
-.dayfill{width:100%;background:#2a78d6;border-radius:2px}
-.day.zero .dayfill{background:var(--faint)}
-.daylab{font-size:9.5px;color:var(--dim);margin-top:4px;white-space:nowrap}
-.rtrack{height:13px;display:block}
-.rfill{display:block;height:13px;border-radius:3px}
-.rrow.clk:hover .rfill{opacity:.82}
-.rval{font-size:11.5px;color:var(--dim);white-space:nowrap}
-.srclab{font-size:12px;color:var(--dim);margin:12px 0 5px;font-weight:600}
+border-bottom:1px solid var(--rule)}
+.dayfill{width:100%;background:var(--rust)}
+.day.zero .dayfill{background:var(--rule)}
+.daylab{font-size:10px;color:var(--faint);margin-top:4px;white-space:nowrap;
+font-family:Fell,Georgia,serif}
+.srclab{font-size:13px;color:var(--ash);margin:14px 0 5px;font-family:Fell,Georgia,serif;
+font-style:italic}
 .srclab:first-child{margin-top:0}
-.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--dim)}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12.5px;color:var(--ash)}
+/* A monitoring finding is a name and a sentence, set as two columns so the names line up
+   and the sentences read as a list rather than as a paragraph each. */
+.mfrow{display:flex;gap:16px;align-items:baseline;padding:7px 0;
+border-bottom:1px solid var(--rule2)}
+.mfrow .rlab{flex:0 0 250px;text-align:left}
 .lgi{display:inline-flex;gap:6px;align-items:center}
-.sw{width:11px;height:11px;border-radius:2px;display:inline-block}
-.bad{color:var(--red);font-weight:600}
-.ok{color:var(--green)}
-.low{color:var(--amber);font-weight:600}
-a.lk{color:var(--blue);text-decoration:none;border-bottom:1px dotted #b9ccd6}
-a.lk:hover{border-bottom-style:solid}
-button.back{appearance:none;border:1px solid var(--line);background:var(--card);font:inherit;
-font-size:12.5px;color:var(--blue);padding:4px 10px;border-radius:6px;cursor:pointer;
-margin:0 8px 10px 0}
-button.back:hover{background:#f2f7f9}
-.titlerow{display:flex;align-items:center;gap:11px;margin:12px 0 10px}
+.sw{width:11px;height:11px;display:inline-block}
+
+/* ---- buttons read as printed catchwords */
+button.back{appearance:none;border:0;border-bottom:1px solid var(--rule);background:none;
+font-family:Fell,Georgia,serif;font-size:14px;color:var(--rust);padding:2px 0;cursor:pointer;
+margin:0 14px 8px 0}
+button.back:hover{border-bottom-color:var(--rust)}
+button.back.on{color:var(--ink);border-bottom-color:var(--ink)}
+.titlerow{display:flex;align-items:baseline;gap:14px;margin:6px 0 8px}
 .titlerow .back{margin:0}
-h3.crumb{margin:0;font-size:14px;font-weight:600;color:var(--ink);letter-spacing:-.01em;
-text-transform:none}
-.crumb{color:var(--dim);font-size:13px}
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}
-.chips.flat{margin:6px 0 0}
-.chip{appearance:none;font:inherit;font-size:12px;border:1px solid var(--line);background:var(--card);
-border-radius:6px;padding:3px 9px;cursor:pointer;display:inline-flex;gap:7px;align-items:center;
-color:var(--dim)}
-.chip:hover{border-color:#b9ccd6}
-.chip.on{border-color:var(--blue);color:var(--ink);background:#eef5f8}
-.chip b{font-weight:650;color:var(--ink)}
-.chips.flat .chip{cursor:default;color:var(--dim);background:var(--bg)}
-details.strip{margin:0 0 14px;border:1px solid var(--line);border-radius:8px;background:var(--card);
-padding:9px 12px}
-details.strip summary{color:var(--ink);font-size:13px}
-.quote{margin:4px 0 8px;padding-left:11px;border-left:2px solid var(--line);color:#2b3c44;
-font-size:13.5px}
-.opt{border:1px solid var(--line);border-radius:7px;padding:9px 12px;margin:7px 0;
-background:var(--card)}
-.optname{font-weight:650;color:var(--ink);font-size:12.5px;margin-bottom:3px}
-.kv.sub{margin:2px 0 6px 0;padding-left:10px;border-left:1px solid var(--line)}
-.sub{margin:3px 0}
-.linwrap{overflow:hidden;border:1px solid var(--line);border-radius:8px;background:var(--card);
-padding:0;position:relative;height:var(--lin-h);touch-action:none}
+h3.crumb{margin:0;font-family:Fell,Georgia,serif;font-size:16px;font-weight:400;color:var(--ink);
+text-transform:none;letter-spacing:.01em;border:0;padding:0}
+.crumb{color:var(--ash);font-size:14px}
+.chips{display:flex;gap:0;flex-wrap:wrap;margin:0 0 10px;align-items:baseline}
+.chips.flat{margin:6px 0 0;gap:6px}
+.chip{appearance:none;font-family:Fell,Georgia,serif;font-size:13.5px;border:0;
+border-bottom:2px solid transparent;background:none;padding:2px 11px 2px 0;cursor:pointer;
+display:inline-flex;gap:6px;align-items:baseline;color:var(--ash);margin-right:5px}
+.chip:hover{color:var(--ink)}
+.chip.on{color:var(--ink);border-bottom-color:var(--ink)}
+.chip b{font-weight:400;color:var(--faint);font-size:12px}
+.chips.flat .chip{cursor:default;border:1px solid var(--rule);padding:0 6px;margin:0}
+.chips .more{margin:0 14px 0 4px}
+label.chk{display:inline-flex;gap:6px;align-items:center;font-size:13px;color:var(--ash);
+cursor:pointer;user-select:none;white-space:nowrap;font-family:Fell,Georgia,serif}
+label.chk:hover{color:var(--ink)}
+label.chk input{margin:0;cursor:pointer;accent-color:var(--ink)}
+
+/* ---- suggestions */
+.sug{border:0;border-left:2px solid var(--ink);padding:8px 14px;margin:0 0 10px}
+.sug-h{margin-bottom:5px}
+.sug-m{margin:0 0 6px;padding-left:18px;color:var(--ash);font-size:13px}
+.sug-m li{margin:1px 0}
+.sug-d{white-space:pre-wrap;font-size:13px;border-left:2px solid var(--ember);
+padding:5px 0 5px 11px;margin:6px 0;color:var(--ink)}
+.sug-y{white-space:pre-wrap;font-size:12px;background:#f4f1e9;border:0;
+border-left:2px solid var(--rule);padding:8px 12px;margin:6px 0 0;overflow-x:auto}
+
+/* ---- rendered markdown */
+.md > :first-child{margin-top:0}
+.md > :last-child{margin-bottom:0}
+.mdh{margin:14px 0 5px;font-family:Fell,Georgia,serif;font-size:15px;font-weight:400}
+.mdlist{margin:6px 0;padding-left:20px;font-size:13.5px;color:var(--ink)}
+.mdlist li{margin:2px 0}
+.mdpre{white-space:pre-wrap;font-size:12px;background:#f4f1e9;border:0;
+border-left:2px solid var(--rule);padding:8px 12px;margin:8px 0;overflow-x:auto}
+.md code{font-size:12px;background:#f4f1e9;padding:0 3px}
+
+/* ---- the empty-store notice: a printed errata slip */
+.newstore{border-top:1px solid var(--ink);border-bottom:1px solid var(--ink);
+padding:11px 0;margin:0 0 20px;font-size:13.5px;color:var(--ink)}
+.newstore b{font-family:Fell,Georgia,serif;font-weight:400}
+
+/* ---- the lineage drawing */
+.linwrap{overflow:hidden;border:1px solid var(--rule);padding:0;position:relative;
+height:var(--lin-h);touch-action:none}
 .linwrap svg.lin{width:100%;height:100%;display:block;cursor:grab}
 .linwrap svg.lin.drag{cursor:grabbing}
-.lintools{position:absolute;right:8px;top:8px;display:flex;gap:4px;z-index:2}
-.lintools button{font:inherit;font-size:12px;line-height:1;padding:5px 8px;background:var(--card);
-border:1px solid var(--line);border-radius:5px;color:var(--dim);cursor:pointer}
-.lintools button:hover{color:var(--ink);border-color:var(--blue)}
-.linhint{position:absolute;left:10px;bottom:8px;font-size:11.5px;color:var(--faint);z-index:2;
-pointer-events:none}
-.pop{position:fixed;z-index:50;width:360px;max-width:calc(100vw - 24px);max-height:70vh;
-overflow:auto;background:var(--card);border:1px solid #b9ccd6;border-radius:8px;
-box-shadow:0 6px 20px rgba(22,35,42,.16);padding:12px 14px 10px}
-.pop .popname{font-weight:650;font-size:13px;padding-right:18px}
+.lintools{position:absolute;right:8px;top:8px;display:flex;gap:6px;z-index:2}
+.lintools button{font-family:Fell,Georgia,serif;font-size:14px;line-height:1;padding:4px 8px;
+background:var(--paper);border:1px solid var(--rule);color:var(--ash);cursor:pointer}
+.lintools button:hover{color:var(--ink);border-color:var(--ink)}
+.linhint{position:absolute;left:10px;bottom:8px;font-size:12px;color:var(--faint);z-index:2;
+pointer-events:none;font-family:Fell,Georgia,serif;font-style:italic}
+svg.lin{display:block}
+svg.lin rect{fill:var(--paper);stroke:var(--ink);stroke-width:1.4}
+svg.lin .foc rect{fill:#efe9dc;stroke:var(--ink);stroke-width:2.6}
+svg.lin .bt{font:400 13px Fell,Georgia,serif;fill:var(--ink)}
+svg.lin .bs{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;fill:var(--ash)}
+svg.lin .ln{fill:none;stroke:var(--iron);stroke-width:1.2}
+svg.lin .ln.drv{stroke:var(--ink);stroke-width:2.2}
+svg.lin .ln.nb{stroke:var(--rust);stroke-width:2;stroke-dasharray:5 3}
+svg.lin .par.nb rect{stroke:var(--rust)}
+svg.lin marker path{fill:var(--iron)}
+svg.lin .clk{cursor:pointer}
+svg.lin .clk:hover rect{stroke:var(--rust);stroke-width:2.2}
+
+/* ---- the node card */
+.pop{position:fixed;z-index:50;width:370px;max-width:calc(100vw - 24px);max-height:70vh;
+overflow:auto;background:var(--paper);border:1px solid var(--ink);
+box-shadow:3px 3px 0 rgba(26,23,20,.14);padding:13px 15px 11px}
+.pop .popname{font-family:Fell,Georgia,serif;font-size:16px;padding-right:18px}
 .pop .path{font-size:11.5px;margin:2px 0 6px}
-.pop .prose{font-size:12.5px}
-.pop .kv{margin-top:8px;font-size:12.5px}
+.pop .prose{font-size:13px}
+.pop .kv{margin-top:8px;font-size:13px}
 .pop h3{margin:12px 0 4px}
 .pop .bar{margin:10px 0 0}
-.popx{position:absolute;top:6px;right:8px;appearance:none;border:none;background:none;
-font-size:17px;line-height:1;color:var(--faint);cursor:pointer;padding:0 2px}
+.popx{position:absolute;top:5px;right:9px;appearance:none;border:none;background:none;
+font-size:18px;line-height:1;color:var(--faint);cursor:pointer;padding:0 2px}
 .popx:hover{color:var(--ink)}
 .bandlist{margin:8px 0}
-svg.lin{display:block}
-svg.lin rect{fill:#fff;stroke:var(--line);stroke-width:1}
-svg.lin .foc rect{fill:#eef5f8;stroke:var(--blue);stroke-width:1.5}
-svg.lin .bt{font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:var(--ink)}
-svg.lin .bs{font:11px -apple-system,BlinkMacSystemFont,sans-serif;fill:var(--dim)}
-svg.lin .ln{fill:none;stroke:#c4d0d5;stroke-width:1.3}
-svg.lin .ln.drv{stroke:var(--blue);stroke-width:2}
-svg.lin .ln.nb{stroke:#c9a227;stroke-width:2;stroke-dasharray:5 3}
-label.chk{display:inline-flex;gap:6px;align-items:center;font-size:12.5px;color:var(--dim);
-cursor:pointer;user-select:none;white-space:nowrap}
-label.chk:hover{color:var(--ink)}
-label.chk input{margin:0;cursor:pointer}
-svg.lin .par.nb rect{stroke:#c9a227}
-button.back.on{border-color:var(--blue);background:#eef5f8;color:var(--ink)}
-svg.lin marker path{fill:#c4d0d5}
-svg.lin .clk{cursor:pointer}
-svg.lin .clk:hover rect{stroke:var(--blue)}
-footer{color:var(--faint);font-size:12px;padding:18px 24px;border-top:1px solid var(--line)}
+.opt{border:0;border-left:1px solid var(--rule);padding:6px 0 6px 12px;margin:8px 0}
+.optname{font-family:Fell,Georgia,serif;font-size:14px;margin-bottom:3px}
+.kv.sub{margin:2px 0 6px 0;padding-left:12px;border-left:1px solid var(--rule2)}
+.sub{margin:3px 0}
+details.strip{margin:0 0 14px;border:0;border-top:1px solid var(--rule);
+border-bottom:1px solid var(--rule);padding:8px 0}
+details.strip summary{color:var(--ink);font-size:13.5px}
+
+footer{color:var(--faint);font-size:12px;padding:14px 26px;border-top:3px double var(--ink);
+font-family:Fell,Georgia,serif;font-style:italic}
+footer b{font-style:normal;font-weight:400;color:var(--ash)}
 """
 
 JS = r"""
@@ -466,6 +539,10 @@ function md(text) {
   return host;
 }
 
+/* *** A PLATE PER TAB, BESIDE WHAT THE TAB IS FOR. ***
+   The cuts are apparatus: a rank of stills, a chain of vessels, a furnace in draught. Each tab
+   takes the one whose picture is what the tab does, floated beside its opening line, so the page
+   reads as a plate book rather than as a table with a picture on the front. */
 function section(title, node) {
   const h = el('h3', {text: title});
   return el('div', {}, node ? [h, node] : [h]);
@@ -524,11 +601,13 @@ def explorer_html(data: dict, record_html: str) -> str:
     # for one project, and `assay page --from` stops reproducing the page it was made from. The
     # round-trip guard caught exactly this the first time a section was added, which is the whole
     # reason that guard compares bytes rather than rendering.
+    from .assets import CUTS, FAVICON, FONT_CSS, MARK_SVG
     from .explore import _LINES, _WHOLE
-    from .mark import FAVICON, MARK_SVG
     filled = {n: [] for n in _LINES}
     filled.update({n: empty() for n, empty in _WHOLE})
-    data = {**filled, **data, "record": record_html}
+    # The plates travel with the data rather than being spelled into the markup, so a view asks
+    # for `cuts.furnace` the way it asks for anything else it draws.
+    data = {**filled, **data, "record": record_html, "cuts": CUTS}
     blob = json.dumps(data, separators=(",", ":"), sort_keys=True, default=str)
     blob = blob.replace("</", "<\\/").replace("<!--", "<\\!--")
 
@@ -538,6 +617,10 @@ def explorer_html(data: dict, record_html: str) -> str:
         "decisions": len(data["decisions"]), "questions": len(data["questions"]),
         "unreadable": len(data["unreadable"]),
         "suggestions": len(data.get("suggestions") or []),
+        # The count is the findings ABOUT the monitoring, which is the number worth a badge.
+        # None when nothing was measured, so the tab shows no count rather than a zero.
+        "monitoring": (len((data.get("monitoring") or {}).get("monitoring") or [])
+                       if (data.get("monitoring") or {}) else None) or None,
     }
     # *** THE OVERVIEW IS THE WAY IN, NOT THE LAST TAB. ***
     # It is the only surface here with an argument to make rather than a table to show, and a
@@ -549,6 +632,11 @@ def explorer_html(data: dict, record_html: str) -> str:
         ("chain", "The chain", counts["edges"]),
         ("claims", "Claims", counts["claims"]),
         ("findings", "Findings", counts["findings"]),
+        # *** IS ANYTHING WATCHING THIS, AND ARE THE TESTS ACTUALLY RUNNING. ***
+        # Present whether or not the numbers were taken: a tab that appears only when somebody
+        # passed `--monitoring` is a tab nobody learns exists, and its absence reads as a tool
+        # that does not do this rather than as a measurement not yet made.
+        ("monitoring", "Monitoring", counts["monitoring"]),
         ("suggest", "What to configure", counts["suggestions"]),
         ("answers", "Answers", counts["decisions"]),
         ("spend", "Spend", None),
@@ -574,7 +662,7 @@ def explorer_html(data: dict, record_html: str) -> str:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{e(meta['project'])} &middot; assay</title>
 <link rel="icon" href="{FAVICON}">
-<style>{CSS}</style></head><body>
+<style>{FONT_CSS}{CSS}</style></head><body>
 <header>
 <h1>{MARK_SVG}<span class="hname">{e(meta['project'])}</span><span>everything assay knows</span></h1>
 <div class="sub">{meta['models']} models &middot; {meta['sources']} sources &middot;
@@ -673,15 +761,17 @@ function link(name, where) {
    the first screen tells you nothing about the shape of what is there and gives you nowhere
    obvious to click. So the summary is the view, and the rows are one click in, already filtered. */
 function drill(opts) {
-  /* *** ONE LAYOUT, USED BY EVERY TAB. ***
-     This was a full-width stack: a blurb, then a table, then -- once you drilled -- another
-     table. Nothing was height-bound, so the page scrolled as a whole, and a row you clicked told
-     you nothing until you went looking for it somewhere else. It is the same two-pane shell the
-     Findings tab already had: list on the left, bound to the window, and what you picked on the
-     right. */
-  /* *** THE EXPLANATION IS PAGE-WIDE. THE LIST IS NOT. ***
-     Putting the blurb inside the left column wrapped one sentence over five lines in a 260px
-     gutter, which is a paragraph pretending to be a column. It sits above both panes. */
+  /* *** ONE CLICK. ALWAYS. THE RIGHT PANE IS NEVER EMPTY. ***
+     This used to be three screens to read one thing: a table of groups, then a click to a table
+     of rows, then a click to the content -- with the right-hand pane saying "pick something" at
+     two of the three steps. Reported exactly as it deserved: "what in the fuck was your decision
+     process when you decided this 3 step process was necessary to get any information."
+
+     The grouping was never worth a screen. It is a FILTER, so it is a row of catchwords above the
+     list, and the list underneath is always the leaves -- the claims, the answers, the candidates,
+     the things somebody came here to read. One click on a row fills the right pane. And the pane
+     is filled on arrival with the first row, because a pane that opens empty has spent a screen
+     to say nothing. */
   const host = el('div', {class: 'drillhost'});
   const top = el('div', {class: 'drilltop'});
   const cols = el('div', {class: 'wrap2 wide'});
@@ -689,56 +779,101 @@ function drill(opts) {
   const detail = el('div', {class: 'detail'});
   const head = el('div', {class: 'panehead'});
   const body = el('div', {class: 'panebody'});
-  const back = el('button', {class: 'back', text: '\u2190 all ' + opts.noun});
-  back.onclick = () => showGroups();
 
-  function blank(text) {
-    detail.replaceChildren(el('p', {class: 'empty', text: text}));
+  /* The groups become chips: `all`, then one per group, each carrying its count. Picking one
+     narrows the SAME list rather than replacing it with a different table. */
+  const ALL = {__all: 1};
+  let pickedGroup = ALL;
+  /* *** A VIEW SWITCH IS A FILTER, SO IT IS A CHIP LIKE EVERY OTHER FILTER. ***
+     It used to be a `select` in the filter bar, which was the right answer when the alternative
+     was a button floating over the table. Now that the groups themselves are chips, a dropdown
+     beside them is a second grammar for one idea -- and it is in the SAME place in every state,
+     which is the property the select was there to keep. */
+  const toggles = (opts.toggles || []).map(t => ({...t, on: false}));
+  const chips = el('div', {class: 'chips'});
+
+  function rowsFor(g) {
+    let out = g === ALL
+      ? opts.groups.flatMap(x => opts.rowsOf(x).map(r => [r, x]))
+      : opts.rowsOf(g).map(r => [r, g]);
+    for (const t of toggles) if (t.on) out = out.filter(p => t.where(p[0]));
+    return out;
   }
 
-  /* *** ONE BAR, IN THE SAME PLACE, WHICHEVER VIEW YOU ARE IN. ***
-     The first version put the view switch in the group bar and a breadcrumb above the rows, so
-     flipping between two views changed the furniture as well as the table and you could not flip
-     back from where you had landed. Reported from the field: "I'd greatly prefer that dropdown to
-     remain so it's flipping between the two, rather than different UI." The switch lives in the
-     bar in every state; only DRILLING into one group adds a way back, because that is the one
-     move the switch cannot undo. */
-  function showGroups() {
-    if (opts.onGroups) opts.onGroups();
-    top.replaceChildren(el('p', {class: 'note', text: opts.blurb}));
-    head.replaceChildren();
-    body.replaceChildren(grid(opts.groups, opts.groupCols, {
-      placeholder: opts.groupFilter || 'filter...', pick: g => showRows(g, true),
-      sort: opts.groupSort, dir: opts.groupDir || -1, cap: 800, scroll: 1,
-      controls: opts.controls || [], text: opts.groupText}));
-    blank('Pick a ' + (opts.groupNoun || opts.noun.replace(/s$/, ''))
-          + ' on the left to see what is in it.');
+  function paintChips() {
+    chips.replaceChildren();
+    /* *** A CHIP IS A CATCHWORD. ***
+       `already defined in this project's own column descriptions` as a chip label ran the row to
+       four lines, which is a second list above the list. Truncated, with the whole thing on
+       hover, because the chip's job is to be picked and the detail pane says it in full. */
+    const mk = (label, n, g) => {
+      const short = label.length > 30 ? label.slice(0, 29) + '\u2026' : label;
+      const c = el('button', {class: 'chip' + (g === pickedGroup ? ' on' : ''), title: label},
+                    [el('span', {text: short}), el('b', {text: num(n)})]);
+      c.onclick = () => { pickedGroup = g; paintChips(); draw(); };
+      return c;
+    };
+    chips.append(mk('all ' + opts.noun, opts.groups.reduce(
+      (a, g) => a + opts.rowsOf(g).length, 0), ALL));
+    /* Capped, because a chip row is a way to steer and a hundred chips is a second list. The
+       ones past the cap are still reachable by typing in the filter, which the count says. */
+    const sorted = opts.groups.slice().sort(
+      (a, b) => opts.rowsOf(b).length - opts.rowsOf(a).length);
+    for (const g of sorted.slice(0, 8)) mk_append(mk(opts.chip(g), opts.rowsOf(g).length, g));
+    if (sorted.length > 8)
+      chips.append(el('span', {class: 'count more',
+                               text: '+' + (sorted.length - 8) + ' more, use the filter'}));
+    for (const t of toggles) {
+      const c = el('button', {class: 'chip' + (t.on ? ' on' : ''), title: t.title || t.label},
+                    [el('span', {text: t.label}), el('b', {text: num(t.count)})]);
+      c.onclick = () => { t.on = !t.on; paintChips(); draw(); };
+      chips.append(c);
+    }
+    function mk_append(node) { chips.append(node); }
   }
-  function showRows(g, drilled) {
-    /* *** WHAT YOU ARE LOOKING AT IS A HEADING, NOT A CONTROL. ***
-       The crumb was squeezed into the filter bar beside the row count and the view switch, so
-       the one piece of text that says what this table IS read as another widget. It gets its own
-       line as a small title, with the way back immediately to its left where a person looks for
-       it. The filter bar below it goes back to holding only things you operate. */
-    head.replaceChildren(...(drilled
-      ? [el('div', {class: 'titlerow'}, [back, el('h3', {class: 'crumb', text: opts.label(g)})])]
-      : []));
-    body.replaceChildren(grid(opts.rowsOf(g), opts.rowCols, {
-      placeholder: 'filter...', cap: 2000, sort: opts.rowSort, dir: opts.rowDir || 1,
-      scroll: 1, pick: opts.detailOf ? r => showOne(r, g) : null,
-      controls: opts.controls || [], text: opts.rowText, emptyText: 'nothing here'}));
-    blank(opts.detailOf ? 'Pick a row to read it in full.'
-                        : opts.label(g));
+
+  let list = null;
+  function draw() {
+    const pairs = rowsFor(pickedGroup);
+    list = grid(pairs, opts.rowCols.map(c => ({...c,
+      val: p => c.val(p[0]), cell: c.cell ? p => c.cell(p[0]) : null})), {
+      placeholder: opts.rowFilter || 'filter...', cap: 4000,
+      sort: opts.rowSort, dir: opts.rowDir || 1, scroll: 1,
+      pick: p => showOne(p[0], p[1]),
+      text: p => opts.rowText(p[0]) + ' ' + opts.chip(p[1]),
+      emptyText: 'nothing matches'});
+    body.replaceChildren(list);
+    /* *** THE PANE OPENS ON SOMETHING. ***
+       `first.click()` rather than calling `showOne` directly, so the row is also MARKED as the
+       selected one -- a pane showing a row while the list shows nothing selected is two views
+       of one state that disagree. */
+    const first = $('tbody tr', list);
+    if (first) first.click(); else blank();
   }
+
+  function blank() {
+    const plate = (DATA.cuts || {}).still;
+    detail.replaceChildren(el('div', {class: 'plate'}, [
+      plate ? el('img', {class: 'cut', src: plate, alt: '',
+                         style: 'width:190px;opacity:.55'}) : el('span'),
+      el('p', {class: 'empty', text: 'nothing matches that filter'})]));
+  }
+
   function showOne(row, g) {
     detail.replaceChildren(...[].concat(opts.detailOf(row, g)));
+    detail.scrollTop = 0;
   }
+
+  head.replaceChildren(chips);
   left.append(head, body);
   cols.append(left, detail);
+  top.replaceChildren(el('p', {class: 'note', text: opts.blurb}));
   host.append(top, cols);
-  showGroups();
-  host.showGroups = showGroups;
-  host.showRows = showRows;
+  paintChips();
+  draw();
+  /* Kept for the callers that flip a view from outside (Claims' contradicted/all switch). */
+  host.showGroups = () => { pickedGroup = ALL; paintChips(); draw(); };
+  host.showRows = (g) => { pickedGroup = g; paintChips(); draw(); };
   return host;
 }
 
@@ -1171,7 +1306,9 @@ function modelsTab(host) {
       : el('p', {class: 'empty', text: 'nothing has been asked about this model'})));
   }
 
-  host.replaceChildren(el('div', {class: 'wrap2'}, [list, detail]));
+  host.replaceChildren(
+    el('p', {class: 'note', text: 'Every model this project builds, and what one row of each one is.'}),
+    el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a model. Everything assay knows about it is here: what one row is and who settled that, every column with its role and where its value came from, every hop in and out, what the project claims about it, and every answer ever given.'}));
   GO.models = name => { const m = BY_NAME[name]; if (!m) return;
     show(m);
@@ -1270,9 +1407,9 @@ function chainTab(host) {
   const n = DATA.edges.filter(e => why(e)).length;
   host.replaceChildren(
     el('p', {class: 'note', text: 'Every hop in the DAG, drawn one neighborhood at a time. '
-      + n + ' of ' + DATA.edges.length + ' hops carry something worth a look: a join with no key '
-      + 'assay could resolve, an unusually large column drop, or most of the parent lost. Those '
-      + 'are counted in the notable column and named under each drawing.'}),
+             + n + ' of ' + DATA.edges.length + ' hops carry something worth a look: a join with '
+             + 'no key assay could resolve, an unusually large column drop, or most of the parent '
+             + 'lost. Those are counted in the notable column and named under each drawing.'}),
     el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a model to see its lineage drawn: what feeds it, what it feeds, and what each edge carries and drops. A drawing is always one neighborhood, never the whole DAG.'}));
   /* *** THE DETAIL IS AUTHORITATIVE; THE LIST IS AN INDEX. ***
@@ -1302,53 +1439,36 @@ function claimsTab(host) {
     {key: 'model', label: 'model', mono: 1, val: c => c.subject_name,
      cell: c => link(c.subject_name)},
     {key: 'text', label: 'claim', clip: 1, val: c => c.text},
-    {key: 'kind', label: 'kind', val: c => c.kind,
-     cell: c => el('span', {class: 'pill', text: c.kind || 'unclassified'})},
-    {key: 'from', label: 'written', mono: 1, val: c => c.source_ref},
-    {key: 'v', label: 'the code', val: c => c.contradicted == null ? -1 : c.contradicted,
-     cell: c => c.contradicted == null ? el('span', {class: 'tot', text: 'not contradicted'})
-       : el('span', {class: 'pill bad', text: 'contradicts @' + c.contradicted.toFixed(2)})},
+    /* *** A LEFT PANE IS AN INDEX, NOT A SECOND REPORT. ***
+       Five columns in this pane clipped the last two off the edge, and one of them was the
+       verdict -- the thing somebody scans this list FOR. The kind and the file have room in the
+       pane on the right, one click away. */
+    {key: 'v', label: 'code', n: 1, val: c => c.contradicted == null ? -1 : c.contradicted,
+     cell: c => c.contradicted == null ? el('span', {class: 'tot', text: '\u2014'})
+       : el('span', {class: 'pill bad', text: c.contradicted.toFixed(2)})},
   ];
   const contradicted = DATA.claims.filter(c => c.contradicted != null);
 
-  /* *** A BUTTON FLOATING ABOVE THE TABLE IS A ROW OF FURNITURE, NOT A CONTROL. ***
-     The same note from the field as the eleven check chips, one tab over: it spends a row of the
-     page on something the filter bar already has room for. The select says which of the two
-     things you are looking at, and adds nothing above the table. */
-  const view = el('select');
-  const opt = (v, t) => { const o = document.createElement('option'); o.value = v;
-    o.textContent = t; return o; };
-  view.append(opt('by_model', 'all ' + num(DATA.claims.length) + ' claims, by model'));
-  view.append(opt('contradicted', 'the ' + contradicted.length + ' contradicted, every model'));
-  view.onchange = () => { if (view.value === 'contradicted')
-    d.showRows({rows: contradicted, model: 'every model'}, false); else d.showGroups(); };
-
   const d = drill({
-    controls: [view], onGroups: () => { view.value = 'by_model'; },
-    noun: 'models', groups: groups, groupSort: 'bad',
+    noun: 'claims', groups: groups, chip: g => g.model,
+    /* The one view worth keeping beside "by model": the claims the code disagrees with. It
+       combines with a model chip rather than replacing the view, which the old dropdown could
+       not do -- picking `contradicted` there threw away whichever model you were looking at. */
+    toggles: [{label: 'the code contradicts', count: contradicted.length,
+               title: 'only claims a judgment read against the SQL and found contradicted',
+               where: c => c.contradicted != null}],
+    rowFilter: 'filter claims...',
     blurb: 'Every sentence this project says about itself, extracted from descriptions and SQL '
       + 'comments, grouped by the model it is about. A claim with no verdict was never asked, '
       + 'which is not the same as supported.',
-    groupFilter: 'filter models...',
-    groupText: g => g.model + ' ' + (g.desc || ''),
-    label: g => g.model + ' · ' + g.rows.length + ' claim(s)',
-    groupCols: [
-      {key: 'model', label: 'model', mono: 1, val: g => g.model},
-      {key: 'desc', label: 'what it is', val: g => g.desc,
-       cell: g => g.desc ? el('span', {text: g.desc.slice(0, 150)})
-         : el('span', {class: 'tot', text: 'no description'})},
-      {key: 'n', label: 'claims', n: 1, val: g => g.rows.length},
-      {key: 'bad', label: 'contradicted', n: 1, val: g => g.bad,
-       cell: g => el('span', {class: g.bad ? 'bad' : 'tot', text: num(g.bad)})},
-    ],
     rowsOf: g => g.rows, rowCols: rowCols, rowSort: 'v', rowDir: -1,
     rowText: c => [c.text, c.source_ref, c.kind].join(' '),
-    groupNoun: 'model',
     /* The claim itself is a SENTENCE, and a sentence in a table cell is a sentence you skim.
        The right pane is where it gets read. */
     detailOf: c => [
-      el('h2', {text: c.kind || 'unclassified'}),
-      el('div', {class: 'path mono', text: c.subject_name + '  ·  ' + (c.source_ref || '')}),
+      el('h2', {text: c.subject_name}),
+      el('div', {class: 'path', text: c.source_ref || ''}),
+      el('div', {}, [el('span', {class: 'pill', text: c.kind || 'unclassified'})]),
       section('what it says', el('p', {class: 'quote', text: c.text})),
       section('has the code contradicted it',
         c.contradicted == null
@@ -1423,7 +1543,8 @@ function findingsTab(host) {
 
   host.replaceChildren(
     el('p', {class: 'note', text: 'Ranked by weight, which is the base severity lifted by reach: '
-      + 'the same defect on a leaf and on a model nine marts read are not the same finding.'}),
+             + 'the same defect on a leaf and on a model nine marts read are not the same '
+             + 'finding.'}),
     el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a finding.'}));
   const first = $('tbody tr', list); if (first) first.click();
@@ -1455,27 +1576,12 @@ function answersTab(host) {
   const groups = Object.values(fam).sort((a, b) => b.rows.length - a.rows.length);
 
   host.replaceChildren(drill({
-    noun: 'question families', groups: groups, groupSort: 'n', groupFilter: 'filter families...',
+    noun: 'answers', groups: groups, rowFilter: 'filter answers...',
+    chip: g => qByPrefix[g.prefix] || g.prefix,
     blurb: 'The live answer to every question asked about this project: one row per subject and '
       + 'question, the latest. Grouped by the question that asked it, because 8,449 answers '
       + 'sorted by id is a filing cabinet. Below 0.60 nothing is reported as a finding, so the '
       + 'low column is where the model is telling you it cannot tell.',
-    groupText: g => g.prefix + ' ' + (qByPrefix[g.prefix] || ''),
-    label: g => (qByPrefix[g.prefix] || g.prefix) + ' · ' + g.rows.length + ' answer(s)',
-    groupCols: [
-      {key: 'fam', label: 'family', mono: 1, val: g => qByPrefix[g.prefix] || g.prefix,
-       cell: g => { const s = el('span', {});
-         s.append(el('span', {class: 'mono', text: qByPrefix[g.prefix] || g.prefix}));
-         if (!qByPrefix[g.prefix]) s.append(el('span', {class: 'pill',
-           text: 'no bank claims ' + g.prefix}));
-         return s; }},
-      {key: 'n', label: 'answers', n: 1, val: g => g.rows.length},
-      {key: 'mean', label: 'mean conf', n: 1, val: g => g.n ? g.sum / g.n : null,
-       cell: g => conf(g.n ? g.sum / g.n : null)},
-      {key: 'low', label: 'under 0.60', n: 1, val: g => g.low,
-       cell: g => el('span', {class: g.low ? 'low' : 'tot', text: num(g.low)})},
-      {key: 'v', label: 'versions', mono: 1, val: g => Object.keys(g.versions).sort().join(', ')},
-    ],
     rowsOf: g => g.rows,
     /* *** SEVEN COLUMNS, AND ONE OF THEM HELD TWO DIFFERENT KINDS OF THING. ***
        `subject` fell back to the decision's CONTEXT when it could not resolve a model name, and
@@ -1486,20 +1592,20 @@ function answersTab(host) {
 
        The subject is now always the subject, derived from the decision key, with a pill for the
        scope. What it was asked ABOUT has its own column, and the full text is in the pane. */
+    /* *** THE SORT KEY HAS TO BE ON THE SCREEN. ***
+       Four columns in this pane clipped `confidence` off the right edge -- and the list is
+       sorted by it ascending, because the lowest is where the model is telling you it cannot
+       tell. A list sorted by a column you cannot see is a list in no apparent order.
+
+       So three columns: what it is about, what it answered, how sure. The subject, the scope and
+       the question id are all in the pane, one click away, with room to be read. */
     rowCols: [
-      {key: 'ctx', label: 'subject', mono: 1, val: a => subjectOf(a).name,
-       cell: a => { const s = subjectOf(a);
-         const box = el('span', {});
-         box.append(BY_NAME[s.name] ? link(s.name) : el('span', {class: 'mono', text: s.name}));
-         if (s.scope) box.append(el('span', {class: 'pill', text: s.scope}));
-         return box; }},
-      {key: 'about', label: 'about', clip: 1, val: a => a.context},
-      {key: 'a', label: 'answered', val: a => a.answer},
-      {key: 'c', label: 'confidence', n: 1, val: a => a.confidence, cell: a => conf(a.confidence)},
+      {key: 'about', label: 'about', clip: 1, val: a => a.context || subjectOf(a).name},
+      {key: 'a', label: 'answered', clip: 1, val: a => a.answer},
+      {key: 'c', label: 'sure', n: 1, val: a => a.confidence, cell: a => conf(a.confidence)},
     ],
     rowSort: 'c', rowDir: 1,
     rowText: a => [a.question, a.key, a.context, a.answer, a.prompt_version].join(' '),
-    groupNoun: 'question family',
     /* *** THE QUESTION TEXT ABOVE ITS ANSWERS, WHICH IS THE THING BEING MEASURED. ***
        A row read `column_role__what_is_it = dimension, 0.62` and the question it answered was
        somewhere else entirely -- another tab. An answer without its question is a value with no
@@ -1507,10 +1613,16 @@ function answersTab(host) {
     detailOf: a => {
       const q = (DATA.questions || []).find(x => a.question.startsWith(x.id_prefix + '__')
                                                  || x.id_prefix === a.question.split('__')[0]);
+      const s = subjectOf(a);
       const bits = [
         el('h2', {text: a.answer || '(no answer)'}),
-        el('div', {class: 'path mono', text: a.question}),
+        el('div', {class: 'path', text: a.question}),
       ];
+      /* Which thing this answer is ABOUT, linked where it is a model somebody can open. */
+      const who = el('div', {class: 'note'});
+      who.append(BY_NAME[s.name] ? link(s.name) : el('span', {class: 'mono', text: s.name}));
+      if (s.scope) who.append(el('span', {class: 'pill', text: s.scope}));
+      bits.push(who);
       if (q && (q.instructions || {}).question)
         bits.push(section('the question it answered',
                           el('p', {class: 'quote', text: q.instructions.question})));
@@ -1640,8 +1752,8 @@ function questionsTab(host) {
   }
 
   host.replaceChildren(
-    el('p', {class: 'note', text: 'Every question assay will ask, in full, beside how often it '
-      + 'has been ruled on. Only a human verdict can gate a build.'}),
+    el('p', {class: 'note', text: 'Every question assay will ask, in full, beside how often it has been ruled on. '
+             + 'Only a human verdict can gate a build.'}),
     el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a question to read its instructions and every option, exactly as they are sent.'}));
   const first = $('tbody tr', list); if (first) first.click();
@@ -1650,8 +1762,16 @@ function questionsTab(host) {
 /* ------------------------------------------------------------------------------- Config */
 function configTab(host) {
   const c = DATA.config || {}, bits = [];
-  bits.push(el('p', {class: 'note', text: 'What was actually resolved, which is not always what '
-    + 'the file says. Everything under here you wrote by hand.'}));
+  /* The one tab besides the Overview that carries a plate: it has a short opening line and a
+     long table under it, so a cut set into that line costs nothing and fills paper that was
+     otherwise empty. */
+  const cut = (DATA.cuts || {}).tower;
+  const head = el('p', {class: 'note tabhead'});
+  if (cut) head.append(el('img', {class: 'cut tabcut', src: cut, alt: ''}));
+  head.append(document.createTextNode(
+    'What was actually resolved, which is not always what the file says. Everything under here '
+    + 'you wrote by hand.'));
+  bits.push(head);
 
   const scalars = Object.entries(c).filter(([, v]) => typeof v !== 'object' || v === null);
   if (scalars.length) bits.push(section('resolved', kv(scalars.map(([k, v]) => [k, String(v)]))));
@@ -1739,8 +1859,17 @@ function configTab(host) {
    Checked monotonic in OKLab lightness: .433 / .575 / .764, then a neutral for the absence.
    Status colors are reserved, never reused as a series, and always carry their label, because
    `warning` is sub-3:1 against this surface by design. */
-const RAMP = {declared: '#184f95', derived: '#2a78d6', judged: '#86b6ef', none: '#b8c2c6'};
-const ACT = {fail: '#d03b3b', queue: '#fab219', annotate: '#7c8b91', waived: '#b8c2c6'};
+/* *** THE ONLY COLOUR ON THE PAGE, AND IT ALWAYS MEANS A QUANTITY. ***
+   Forge tones: iron for the strongest evidence, through rust and ember, to a bare rule for what
+   nothing settles. One hue family, ordered dark to light, so a stacked bar reads as a scale
+   rather than as four unrelated categories -- and so nothing else on the page can be coloured
+   without immediately looking like a measurement. */
+const RAMP = {declared: '#4a443d', derived: '#a8491a', judged: '#d2833a', none: '#cec5b6'};
+const ACT = {fail: '#a8491a', queue: '#d2833a', annotate: '#615a52', waived: '#cec5b6'};
+const INK = '#1a1714';
+/* A ranked bar is a quantity, so it takes the strongest forge tone rather than the ink: a row of
+   near-black bars reads as a block of type rather than as a measure. */
+const BAR = RAMP.derived;
 
 /* A composition of a known whole. HTML, not SVG.
    *** AN SVG BAR THAT FILLS ITS CONTAINER NEEDS preserveAspectRatio="none", WHICH STRETCHES THE
@@ -1780,7 +1909,7 @@ function rankedBars(rows) {
     const track = el('span', {class: 'rtrack'});
     track.append(el('span', {class: 'rfill',
                              style: `width:${Math.max(1.5, (r.n / max) * 100)}%;`
-                                    + `background:${r.color || '#2a78d6'}`}));
+                                    + `background:${r.color || BAR}`}));
     line.append(track);
     /* *** `114` AND `6 read` RENDERED AS `114 6 read`, WHICH READS AS 1,146. ***
        Two numbers separated by whitespace are one number to a reader. The check dropdown already
@@ -1857,32 +1986,25 @@ function suggestTab(host) {
     (SECT.indexOf(a.section) - SECT.indexOf(b.section)) || b.rows.length - a.rows.length);
 
   host.replaceChildren(drill({
-    noun: 'reasons', groupNoun: 'reason', groups: groups, groupSort: 'n',
-    groupFilter: 'filter reasons...',
+    noun: 'candidates', groups: groups, rowFilter: 'filter candidates...',
+    chip: g => g.basis,
     blurb: 'assay measured these and cannot know what they mean. Every means: and implies: in a '
       + 'draft is blank for you to fill in. Grouped by the reason each one fired, because forty '
       + 'rows of one reason are one decision.',
-    groupText: g => g.basis + ' ' + LABEL[g.section],
-    label: g => g.basis,
-    groupCols: [
-      {key: 'sec', label: 'what you would edit', val: g => LABEL[g.section] || g.section,
-       cell: g => el('span', {class: 'pill', text: LABEL[g.section] || g.section})},
-      {key: 'basis', label: 'why it fired', val: g => g.basis},
-      {key: 'n', label: 'items', n: 1, val: g => g.rows.length},
-      {key: 'open', label: '', val: g => (g.decide ? 1 : 0),
-       cell: g => g.decide ? el('span', {class: 'pill bad', text: 'needs a decision'})
-                           : el('span')},
-    ],
     rowsOf: g => g.rows.slice().sort((a, b) => (b.rank || 0) - (a.rank || 0)),
     /* *** THE HEADLINE IS THE GROUP'S OWN REASON, REPEATED ONCE PER ROW. ***
        123 rows reading "`X` is described identically in N models and the vocab does not carry
        it" is the reason spelled 123 times: it is already the crumb above the table and the first
        line of the pane. What differs between rows is the NAME and the number, so those are the
        columns. */
+    /* `what was measured` was empty on every row of the largest rule, because that rule keeps
+       its evidence on the RULE rather than repeating it per row. A column that is blank
+       everywhere is furniture. What varies is the candidate, which file it would go in, and
+       where it ranks within its own rule. */
     rowCols: [
       {key: 'k', label: 'candidate', mono: 1, val: r => r.key || r.headline},
-      {key: 'm', label: 'what was measured', clip: 1, val: r => (r.measured || [])[0] || '',
-       cell: r => el('span', {class: 'tot', text: (r.measured || [])[0] || ''})},
+      {key: 'sec', label: 'edit', val: r => LABEL[r.section] || r.section,
+       cell: r => el('span', {class: 'pill', text: LABEL[r.section] || r.section})},
       {key: 'rank', label: 'rank', n: 1, val: r => r.rank},
     ],
     rowSort: 'rank', rowDir: -1,
@@ -1928,44 +2050,49 @@ function understoodTab(host) {
       el('b', {text: 'Nothing has been recorded yet. '}),
       el('span', {text: meta.new_store})]));
 
-  /* *** THE OVERVIEW LED WITH AN INVENTORY OF FINDINGS BY CHECK. ***
-     That is a table of contents, not an argument. The first screen has to say the thing nothing
-     else could have done: it read every sentence this warehouse says about itself, put a
-     question to each one, and found defects no dbt test can express -- for the price of a
-     coffee. The loop number is still here, one block down, because it is the honest measure;
-     it is just not the opening. */
+  /* *** "474" IS NOT A SENTENCE AND "FOUND 474 WHAT" IS THE RIGHT QUESTION. ***
+     The first screen used three floating numbers with their nouns in a caption underneath, so
+     the biggest type on the page said nothing on its own. It is an assay ticket now: what was
+     CHARGED, what was ASSAYED out of it, and what it COST -- three columns of an account, each
+     number carrying its unit on the same line, ruled the way a ticket is ruled.
+
+     The loop number stays one block down. It is the honest measure and it is not the argument. */
   const ruledN = F.filter(f => f.ruled_finding).length;
   const agentN = DATA.adjudications.filter(a => a.source === 'agent').length;
   const humanN = DATA.adjudications.filter(a => a.source === 'human').length;
   const checks = new Set(F.map(f => f.check)).size;
   const classified = DATA.claims.filter(c => c.kind).length;
   const spent = (DATA.cost || {}).usd;
-  const money = spent == null ? null : '$' + spent.toFixed(2);
 
-  bits.push(el('div', {class: 'hero'}, [
-    el('div', {class: 'herobig'}, [
-      el('div', {class: 'lab', text: 'it read this warehouse'}),
-      el('div', {}, [el('span', {class: 'heron', text: num(meta.models)}),
-                     el('span', {class: 'heroof', text: ' models · ' + num(DATA.edges.length)
-                                                        + ' hops'})]),
-      el('p', {class: 'note', text: num(DATA.claims.length) + ' sentence(s) extracted from '
-        + 'descriptions and comments, ' + num(classified) + ' classified, '
-        + num(DATA.decisions.length) + ' question(s) answered.'}),
-    ]),
-    el('div', {class: 'herobig'}, [
-      el('div', {class: 'lab', text: 'and found'}),
-      el('div', {}, [el('span', {class: 'heron', text: num(F.length)}),
-                     el('span', {class: 'heroof', text: ' across ' + num(checks) + ' checks'})]),
-      el('p', {class: 'note', text: 'A dbt test asserts a value in a column. These are about '
-        + 'grain, meaning, provenance and drift -- the things no unique or not_null can say.'}),
-    ]),
-    el('div', {class: 'herobig'}, [
-      el('div', {class: 'lab', text: 'for'}),
-      el('div', {}, [el('span', {class: 'heron small', text: money == null ? 'no ledger' : money})]),
-      el('p', {class: 'note', text: money == null
-        ? 'This store predates the ledger, so what it cost is unknown rather than zero.'
-        : 'Every call recorded, one row each. The Spend tab has the whole ledger.'}),
-    ]),
+  function column(label, n, unit, sub) {
+    const c = el('div', {class: 'tcol'});
+    c.append(el('div', {class: 'tlab', text: label}));
+    c.append(el('div', {}, [el('span', {class: 'tnum', text: n}),
+                            el('span', {class: 'tunit', text: unit})]));
+    c.append(el('div', {class: 'tsub', text: sub}));
+    return c;
+  }
+
+  const ticket = el('div', {class: 'ticket'}, [
+    column('charged', num(meta.models), 'models',
+           num(DATA.edges.length) + ' hops between them, ' + num(meta.sources)
+           + ' sources feeding them, ' + num(DATA.claims.length)
+           + ' sentences they say about themselves.'),
+    column('assayed out', num(F.length), 'defects',
+           'Across ' + num(checks) + ' assays. A dbt test asserts a value in a column; these are '
+           + 'about grain, meaning, provenance and drift, which no unique or not_null can say.'),
+    column('at cost', spent == null ? '\u2014' : '$' + spent.toFixed(2), '',
+           spent == null
+             ? 'This store predates the ledger, so what it cost is unknown rather than nothing.'
+             : num(DATA.decisions.length) + ' questions put and answered, every call recorded one '
+               + 'row each. The Spend tab has the ledger.'),
+  ]);
+  /* The plate earns its place by being the thing the page is named after: a charge going into a
+     furnace and something being drawn off it. */
+  const cut = (DATA.cuts || {}).condensers;
+  bits.push(el('div', {class: 'ticketwrap'}, [
+    ticket,
+    cut ? el('img', {class: 'cut ticketcut', src: cut, alt: ''}) : el('div'),
   ]));
 
   // ---- the loop number. It moves only when a person reads SQL, which is why it is not the hero.
@@ -2033,16 +2160,29 @@ function understoodTab(host) {
     el('div', {}, [stackedBar(aparts.filter(p => p.n), F.length), alegend])));
 
   // ---- the configuration gap
+  /* *** TWENTY BARS, ALL THE SAME LENGTH, NONE OF THEM LABELLED. ***
+     `rankedBars` was handed rows with no `label` and no `n`, so it drew a full-width track for
+     every row and put the check's name in a hover title -- on a page whose whole argument is
+     that a reader should not have to ask. "wtf even is this visualization here?" was the right
+     question: there was no magnitude in it at all.
+
+     The magnitude that belongs here is how many findings each unnamed check is firing, which is
+     the number that decides whether configuring it matters. Same source as the ranking above. */
   const gap = DATA.unconfigured || [];
   if (gap.length) {
     const grows = gap.map(u => ({
-      label: u.check, n: (byCheck[u.check] || 0),
+      label: u.check,
+      n: byCheck[u.check] || 0,
       note: u.shipped ? 'assay suggests ' + u.shipped
                       : 'not configured \u00b7 warns, cannot fail a build',
-      color: '#b8c2c6',
-      tip: `${u.check} is firing and audit.yml does not name it`}));
+      color: RAMP.none,
+      tip: `${u.check} is firing ${num(byCheck[u.check] || 0)} finding(s) and audit.yml does not `
+           + `name it`,
+      onclick: () => { open('suggest'); }}))
+      .sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
     bits.push(block(gap.length + ' check(s) fired that your audit.yml does not name',
-      'Unconfigured checks fall back to their severity and cannot fail a build.',
+      'The bar is how many findings each one is firing. Unconfigured checks fall back to their '
+      + 'severity and cannot fail a build. Click one for what to write.',
       rankedBars(grows)));
   }
 
@@ -2068,10 +2208,9 @@ function understoodTab(host) {
          before-and-after comparison needs. The data was right and the label was the lie, so the
          version moves out of the bar label and into the note that explains it. */
       wrap.append(rankedBars(bySrc[src].map(r => ({
-        label: r.family,
         sub: r.prompt_version ? 'ruled under ' + r.prompt_version : 'unversioned',
         n: r.n,
-        color: r.agreement == null ? '#b8c2c6'
+        color: r.agreement == null ? RAMP.none
              : r.agreement >= 0.8 ? RAMP.declared
              : r.agreement >= 0.5 ? RAMP.derived : RAMP.judged,
         note: (r.agreement == null ? '' : Math.round(r.agreement * 100) + '% agreed')
@@ -2155,6 +2294,8 @@ function spendTab(host) {
   }
   const money = n => '$' + (n == null ? '--' : n < 1 ? n.toFixed(4) : n.toFixed(2));
   const wh = c.warehouse || {};
+  bits.push(el('p', {class: 'note', text: 'What the thinking cost and what the warehouse cost, kept apart because '
+                     + 'they are priced by different people in different units.'}));
   bits.push(block('What this project has cost', null, el('div', {class: 'tiles'}, [
     tile(money(c.usd || 0), 'thinking', num(c.calls || 0) + ' model call(s)'),
     tile(wh.calls ? money(wh.usd) : '--', 'the warehouse',
@@ -2249,9 +2390,155 @@ function spendTab(host) {
   host.replaceChildren(...bits);
 }
 
+/* ------------------------------------------------------------------------------ Monitoring
+
+   *** THE REPORT KNEW EVERYTHING ABOUT THE SQL AND NOTHING ABOUT WHETHER ANYBODY WAS WATCHING. ***
+   `assay volume` measured the build cadence, every Elementary monitor's own freshness, what the
+   declared tests are actually doing and which models have no volume history at all -- and wrote
+   it to a JSON that only the review form read. So the page that answers "what is known about this
+   warehouse" could not answer "is anything watching it", which is the same question one layer
+   out.
+
+   *** AND THIS TAB IS ABOUT THE MONITORING, NEVER ABOUT THE DATA. ***
+   assay does not count rows over time and does not intend to; Elementary does. Everything here
+   is an assertion that a monitor EXISTS, is CURRENT, and COVERS what matters. A relation that is
+   `abandoned` means the monitor stopped, which is not the same as the data being late -- and in
+   any monitoring view a monitor that stopped looks exactly like one that finds nothing. */
+function monitoringTab(host) {
+  const m = DATA.monitoring || {}, bits = [];
+  const cad = m.cadence || {}, cov = m.test_coverage || {};
+  const readings = m.readings || [], unwatched = m.unwatched || [], mf = m.monitoring || [];
+  const stale = m.stale_failures || [];
+
+  /* *** AN EMPTY TAB READS AS "NOTHING IS WRONG". *** It is not measured until somebody
+     measures it, and this says exactly which command does that. */
+  if (!cad.runs && !readings.length && !cov.declared) {
+    bits.push(block('Nothing here has been measured',
+      'This page carries the monitoring only when it is handed the measurement, because taking '
+      + 'it needs your dbt connection and assay never holds a credential.', null));
+    bits.push(el('pre', {text: 'assay volume --json > volume.json\n'
+      + 'assay page assay.html --monitoring volume.json'}));
+    bits.push(el('p', {class: 'note', text:
+      'Nothing above is a statement about your monitoring. It says the numbers were not taken.'}));
+    host.replaceChildren(...bits);
+    return;
+  }
+
+  // ---- how often this project actually builds, which every threshold below is derived from
+  const cadline = el('div', {});
+  cadline.append(el('p', {text: cad.explain || 'the build cadence could not be read'}));
+  if (cad.derived_staleness_days != null)
+    cadline.append(el('p', {class: 'note', text:
+      'So a monitor is called late after ' + cad.derived_staleness_days + ' day(s)'
+      + (cad.floored ? ', which is the one-day floor rather than the measured gap: a threshold '
+                     + 'cannot be shorter than a day' : '')
+      + (cad.configured ? '. audit.yml sets this one deliberately.'
+                        : '. Nothing is configured, so the derived number is what is in force.')}));
+  bits.push(block('How often this project builds', 'Every threshold on this tab is derived from '
+    + 'this rather than picked. A number somebody guesses cries wolf or stays quiet for a '
+    + 'quarter.', cadline));
+
+  // ---- the monitors, and whether each one is still being written to
+  if (readings.length) {
+    const live = readings.filter(r => r.state === 'live').length;
+    const off = readings.length - live;
+    const mbox = el('div', {});
+    mbox.append(grid(readings, [
+        {key: 'relation', label: 'relation', mono: 1, val: r => r.relation},
+        {key: 'state', label: 'state', val: r => r.state,
+         cell: r => el('span', {class: r.state === 'live' ? '' : 'bad',
+                                text: String(r.state).replace(/_/g, ' ')})},
+        {key: 'rows', label: 'rows', n: 1, val: r => r.rows},
+        {key: 'newest', label: 'newest', val: r => r.newest || ''},
+        {key: 'age', label: 'days since', n: 1, val: r => r.age_days,
+         cell: r => el('span', {text: r.age_days == null ? '' : r.age_days.toFixed(1)})},
+      ], {placeholder: 'filter monitors...', cap: 200}));
+    /* *** THE SENTENCE IS THE EVIDENCE, AND A TABLE CELL CANNOT HOLD IT. ***
+       Each reading carries the write history its threshold was derived from, which is what makes
+       the state arguable rather than a verdict handed down. One line per monitor that is not
+       live, inside the same block so it is part of that section rather than loose above the
+       next heading. */
+    for (const r of readings.filter(x => x.state !== 'live' && x.says))
+      mbox.append(el('p', {class: 'note', text: r.says}));
+    bits.push(block('The monitors themselves (' + num(readings.length) + ')',
+      off === 0
+        ? 'Every one of these has been written to recently.'
+        : num(off) + (off === 1 ? ' of them has' : ' of them have')
+          + ' stopped being written to, and a monitor that stopped reads exactly like one that '
+          + 'finds nothing.',
+      mbox));
+  }
+
+  // ---- what the declared tests are actually doing
+  if (cov.declared) {
+    const never = (cov.declared || 0) - (cov.ever_ran || 0);
+    const parts = [
+      {label: 'have produced a result', n: cov.ever_ran || 0, color: RAMP.declared},
+      {label: 'declared, never run', n: never, color: RAMP.judged},
+    ];
+    const legend = el('div', {class: 'legend'}, parts.filter(x => x.n).map(x =>
+      el('span', {class: 'lgi'}, [el('span', {class: 'sw', style: 'background:' + x.color}),
+                                  el('span', {text: x.label + ' ' + num(x.n)})])));
+    const box = el('div', {}, [stackedBar(parts.filter(x => x.n), cov.declared), legend]);
+    box.append(el('p', {class: 'note', text:
+      num(cov.declared) + ' test(s) declared, ' + num(cov.ever_ran || 0) + ' have ever produced a '
+      + 'result, ' + num(cov.skipped_results || 0) + ' result(s) are SKIPPED. A test that never '
+      + 'ran and a test that passed look identical in a summary, and only one of them has read '
+      + 'your data.'}));
+    bits.push(block('What your tests are doing', 'Declared is not run, and skipped is not '
+      + 'passed.', box));
+  }
+
+  /* *** THE ONE NOBODY PREDICTED. ***
+     A test whose LAST result was a failure and which has not run since. In any Elementary view
+     it is indistinguishable from something failing right now, and it is neither: it is a
+     question nobody has asked for two months. */
+  if (stale.length) {
+    bits.push(block(num(stale.length) + ' test(s) whose last result was a FAILURE, and which have '
+      + 'not run since',
+      'This is not a live failure and it is not a pass. It is an answer that has gone out of '
+      + 'date, and it reads as a live failure in any view that sorts by status.',
+      grid(stale, [
+        {key: 'table', label: 'table', mono: 1, val: r => r.table, cell: r => link(r.table)},
+        {key: 'kind', label: 'what failed', val: r => r.kind + ' · ' + (r.sub_type || '')},
+        {key: 'age', label: 'days since', n: 1, val: r => r.age_days,
+         cell: r => el('span', {text: r.age_days == null ? '' : r.age_days.toFixed(0)})},
+      ], {placeholder: 'filter...', cap: 200})));
+  }
+
+  // ---- the monitoring findings, which are about the monitoring and not about the data
+  if (mf.length) {
+    bits.push(block(num(mf.length) + ' finding(s) about the monitoring',
+      'Every one of these is a statement about whether something is watching. None of them is a '
+      + 'statement about your data.',
+      el('div', {}, mf.map(f => {
+        const row = el('div', {class: 'mfrow'});
+        row.append(el('span', {class: 'rlab mono', text: f.check.replace(/_/g, ' ')}));
+        row.append(el('span', {text: f.summary}));
+        return row;
+      }))));
+  }
+
+  // ---- and the models nothing watches at all
+  if (unwatched.length) {
+    const worst = unwatched.filter(u => u.marts).length;
+    bits.push(block(num(unwatched.length) + ' model(s) with nothing watching them',
+      num(worst) + ' of them have a mart downstream, which is what makes an unnoticed change '
+      + 'expensive. assay does not measure volume and does not intend to; `elementary-data` does, '
+      + 'and it is a dbt package.',
+      grid(unwatched, [
+        {key: 'model', label: 'model', mono: 1, val: r => r.model, cell: r => link(r.model)},
+        {key: 'marts', label: 'marts downstream', n: 1, val: r => r.marts},
+        {key: 'descendants', label: 'descendants', n: 1, val: r => r.descendants},
+      ], {placeholder: 'filter models...', cap: 400, sort: 'marts', dir: -1})));
+  }
+
+  host.replaceChildren(...bits);
+}
+
 /* ---------------------------------------------------------------------------------- tabs */
 const VIEWS = {models: modelsTab, chain: chainTab, claims: claimsTab, findings: findingsTab,
-               suggest: suggestTab,
+               suggest: suggestTab, monitoring: monitoringTab,
                answers: answersTab, spend: spendTab, questions: questionsTab, config: configTab,
                understood: understoodTab};
 const built = {};

@@ -214,16 +214,47 @@ def test_unwatched_ignores_a_model_nothing_reads():
 
 
 def test_the_state_carries_the_claim_the_movement_and_the_reach():
-    """The join is the whole point: neither tool has all three."""
+    """The join is the whole point: neither tool has all three.
+
+    *** AND THE KEY NAMES WHAT THE NUMBER IS. ***
+    It used to be `movement.row_count_is`, which invites the reading "the table now holds N
+    rows". It is rows that ARRIVED in one bucket. A state that misnames its own measurement
+    produces a confident answer to a question nobody asked, which is the failure this whole
+    module is about.
+    """
     v = E.Volume(table="a", raw="db.s.a", buckets=9, latest=59.0, previous=100.0,
-                 at=datetime(2026, 9, 21))   # noqa: DTZ001
+                 at=datetime(2026, 9, 21), age_days=1.0)   # noqa: DTZ001
     st = E.claim_state(_project(["a"], marts=19), "model.p.a", v,
                        {"claim_id": "c1", "text": "holds the FULL set", "source_ref": "a.yml:3"})
-    assert st["movement"]["change_percent"] == pytest.approx(-41.0)
+    mv = st["arrivals_per_bucket"]
+    assert mv["change_percent"] == pytest.approx(-41.0)
+    assert mv["latest_bucket"] == 59 and mv["previous_bucket"] == 100
+    assert mv["latest_bucket_observed_days_ago"] == 1
+    assert "not the size of the table" in mv["what_this_counts"]
+    assert "row_count_is" not in str(st), "the key that invited the wrong reading is back"
     assert st["the_project_says"] == "holds the FULL set"
     assert st["marts_downstream"] == 19
-    assert "not by assay" in st["movement"]["counted_by"]
     assert "sql" not in str(st).lower(), "the model's SQL is not in the state, on purpose"
+
+
+def test_an_observation_months_old_is_stale_and_an_undated_one_is_not_fresh():
+    """*** THE REPORT LED WITH `-100.0%, rows now 0` ON A TABLE HOLDING 281,286 ROWS. ***
+
+    The newest bucket started eighty days before the run, and the column was labelled `rows now`.
+    An unknown age is not treated as fresh either: a bucket assay cannot date is one it cannot
+    vouch for, and the point of this is to stop vouching for numbers it cannot.
+    """
+    fresh = E.Volume(table="a", raw="db.s.a", buckets=9, latest=59.0, previous=100.0,
+                     at=datetime(2026, 9, 21), age_days=1.0)          # noqa: DTZ001
+    old_ = E.Volume(table="b", raw="db.s.b", buckets=126, latest=0.0, previous=900.0,
+                    at=datetime(2026, 7, 4), age_days=80.0)           # noqa: DTZ001
+    undated = E.Volume(table="c", raw="db.s.c", buckets=3, latest=0.0, previous=900.0,
+                       at=None, age_days=None)
+    assert fresh.stale(30) is False
+    assert old_.stale(30) is True
+    assert undated.stale(30) is True, "an undated observation is not a fresh one"
+    # the change itself is still computed: it is REPORTED differently, never hidden
+    assert old_.change == pytest.approx(-1.0)
 
 
 # --------------------------------------------------------------- monitoring as a contract

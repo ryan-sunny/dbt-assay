@@ -6,7 +6,7 @@ checking is the step, and the warehouse's own accumulated judgment -- not the ag
 someone else's project -- is what decides whether an edit was safe.
 """
 
-SKILL_MD = '''---
+_EDIT_BODY = '''---
 name: dbt-assay
 description: >-
   Use before and after editing any dbt model. assay knows what every model in this project MEANS --
@@ -18,6 +18,25 @@ description: >-
 
 assay is running as an MCP server. It has already derived what every model means. Use it; do not
 re-derive it by reading SQL, and do not guess.
+
+## If it is not set up in this repo yet
+
+Three commands, in this order. Nothing here costs anything: no key, no network, no spend.
+
+```bash
+uvx --refresh --from 'dbt-assay[mcp]' assay onboard --target target/
+claude mcp add assay --scope project -- uvx --refresh --from 'dbt-assay[mcp]' assay mcp --target target
+uvx --refresh --from 'dbt-assay[mcp]' assay skill all --write .
+```
+
+`onboard` reads the project and says what would degrade the answers here -- no compiled SQL, no
+catalog, a guessed dialect -- BEFORE it shows a finding, and prints the command that fixes each
+one. `skill all --write .` lays these procedures into `.claude/skills/` so the next agent has
+them. **`uvx --refresh`, always**: without it uvx serves a CACHED environment while the process
+reports itself as the version you asked for, and the symptom is a page that renders blank.
+
+`assay --help` lists every command; the table at the end of this file has all of them with every
+flag.
 
 ## Before you touch a model
 
@@ -278,6 +297,7 @@ and nothing is lost:
 | `spend()` | `assay cost`, or `assay cost --json` |
 | `stale(exact)` | `assay stale`, `assay stale --exact`, `assay stale --cost` |
 | `vocabulary()` | `assay config --target <target/>` |
+| `monitoring(volume_json)` | `assay volume --json > volume.json` |
 
 The one difference worth knowing: the MCP tools reload when the manifest moves, and a CLI run
 reads whatever `target/` holds at that moment. Run `dbt compile` first if you have edited SQL.
@@ -311,6 +331,28 @@ reads whatever `target/` holds at that moment. Run `dbt compile` first if you ha
   which catches a change to a PARENT that a checksum by definition cannot. `--cost` quotes what
   re-asking them would cost before you spend it. Neither makes an API call.
 - `assay config --target <dir>` — lints their **vocabulary**, which nothing used to check at all.
+## Whether anything is WATCHING the warehouse
+
+`monitoring(volume_json)` answers the one question every other tool here assumes somebody else
+answered: if what this SQL produces changed tonight, would anybody notice? It reports the build
+cadence, whether each monitor is still being written to, how many declared tests have ever
+produced a result, tests whose last result was a FAILURE and which have not run since, and the
+models with a mart downstream and no row-count history at all.
+
+**It reads a file and never a warehouse.** Taking the measurement needs their dbt connection and
+assay never holds a credential, so they run the measurement and you read it:
+
+```bash
+assay volume --json > volume.json                      # their connection, free, no judgment
+assay page assay.html --monitoring volume.json         # the same numbers on the report
+assay review --emit review.html -t target/ --monitoring volume.json
+```
+
+Called with no path it hands back that command rather than a set of zeros, and you should pass it
+on rather than reporting that the monitoring is fine. **A zero here reads as "nothing is wrong"
+and means "nobody looked".** A `stale_failure` is neither a live failure nor a pass: it is an
+answer that has gone out of date, and it reads as a live failure in any view that sorts by status.
+
 - `assay volume` — what Elementary counted, joined to what the project claims, plus five checks on
   the MONITORING itself: a monitor configured and never run, one that ran and stopped, models that
   feed marts with no row-count history, tests that have never fired, and results that are `skipped`
@@ -620,3 +662,63 @@ worth their time.
 - **Do not chase completeness.** 159 models is not a backlog to burn down. The high-mart ones are
   the ones where a wrong verdict costs something.
 '''
+
+
+# --------------------------------------------------------------- the complete surface, generated
+
+# *** A PROCEDURE THAT NAMES HALF THE TOOL TEACHES HALF THE TOOL. ***
+# Measured against the app itself: 21 of 47 commands appeared nowhere in either shipped skill, and
+# 85 flags appeared in neither the skills nor the docs -- including `page --monitoring`, which is
+# the whole reason the report can say anything about whether the warehouse is watched. Anybody
+# onboarding through the skill could not find them, and there was no signal that they existed.
+#
+# *** SO IT IS READ OFF THE APP, NEVER TYPED. ***
+# A hand-written table of 47 commands is a table that is wrong by the next release, and the
+# failure is silent: the reader believes what it says. This one is generated from the registered
+# commands and their registered parameters, so a flag that exists is in it and a flag that is in
+# it exists. The checked-in copies are regenerated by `assay skill all --write .`, and a test
+# fails when they drift.
+def _command_reference() -> str:
+    """Every command, what it is for, and every flag it takes, read from the app."""
+    import typer.main
+
+    from .cli import app
+
+    rows = []
+    for c in app.registered_commands:
+        name = c.name or c.callback.__name__.removesuffix("_cmd").replace("_", "-")
+        doc = (c.help or c.callback.__doc__ or "").strip()
+        # The first sentence only. These docstrings run to forty lines of argument, which belongs
+        # in `--help` and would drown a reference.
+        first = doc.split("\n\n")[0].replace("\n", " ").strip()
+        if "." in first:
+            first = first[:first.index(".") + 1]
+        params = typer.main.get_params_convertors_ctx_param_name_from_function(c.callback)[0]
+        args, opts = [], []
+        for p in params:
+            got = [o for o in getattr(p, "opts", []) if o.startswith("-")]
+            if not got:
+                # A positional: the thing the command acts on, which a reference that lists only
+                # flags leaves you guessing at.
+                args.append(f"<{p.name}>")
+                continue
+            if "--help" in got:
+                continue
+            opts.append("/".join(sorted(got, key=lambda o: (not o.startswith("--"), o))))
+        rows.append((name, " ".join(args), first, opts))
+
+    out = ["", "## Every command, and every flag it takes", "",
+           "Generated from the app itself, so it cannot drift from what is installed.",
+           "`assay <command> --help` has the long form of any of these.", "",
+           "| command | what it answers | flags |", "|---|---|---|"]
+    for name, args, first, opts in sorted(rows):
+        flags = " ".join(f"`{o}`" for o in opts) or "—"
+        out.append(f"| `assay {name}{(' ' + args) if args else ''}` | {first} | {flags} |")
+    out.append("")
+    return "\n".join(out)
+
+
+# *** AND THE REFERENCE IS PART OF THE DOCUMENT, NOT A SEPARATE THING TO GO AND FIND. ***
+# A skill that says "see the docs" for the other half of the tool is a skill whose reader stops at
+# its last line.
+SKILL_MD = _EDIT_BODY + _command_reference()

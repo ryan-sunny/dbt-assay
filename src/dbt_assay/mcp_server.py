@@ -784,6 +784,61 @@ class Backend:
                      "that asserts somebody's law. Read guide('vocab') before writing one."),
         }
 
+    def monitoring(self, volume_json: str = "") -> dict:
+        """Is anything WATCHING this warehouse, and are the declared tests actually running?
+
+        *** THE ONE QUESTION EVERY OTHER TOOL HERE ASSUMES SOMEBODY ELSE ANSWERED. ***
+        Every other tool reports on the SQL. This reports on whether a change to what that SQL
+        produces would be noticed by anybody -- the build cadence, each monitor's own freshness,
+        how many declared tests have ever produced a result, and the models with a mart downstream
+        and no row-count history at all.
+
+        *** IT READS A FILE AND NEVER A WAREHOUSE. ***
+        Taking the measurement needs their dbt connection, and assay never holds a credential, so
+        `assay volume --json > volume.json` takes it and this reads it -- the same artifact the
+        report and the review form take. Without the file this returns the command rather than a
+        set of zeros, because a zero here reads as "nothing is wrong" and means "nobody looked".
+        """
+        import json as _json
+        from pathlib import Path as _Path
+        cmd = ("assay volume --json > volume.json   # needs their dbt connection; free, no "
+               "judgment")
+        if not volume_json:
+            return {"measured": False, "run_this_first": cmd,
+                    "note": ("Nothing here is a statement about their monitoring: it says the "
+                             "measurement has not been taken. Then pass the path back to this "
+                             "tool, and `assay page --monitoring volume.json` puts the same "
+                             "numbers on the report.")}
+        try:
+            vol = _json.loads(_Path(volume_json).read_text())
+        except (OSError, ValueError) as e:
+            return {"measured": False, "error": f"could not read {volume_json}: {e}",
+                    "run_this_first": cmd}
+        cad = vol.get("cadence") or {}
+        cov = vol.get("test_coverage") or {}
+        readings = vol.get("readings") or []
+        unwatched = vol.get("unwatched") or []
+        return {
+            "measured": True,
+            "cadence": {"runs": cad.get("runs"), "explain": cad.get("explain"),
+                        "derived_staleness_days": cad.get("derived_staleness_days"),
+                        "floored": cad.get("floored"), "configured": cad.get("configured")},
+            "monitors": readings,
+            "monitors_stopped": [r["relation"] for r in readings if r.get("state") != "live"],
+            "test_coverage": cov,
+            "tests_never_run": (cov.get("declared") or 0) - (cov.get("ever_ran") or 0),
+            "stale_failures": vol.get("stale_failures") or [],
+            "unwatched": unwatched[:25],
+            "unwatched_total": len(unwatched),
+            "findings": vol.get("monitoring") or [],
+            "note": ("assay never measures volume or freshness itself -- that would be a second "
+                     "monitoring tool with a second opinion. Every row here asserts that a "
+                     "monitor EXISTS, is CURRENT and COVERS what matters; the counting stays "
+                     "Elementary's. A `stale_failure` is neither a live failure nor a pass: it "
+                     "is an answer that has gone out of date, and it reads as a live failure in "
+                     "any view that sorts by status."),
+        }
+
     def suggestions(self, section: str = "", limit: int = 15) -> dict:
         """What this project should CONFIGURE, from what the checks found.
 
@@ -973,6 +1028,14 @@ TOOLS = [
                     "false outside some corner of the project steers every answer wrong at once "
                     "-- measured at 25% of one real warehouse's answers. Call this before writing "
                     "or editing any term, and pair it with guide('vocab').")),
+    ("monitoring", ("Is anything WATCHING this warehouse: the build cadence, whether each "
+                    "monitor is still being written to, how many declared tests have ever "
+                    "produced a result, tests whose last result was a FAILURE and which have not "
+                    "run since, and the models with a mart downstream and no row-count history. "
+                    "Pass the path to a file from `assay volume --json`; with no path it returns "
+                    "the command to produce one, because a zero here reads as `nothing is wrong` "
+                    "and means `nobody looked`. assay never measures volume itself and never "
+                    "holds a credential.")),
     ("evidence", ("The exact STATE a judged answer was computed from, as it was sent. Call it "
                   "before disagreeing with an answer: if the answer is wrong and the state is "
                   "wrong, what gets sent needs fixing; if the answer is wrong and the state is "
@@ -1120,6 +1183,10 @@ def serve(target: str, store_path: str | None = None) -> None:
     @app.tool(description=_desc("vocabulary"))
     def vocabulary() -> str:
         return _out(be.vocabulary())
+
+    @app.tool(description=_desc("monitoring"))
+    def monitoring(volume_json: str = "") -> str:
+        return _out(be.monitoring(volume_json))
 
     @app.tool(description=_desc("evidence"))
     def evidence(decision_key: str = "", question: str = "", subject: str = "",

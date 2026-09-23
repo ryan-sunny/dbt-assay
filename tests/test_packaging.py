@@ -242,3 +242,25 @@ def test_ci_fails_on_main_when_the_version_has_no_tag():
     assert "github.ref == 'refs/heads/main'" in body, "the guard would fire on every branch"
     assert "there is no v$VER tag" in body
     assert "scripts/release.sh" in body, "the failure does not say how to fix it"
+
+
+def test_the_cuts_and_the_type_live_inside_the_package():
+    """*** THE PICTURES ARE DATA TOO, AND DATA IS WHAT PACKAGING DROPS. ***
+
+    Both artifacts embed every plate and both faces as base64, read off disk at render time. A
+    wheel built without `assets/` still imports, still renders, and produces a page with no
+    woodcuts and the wrong type -- which is the same shape as the cached-uvx failure that
+    published a blank report: nothing errors, the output is just wrong.
+
+    `_uri` returns "" for a file it cannot read, on purpose, so an absent asset cannot take a
+    page down. That is exactly why it needs a guard here instead.
+    """
+    from dbt_assay import assets
+
+    d = Path(dbt_assay.__file__).parent / "assets"
+    assert d.is_dir(), "the assets directory is not inside the package"
+    assert len(sorted(d.glob("*.gif"))) >= 20, "the plate book is nearly empty"
+    assert {p.name for p in d.glob("*.woff2")} == {"fell-regular.woff2", "fell-italic.woff2"}
+    assert assets.FELL_REGULAR.startswith("data:font/woff2;base64,"), "the type did not load"
+    assert all(u.startswith("data:image/gif;base64,") for u in assets.CUTS.values()), \
+        "a cut resolved to nothing, which renders as a page that lost its pictures"

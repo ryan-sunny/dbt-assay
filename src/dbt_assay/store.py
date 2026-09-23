@@ -306,6 +306,11 @@ class Store:
         "model_decisions": [("input_tokens", "integer"), ("context", "varchar"),
                             ("file_checksum", "varchar"), ("state_builder", "varchar"),
                             ("state_inputs", "varchar")],
+        # *** THE ENGINE'S OWN TIME, ADDED AFTER THE TABLE SHIPPED. ***
+        # A store written by 0.48.0 has `warehouse_calls` without it, and the reader selects it by
+        # name -- so `assay cost` died with a binder error on every existing store until this
+        # line existed. Which is what the banner above this dict says, and it still happened.
+        "warehouse_calls": [("exec_ms", "integer")],
     }
 
     def _migrate(self) -> None:

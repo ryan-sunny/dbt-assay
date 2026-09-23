@@ -5,6 +5,7 @@ An agent walking findings one at a time is the right shape for a CALL and the wr
 project. So the reading batches and the answering leaves the conversation: a single file, filled in
 whenever there is ten minutes, handed back as JSON.
 """
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -172,8 +173,18 @@ def test_the_page_reaches_out_to_nothing():
     # An `xmlns` is an identifier, not a request: the inline mark declares the SVG namespace and
     # no browser has ever fetched it.
     html = html.replace('xmlns="http://www.w3.org/2000/svg"', "")
-    for bad in ("http://", "https://", "<img", "fetch(", "XMLHttpRequest"):
+    for bad in ("http://", "https://", "fetch(", "XMLHttpRequest"):
         assert bad not in html, bad
+    # *** THE GUARD IS ABOUT THE WIRE, NOT ABOUT THE TAG. ***
+    # It forbade `<img` outright, which was right while the page had no pictures. The plates are
+    # `data:` URIs and fetch nothing; an `<img src="cuts/x.gif">` is the thing that breaks the
+    # moment somebody emails the file. So: every img must carry a data URI, and no img may name
+    # a path.
+    imgs = re.findall(r'<img[^>]*>', html)
+    for tag in imgs:
+        src = re.search(r'src="([^"]{0,24})', tag)
+        assert src and src.group(1).startswith("data:"), f"an image is fetched: {tag[:70]}"
+
 
 
 def test_the_page_carries_no_wall_clock(store, tmp_path):

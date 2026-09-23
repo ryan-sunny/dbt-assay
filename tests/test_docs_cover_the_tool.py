@@ -361,8 +361,20 @@ def test_the_shipped_skills_are_still_shaped_like_documents():
         # A list item never continues a line that already holds one.
         assert not [ln for ln in lines if ln.lstrip().startswith("- ") and " - " in ln], \
             f"{name} has bullets folded into a paragraph"
-        over = [ln for ln in lines if len(ln) > 100 and "```" not in ln]
-        assert not over, f"{name} has lines past 100 columns: {[len(x) for x in over]}"
+        # *** THE COLUMN LIMIT IS ABOUT PROSE, AND TWO THINGS HERE ARE NOT PROSE. ***
+        # A markdown table row cannot be wrapped without breaking the table, and a shell command
+        # inside a fence cannot be wrapped without breaking the command. Neither is the reflow
+        # hazard this guard exists for -- that is a paragraph rewrapped across a newline -- and
+        # holding them to 100 columns would mean deleting the reference rather than wrapping it.
+        prose, fenced = [], False
+        for ln in lines:
+            if ln.lstrip().startswith("```"):
+                fenced = not fenced
+                continue
+            if not fenced and not ln.lstrip().startswith("|"):
+                prose.append(ln)
+        over = [ln for ln in prose if len(ln) > 100]
+        assert not over, f"{name} has prose lines past 100 columns: {[len(x) for x in over]}"
 
 
 def test_every_check_the_code_ships_is_named_in_the_docs():
@@ -399,8 +411,10 @@ def test_the_mcp_tool_count_in_the_docs_is_the_real_one():
     if docs is None:
         pytest.skip("no docs in a wheel install")
     words = {14: "Fourteen", 15: "Fifteen", 16: "Sixteen", 17: "Seventeen", 18: "Eighteen",
-             19: "Nineteen", 20: "Twenty"}
-    said = re.search(r"\b(Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty) tools\b",
+             19: "Nineteen", 20: "Twenty", 21: "Twenty-one", 22: "Twenty-two",
+             23: "Twenty-three", 24: "Twenty-four", 25: "Twenty-five"}
+    said = re.search(r"\b(Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty|"
+                     r"Twenty-one|Twenty-two|Twenty-three|Twenty-four|Twenty-five) tools\b",
                      docs)
     assert said, "the tool count sentence is gone; keep it or drop this test deliberately"
     assert said.group(1) == words.get(len(TOOLS)), \
@@ -493,3 +507,48 @@ def test_every_mcp_tool_reaches_the_skill_and_the_overview():
     assert not missing_skill, f"MCP tools the agent skill never names: {missing_skill}"
     if overview is None:
         pytest.skip("no docs in a wheel install")
+
+
+def _registered():
+    """(command name, its flags) read off the app, never off rendered help."""
+    import typer.main
+
+    from dbt_assay.cli import app
+    for c in app.registered_commands:
+        name = c.name or c.callback.__name__.removesuffix("_cmd").replace("_", "-")
+        params = typer.main.get_params_convertors_ctx_param_name_from_function(c.callback)[0]
+        yield name, {o for p in params for o in getattr(p, "opts", [])
+                     if o.startswith("--") and o != "--help"}
+
+
+def test_every_command_and_every_flag_reaches_the_shipped_skills():
+    """*** SOMEBODY ONBOARDING THROUGH THE SKILL COULD NOT FIND HALF THE TOOL. ***
+
+    Measured when this was written: 21 of 47 commands appeared in neither shipped procedure, and
+    85 flags appeared in neither the procedures nor the docs -- `page --monitoring` among them,
+    which is the only way the report says anything about whether the warehouse is watched. An
+    agent reading the skill has no signal that an unnamed flag exists, so the capability is the
+    same as absent.
+
+    The reference is generated from the app, so this guard is really checking that it is still
+    generated and still attached.
+    """
+    from dbt_assay.skilltext import REVIEW_SKILL_MD, SKILL_MD
+    both = SKILL_MD + REVIEW_SKILL_MD
+    cmds = list(_registered())
+    assert len(cmds) > 20, "the command reader found almost nothing; it is broken"
+
+    missing_cmds = sorted(n for n, _f in cmds if f"assay {n}" not in both)
+    assert not missing_cmds, f"commands named in neither procedure: {missing_cmds}"
+
+    missing_flags = sorted(f"{n} {o}" for n, flags in cmds for o in flags if o not in both)
+    assert not missing_flags, f"flags named in neither procedure: {missing_flags}"
+
+
+def test_the_reference_is_generated_rather_than_typed():
+    """A hand-maintained table of 47 commands is wrong by the next release, and silently: the
+    reader believes it. If somebody pastes it in as a literal, this fails."""
+    from dbt_assay import skilltext
+    assert "_command_reference()" in Path(skilltext.__file__).read_text()
+    table = skilltext._command_reference()
+    assert table.count("\n| `assay ") == len(list(_registered()))

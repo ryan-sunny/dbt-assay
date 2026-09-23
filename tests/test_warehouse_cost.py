@@ -442,3 +442,117 @@ def test_a_measured_statement_says_adapter_and_leaves_the_estimate_alone(tmp_pat
     # Priced on the invoice, not on the guess.
     assert usd == (10485760 / cost.USD_PER_TB) * 6.25
     s.close()
+
+
+# ------------------------------- the 600x that looks plausible, which is the direction nobody checks
+
+SF = cost.RateCard(engine="snowflake", name="sf.2026", usd_per_credit=3.0, credits_per_hour=1)
+
+
+def test_a_snowflake_estimate_is_never_built_on_the_subprocess_clock():
+    """*** 18,000ms OF WALL CLOCK AROUND A STATEMENT THE WAREHOUSE RAN IN 30ms. ***
+
+    Measured on a production sweep: 99.7% of a `dbt show` is dbt starting up and parsing a
+    manifest. Snowflake bills warehouse seconds, so a credit estimate built on the wall clock is
+    wrong by about 600x -- and wrong in the direction that looks plausible rather than absurd,
+    which is the direction nobody checks.
+
+    So there is no fallback. With no engine time, the card declines.
+    """
+    assert SF.price(None, 3_600_000) == 3.0, "an engine hour is a credit"
+    assert SF.price(None, None) is None, "it priced something with no engine time"
+    # and the bytes path is untouched: BigQuery does not care how long anything took
+    assert BQ.price(10**12, None) == 6.25
+
+
+def test_the_ledger_records_both_clocks_and_prices_only_one(tmp_path):
+    s = Store(str(tmp_path / "s.duckdb"))
+    probe.enrich(dialect="snowflake", rate=SF)
+    slow = probe.Result(rows=[{"n": 1}], wall_ms=18_000, engine_ms=30)
+    probe._record("select 1", slow, caller="assay.probe.keys", kind="key_scan")
+    wall, ex, usd = s.con.execute(
+        "select wall_ms, exec_ms, usd_estimated from warehouse_calls").fetchone()
+    assert wall == 18_000, "the round trip is still recorded; it is just never priced"
+    assert ex == 30
+    # 30ms of a credit, not 18 seconds of one
+    assert usd == (30 / 3_600_000.0) * 3.0
+    s.close()
+
+
+def test_with_no_engine_time_a_time_priced_statement_carries_no_dollars(tmp_path):
+    """Absent beats 600x wrong. `assay cost` then says how many statements it could not price."""
+    s = Store(str(tmp_path / "s.duckdb"))
+    probe.enrich(dialect="snowflake", rate=SF)
+    probe._record("select 1", probe.Result(rows=[{"n": 1}], wall_ms=18_000),
+                  caller="assay.probe.keys", kind="key_scan")
+    wall, ex, usd = s.con.execute(
+        "select wall_ms, exec_ms, usd_estimated from warehouse_calls").fetchone()
+    assert wall == 18_000 and ex is None
+    assert usd is None, "it invented a Snowflake bill out of dbt's startup time"
+    s.close()
+
+
+# --------------------------------- a candidate column that does not exist, and what it took with it
+
+def test_a_relation_is_only_asked_for_columns_the_warehouse_says_it_has():
+    """*** 70 OF 271 STATEMENTS COUNTED A COLUMN THAT LIVED ONLY IN THE CHILD. ***
+
+    `nhdplus_flowline` has nine columns and assay asked it to count `basin_name`. A source
+    declares no columns anywhere, so the candidates were taken from what its CHILDREN reference
+    -- which is evidence of what the child produces, not of what the parent holds.
+    """
+    from types import SimpleNamespace as NS
+
+    d = NS(ok=True, joins=[NS(target_relation="db.s.flow", target_keys=["comid", "basin_name"])],
+           windows=[], group_by_columns=set(), referenced_columns={"comid", "basin_name"})
+    project = NS(models={"model.p.child": NS(children=[], parents=[], name="child")},
+                 sources={"source.p.flow": NS(children=["model.p.child"], columns={})})
+    schema = NS(relation={"source.p.flow": "db.s.flow"},
+                columns=lambda uid: NS(names=[]))
+    digests = {"model.p.child": d}
+
+    # With nothing to check against, every name a child mentions gets through -- including the
+    # one that only exists in the child. It stands, and it says it is unverified.
+    blind = probe.targets(project, digests, schema, {}, {})
+    assert blind and set(blind[0].columns) == {"comid", "basin_name"}
+    assert "UNVERIFIED" in blind[0].why or "GUESSED" in blind[0].why, blind[0].why
+
+    # With the warehouse's own column list, the name that is not there is never asked for.
+    seen = probe.targets(project, digests, schema, {}, {},
+                         real_columns={"db.s.flow": {"comid", "reachcode"}})
+    assert seen and seen[0].columns == ["comid"], seen[0].columns
+    assert "UNVERIFIED" not in seen[0].why and "GUESSED" not in seen[0].why
+
+
+def test_one_bad_column_does_not_discard_the_good_ones(tmp_path):
+    """*** 548 CANDIDATE COLUMNS PRODUCED 242 UNKNOWNS. ***
+
+    A statement counting twelve columns fails entirely if one of them does not exist, and the
+    batch then wrote the whole relation off. The halving that isolates a bad RELATION works on
+    columns too: split until the bad name is alone, and count everything beside it.
+    """
+    s = Store(str(tmp_path / "s.duckdb"))
+    t = probe.Target(relation="db.s.t", uid="u", columns=["good1", "bad", "good2", "good3"])
+    seen = []
+
+    def fake(sql, *a, **k):
+        seen.append(sql)
+        if "bad" in sql:
+            return probe.Result(failed=True, why='column "bad" does not exist')
+        cols = {"assay_rel": "db.s.t", "row_count": 10}
+        for i in range(sql.count("as nn_")):
+            cols[f"nn_{i}"] = 10
+            cols[f"dc_{i}"] = 10
+        return probe.Result(rows=[cols])
+
+    real = probe._execute
+    probe._execute = fake
+    try:
+        got = probe.run_batch([t], ".", None, "duckdb")
+    finally:
+        probe._execute = real
+    by_col = {o.column: o.status for o in got["db.s.t"]}
+    assert by_col["bad"] == "unknown", "the column that does not exist must not be counted"
+    for good in ("good1", "good2", "good3"):
+        assert by_col[good] == "unique", f"{good} was thrown away with the bad one: {by_col}"
+    s.close()

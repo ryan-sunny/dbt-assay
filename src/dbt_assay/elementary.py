@@ -111,20 +111,51 @@ class Reading:
 
 @dataclass
 class Volume:
-    """One table's row count over time, as Elementary recorded it."""
+    """One table's row count PER BUCKET over time, as Elementary recorded it.
+
+    *** `metric_value` IS ROWS THAT LANDED IN A BUCKET, NOT ROWS IN THE TABLE. ***
+    Reported from the field, with the arithmetic: `buyer_leads_enriched` holds 281,286 rows, and
+    the 126 buckets Elementary recorded for it sum to 13,579. `bucket_duration_hours` is 24, so
+    the metric counts a DAY's arrivals. A quiet day records 0. Comparing one day's arrivals to the
+    previous day's and calling the result a change in table size reports an ordinary quiet day as
+    a table being emptied -- which is exactly what the report led with: `-100.0%, rows now 0`.
+
+    *** AND THE OBSERVATION CAN BE MONTHS OLD WHILE THE COLUMN SAYS `rows now`. ***
+    That table's newest bucket started 2026-07-04, eighty days before the run. Of 114 relations
+    with any history, it was the only one over thirty days stale -- so one age test removes the
+    false alarm and keeps every true one.
+
+    This module already knows to be careful about staleness: it prints "63 monitors last FAILED
+    and have not run since. A stale failure looks exactly like a live one." The same instinct,
+    not applied to the row counts printed directly above it.
+    """
     table: str                      # normalised: the last segment, lowercased
     raw: str                        # exactly as Elementary wrote it
     buckets: int
     latest: float | None
     previous: float | None
     at: datetime | None
+    # Days since the newest bucket STARTED. None when Elementary recorded no usable date.
+    age_days: float | None = None
 
     @property
     def change(self) -> float | None:
-        """Signed fraction. None when there is nothing to compare, which is not zero."""
+        """Signed fraction between two buckets. None when there is nothing to compare.
+
+        This is a change in ARRIVALS, never in table size, and nothing that prints it may call it
+        a row count.
+        """
         if self.previous in (None, 0) or self.latest is None:
             return None
         return (self.latest - self.previous) / self.previous
+
+    def stale(self, after_days: int = 30) -> bool:
+        """Whether the newest observation is too old to describe the present.
+
+        An unknown age is NOT treated as fresh: a bucket assay could not date is one it cannot
+        vouch for, and the whole point of this is to stop vouching for numbers it cannot.
+        """
+        return self.age_days is None or self.age_days > after_days
 
 
 @dataclass
@@ -408,7 +439,8 @@ def _volumes(rows: list, now) -> list:
         prev = pairs[1] if len(pairs) > 1 else None
         out.append(Volume(table=_norm(raw), raw=raw,
                           buckets=got["total"] or len(pairs),
-                          latest=latest[2], previous=prev[2] if prev else None, at=latest[1]))
+                          latest=latest[2], previous=prev[2] if prev else None, at=latest[1],
+                          age_days=_age(_as_dt(latest[1]), now)))
     out.sort(key=lambda v: v.table)
     return out
 
@@ -455,6 +487,10 @@ def claim_subjects(rep: Report, project, store, threshold: float = 0.10) -> list
         change = v.change
         if change is None or abs(change) < threshold:
             continue
+        # A movement nobody has observed for a month is not something to spend a judgment on,
+        # and asking produces a confident answer about the past.
+        if v.stale(30):
+            continue
         uid = by_name.get(v.table)
         if uid is None:
             continue
@@ -476,12 +512,19 @@ def claim_state(project, uid: str, vol: Volume, claim: dict, entry=None,
     radius = project.blast_radius(uid)
     state = {
         "model": m.name if m else uid,
-        "movement": {
-            "row_count_was": int(vol.previous) if vol.previous is not None else None,
-            "row_count_is": int(vol.latest) if vol.latest is not None else None,
+        # *** NAMED FOR WHAT IT IS, BECAUSE A MODEL READS THE KEY. ***
+        # `row_count_is` invited the reading "the table now holds N rows". It is the number of
+        # rows that landed in one bucket, and a state that misnames its own measurement produces
+        # a confident answer to a question nobody asked.
+        "arrivals_per_bucket": {
+            "previous_bucket": int(vol.previous) if vol.previous is not None else None,
+            "latest_bucket": int(vol.latest) if vol.latest is not None else None,
             "change_percent": round((vol.change or 0) * 100, 1),
-            "observations": vol.buckets,
-            "counted_by": "elementary, not by assay and not by a judgment",
+            "buckets_recorded": vol.buckets,
+            "latest_bucket_observed_days_ago": (None if vol.age_days is None
+                                                else round(vol.age_days)),
+            "what_this_counts": ("rows that ARRIVED in one bucket, not the size of the table. "
+                                 "Elementary's row_count metric, counted by Elementary"),
         },
         "the_project_says": claim.get("text", ""),
         "it_says_it_in": claim.get("source_ref") or claim.get("source_kind") or "",
@@ -600,6 +643,34 @@ class Cadence:
             return None
         import math
         return max(1, math.ceil(p90))
+
+    @property
+    def floored(self) -> bool:
+        """Whether the number above is the ONE-DAY FLOOR rather than the measured gap.
+
+        *** A FLOOR APPLIED SILENTLY IS A NUMBER NOBODY CAN CHECK. ***
+        Reported from the field: the pane said "runs dbt every 0.0 day(s)" and then "three missed
+        runs is 5 day(s)", which does not follow from 0.0 by any arithmetic. A project that builds
+        several times a day has a sub-daily gap, the threshold cannot go below a day, and the pane
+        printed the floor without ever saying a floor existed -- while also saying that this
+        derived number is the one in force.
+        """
+        p90 = self.normal_gap_days
+        return p90 is not None and p90 < 1.0
+
+    def gap_text(self) -> str:
+        """The normal gap, in the unit that makes it readable. Hours below a day.
+
+        `0.0 day(s)` is not a cadence. A project that runs dbt sixteen times on one day has a gap
+        measured in hours, and rounding it to one decimal place in days rounds it away.
+        """
+        p90 = self.normal_gap_days
+        if p90 is None:
+            return "not derivable"
+        if p90 < 1.0:
+            hours = p90 * 24
+            return f"{hours:.0f} hour(s)" if hours >= 1 else f"{hours * 60:.0f} minute(s)"
+        return f"{p90:.1f} day(s)"
 
     def explain(self) -> str:
         if self.unreadable:

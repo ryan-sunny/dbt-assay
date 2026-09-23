@@ -1130,7 +1130,7 @@ a column is, what the grain is, and what would break before it writes a line. Th
 it the **obligation** — without it an agent checks when it remembers, and with it, checking is the
 procedure.
 
-Twenty tools. Most report; eight do something else:
+Twenty-one tools. Most report; nine do something else:
 
 | tool | what it is for |
 |---|---|
@@ -1142,6 +1142,7 @@ Twenty tools. Most report; eight do something else:
 | `spend()` | what the judged tier has **cost** here, by caller and by day. Put it in front of somebody before proposing a judged run |
 | `load_handback(path)` | record the verdicts a **person** wrote in the review form. The only tool that files `human` verdicts, and it can only file what the file carries — the agent is the courier, not the reviewer. Without it the form downloads and the most valuable work in the system sits in a folder |
 | `stale(exact)` | judged answers about SQL that has **since changed**, so an agent knows whether an answer it is about to rely on is still about the code in front of it. `exact=true` rebuilds the state and catches a change to a *parent*; neither form makes an API call |
+| `monitoring(volume_json)` | **is anything watching this warehouse** — build cadence, whether each monitor is still being written to, how many declared tests have ever produced a result, tests whose last result was a FAILURE and which have not run since, and the models with a mart downstream and no row-count history. It reads a file from `assay volume --json` and never a warehouse; with no path it returns the command, because a zero here reads as *nothing is wrong* and means *nobody looked* |
 
 Each has a CLI equivalent, because a skill with no MCP connection is still a procedure:
 `assay guide`, `assay plan`, `assay suggest`, `assay evidence`, `assay config --target`,

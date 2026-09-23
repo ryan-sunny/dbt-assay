@@ -325,7 +325,8 @@ def monitoring_rows(cfg, volume_json: dict | None) -> dict:
         "derived": cad.get("derived_staleness_days"),
         "in_use": cad.get("in_use_days") or configured,
         "runs": cad.get("runs"),
-        "median_gap_days": cad.get("median_gap_days"),
+        "gap_text": cad.get("gap_text"),
+        "floored": bool(cad.get("floored")),
         "min_marts": mon.get("min_marts"),
         "findings": (volume_json or {}).get("monitoring") or [],
         "test_coverage": cov,
@@ -552,87 +553,154 @@ def _waiver_rows(store, cfg, findings) -> list:
 
 # --------------------------------------------------------------------------------- the page
 
-_CSS = """
-:root{--ink:#16232a;--dim:#6b7a80;--faint:#94a3aa;--line:#dfe6e8;--bg:#fbfcfc;--card:#fff;
---red:#9e2b20;--green:#5a6a2f;--blue:#2b5c7a;--amber:#8a6412}
+_CSS = """/* *** THE SAME PRESS AS THE REPORT. ***
+   Paper, ink and rules. The report and the form are two artifacts a person moves between, and
+   two houses of type between them would read as two tools. Everything here is the report's
+   system, with the additions a form needs: boxes you type into, and a card you rule on. */
+:root{
+  --paper:#faf8f3; --ink:#1a1714; --ash:#615a52; --faint:#948c81;
+  --rule:#cec5b6; --rule2:#e3dbcd;
+  --rust:#a8491a; --ember:#d2833a; --iron:#4a443d;
+}
 *{box-sizing:border-box}
-body{margin:0;font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-color:var(--ink);background:var(--bg)}
-header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);
-padding:14px 24px}
-h1{margin:0;font-size:17px;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
-/* The mark sits on the text's optical centre and never shrinks beside a long project name. */
-h1 > svg{width:22px;height:22px;flex:none}
-h1 span{font-weight:400;color:var(--dim);font-size:13px;margin-left:0}
-h1 span.hname{font-weight:600;color:var(--ink);font-size:17px;flex:none}
-.bar{display:flex;align-items:center;gap:14px;margin-top:8px;flex-wrap:wrap}
-.tabgap{flex:1 1 auto}
-.task{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--ink);
-border-radius:6px;padding:14px 16px;margin:0 0 16px}
-.taskh{margin:0 0 6px;font-size:15px;font-weight:650}
-.tasklab{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);
-margin:10px 0 4px}
-.taskex{margin:0;white-space:pre-wrap;font-size:12px;background:var(--bg);
-border:1px solid var(--line);border-radius:4px;padding:8px 10px;overflow-x:auto}
+html{background:var(--paper)}
+body{margin:0;background:var(--paper);color:var(--ink);
+font:15px/1.55 "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+display:flex;flex-direction:column;height:100vh;overflow:hidden;
+-webkit-font-smoothing:antialiased}
+header,footer{flex:0 0 auto}
+header{background:var(--paper);border-bottom:3px double var(--ink);padding:14px 26px 0}
+h1{margin:0;font-family:Fell,"Iowan Old Style",Georgia,serif;font-weight:400;font-size:25px;
+display:flex;align-items:center;gap:11px;flex-wrap:wrap}
+/* The mark is the cut itself, so it blends onto the paper rather than sitting on a
+   white field of its own. */
+h1 > .mark{width:27px;height:auto;flex:none;mix-blend-mode:multiply}
+/* *** EVERY WORD BESIDE THE PROJECT NAME WAS SET TOO SMALL TO READ. ***
+   13px of an old face at 15px body size is a footnote, and this line carries the counts, the
+   version and the manifest stamp -- the things a reader checks before trusting anything under
+   them. */
+h1 span{font-weight:400;color:var(--ash);font-size:15px;font-style:italic;
+font-family:Fell,Georgia,serif}
+h1 span.hname{color:var(--ink);font-size:25px;flex:none;font-style:normal}
+h1 a{color:var(--rust)}
+
+.tabs{display:flex;gap:0;margin-top:10px;border-bottom:1px solid var(--ink);
+align-items:center;flex-wrap:wrap;padding-bottom:0}
+.tabs button{background:none;border:0;border-bottom:3px solid transparent;
+font-family:Fell,Georgia,serif;font-size:16.5px;letter-spacing:.06em;text-transform:uppercase;
+color:var(--ash);padding:7px 15px 6px;cursor:pointer;margin-bottom:-1px}
+.tabs button:hover{color:var(--ink)}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--ink)}
+.tabs button b{font-weight:400;color:var(--ash);margin-left:6px;font-size:13px;
+letter-spacing:0;text-transform:none}
+/* *** THE ONE CONTROL THE WHOLE FORM EXISTS FOR WAS THE PALEST THING ON THE PAGE. ***
+   `download handback.json` was a rust underline at 14px among faint italics: "this shit is like
+   hard to see i dont like it". Nothing about it is decoration -- until it is pressed, every
+   answer is in browser storage and nowhere else. So it is boxed, in ink weight, and the status
+   beside it is ash rather than faint. */
+.ident{margin-left:auto;display:flex;align-items:center;gap:16px;flex:none;
+font-style:normal}
+.ident .count{color:var(--ash);font-size:13.5px;font-family:Fell,Georgia,serif}
+.ident button{margin-right:0}
+.ident #by{font-size:15px;border-bottom-color:var(--ash)}
+.ident button.go{color:var(--rust);border:1px solid var(--rust);padding:4px 12px;
+font-size:14.5px;background:#fbf2e9}
+.ident button.go:hover:not(:disabled){background:var(--rust);color:var(--paper)}
+.ident button#clear{color:var(--ash);font-size:14.5px}
+.tabs .count{margin-right:6px;color:var(--faint);font-size:12.5px;
+font-family:Fell,Georgia,serif}
+.bar{display:flex;align-items:baseline;gap:16px;margin:8px 0 0;flex-wrap:wrap;
+padding-bottom:8px}
+
+/* *** MAIN OWNS THE SCROLL, NOT THE DOCUMENT. ***
+   Reported from the field with the numbers: the words pane overflowed the document by 6,705px,
+   findings by 6,059. The report got this shell and the form did not. */
+/* *** THE PAGE IS AS WIDE AS THE WINDOW. ***
+   A 1200px column in a 1990px window left 700px of bare paper down the right of every tab, which
+   is not a margin, it is the page failing to use the sheet it was given. The gutter is the
+   margin; the measure is whatever is left. */
+main{padding:18px 34px 26px;flex:1 1 auto;min-height:0;overflow:auto;width:100%}
+.pane[hidden]{display:none}
+
+/* ---- the task slip that opens each tab */
+.task{border-top:1px solid var(--ink);border-bottom:1px solid var(--ink);
+padding:14px 0;margin:0 0 20px}
+.taskh{margin:0 0 6px;font-family:Fell,Georgia,serif;font-size:19px;font-weight:400}
+.tasklab{font-family:Fell,Georgia,serif;font-size:12px;text-transform:uppercase;
+letter-spacing:.1em;color:var(--faint);margin:12px 0 4px}
+.taskex{margin:0;white-space:pre-wrap;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+background:#f4f1e9;border:0;border-left:2px solid var(--rule);padding:9px 12px;overflow-x:auto}
 .measured.dim{color:var(--faint);margin-top:10px}
-.tabs{display:flex;gap:2px;margin-top:10px;border-bottom:1px solid var(--line);
-align-items:center;flex-wrap:wrap;padding-bottom:6px}
-.tabs .count{margin-right:4px}
-.tabs input,.tabs .go,.tabs #clear{margin-bottom:0}
-.tabs button{background:none;border:0;border-bottom:2px solid transparent;font:inherit;
-font-size:13px;color:var(--dim);padding:7px 13px;cursor:pointer}
-.tabs button.on{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
-.tabs button b{font-weight:500;color:var(--faint);margin-left:5px;font-size:11.5px}
-.wrow{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:14px 16px;
-margin:0 0 12px}
-.wrow h3{margin:0 0 2px;font-size:14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.wrow .measured{color:var(--dim);font-size:12.5px;margin:6px 0 10px}
-.wrow label{display:block;font-size:11.5px;color:var(--faint);text-transform:uppercase;
-letter-spacing:.04em;margin:8px 0 3px}
-.wrow textarea,.wrow input{width:100%;font:inherit;font-size:13px;padding:6px 9px;
-border:1px solid var(--line);border-radius:4px;background:var(--bg)}
-.wrow textarea{min-height:46px;resize:vertical}
-.flag{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:9px;margin-right:6px;
-background:#fdf3e0;color:var(--amber)}
-.flag.error{background:#fbeceb;color:var(--red)}
-.accept{font-size:12px;padding:3px 9px;margin-top:6px;cursor:pointer;border:1px solid var(--line);
-border-radius:4px;background:var(--bg)}
+/* *** ONE PLATE, ON THE LEFT, BIG ENOUGH TO READ. ***
+   Set into the slip rather than stacked above it, so it costs the height it occupies and the
+   instruction runs around it. */
+.taskcut{float:left;height:172px;width:auto;margin:2px 26px 12px 0;mix-blend-mode:multiply}
+
+/* ---- a row you fill in */
+.wrow{border:0;border-bottom:1px solid var(--rule2);padding:16px 0;margin:0}
+.wrow h3{margin:0 0 2px;font-size:15px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.wrow h3 .tag{margin-left:12px;position:relative;top:-1px}
+.wrow .measured{color:var(--ash);font-size:13px;margin:6px 0 10px}
+.wrow label{display:block;font-family:Fell,Georgia,serif;font-size:12px;color:var(--faint);
+text-transform:uppercase;letter-spacing:.08em;margin:10px 0 2px}
+.wrow textarea,.wrow input{width:100%;font:inherit;font-size:14px;padding:5px 2px;
+border:0;border-bottom:1px solid var(--rule);background:none;color:var(--ink)}
+.wrow textarea:focus,.wrow input:focus{outline:none;border-bottom-color:var(--ink)}
+.wrow textarea{min-height:44px;resize:vertical;line-height:1.5}
+.flag{display:inline-block;font-family:Fell,Georgia,serif;font-size:11.5px;padding:0 6px;
+margin-right:6px;border:1px solid var(--ember);color:var(--ember)}
+.flag.error{border-color:var(--rust);color:var(--rust)}
+.accept{font-family:Fell,Georgia,serif;font-size:13.5px;padding:2px 0;margin-top:8px;
+cursor:pointer;border:0;border-bottom:1px solid var(--rule);background:none;color:var(--rust)}
+.accept:hover{border-bottom-color:var(--rust)}
 .count{font-variant-numeric:tabular-nums}
-button{font:inherit;padding:5px 12px;border:1px solid var(--line);background:var(--bg);
-border-radius:4px;cursor:pointer}
-button:hover:not(:disabled){background:var(--card);border-color:var(--dim)}
-button:disabled{opacity:.4;cursor:default}
-button.go{background:var(--blue);color:#fff;border-color:var(--blue)}
-main{padding:18px 24px 60px;max-width:none}
-.card{border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:5px;
-background:var(--card);padding:14px 16px;margin:0 0 14px}
-.card.done{border-left-color:var(--green)}
-.hd{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px}
-.hd b{font-size:15px}
-.tag{font-size:11.5px;color:var(--dim);border:1px solid var(--line);border-radius:3px;
-padding:1px 6px}
-.lbl{font-size:11px;letter-spacing:.06em;color:var(--faint);text-transform:uppercase;
-margin:10px 0 3px}
-.q{border-left:2px solid var(--line);padding-left:10px;margin:0 0 4px}
+
+button{font-family:Fell,Georgia,serif;font-size:14px;padding:3px 0;border:0;
+border-bottom:1px solid var(--rule);background:none;cursor:pointer;color:var(--ash);
+margin-right:14px}
+button:hover:not(:disabled){color:var(--ink);border-bottom-color:var(--ink)}
+/* *** DISABLED HAS TO READ AS A CONTROL THAT IS NOT READY, NOT AS A SMUDGE. ***
+   At .35 the download button was the faintest thing on the masthead and read as broken
+   styling rather than as "answer something first". */
+button:disabled{opacity:.55;cursor:default}
+button.go{color:var(--rust);border-bottom-color:var(--rust)}
+button.go:hover:not(:disabled){color:var(--rust)}
+input[type=text]{font:inherit;font-size:14px;padding:4px 2px;border:0;
+border-bottom:1px solid var(--rule);background:none;color:var(--ink)}
+input[type=text]:focus{outline:none;border-bottom-color:var(--ink)}
+
+/* ---- the finding card: a ruled entry, not a box */
+.card{border:0;border-left:2px solid var(--ink);padding:14px 0 16px 16px;margin:0 0 22px}
+.card.done{border-left-color:var(--ember)}
+.hd{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px}
+.hd b{font-family:Fell,Georgia,serif;font-size:18px;font-weight:400}
+.tag{font-family:Fell,Georgia,serif;font-size:11.5px;color:var(--ash);
+border:1px solid var(--rule);padding:0 6px}
+.lbl{font-family:Fell,Georgia,serif;font-size:12px;letter-spacing:.09em;color:var(--faint);
+text-transform:uppercase;margin:12px 0 3px}
+.q{border-left:2px solid var(--rule);padding-left:12px;margin:0 0 4px}
 .claim{font-style:italic}
 pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;
-background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:8px 10px;
+background:#f4f1e9;border:0;border-left:2px solid var(--rule);padding:9px 12px;
 max-height:340px;overflow:auto}
 pre .n{color:var(--faint);user-select:none}
-details summary{cursor:pointer;color:var(--blue);font-size:12.5px}
-.ans{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;
-padding-top:10px;border-top:1px solid var(--line)}
-.ans label{display:inline-flex;gap:5px;align-items:center;border:1px solid var(--line);
-border-radius:4px;padding:4px 10px;cursor:pointer}
-.ans label:hover{border-color:var(--dim)}
-.ans input:checked+span{font-weight:600}
-.ans .note{flex:1;min-width:220px}
-input[type=text]{font:inherit;padding:5px 8px;border:1px solid var(--line);border-radius:4px;
-width:100%;background:var(--bg)}
-.note-none{color:var(--faint)}
-.q.dim{color:var(--dim);font-size:13px}
-.warn{color:var(--amber)}
-footer{padding:0 24px 40px;color:var(--dim);font-size:12.5px}
+details summary{cursor:pointer;color:var(--rust);font-size:13.5px;font-family:Fell,Georgia,serif}
+.ans{display:flex;gap:18px;align-items:baseline;flex-wrap:wrap;margin-top:14px;
+padding-top:11px;border-top:1px solid var(--rule)}
+.ans label{display:inline-flex;gap:6px;align-items:baseline;border:0;padding:0;cursor:pointer;
+font-family:Fell,Georgia,serif;font-size:15px;color:var(--ash)}
+.ans label:hover{color:var(--ink)}
+.ans input{accent-color:var(--ink)}
+.ans input:checked+span{color:var(--ink);border-bottom:2px solid var(--ink)}
+.ans .note{flex:1;min-width:240px}
+.note-none{color:var(--faint);font-style:italic}
+.q.dim{color:var(--ash);font-size:13.5px}
+.warn{color:var(--rust)}
+.measured{color:var(--ash)}
+footer{padding:13px 26px;color:var(--faint);font-size:12px;border-top:3px double var(--ink);
+font-family:Fell,Georgia,serif;font-style:italic}
+footer code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-style:normal;
+font-size:11.5px}
 """
 
 _JS = r"""
@@ -883,6 +951,15 @@ function configChanges() {
   return Object.keys(edits).sort().map(k => ({path: k.split('\u001f'), value: edits[k]}));
 }
 
+/* *** `what is a address?` AND `what is a owner_name?`. ***
+   The article was a literal in the template, and every term beginning with a vowel read as
+   somebody who does not speak the language. `u` stays `a`: warehouse identifiers starting with
+   one are `user`, `unit`, `uuid`, all of which are said "you", and "an user" is the same error
+   in the other direction. */
+function an(word) {
+  return (/^[aeio]/i.test(String(word)) ? 'an ' : 'a ') + word;
+}
+
 function field(label, pathParts, current, placeholder, big) {
   const key = pathParts.join('\u001f');
   const box = el(big ? 'textarea' : 'input', {placeholder: placeholder || ''});
@@ -894,12 +971,22 @@ function field(label, pathParts, current, placeholder, big) {
   return wrap;
 }
 
-/* *** A TAB HAS TO SAY WHAT TO DO BEFORE IT SAYS HOW IT WORKS. ***
+/* *** ONE PLATE PER TAB, AND NO TWO TABS THE SAME. ***
+   Every tab opened with the same cut, so the picture told a reader nothing except that they were
+   still in the form -- and on arriving at Settings from Words it read as a page that had not
+   changed. The cut is a landmark or it is wallpaper: Words gets the workshop, Settings the
+   lettered instruments, Explanations the assayer at his cauldron.
+
+   *** A TAB HAS TO SAY WHAT TO DO BEFORE IT SAYS HOW IT WORKS. ***
    Every one of these tabs opened with a paragraph about the mechanism, and a reader who does not
    already know the tool cannot get a task out of it. Imperative first, then one filled example,
    then why it matters. */
-function explainer(task, how, example, why) {
+function explainer(task, how, example, why, cut) {
   const box = el('div', {class: 'task'});
+  /* The plate floats into the slip. A cut beside the instruction reads as the page being about
+     something, where the same cut in a row of its own reads as an ornament somebody added. */
+  const src = cut && (D.cuts || {})[cut];
+  if (src) box.append(el('img', {class: 'taskcut', src: src, alt: ''}));
   box.append(el('h2', {class: 'taskh', text: task}));
   box.append(el('p', {class: 'measured', text: how}));
   if (example) {
@@ -927,7 +1014,8 @@ function wordsTab(host) {
     + '  applies_to: path:models/marts/orders',
     'Every word you fill in is sent with EVERY judged question about every model it applies to. '
     + 'That is why it improves answers to questions you never wrote -- and why one that is false '
-    + 'in part of the project is false in every answer about that part.'));
+    + 'in part of the project is false in every answer about that part.',
+    'workshop'));
   const _p = pageOf('words');
   for (const w of CTX.words.slice(_p.from, _p.to)) {
     const row = el('div', {class: 'wrow'});
@@ -944,9 +1032,9 @@ function wordsTab(host) {
       + (where ? ', under ' + where : '')
       + ((u.examples || []).length ? '  e.g. ' + u.examples.join(', ') : '')}));
     row.append(field('means', ['vocab', w.term, 'means'], w.means,
-                     'what is a ' + w.term + '?', 1));
+                     'what is ' + an(w.term) + '?', 1));
     row.append(field('implies', ['vocab', w.term, 'implies'], w.implies,
-                     'what does knowing it is a ' + w.term + ' tell you?', 1));
+                     'what does knowing it is ' + an(w.term) + ' tell you?', 1));
     row.append(field('applies_to', ['vocab', w.term, 'applies_to'], w.applies_to,
                      'blank means every model'));
     if (w.suggested) {
@@ -973,7 +1061,7 @@ function settingsTab(host) {
     'gating.min_adjudications: 20   # a question family needs 20 human verdicts to gate a build\n'
     + 'cost.usd_per_tb_scanned:  6.25 # so `assay cost` can price what it ran on your warehouse',
     'Nothing here is written until you download the file and run `assay review --load '
-    + 'handback.json --apply`, which shows you the diff first.')];
+    + 'handback.json --apply`, which shows you the diff first.', 'instruments')];
   for (const s of (CTX.settings || [])) {
     const row = el('div', {class: 'wrow'});
     row.append(el('h3', {text: s.dotted}));
@@ -1001,7 +1089,7 @@ function explanationsTab(host) {
     + '  backorder:  the stock had not arrived, so the ship date is legitimately null\n'
     + '  test_order: a row our own QA writes nightly and deletes the next morning',
     'These are the domain knowledge. A failing row somebody can name is a decision; one nobody '
-    + 'can name gets ruled `unclear` and measures nothing.')];
+    + 'can name gets ruled `unclear` and measures nothing.', 'assayer')];
   const _p = pageOf('explanations');
   for (const x of CTX.explanations.slice(_p.from, _p.to)) {
     const row = el('div', {class: 'wrow'});
@@ -1024,7 +1112,13 @@ function waiversTab(host) {
   const _p = pageOf('waivers');
   for (const w of CTX.waivers.slice(_p.from, _p.to)) {
     const row = el('div', {class: 'wrow'});
-    row.append(el('h3', {text: w.model + '  ' + w.check}));
+    /* *** TWO NAMES RUN TOGETHER READ AS ONE NAME. ***
+       `water_stream_gauges hop_multiplies_rows` in one weight is a single identifier to anybody
+       who does not already know where the model ends. The model is the subject; the check is a
+       tag on it, set the way the findings cards already set theirs. */
+    const h = el('h3', {text: w.model});
+    h.append(el('span', {class: 'tag', text: w.check}));
+    row.append(h);
     row.append(el('div', {class: 'measured', text: 'they said: ' + w.reason}));
     row.append(field('reason', ['waivers', w.model, 'reason'], w.reason, '', 1));
     row.append(field('until', ['waivers', w.model, 'until'], '', 'YYYY-MM-DD, optional'));
@@ -1051,12 +1145,20 @@ function monitoringTab(host) {
   }
   const row = el('div', {class: 'wrow'});
   row.append(el('h3', {text: 'how stale is too stale'}));
+  /* *** THE SENTENCE CALLED A p90 GAP "THREE MISSED RUNS", WHICH IT IS NOT. ***
+     It is the 90th-percentile gap this project has actually gone between builds, rounded up to
+     whole days -- and where that rounds below a day, the one-day floor is what you are reading.
+     Reported from the field as "0.0 days isn't a cadence" and "three missed runs at 0.0 days
+     apart is 0, not 5, so a floor is being applied silently". Both were true. */
+  const gap = m.gap_text || 'not derivable';
   row.append(el('div', {class: 'measured', text:
-    'assay measured: this project runs dbt every ' + (m.median_gap_days || 0).toFixed(1)
-    + ' day(s), across ' + num(m.runs) + ' run(s). Three missed runs is '
+    'assay measured: across ' + num(m.runs) + ' run(s), 9 gaps in 10 between builds are under '
+    + gap + '. Late is longer than this project has normally gone, so the derived threshold is '
     + (m.derived == null ? 'not derivable from that' : m.derived + ' day(s)')
-    + (m.configured ? '; audit.yml says ' + m.configured : '; nothing is configured, so the '
-       + 'derived number is what is used') + '.'}));
+    + (m.floored ? ', which is the one-day floor rather than the measured gap: a threshold '
+       + 'cannot be shorter than a day' : '')
+    + (m.configured ? '. audit.yml says ' + m.configured : '. Nothing is configured, so the '
+       + 'derived number is what is in force') + '.'}));
   row.append(field('max_staleness_days',
                    ['monitoring', 'source_freshness', 'max_staleness_days'],
                    m.configured == null ? '' : String(m.configured),
@@ -1141,11 +1243,11 @@ openPane(SAVED_PANE && (SAVED_PANE in PANES) ? SAVED_PANE
 def form_html(card_list: list, sql: dict, project: str, generated_at: str, version: str,
               ctx: dict | None = None, report: str = "") -> str:
     """One self-contained file. No server, no fetch, no network."""
-    from .mark import FAVICON, MARK_SVG
+    from .assets import CUTS, FAVICON, FONT_CSS, MARK_SVG
     e = html.escape
     ctx = ctx or {"words": [], "explanations": [], "waivers": [], "settings": []}
     blob = json.dumps({"project": project, "cards": card_list, "sql": sql, "no_read": NO_READ,
-                       "context": ctx},
+                       "context": ctx, "cuts": CUTS},
                       separators=(",", ":"), sort_keys=True, default=str)
     # `</script>` inside a model's SQL would end the tag and silently truncate the page. `<!--`
     # opens a comment inside a script element. A dbt model containing either is not exotic.
@@ -1159,10 +1261,20 @@ def form_html(card_list: list, sql: dict, project: str, generated_at: str, versi
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{e(project)} &middot; assay review</title>
 <link rel="icon" href="{FAVICON}">
-<style>{_CSS}</style></head><body>
+<style>{FONT_CSS}{_CSS}</style></head><body>
 <header>
 <h1>{MARK_SVG}<span class="hname">{e(project)}</span><span>{len(card_list)} to rule on &middot; {len(ctx.get("words") or [])} word(s) &middot; {withread} carry a reading &middot;
-assay {e(version)} &middot; manifest {e(str(generated_at))}{report_link}</span></h1>
+assay {e(version)} &middot; manifest {e(str(generated_at))}{report_link}</span>
+<!-- *** IT MOVED EVERY TIME THE COUNT TEXT CHANGED LENGTH OR A PAGER APPEARED. ***
+     On the tab strip it wrapped to a second line on five panes and sat at x=176 on the sixth,
+     measured. These belong to the whole form, not to a tab, so they sit on the masthead where
+     nothing a tab does can shift them. -->
+<span class="ident">
+  <span class="count" id="count"></span>
+  <input type="text" id="by" placeholder="your name" style="width:140px">
+  <button class="go" id="dl">download handback.json</button>
+  <button id="clear">clear</button>
+</span></h1>
 <!-- *** WHAT YOU DO WITH THE WHOLE FORM SITS WITH THE TAB STRIP, NOT INSIDE A TAB. ***
      Your name and the download button used to share a row with the findings pager, so switching
      to a tab that has no pager slid them sideways: "so it doesnt get moved around by the UI when
@@ -1174,11 +1286,6 @@ assay {e(version)} &middot; manifest {e(str(generated_at))}{report_link}</span><
   <button data-pane="monitoring">Monitoring<b id="n-mon"></b></button>
   <button data-pane="settings">Settings<b id="n-set"></b></button>
   <button data-pane="findings">Findings<b id="n-find"></b></button>
-  <span class="tabgap"></span>
-  <span class="count" id="count"></span>
-  <input type="text" id="by" placeholder="your name" style="width:150px">
-  <button class="go" id="dl">download handback.json</button>
-  <button id="clear">clear</button>
 </nav>
 <!-- The pager belongs to one pane, so it appears with that pane and nowhere else. -->
 <div class="bar" id="pager">

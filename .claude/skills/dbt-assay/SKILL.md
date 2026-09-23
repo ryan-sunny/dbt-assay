@@ -11,6 +11,25 @@ description: >-
 assay is running as an MCP server. It has already derived what every model means. Use it; do not
 re-derive it by reading SQL, and do not guess.
 
+## If it is not set up in this repo yet
+
+Three commands, in this order. Nothing here costs anything: no key, no network, no spend.
+
+```bash
+uvx --refresh --from 'dbt-assay[mcp]' assay onboard --target target/
+claude mcp add assay --scope project -- uvx --refresh --from 'dbt-assay[mcp]' assay mcp --target target
+uvx --refresh --from 'dbt-assay[mcp]' assay skill all --write .
+```
+
+`onboard` reads the project and says what would degrade the answers here -- no compiled SQL, no
+catalog, a guessed dialect -- BEFORE it shows a finding, and prints the command that fixes each
+one. `skill all --write .` lays these procedures into `.claude/skills/` so the next agent has
+them. **`uvx --refresh`, always**: without it uvx serves a CACHED environment while the process
+reports itself as the version you asked for, and the symptom is a page that renders blank.
+
+`assay --help` lists every command; the table at the end of this file has all of them with every
+flag.
+
 ## Before you touch a model
 
 1. `contract(model)` — what one row is, what each column does, where each value comes from.
@@ -270,6 +289,7 @@ and nothing is lost:
 | `spend()` | `assay cost`, or `assay cost --json` |
 | `stale(exact)` | `assay stale`, `assay stale --exact`, `assay stale --cost` |
 | `vocabulary()` | `assay config --target <target/>` |
+| `monitoring(volume_json)` | `assay volume --json > volume.json` |
 
 The one difference worth knowing: the MCP tools reload when the manifest moves, and a CLI run
 reads whatever `target/` holds at that moment. Run `dbt compile` first if you have edited SQL.
@@ -303,6 +323,28 @@ reads whatever `target/` holds at that moment. Run `dbt compile` first if you ha
   which catches a change to a PARENT that a checksum by definition cannot. `--cost` quotes what
   re-asking them would cost before you spend it. Neither makes an API call.
 - `assay config --target <dir>` — lints their **vocabulary**, which nothing used to check at all.
+## Whether anything is WATCHING the warehouse
+
+`monitoring(volume_json)` answers the one question every other tool here assumes somebody else
+answered: if what this SQL produces changed tonight, would anybody notice? It reports the build
+cadence, whether each monitor is still being written to, how many declared tests have ever
+produced a result, tests whose last result was a FAILURE and which have not run since, and the
+models with a mart downstream and no row-count history at all.
+
+**It reads a file and never a warehouse.** Taking the measurement needs their dbt connection and
+assay never holds a credential, so they run the measurement and you read it:
+
+```bash
+assay volume --json > volume.json                      # their connection, free, no judgment
+assay page assay.html --monitoring volume.json         # the same numbers on the report
+assay review --emit review.html -t target/ --monitoring volume.json
+```
+
+Called with no path it hands back that command rather than a set of zeros, and you should pass it
+on rather than reporting that the monitoring is fine. **A zero here reads as "nothing is wrong"
+and means "nobody looked".** A `stale_failure` is neither a live failure nor a pass: it is an
+answer that has gone out of date, and it reads as a live failure in any view that sorts by status.
+
 - `assay volume` — what Elementary counted, joined to what the project claims, plus five checks on
   the MONITORING itself: a monitor configured and never run, one that ran and stopped, models that
   feed marts with no row-count history, tests that have never fired, and results that are `skipped`
@@ -384,3 +426,58 @@ is a question about intent, and intent is the thing this tool refuses to guess a
 It reads code and rows, never intent. It cannot tell you whether a business rule is correct, only
 whether the code does what the documentation claims. Where it is uncertain it says so, and an
 uncertain answer is a question for a person, not a number to round off.
+
+## Every command, and every flag it takes
+
+Generated from the app itself, so it cannot drift from what is installed.
+`assay <command> --help` has the long form of any of these.
+
+| command | what it answers | flags |
+|---|---|---|
+| `assay adjudicate` | Rows a dbt test flagged: does the rest of the row explain it? | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--per-test` `--store` `--config` |
+| `assay align` | Do two columns in different models mean the same thing? | `--target/-t` `--select/-s` `--max-pairs` `--store` `--config` |
+| `assay ask` | Run every question that declares a `subject:`, including your own. | `--target/-t` `--store` `--config` `--family/-f` `--select/-s` `--limit/-n` `--dry-run` |
+| `assay backtest` | Replay this repo's own history and measure whether the checks catch what it already fixed. | `--repo/-r` `--limit/-n` `--fix-like-only` `--since` `--show` `--compile` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` |
+| `assay banks` | Every question assay will ask, where it came from, and whether its shape is sound. | `--lint` `--strict` `--judge` `--config` `--store` |
+| `assay calibrate` | Measure the grain judgment against the keys this project already declares. | `--target/-t` `--limit/-n` `--store` `--config` |
+| `assay calibration` | When this thing is confident, is it right more often than when it is not? | `--store` `--source` |
+| `assay check` | Run the structural checks. | `--target/-t` `--json` `--store` `--limit/-n` `--check` `--config` `--dialect` `--verify` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` |
+| `assay claims` | What this project ASSERTS about its models, as data you can read, edit and rule on. | `--target/-t` `--store` `--config` `--extract` `--select/-s` `--limit/-n` `--min-confidence` `--write` `--model/-m` |
+| `assay columns` | Judge each column's role and what a NULL in it would mean. | `--target/-t` `--print-state` `--limit/-n` `--store` `--config` `--with-null` `--dialect` `--control` |
+| `assay completeness` | Do we have all of it? Coverage of what this project itself declares. | `--target/-t` `--store` `--config` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--verify` `--dialect` `--json` |
+| `assay config` | What assay resolved: the config file, the provider, where the key came from, the cap. | `--config` `--store` `--check` `--target/-t` `--strict` |
+| `assay cost` | What the judged tier has cost, by caller, by family and by day. | `--store` `--since` `--json` |
+| `assay diff` | What changed about what your models MEAN. | `--baseline/-b` `--target/-t` `--store` `--markdown` `--limit/-n` |
+| `assay disagreements` | Group the open disagreements. | `--store` `--config` `--source` `--judge` `--json` |
+| `assay effectiveness` | Did the questions get BETTER? Agreement per family, per version of the question. | `--store` `--source` `--config` `--target/-t` `--json` |
+| `assay evidence` | The exact state a judged answer was computed from, as it was sent. | `--key` `--question/-q` `--subject/-s` `--store` `--limit/-n` `--json` |
+| `assay export <directory>` | Put assay's tables in your warehouse, as data your own models can join to. | `--store` `--format` `--no-docs` |
+| `assay feeds` | Has a feed changed its mind while its schema held still? | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--sample` `--limit/-n` `--store` `--config` |
+| `assay guide <topic>` | How to SET ASSAY UP, for somebody who has never used it. | — |
+| `assay infer` | Infer each model's grain. | `--target/-t` `--print-state` `--limit/-n` `--store` `--config` |
+| `assay init` | Write an audit. | `--force` |
+| `assay inventory` | What every model in this project actually IS. | `--target/-t` `--model/-m` `--store` `--json` `--html` `--write` `--include-unadjudicated` `--limit/-n` `--dialect` |
+| `assay mcp` | Serve assay as tools an agent can call instead of reading your SQL. | `--target/-t` `--store` |
+| `assay onboard` | One command for a project assay has never seen. | `--target/-t` `--store` `--config` `--agent` `--compile` `--dbt/--dbt-bin` `--profiles-dir` `--judge` `--judge-limit` `--dialect` |
+| `assay page <out>` | Everything assay knows about this warehouse, as one file you can open. | `--target/-t` `--store` `--config` `--dialect` `--plain` `--data` `--from` `--form` `--monitoring` |
+| `assay patch <out_dir>` | Write the uniqueness tests assay can prove will pass. | `--target/-t` `--store` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--dry-run` `--dialect` |
+| `assay plan` | What to DO about the findings a person agreed with. | `--target/-t` `--config` `--store` `--out` `--dialect` `--json` |
+| `assay practices` | Standard dbt practice: deferred to where it exists, adjudicated where it is noisy. | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--evaluator-schema` `--dialect` `--verify` `--keys-only` `--store` `--config` |
+| `assay probe` | Count what the SQL cannot settle. | `--target/-t` `--project-dir` `--profiles-dir` `--dialect` `--dbt/--dbt-bin` `--dry-run` `--emit` `--load` `--limit/-n` `--store` `--config` `--sample` |
+| `assay prune` | Drop old runs from the tables a parser can regenerate. | `--keep/-k` `--store` `--dry-run` |
+| `assay regress` | Re-ask every question a person already agreed with, and report what moved. | `--target/-t` `--store` `--config` `--family/-f` |
+| `assay review` | List judgments nobody has ruled on, or record a verdict. | `--store` `--interactive/-i` `--from-labels` `--target/-t` `--dialect` `--limit/-n` `--subject` `--question` `--verdict` `--correction` `--note` `--by` `--config` `--emit` `--load` `--report` `--monitoring` `--apply` `--reads` `--repair` |
+| `assay scan` | Read the project and report what can and cannot be audited. | `--target/-t` `--dialect` |
+| `assay semantics` | Why is that filter there, and does the description still describe the code? | `--target/-t` `--select/-s` `--families` `--print-state` `--limit/-n` `--store` `--config` |
+| `assay skill <which>` | Emit an agent procedure. | `--write` |
+| `assay stale` | Judged answers that are about SQL which has since changed. | `--target/-t` `--store` `--config` `--dialect` `--exact` `--cost` `--limit/-n` `--json` |
+| `assay suggest` | What this project should configure, drawn from what the checks actually found. | `--target/-t` `--config` `--store` `--section` `--limit/-n` `--out` `--json` |
+| `assay tests` | Is each test's severity right, and what is a model exposed to that nothing asserts? | `--target/-t` `--count-defaults` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--gaps-only` `--run-results` `--dialect` `--limit/-n` `--store` `--config` |
+| `assay trace <column>` | Where did this number come from? | `--target/-t` |
+| `assay traverse` | Judge every hop in the graph: does one row still mean the same thing on the other side? | `--target/-t` `--store` `--config` `--select/-s` `--limit/-n` `--model/-m` |
+| `assay verify` | Check every extracted claim against what the code actually does. | `--target/-t` `--store` `--config` `--select/-s` `--limit/-n` `--min-confidence` `--model/-m` |
+| `assay version` | Print the version. | — |
+| `assay version-check` | A version bump is owed when the MEANING changed, and never when it did not. | `--baseline/-b` `--target/-t` `--store` `--bump` `--write` `--project-root` |
+| `assay version-stamps` | Does each row say which version of the logic produced it? | `--target/-t` `--store` `--recommend` |
+| `assay volume` | What Elementary counted, joined to what this project says about itself. | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--elementary-schema` `--store` `--config` `--dialect` `--judge` `--threshold` `--limit/-n` `--dry-run` `--json` |
+| `assay watch` | Stay quiet until something in your working tree MEANS something different. | `--target/-t` `--project-dir` `--compile` `--dbt/--dbt-bin` `--profiles-dir` `--interval` `--store` |

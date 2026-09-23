@@ -1,6 +1,6 @@
 # assay
 
-<img src="docs/assay-mark.svg" align="right" width="116" alt="">
+<img src="docs/cuts/condensers.gif" align="right" width="190" alt="">
 
 **Recover the semantics your warehouse never wrote down.**
 
@@ -19,6 +19,8 @@ Jev](https://docs.typesafe.ai) reads the meaning. SQL does the rest.
 > a water division and nothing in the stack could tell me that.
 
 **New here? [docs/PRODUCT.md](docs/PRODUCT.md) is the whole thing in plain words** — what it checks, how it works next to a coding agent, what it costs, and what it deliberately will not do.
+
+<img src="docs/cuts/atwork.gif" align="right" width="150" alt="">
 
 ## What it finds
 
@@ -46,6 +48,8 @@ On a project `assay` has never seen: it reads your manifest, says what it can an
 the structural checks, runs the judgment tier if a key is present, writes an `audit.yml` that gates
 nothing, and prints the next command. `--agent` also writes the skill file your coding agent
 follows.
+
+<img src="docs/cuts/apparatus.gif" align="right" width="130" alt="">
 
 ## How it works
 
@@ -113,6 +117,8 @@ answer is still served everywhere it was served before, because hiding it leaves
 which is strictly worse than serving it dated. An answer `assay` cannot check at all reports as
 **cannot be checked**, in its own column, never folded into the ones that are current.
 
+<img src="docs/cuts/tubs.gif" align="right" width="150" alt="">
+
 ## Volume, read from Elementary rather than rebuilt
 
 ```bash
@@ -168,6 +174,8 @@ warehouse: grain settled for 250, 4,684 columns classified.
 it), `derived` (code worked it out) or `judged` (with the probability). A fact resting on an
 unresolved premise says so rather than inheriting confidence it did not earn.
 
+<img src="docs/cuts/tower.gif" align="right" width="140" alt="">
+
 ## The page
 
 ```bash
@@ -198,6 +206,8 @@ There is no `dialect:` line because the manifest names its own adapter. Pass one
 An earlier version of this action defaulted it to `duckdb`, which silently misparsed every other
 warehouse: on a BigQuery project that turned 12 parse failures into 128 and lost two real findings,
 without changing how confident the output looked.
+
+<img src="docs/cuts/assayer.gif" align="right" width="180" alt="">
 
 ## Ruling on findings, one keypress each
 
@@ -975,3 +985,19 @@ no credentials -- a reviewer, a security team, or you evaluating this tool.
 ## License
 
 Apache-2.0
+
+---
+
+<img src="docs/cuts/chain.gif" align="right" width="110" alt="">
+
+### The plates
+
+The engravings are apparatus from the 17th-century alchemical and assaying literature: furnaces,
+retorts, condensing trains, an assayer at his forge. They are long out of copyright, and they are
+here because the work is the same work. You charge a sample, you drive it, and you read what comes
+off.
+
+The type is IM Fell English, Igino Marini's digitisation of the types cut for the Oxford
+University Press in the 1670s, under the Open Font Licence. Both the report and the review form
+carry the cuts and the type inside the file, so a page that has been emailed, moved or committed
+still looks like itself with no network at all.
