@@ -47,3 +47,16 @@ def test_the_keyboard_command_is_refused_with_the_routes_that_work(project_dir):
 
 def test_an_unknown_command_is_named(project_dir):
     assert "no command" in Backend(str(project_dir)).run_cli("nonesuch")["error"]
+
+
+def test_every_command_answers_as_a_module_the_way_the_tools_run_it():
+    """`python -m dbt_assay.cli <cmd>` is how every assay_<cmd> tool and the edit hook run a command."""
+    import subprocess
+    import sys
+    bad = []
+    for c in cli_tools.commands():
+        r = subprocess.run([sys.executable, "-m", "dbt_assay.cli", c["name"], "--help"],
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            bad.append(c["name"])
+    assert not bad, f"not runnable as a module: {bad}"

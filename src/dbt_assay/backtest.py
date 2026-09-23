@@ -164,8 +164,12 @@ class Compiler:
 
     def __init__(self, repo: str, project_subdir: str = ".", dbt_bin: str = "dbt",
                  profiles_dir: str | None = None):
+        import os
         import tempfile
-        self.repo = repo
+        # *** ABSOLUTE, BECAUSE A SYMLINK'S TARGET RESOLVES FROM WHERE THE LINK LIVES. ***
+        # `--repo .` wrote `dbt_packages -> ./transform/dbt_packages` into the temp worktree, which
+        # resolves inside the temp dir and points at nothing, and the second commit died on it.
+        self.repo = os.path.abspath(repo)
         self.project_subdir = project_subdir
         self.dbt_bin = dbt_bin
         # *** dbt NEEDS A CONNECTION EVEN TO COMPILE. ***
@@ -214,7 +218,9 @@ class Compiler:
         import os
         src = os.path.join(self.repo, self.project_subdir, "dbt_packages")
         dst = os.path.join(self.dir, self.project_subdir, "dbt_packages")
-        if os.path.isdir(src) and not os.path.exists(dst):
+        # `lexists`, not `exists`: `exists` follows a link, so a BROKEN one read as absent and
+        # `symlink` then failed on the path that was there.
+        if os.path.isdir(src) and not os.path.lexists(dst):
             os.symlink(src, dst)              # this era's packages, no network fetch
 
     def compiled(self, sha: str, model_names: list[str]) -> dict:

@@ -3609,9 +3609,6 @@ def main() -> None:
         raise SystemExit(1) from e
 
 
-if __name__ == "__main__":
-    main()
-
 
 @app.command()
 def calibration(
@@ -7169,3 +7166,12 @@ def _record_from_labels(store, target, dialect: str) -> None:
                   f"question and never permission for it to fail a build: a label can itself be "
                   f"wrong, and on a real project three of four disagreements were exactly that. "
                   f"Human verdicts so far: {human}. Add more with `assay review -i`.[/]")
+
+
+# *** AT THE END OF THE FILE, BECAUSE EVERYTHING ABOVE IT IS A COMMAND. ***
+# This block sat in the middle, so `python -m dbt_assay.cli` ran the app before 30 of its commands
+# were defined -- `review`, `probe`, `read`, `hook` among them -- and answered "No such command".
+# The `assay` entry point imports the whole module first and never noticed; every MCP tool that
+# runs a command in a child process did.
+if __name__ == "__main__":
+    main()

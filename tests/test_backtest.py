@@ -129,3 +129,20 @@ def test_a_macro_on_its_own_line_inside_a_from_clause_is_not_a_statement():
     out = backtest.dejinja(sql)
     assert "config" not in out                 # config IS removed
     assert digest(out).ok, out                 # and the FROM still has an operand
+
+
+def test_a_relative_repo_links_packages_that_resolve(tmp_path, monkeypatch):
+    """`--repo .` from inside the repo is the natural invocation, and it broke on commit two."""
+    import os
+
+    from dbt_assay.backtest import Compiler
+    repo = tmp_path / "repo"
+    (repo / "transform" / "dbt_packages").mkdir(parents=True)
+    monkeypatch.chdir(repo)
+    c = Compiler(".", "transform")
+    c.dir = str(tmp_path / "replay")
+    os.makedirs(os.path.join(c.dir, "transform"))
+    c._link_packages()
+    c._link_packages()                     # the second commit: must not raise
+    link = os.path.join(c.dir, "transform", "dbt_packages")
+    assert os.path.islink(link) and os.path.isdir(link), "the link must resolve"
