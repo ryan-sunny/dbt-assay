@@ -184,11 +184,16 @@ overflow:auto;font-size:12px;margin:6px 0;white-space:pre-wrap;word-break:break-
 .quote{margin:4px 0 8px;padding-left:13px;border-left:2px solid var(--ink);color:var(--ink);
 font-size:14.5px;font-style:italic}
 
-/* ---- the assay ticket: the overview's three columns, ruled like an account. */
-.ticket{display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin:0;
+/* ---- the assay ticket: the overview's four columns, ruled like an account. */
+.tlead{font-family:Fell,Georgia,serif;font-size:21px;line-height:1.35;margin:0 0 16px}
+.ticket{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin:0;
 border-bottom:1px solid var(--ink)}
+.qhead{padding:10px 0 4px;margin-top:8px;border-top:1px solid var(--rule2)}
+.qhead .quote{margin:4px 0 6px}
 .tcol{padding:2px 22px 16px 0}
 .tcol + .tcol{padding-left:22px;border-left:1px solid var(--rule)}
+@media (max-width:900px){.ticket{grid-template-columns:repeat(2,1fr)}
+.tcol:nth-child(3){padding-left:0;border-left:0}}
 .tlab{font-family:Fell,Georgia,serif;font-size:12px;text-transform:uppercase;letter-spacing:.11em;
 color:var(--faint);margin-bottom:6px}
 .tnum{font-family:Fell,Georgia,serif;font-size:50px;line-height:.95;letter-spacing:-.01em}
@@ -784,7 +789,7 @@ function drill(opts) {
   /* The groups become chips: `all`, then one per group, each carrying its count. Picking one
      narrows the SAME list rather than replacing it with a different table. */
   const ALL = {__all: 1};
-  let pickedGroup = ALL;
+  let pickedGroup = (opts.startGroup && opts.startGroup(opts.groups)) || ALL;
   /* *** A VIEW SWITCH IS A FILTER, SO IT IS A CHIP LIKE EVERY OTHER FILTER. ***
      It used to be a `select` in the filter bar, which was the right answer when the alternative
      was a button floating over the table. Now that the groups themselves are chips, a dropdown
@@ -843,6 +848,11 @@ function drill(opts) {
       pick: p => showOne(p[0], p[1]),
       text: p => opts.rowText(p[0]) + ' ' + opts.chip(p[1]),
       emptyText: 'nothing matches'});
+    /* *** WHAT THE ROWS ARE ANSWERS TO, ABOVE THE ROWS. ***
+       A group can carry a header -- the question a set of answers answered -- so the thing being
+       measured is on screen rather than one click into a detail pane. */
+    const gh = opts.groupHead && pickedGroup !== ALL ? opts.groupHead(pickedGroup) : null;
+    head.replaceChildren(...(gh ? [chips, gh] : [chips]));
     body.replaceChildren(list);
     /* *** THE PANE OPENS ON SOMETHING. ***
        `first.click()` rather than calling `showOne` directly, so the row is also MARKED as the
@@ -1576,12 +1586,27 @@ function answersTab(host) {
   for (const q of DATA.questions) if (q.id_prefix) qByPrefix[q.id_prefix] = q.name;
   const groups = Object.values(fam).sort((a, b) => b.rows.length - a.rows.length);
 
+  const qOf = g => (DATA.questions || []).find(x => x.id_prefix === g.prefix);
   host.replaceChildren(drill({
     noun: 'answers', groups: groups, rowFilter: 'filter answers...',
     chip: g => qByPrefix[g.prefix] || g.prefix,
+    /* *** GROUPED BY QUESTION, AND THE QUESTION IS ON THE SCREEN. ***
+       Opening on "all answers" put thousands of rows from every family in one list with no
+       question anywhere above them. It opens on the largest question, with that question's own
+       words over its answers and how many were unsure. */
+    startGroup: gs => gs[0],
+    groupHead: g => {
+      const q = qOf(g);
+      const words = q && (q.instructions || {}).question;
+      return el('div', {class: 'qhead'}, [
+        el('div', {class: 'tlab', text: (qByPrefix[g.prefix] || g.prefix) + ' \u00b7 '
+          + num(g.rows.length) + ' answers \u00b7 ' + num(g.low) + ' under 0.60'}),
+        el('p', {class: 'quote', text: words || 'This question\u2019s wording is not in the '
+          + 'bank any more; its answers are kept and served dated.'})]);
+    },
     blurb: 'The live answer to every question asked about this project: one row per subject and '
-      + 'question, the latest. Grouped by the question that asked it, because 8,449 answers '
-      + 'sorted by id is a filing cabinet. Below 0.60 nothing is reported as a finding, so the '
+      + 'question, the latest. Grouped by the question that asked it, because thousands of '
+      + 'answers sorted by id is a filing cabinet. Below 0.60 nothing is reported as a finding, so the '
       + 'low column is where the model is telling you it cannot tell.',
     rowsOf: g => g.rows,
     /* *** SEVEN COLUMNS, AND ONE OF THEM HELD TWO DIFFERENT KINDS OF THING. ***
@@ -1979,8 +2004,9 @@ function suggestTab(host) {
      draft YAML -- the thing you came to copy -- is in the right pane, once, for the row you
      picked, rather than a hundred times down the page. */
   const LABEL = {open: 'Decide first', vocab: 'Vocabulary', questions: 'Per-check policy',
-                 waivers: 'Waivers', explanations: 'Row explanations'};
-  const SECT = ['open', 'vocab', 'questions', 'waivers', 'explanations'];
+                 waivers: 'Waivers', explanations: 'Row explanations',
+                 descriptions: 'Column descriptions'};
+  const SECT = ['open', 'vocab', 'questions', 'waivers', 'explanations', 'descriptions'];
   const byBasis = {};
   for (const r of S) {
     const k = (r.section || '') + '|' + (r.basis || '');
@@ -1995,9 +2021,10 @@ function suggestTab(host) {
   host.replaceChildren(drill({
     noun: 'candidates', groups: groups, rowFilter: 'filter candidates...',
     chip: g => g.basis,
-    blurb: 'assay measured these and cannot know what they mean. Every means: and implies: in a '
-      + 'draft is blank for you to fill in. Grouped by the reason each one fired, because forty '
-      + 'rows of one reason are one decision.',
+    blurb: 'assay measured these and writes no meaning. A means: in a draft is either blank or '
+      + 'QUOTED from a sentence this project already uses, with where it came from; a column '
+      + 'description draft says per line whether it is quoted or built from recorded facts. '
+      + 'Grouped by the reason each one fired, because forty rows of one reason are one decision.',
     rowsOf: g => g.rows.slice().sort((a, b) => (b.rank || 0) - (a.rank || 0)),
     /* *** THE HEADLINE IS THE GROUP'S OWN REASON, REPEATED ONCE PER ROW. ***
        123 rows reading "`X` is described identically in N models and the vocab does not carry
@@ -2029,7 +2056,8 @@ function suggestTab(host) {
       if ((g && g.decide) || r.decide)
         bits.push(section('assay will not pick between these',
           el('div', {class: 'sug-d', text: (g && g.decide) || r.decide})));
-      if (r.draft) bits.push(section('paste this into audit.yml',
+      if (r.draft) bits.push(section(r.section === 'descriptions'
+        ? 'a draft for schema.yml -- edit it first' : 'paste this into audit.yml',
         el('pre', {class: 'sug-y', text: r.draft})));
       else bits.push(el('p', {class: 'note', text: 'No draft: there is nothing to paste until '
         + 'the question above is answered.'}));
@@ -2080,19 +2108,40 @@ function understoodTab(host) {
     return c;
   }
 
+  /* *** LEAD WITH WHAT NOTHING ELSE COULD HAVE DONE, NOT WITH AN INVENTORY. ***
+     "charged: 356 models" opened the page, which is a count anyone's catalog already has. The
+     argument is the reading: the project's own prose read and classified, questions answered that
+     no parser can answer, and what it cost -- and then what it found, which no dbt test could have
+     expressed. One sentence says it, and the four columns are its ledger. */
+  const answered = DATA.decisions.length;
+  const leadBits = [];
+  if (DATA.claims.length)
+    leadBits.push(num(DATA.claims.length) + ' sentences of this project\u2019s own prose read'
+                  + (classified === DATA.claims.length ? ' and classified'
+                     : classified ? ' and ' + num(classified) + ' classified' : ''));
+  if (answered)
+    leadBits.push(num(answered) + ' questions answered across ' + num(meta.models) + ' models');
+  const leadCost = spent == null ? '' : ' for $' + spent.toFixed(2);
+  bits.push(el('p', {class: 'tlead', text: (leadBits.length
+    ? leadBits.join(', and ') + leadCost + ', finding '
+    : 'Reading ' + num(meta.models) + ' models found ')
+    + num(F.length) + ' defects no dbt test can express.'}));
+
   const ticket = el('div', {class: 'ticket'}, [
-    column('charged', num(meta.models), 'models',
-           num(DATA.edges.length) + ' hops between them, ' + num(meta.sources)
-           + ' sources feeding them, ' + num(DATA.claims.length)
-           + ' sentences they say about themselves.'),
-    column('assayed out', num(F.length), 'defects',
-           'Across ' + num(checks) + ' assays. A dbt test asserts a value in a column; these are '
-           + 'about grain, meaning, provenance and drift, which no unique or not_null can say.'),
+    column('read', num(DATA.claims.length), 'sentences',
+           (classified === DATA.claims.length ? 'Every one' : num(classified))
+           + ' classified by what job it does; ' + num(meta.models)
+           + ' models and ' + num(DATA.edges.length) + ' hops parsed.'),
+    column('judged', num(answered), 'answers',
+           'Questions no parser can settle -- what a filter is for, what a NULL means -- each '
+           + 'answer stored with what it was asked from.'),
+    column('found', num(F.length), 'defects',
+           'Across ' + num(checks) + ' assays: grain, meaning, provenance and drift, which no '
+           + 'unique or not_null can say.'),
     column('at cost', spent == null ? '\u2014' : '$' + spent.toFixed(2), '',
            spent == null
              ? 'This store predates the ledger, so what it cost is unknown rather than nothing.'
-             : num(DATA.decisions.length) + ' questions put and answered, every call recorded one '
-               + 'row each. The Spend tab has the ledger.'),
+             : 'Every call recorded, one row each. The Spend tab has the ledger.'),
   ]);
   /* The plate earns its place by being the thing the page is named after: a charge going into a
      furnace and something being drawn off it. */

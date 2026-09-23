@@ -453,7 +453,7 @@ def context(store, project, cfg, findings=None, volume_json: dict | None = None)
                       "applies_to": "", "issues": [],
                       "used_by": _used_by(row.key, models),
                       "measured": list(row.measured or []), "basis": row.basis or "",
-                      "suggested": ""})
+                      "suggested": "", "quoted_means": _quoted_means(row.draft)})
     return {
         "words": words,
         "more_candidates": more,
@@ -462,6 +462,22 @@ def context(store, project, cfg, findings=None, volume_json: dict | None = None)
         "waivers": _waiver_rows(store, cfg, findings or [], project),
         "settings": settings_rows(cfg),
     }
+
+
+def _quoted_means(draft: str) -> str:
+    """The `means:` a suggestion QUOTED from this project, or "". Never one assay wrote: only a
+    draft that says it was quoted is read, and the person still has to press the button."""
+    if "quoted" not in (draft or ""):
+        return ""
+    import yaml
+    try:
+        body = (yaml.safe_load(draft) or {}).get("vocab") or {}
+    except Exception:                                            # noqa: BLE001
+        return ""
+    for v in body.values():
+        if isinstance(v, dict) and str(v.get("means") or "").strip():
+            return str(v["means"]).strip()
+    return ""
 
 
 def _candidates(store, cfg, findings, project=None) -> list:
@@ -682,6 +698,9 @@ background:#f4f1e9;border:0;border-left:2px solid var(--rule);padding:9px 12px;o
 
 /* ---- a row you fill in */
 .wrow{border:0;border-bottom:1px solid var(--rule2);padding:16px 0;margin:0}
+.wgroup{font-family:Fell,Georgia,serif;font-weight:400;font-size:13px;letter-spacing:.1em;
+text-transform:uppercase;color:var(--ash);margin:26px 0 0;padding-bottom:6px;
+border-bottom:1px solid var(--ink)}
 .wrow h3{margin:0 0 2px;font-size:15px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .wrow h3 .tag{margin-left:12px;position:relative;top:-1px}
 .wrow .measured{color:var(--ash);font-size:13px;margin:6px 0 10px}
@@ -864,6 +883,7 @@ function card(c) {
   untilBox.hidden = a.verdict !== 'accept';
   untilBox.oninput = () => {
     answers[c.key] = Object.assign({}, answers[c.key], {until: untilBox.value.trim()}); save();
+    emitWaiver();
   };
   for (const v of ['agree', 'disagree', 'unclear', 'accept']) {
     const r = el('input', {type: 'radio', name: 'v-' + c.key, value: v});
@@ -871,6 +891,8 @@ function card(c) {
     r.onchange = () => {
       answers[c.key] = Object.assign({}, answers[c.key], {verdict: v});
       untilBox.hidden = v !== 'accept';
+      wlab.hidden = v !== 'accept';
+      if (v === 'accept' && answers[c.key].write_waiver !== false) writeW.checked = true;
       /* *** AN ACCEPT NEEDS A REASON, AND HALF OF ONE IS ALREADY ON THE CARD. ***
          The finding says what is true; only the reader knows why it stays. So an empty reason
          box is filled with the first half, quoted from the finding, and the second half is left
@@ -880,18 +902,45 @@ function card(c) {
         answers[c.key].note = note.value;
         note.focus();
       }
-      box.classList.add('done'); save(); tick();
+      box.classList.add('done'); save(); tick(); emitWaiver();
     };
     ans.append(el('label', {title: v === 'accept'
       ? 'correct, and left as it is on purpose: it leaves the open list and counts as the check '
         + 'being right. Needs a reason.' : ''}, [r, el('span', {text: v})]));
   }
   ans.append(untilBox);
+  /* *** THE WAIVER, WRITTEN FROM THE CARD, WHERE THE EVIDENCE IS. ***
+     An accept records the decision in the store; a waiver puts it in audit.yml, which is in git.
+     Deciding on the card and then finding the same finding again on another tab to write it down
+     is two trips for one decision. So an accept offers the waiver right here, ticked, built from
+     the reason and date already typed above -- one complete named waiver, the same one the
+     Waivers tab would write. */
+  const wkey = ['waivers', c.model + '__' + c.question].join('\u001f');
+  const writeW = el('input', {type: 'checkbox'});
+  writeW.checked = a.verdict === 'accept' ? (a.write_waiver !== false) : false;
+  const wlab = el('label', {class: 'write'}, [writeW,
+    el('span', {text: ' also write this as a waiver in audit.yml'})]);
+  wlab.hidden = a.verdict !== 'accept';
+  function emitWaiver() {
+    const cur = answers[c.key] || {};
+    const on = cur.verdict === 'accept' && writeW.checked && (cur.note || '').trim()
+               && !(cur.note || '').trim().endsWith('It stays because');
+    setEdit(wkey, on ? Object.assign({question: c.question, applies_to: c.model,
+                                      reason: cur.note.trim()},
+                                     (cur.until || '').trim() ? {until: cur.until.trim()} : {})
+                     : null);
+  }
+  writeW.onchange = () => {
+    answers[c.key] = Object.assign({}, answers[c.key], {write_waiver: writeW.checked});
+    save(); emitWaiver();
+  };
+  ans.append(wlab);
   const note = el('input', {type: 'text', class: 'note',
                             placeholder: 'why (optional, and the most useful thing here)'});
   note.value = a.note || '';
   note.oninput = () => {
     answers[c.key] = Object.assign({}, answers[c.key], {note: note.value}); save();
+    emitWaiver();
   };
   ans.append(note);
   /* *** THE AGENT'S READING IS ALREADY ON THE CARD, TWO INCHES ABOVE THIS BOX. ***
@@ -906,7 +955,7 @@ function card(c) {
     use.onclick = () => {
       note.value = agentWhy;
       answers[c.key] = Object.assign({}, answers[c.key], {note: agentWhy});
-      save(); tick();
+      save(); tick(); emitWaiver();
     };
     ans.append(use);
   }
@@ -1086,7 +1135,22 @@ function wordsTab(host) {
     + 'in part of the project is false in every answer about that part.',
     'workshop'));
   const _p = pageOf('words');
-  for (const w of CTX.words.slice(_p.from, _p.to)) {
+  /* *** FORTY CARDS OF ONE SHAPE, AND THE THING THAT DIFFERED WAS WHY THEY WERE HERE. ***
+     Candidates come from different rules -- joined on across many models, named like a key and
+     nearly unique, described identically everywhere -- and each card said its reason on its own
+     line, forty times. The reason is said once, over the cards it explains, with the count. */
+  const reason = w => w.known ? 'already in your vocabulary' : (w.basis || 'a candidate');
+  const counts = {};
+  for (const w of CTX.words) counts[reason(w)] = (counts[reason(w)] || 0) + 1;
+  const page = CTX.words.slice(_p.from, _p.to)
+    .map((w, i) => [w, i]).sort((a, b) => (a[0].known === b[0].known ? 0 : a[0].known ? -1 : 1)
+      || reason(a[0]).localeCompare(reason(b[0])) || a[1] - b[1]).map(x => x[0]);
+  let lastReason = null;
+  for (const w of page) {
+    if (reason(w) !== lastReason) {
+      lastReason = reason(w);
+      bits.push(el('h2', {class: 'wgroup', text: lastReason + ' \u00b7 ' + counts[lastReason]}));
+    }
     const row = el('div', {class: 'wrow'});
     const head = el('h3', {text: w.term});
     row.append(head);
@@ -1106,6 +1170,17 @@ function wordsTab(host) {
                      'what does knowing it is ' + an(w.term) + ' tell you?', 1));
     row.append(field('applies_to', ['vocab', w.term, 'applies_to'], w.applies_to,
                      'blank means every model'));
+    if (w.quoted_means && !w.means) {
+      /* A sentence this project already uses for the word, quoted and cited in `assay suggest`.
+         Offered, never filled: it becomes the answer only when somebody presses the button. */
+      const q = el('button', {class: 'accept', text: 'use the sentence your models already use'});
+      q.title = w.quoted_means;
+      q.onclick = () => { setEdit(['vocab', w.term, 'means'].join('\u001f'), w.quoted_means);
+                          render(); };
+      row.append(el('div', {class: 'measured', text: 'already written in this project: \u201c'
+                            + w.quoted_means + '\u201d'}));
+      row.append(q);
+    }
     if (w.suggested) {
       const b = el('button', {class: 'accept', text: 'use ' + w.suggested});
       b.onclick = () => { setEdit(['vocab', w.term, 'applies_to'].join('\u001f'), w.suggested);
@@ -1377,8 +1452,8 @@ assay {e(version)} &middot; manifest {e(str(generated_at))}{report_link}</span>
   <button data-pane="explanations">Explanations<b id="n-expl"></b></button>
   <button data-pane="waivers">Waivers<b id="n-waiv"></b></button>
   <button data-pane="monitoring">Monitoring<b id="n-mon"></b></button>
-  <button data-pane="settings">Settings<b id="n-set"></b></button>
   <button data-pane="findings">Findings<b id="n-find"></b></button>
+  <button data-pane="settings">Settings<b id="n-set"></b></button>
 </nav>
 <!-- The pager belongs to one pane, so it appears with that pane and nowhere else. -->
 <div class="bar" id="pager">

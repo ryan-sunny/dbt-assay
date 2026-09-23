@@ -394,9 +394,59 @@ def test_accept_on_a_card_and_a_waiver_from_the_tab_reach_the_handback(tmp_path,
     v = [x for x in doc["verdicts"] if x["verdict"] == "accept"]
     assert v and v[0]["until"] == "2027-06-01" and v[0]["note"]
     waivers = [c for c in doc["config"] if c["path"][0] == "waivers"]
-    assert len(waivers) == 1 and len(waivers[0]["path"]) == 2
+    # One from the Waivers tab (the finding accepted earlier) and one from the card accepted here.
+    assert len(waivers) == 2 and all(len(w["path"]) == 2 for w in waivers)
+    from_card = [w for w in waivers if w["value"]["reason"].startswith("intended")]
+    assert from_card and from_card[0]["value"]["until"] == "2027-06-01"
+    waivers = [w for w in waivers if w not in from_card]
     body = waivers[0]["value"]
     assert body["reason"] == "a grid cell, not a radius" and body["until"] == "2999-01-01"
     assert body["question"] and body["applies_to"]
     from dbt_assay.config import Config
     Config.from_dict({"waivers": {waivers[0]["path"][1]: body}})       # and it loads
+
+
+def test_a_waiver_is_written_from_the_card_it_was_decided_on(tmp_path, project_dir):
+    """Accept on the card, finish the reason, and the handback carries the waiver -- one
+    complete named waiver for that model and check. Untick it and it is gone."""
+    import json
+
+    from playwright.sync_api import sync_playwright
+    store = str(tmp_path / "s.duckdb")
+    CliRunner().invoke(app, ["check", "-t", str(project_dir), "--store", store])
+    out = tmp_path / "review.html"
+    r = CliRunner().invoke(app, ["review", "--emit", str(out), "--target", str(project_dir),
+                                 "--store", store])
+    assert r.exit_code == 0, r.output
+
+    def handback(page):
+        with page.expect_download() as dl:
+            page.click("#dl")
+        return json.loads(dl.value.path().read_text())
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(accept_downloads=True)
+            errors: list[str] = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(out.as_uri())
+            page.click('button[data-pane="findings"]')
+            card = page.locator(".card").first
+            card.locator('input[value="accept"]').check()
+            box = card.locator("label.write input[type=checkbox]")
+            assert box.is_visible() and box.is_checked()
+            card.locator("input.note").fill("the envelope is a grid cell, not a radius")
+            doc = handback(page)
+            ws = [c for c in doc["config"] if c["path"][0] == "waivers"]
+            assert len(ws) == 1 and ws[0]["value"]["reason"].startswith("the envelope")
+            v = next(x for x in doc["verdicts"] if x["verdict"] == "accept")
+            assert ws[0]["value"]["question"] == v["question"]
+            box.uncheck()
+            doc = handback(page)
+            assert not [c for c in doc["config"] if c["path"][0] == "waivers"]
+            tabs = [t.get_attribute("data-pane") for t in page.locator(".tabs button").all()]
+            assert tabs[-1] == "settings", tabs
+            assert not errors, errors
+        finally:
+            browser.close()
