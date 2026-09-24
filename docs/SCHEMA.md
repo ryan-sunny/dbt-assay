@@ -178,10 +178,10 @@ erDiagram
         varchar evidence "json list of kind, detail, status, at"
     }
     PREMISE_USES {
-        varchar run_id FK
-        varchar premise_id FK
-        varchar dependent_kind "grain / held_back / proof"
-        varchar dependent_id "a model uid, or check:model:construct"
+        varchar run_id PK, FK
+        varchar premise_id PK, FK
+        varchar dependent_kind PK "grain / held_back / raised_on / proof"
+        varchar dependent_id PK "a model uid, or check:model:construct"
         varchar model "the model it is about"
         varchar detail
     }

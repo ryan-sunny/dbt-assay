@@ -19,7 +19,8 @@ from dbt_assay.cli import app as cli_app
 
 # The fewest arguments each required parameter needs to reach the tool's real work.
 ARGS = {"model": "int_bad_unique", "column": "section_id", "verdict": "unclear",
-        "why": "smoke test", "path": "no-such-handback.json", "job": "no-such-job"}
+        "why": "smoke test", "path": "no-such-handback.json", "job": "no-such-job",
+        "prop": "grain", "proof": "trivial"}
 
 
 def _content_text(res) -> str:

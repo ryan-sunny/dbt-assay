@@ -66,7 +66,8 @@ create table if not exists premise_uses (
     dependent_kind varchar,        -- grain | held_back | proof | ...
     dependent_id   varchar,        -- what rests on it: a model, a finding's construct, a proof
     model          varchar,        -- the model it is about, by unique_id
-    detail         varchar
+    detail         varchar,
+    primary key (run_id, premise_id, dependent_kind, dependent_id)
 );
 """
 
@@ -633,7 +634,7 @@ def write(store, run_id: str, led: Ledger) -> None:
     if rows:
         store.con.executemany("insert or replace into premises values (?,?,?,?,?,?,?,?,?,?)", rows)
     if uses:
-        store.con.executemany("insert into premise_uses values (?,?,?,?,?,?)", uses)
+        store.con.executemany("insert or replace into premise_uses values (?,?,?,?,?,?)", uses)
 
 
 def changes(store, run_id: str) -> list:
