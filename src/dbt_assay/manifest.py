@@ -291,12 +291,23 @@ class Project:
         visible instead of silent.
         """
         nodes = self.raw.get("nodes", {})
-        canonical = self.target_dir / "compiled" / self.project_name
-        siblings = [d / self.project_name
-                    for d in sorted(self.target_dir.parent.glob("target*/compiled"))
-                    if (d / self.project_name).is_dir() and (d / self.project_name) != canonical]
+        compiled_dirs = sorted(self.target_dir.parent.glob("target*/compiled"))
+
+        # *** EACH MODEL UNDER ITS OWN PACKAGE'S DIRECTORY. ***
+        # dbt writes an installed package's models to `target/compiled/<package>/`, and this looked
+        # only under the root project's name -- so the 30 Elementary models on the field warehouse
+        # read as unreadable while their compiled SQL sat one directory over.
+        def roots(package: str):
+            canonical = self.target_dir / "compiled" / package
+            return canonical, [d / package for d in compiled_dirs
+                               if (d / package).is_dir() and (d / package) != canonical]
+        by_pkg: dict = {}
 
         for uid, m in self.models.items():
+            pkg = m.package or self.project_name
+            if pkg not in by_pkg:
+                by_pkg[pkg] = roots(pkg)
+            canonical, siblings = by_pkg[pkg]
             primary = canonical / m.path
             if primary.exists():
                 m.compiled, m.compiled_from = primary.read_text(), "disk"

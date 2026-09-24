@@ -40,3 +40,17 @@ def test_completeness_names_the_package_and_counts_none_of_yours(project_dir, tm
     doc = json.loads(r.stdout)
     assert doc["assay_can_read"]["not_audited"] == 0, doc["assay_can_read"]
     assert doc["assay_can_read"]["installed_packages_not_counted"] == {"elementary": 1}
+
+
+def test_a_package_model_is_read_from_its_own_packages_compiled_directory(project_dir):
+    """*** THE SQL WAS ONE DIRECTORY OVER. *** dbt compiles a package's models under
+    `target/compiled/<package>/`; looking only under the root project's name left 30 of them
+    unread on the field warehouse."""
+    _add_package_model(project_dir)
+    f = project_dir / "compiled" / "elementary" / "models" / "edr" / "dbt_run_results.sql"
+    f.parent.mkdir(parents=True)
+    f.write_text("select 1 as run_id")
+    project, *_ = _load(project_dir, None)
+    m = project.models["model.elementary.dbt_run_results"]
+    assert m.readable and m.compiled_from == "disk"
+    assert project.coverage()["installed_unreadable"] == 0
