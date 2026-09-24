@@ -5,6 +5,8 @@
     "from_disk": 11,
     "from_manifest": 0,
     "from_stripped": 0,
+    "installed_packages": {},
+    "installed_unreadable": 0,
     "models": 11,
     "readable": 11,
     "sources": 0,
@@ -17,6 +19,6 @@
   "packaged": 0,
   "project": "p",
   "sources": 0,
-  "version": "0.49.0",
+  "version": "0.51.3",
   "yours": 11
 }

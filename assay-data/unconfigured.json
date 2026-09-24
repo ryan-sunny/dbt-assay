@@ -1,5 +1,13 @@
 [
   {
+    "check": "column_has_no_description",
+    "shipped": ""
+  },
+  {
+    "check": "exposure_undeclared",
+    "shipped": "annotate"
+  },
+  {
     "check": "ranks_by_degrees",
     "shipped": ""
   },

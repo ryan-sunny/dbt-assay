@@ -7,13 +7,13 @@
   "days": [
     {
       "calls": 0,
-      "day": "2026-09-22",
+      "day": "2026-09-24",
       "runs": 1,
       "tokens": 0,
       "usd": 0.0,
       "warehouse_bytes": 0,
-      "warehouse_calls": 2,
-      "warehouse_ms": 8,
+      "warehouse_calls": 0,
+      "warehouse_ms": 0,
       "warehouse_usd": 0.0,
       "why": "ran, asked nothing: every judged state was already answered and served from the cache"
     }
@@ -24,61 +24,16 @@
   "output_tokens": 0,
   "usd": 0,
   "warehouse": {
-    "by_caller": [
-      [
-        "assay.feeds.profile",
-        1,
-        0,
-        0.0,
-        5,
-        1
-      ],
-      [
-        "assay.feeds.sample",
-        1,
-        0,
-        0.0,
-        3,
-        1
-      ]
-    ],
-    "by_day": [
-      [
-        "2026-09-22",
-        2,
-        0,
-        0.0,
-        8,
-        2
-      ]
-    ],
-    "by_kind": [
-      [
-        "profile",
-        1,
-        0,
-        0.0,
-        5,
-        1
-      ],
-      [
-        "sample",
-        1,
-        0,
-        0.0,
-        3,
-        1
-      ]
-    ],
+    "by_caller": [],
+    "by_day": [],
+    "by_kind": [],
     "bytes_estimated": null,
     "bytes_measured_calls": 0,
-    "calls": 2,
-    "failed": 2,
-    "rate_cards": [
-      "duckdb.local"
-    ],
-    "unestimated": 2,
+    "calls": 0,
+    "failed": 0,
+    "rate_cards": [],
+    "unestimated": 0,
     "usd": null,
-    "wall_ms": 8
+    "wall_ms": 0
   }
 }

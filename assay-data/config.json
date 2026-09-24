@@ -5,18 +5,18 @@
   "model": "jev-latest",
   "provider": "auto",
   "questions": {
-    "duckdb_full_match": "QuestionConfig(name='duckdb_full_match', enabled=True, select=None, act={}, action='queue')",
-    "grain_unresolved": "QuestionConfig(name='grain_unresolved', enabled=True, select=None, act={'annotate': Threshold(expr='p > 0.50'), 'queue': Threshold(expr='p > 0.75')}, action=None)",
-    "hop_drops_most_rows": "QuestionConfig(name='hop_drops_most_rows', enabled=True, select=None, act={}, action='annotate')",
-    "key_column_started_mattering": "QuestionConfig(name='key_column_started_mattering', enabled=True, select=None, act={}, action='queue')",
-    "key_column_stopped_mattering": "QuestionConfig(name='key_column_stopped_mattering', enabled=True, select=None, act={}, action='annotate')",
-    "key_started_holding": "QuestionConfig(name='key_started_holding', enabled=True, select=None, act={}, action='annotate')",
-    "key_stopped_holding": "QuestionConfig(name='key_stopped_holding', enabled=True, select=None, act={}, action='fail')",
-    "seed_reaches_nothing": "QuestionConfig(name='seed_reaches_nothing', enabled=True, select=None, act={}, action='annotate')",
-    "source_freshness_stale": "QuestionConfig(name='source_freshness_stale', enabled=True, select=None, act={}, action='annotate')",
-    "source_freshness_undeclared": "QuestionConfig(name='source_freshness_undeclared', enabled=True, select=None, act={}, action='annotate')",
-    "source_only_a_test_reads": "QuestionConfig(name='source_only_a_test_reads', enabled=True, select=None, act={}, action='annotate')",
-    "source_reaches_nothing": "QuestionConfig(name='source_reaches_nothing', enabled=True, select=None, act={}, action='annotate')"
+    "duckdb_full_match": "QuestionConfig(name='duckdb_full_match', enabled=True, select=None, act={}, action='queue', exposed_only=False)",
+    "grain_unresolved": "QuestionConfig(name='grain_unresolved', enabled=True, select=None, act={'annotate': Threshold(expr='p > 0.50'), 'queue': Threshold(expr='p > 0.75')}, action=None, exposed_only=False)",
+    "hop_drops_most_rows": "QuestionConfig(name='hop_drops_most_rows', enabled=True, select=None, act={}, action='annotate', exposed_only=False)",
+    "key_column_started_mattering": "QuestionConfig(name='key_column_started_mattering', enabled=True, select=None, act={}, action='queue', exposed_only=False)",
+    "key_column_stopped_mattering": "QuestionConfig(name='key_column_stopped_mattering', enabled=True, select=None, act={}, action='annotate', exposed_only=False)",
+    "key_started_holding": "QuestionConfig(name='key_started_holding', enabled=True, select=None, act={}, action='annotate', exposed_only=False)",
+    "key_stopped_holding": "QuestionConfig(name='key_stopped_holding', enabled=True, select=None, act={}, action='fail', exposed_only=False)",
+    "seed_reaches_nothing": "QuestionConfig(name='seed_reaches_nothing', enabled=True, select=None, act={}, action='annotate', exposed_only=False)",
+    "source_freshness_stale": "QuestionConfig(name='source_freshness_stale', enabled=True, select=None, act={}, action='annotate', exposed_only=False)",
+    "source_freshness_undeclared": "QuestionConfig(name='source_freshness_undeclared', enabled=True, select=None, act={}, action='annotate', exposed_only=False)",
+    "source_only_a_test_reads": "QuestionConfig(name='source_only_a_test_reads', enabled=True, select=None, act={}, action='annotate', exposed_only=False)",
+    "source_reaches_nothing": "QuestionConfig(name='source_reaches_nothing', enabled=True, select=None, act={}, action='annotate', exposed_only=False)"
   },
   "row_loss_threshold": 0.8
 }
