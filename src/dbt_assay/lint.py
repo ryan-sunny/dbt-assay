@@ -613,7 +613,9 @@ def override_drift(banks: dict, shipped: dict) -> list[Issue]:
                 f"forked from {forked!r} and the shipped question is now at "
                 f"{base.get('prompt_version')!r}. Whatever changed in between has not reached "
                 f"this copy."))
-        if same:
+        # *** IT ASKED FOR A `forked_from` THAT WAS ALREADY THERE. *** (25.14) Declared and current,
+        # there is nothing left to ask: when the shipped question moves, `override_is_behind` says so.
+        if same and not forked:
             out.append(Issue(
                 name, "note", "override_copies_the_shipped_text",
                 f"{len(same)} of {len(shared)} blocks are byte-identical to the shipped "

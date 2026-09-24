@@ -2003,3 +2003,17 @@ def test_a_band_reports_its_interval_and_says_when_nothing_separates():
               "lo": wilson(a, n)[0], "hi": wilson(a, n)[1]}
              for a, n in ((200, 200), (10, 200))]
     assert separated(apart), "two obviously different bands did not register as separating"
+
+
+def test_a_fork_that_already_declares_its_origin_is_not_asked_to():
+    """*** `banks` ASKED FOR A `forked_from` THREE LINES ABOVE THE ONE IT WAS ASKING FOR. *** (25.14)"""
+    from dbt_assay.lint import override_drift
+
+    shipped = {"x": _bank()}
+    mine = _bank(prompt_version="x.mine.v1", _source="/mine/x.yml", forked_from="x.v1",
+                 criteria={"a": {"what": "A", "examples": ["one"]},
+                           "b": {"what": "DIFFERENT", "examples": ["two"]}})
+    assert override_drift({"x": mine}, shipped) == []
+    # And the moment the shipped one moves, the fork hears about it.
+    moved = {"x": _bank(prompt_version="x.v2")}
+    assert [i.rule for i in override_drift({"x": mine}, moved)] == ["override_is_behind"]
