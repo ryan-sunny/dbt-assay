@@ -889,6 +889,7 @@ padding:10px 34px;font-size:14px}
 .saved code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
 background:#fbf9f4;padding:1px 5px}
 .saved button{margin-left:14px}
+.saved a{color:var(--rust)}
 .wedit textarea{width:100%;min-height:56px}
 .wedit label{display:block;font-size:12.5px;letter-spacing:.05em;text-transform:uppercase;
 color:var(--ash);margin:12px 0 4px}
@@ -991,6 +992,8 @@ new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) {
   else if (n.nodeType === 3 && n.parentElement) renderTicks(n.parentElement);
 } }).observe(document.querySelector('main'), {childList: true, subtree: true});
 const answered = () => Object.values(answers).filter(a => a && a.verdict).length;
+/* Opened from a server (assay serve) or from disk. */
+const SERVED = /^https?:$/.test(location.protocol);
 
 function numbered(sql) {
   const p = el('pre', {});
@@ -1320,21 +1323,48 @@ function download() {
   const body = JSON.stringify(
     {project: D.project, by: document.getElementById('by').value || '', verdicts: out,
      config: configChanges()}, null, 2);
+  const n = out.length, e = Object.keys(edits_()).length;
+  const saved = document.getElementById('saved');
+  const close = () => Object.assign(el('button', {text: 'close'}),
+                                    {onclick: () => { saved.hidden = true; }});
+  /* *** SERVED, IT SENDS; OPENED FROM DISK, IT DOWNLOADS. *** (S1) A browser cannot save into a
+     chosen folder, so on a server the download landed where nothing could pick it up. Over
+     http(s) the handback goes to the server that served this form, which keeps it for the
+     handbacks page to apply. */
+  if (SERVED) {
+    fetch(new URL('api/handback', location.href), {method: 'POST',
+      headers: {'content-type': 'application/json'}, body: body})
+      .then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        saved.replaceChildren(...(ok
+          ? [el('b', {text: 'Sent to the server'}),
+             el('span', {text: ' with ' + n + ' verdict(s)' + (e ? ' and ' + e + ' config '
+               + 'change(s), which the server will refuse (audit.yml there comes from git)' : '')
+               + '. It is saved as ' + d.saved + ' and nothing is recorded until it is applied: '}),
+             el('a', {href: new URL(d.view || 'handbacks', location.href).href,
+                      text: 'review and apply it'})]
+          : [el('b', {text: 'The server did not take it: '}), el('span', {text: d.error || ''})]),
+          close());
+        saved.hidden = false;
+      })
+      .catch(err => { saved.replaceChildren(el('b', {text: 'Could not reach the server: '}),
+                                             el('span', {text: String(err)}), close());
+                      saved.hidden = false; });
+    return;
+  }
   const url = URL.createObjectURL(new Blob([body], {type: 'application/json'}));
   const a = el('a', {href: url, download: 'handback.json'});
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   /* *** NOTHING SAID WHERE THE FILE WENT OR WHAT TO DO WITH IT. *** (W1) */
-  const n = out.length, e = Object.keys(edits_()).length;
-  document.getElementById('saved').replaceChildren(
+  saved.replaceChildren(
     el('b', {text: 'handback.json saved'}),
     el('span', {text: ' to your browser’s download folder (usually Downloads), with '
       + n + ' verdict(s)' + (e ? ' and ' + e + ' config change(s)' : '') + '. Next, run '}),
     el('code', {text: 'assay review --load latest'}),
     el('span', {text: ' or ask your agent to load the handback. Nothing is recorded until then.'}),
-    Object.assign(el('button', {text: 'close'}), {onclick: () => {
-      document.getElementById('saved').hidden = true; }}));
-  document.getElementById('saved').hidden = false;
+    close());
+  saved.hidden = false;
 }
 
 /* ------------------------------------------------------------------ words, and the rest
@@ -1698,6 +1728,13 @@ function step(by) {
 document.getElementById('prev').onclick = () => step(-1);
 document.getElementById('next').onclick = () => step(1);
 document.getElementById('dl').onclick = download;
+if (SERVED) {
+  const b = document.getElementById('dl');
+  b.textContent = 'send to the server';
+  b.setAttribute('data-tip', 'Sends your verdicts to the server that served this form. It keeps '
+    + 'them on its handbacks page, where they are applied. Config edits are listed there and not '
+    + 'applied, because audit.yml on the server comes from git.');
+}
 document.getElementById('clear').onclick = () => {
   if (!confirm('Clear every answer on this form? This cannot be undone.')) return;
   answers = {}; save(); render();

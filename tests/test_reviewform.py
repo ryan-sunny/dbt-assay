@@ -175,7 +175,11 @@ def test_the_page_reaches_out_to_nothing():
     # An `xmlns` is an identifier, not a request: the inline mark declares the SVG namespace and
     # no browser has ever fetched it.
     html = html.replace('xmlns="http://www.w3.org/2000/svg"', "")
-    for bad in ("http://", "https://", "fetch(", "XMLHttpRequest"):
+    # *** ONE REQUEST, AND ONLY TO THE SERVER THAT SERVED IT. *** (S1) Served by `assay serve`,
+    # the form posts its handback to its own origin; opened from disk it never reaches out.
+    assert html.count("fetch(") == 1, "the form makes a request other than sending its handback"
+    assert "if (SERVED) {\n    fetch(new URL('api/handback', location.href)" in html
+    for bad in ("http://", "https://", "XMLHttpRequest"):
         assert bad not in html, bad
     # *** THE GUARD IS ABOUT THE WIRE, NOT ABOUT THE TAG. ***
     # It forbade `<img` outright, which was right while the page had no pictures. The plates are
@@ -261,7 +265,7 @@ def test_the_page_renders_the_context_and_stays_one_file(project_dir, tmp_path):
     for needed in ("data-pane=\"words\"", "wordsTab", "explanationsTab", "waiversTab",
                    "handback.json"):
         assert needed in page, needed
-    assert "fetch(" not in page and "<script src" not in page, "the form reached the network"
+    assert page.count("fetch(") == 1 and "<script src" not in page, "the form reached the network"
 
 
 # ------------------------------------------------------------------- the handback

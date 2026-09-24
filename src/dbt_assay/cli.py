@@ -6027,6 +6027,57 @@ def hook(
 
 
 @app.command()
+def serve(
+    pages: str = typer.Option(..., "--pages",
+                              help="the folder holding the built assay.html and review.html"),
+    handbacks_dir: str = typer.Option(None, "--handbacks",
+                                      help="where posted and uploaded handbacks are kept. "
+                                           "Default: review.handbacks in audit.yml, then "
+                                           "<pages>/handbacks"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    target: str = typer.Option(None, "--target", "-t",
+                               help="the dbt target. With it, the pages are rebuilt after a "
+                                    "handback is applied; without it they update on the next "
+                                    "scheduled run"),
+    monitoring_json: str = typer.Option(None, "--monitoring",
+                                        help="an `assay volume --json` file, used when the "
+                                             "pages are rebuilt"),
+    host: str = typer.Option("127.0.0.1", "--host",
+                             help="the address to bind. There is no authentication: bind it to "
+                                  "an address only trusted people can reach, such as a tailnet"),
+    port: int = typer.Option(8765, "--port"),
+):
+    """The report and the review form over http, and handbacks into the store without a terminal.
+
+    Served, the form sends its handback here instead of downloading it. It is kept in the
+    handback folder, and the handbacks page shows what loading it would do and applies it.
+    Applying records the VERDICTS ONLY: the config section is refused and listed, because on a
+    server audit.yml comes from git. If a scheduled run holds the store, the handback waits and is
+    retried every minute. With --target, the pages are rebuilt after each apply.
+    """
+    from . import serve as serve_mod
+    cfg = Config.load(config_path)
+    folder = (Path(handbacks_dir).expanduser() if handbacks_dir
+              else Path(cfg.handbacks) if cfg.handbacks else Path(pages) / "handbacks")
+    if not Path(pages).is_dir():
+        console.print(f"[red]no folder at {pages}.[/] [dim]Point --pages at where `assay page` "
+                      f"and `assay review --emit` write.[/]")
+        raise typer.Exit(1)
+    try:
+        serve_mod.server_modules()
+    except RuntimeError as e:
+        console.print(str(e), style="red", markup=False)
+        raise typer.Exit(1) from e
+    srv = serve_mod.Server(Path(pages), folder, store_path, config_path,
+                           str(_find_target(target)) if target else None, monitoring_json)
+    console.print(f"serving [bold]{Path(pages).resolve()}[/] at http://{host}:{port}/  "
+                  f"[dim]handbacks in {folder.resolve()}; verdicts only; "
+                  f"{'rebuilds after apply' if target else 'no --target, so no rebuild'}[/]")
+    serve_mod.run(srv, host, port)
+
+
+@app.command()
 def mcp(
     target: str = typer.Option(None, "--target", "-t"),
     store_path: str = typer.Option("assay.duckdb", "--store"),

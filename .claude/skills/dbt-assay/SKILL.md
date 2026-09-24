@@ -506,7 +506,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay infer` | `assay_infer` | Infer each model's grain. | `--target/-t` `--print-state` `--limit/-n` `--store` `--config` |
 | `assay init` | `assay_init` | Write an audit. | `--force` |
 | `assay inventory` | `assay_inventory` | What every model in this project actually IS. | `--target/-t` `--model/-m` `--store` `--json` `--config` `--html` `--write` `--include-unadjudicated` `--limit/-n` `--dialect` |
-| `assay mcp` | `assay_mcp` | Serve assay as tools an agent can call instead of reading your SQL. | `--target/-t` `--store` |
+| `assay mcp` | `assay_mcp` | Serve assay as tools an agent can call instead of reading your SQL. | `--target/-t` `--store` `--handbacks` `--verdicts-only` |
 | `assay onboard` | `assay_onboard` | One command for a project assay has never seen. | `--target/-t` `--store` `--config` `--agent` `--compile` `--dbt/--dbt-bin` `--profiles-dir` `--judge` `--judge-limit` `--dialect` |
 | `assay page <out>` | `assay_page` | Everything assay knows about this warehouse, as one file you can open. | `--target/-t` `--store` `--config` `--dialect` `--plain` `--data` `--from` `--form` `--monitoring` |
 | `assay patch <out_dir>` | `assay_patch` | Write the uniqueness tests assay can prove will pass. | `--target/-t` `--store` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--dry-run` `--dialect` `--worth-testing` `--limit/-n` `--json` |
@@ -516,9 +516,10 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay prune` | `assay_prune` | Drop old runs from the tables a parser can regenerate. | `--keep/-k` `--store` `--dry-run` |
 | `assay read` | `assay_read` | Read every unruled review card once, by the judged tier, into a file a person checks. | `--out/-o` `--target/-t` `--store` `--config` `--select/-s` `--check` `--limit/-n` `--dry-run` `--dialect` |
 | `assay regress` | `assay_regress` | Re-ask every question a person already agreed with, and report what moved. | `--target/-t` `--store` `--config` `--family/-f` |
-| `assay review` | `assay_review` | List judgments nobody has ruled on, or record a verdict. | `--store` `--interactive/-i` `--from-labels` `--target/-t` `--dialect` `--limit/-n` `--subject` `--question` `--verdict` `--finding` `--until` `--correction` `--note` `--by` `--config` `--emit` `--load` `--report` `--monitoring` `--apply` `--reads` `--repair` |
+| `assay review` | `assay_review` | List judgments nobody has ruled on, or record a verdict. | `--store` `--interactive/-i` `--from-labels` `--target/-t` `--dialect` `--limit/-n` `--subject` `--question` `--verdict` `--finding` `--until` `--correction` `--note` `--by` `--config` `--emit` `--load` `--report` `--monitoring` `--apply` `--verdicts-only` `--handbacks` `--reads` `--repair` |
 | `assay scan` | `assay_scan` | Read the project and report what can and cannot be audited. | `--target/-t` `--dialect` |
 | `assay semantics` | `assay_semantics` | Why is that filter there, and does the description still describe the code? | `--target/-t` `--select/-s` `--families` `--print-state` `--limit/-n` `--store` `--config` `--dry-run` |
+| `assay serve` | `assay_serve` | The report and the review form over http, and handbacks into the store without a terminal. | `--pages` `--handbacks` `--store` `--config` `--target/-t` `--monitoring` `--host` `--port` |
 | `assay skill <which>` | `assay_skill` | Emit an agent procedure. | `--write` |
 | `assay stale` | `assay_stale` | Judged answers that are about SQL which has since changed. | `--target/-t` `--store` `--config` `--dialect` `--exact` `--cost` `--limit/-n` `--json` |
 | `assay suggest` | `assay_suggest` | What this project should configure, drawn from what the checks actually found. | `--target/-t` `--config` `--store` `--section` `--limit/-n` `--out` `--json` |

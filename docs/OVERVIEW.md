@@ -325,6 +325,22 @@ measured on a real 253-line file: 53 comment lines, identical before and after. 
 place unambiguously is refused with the YAML to paste, because a config editor that writes
 something approximately where it belongs is worse than one that says it could not.
 
+**On a server, `assay serve`.** Opened from disk the form can only download its handback, and a
+browser cannot save into a chosen folder, so on a box nothing could pick the file up. `assay serve
+--pages <dir>` serves the report and the form that the scheduled run already built. Served, the
+form's button sends the handback to the server, which keeps it in the handback folder; the
+`/handbacks` page previews each one, takes uploads of handbacks made elsewhere, and applies them.
+Applying records the **verdicts only**: the config section is refused and listed, because a
+server's `audit.yml` comes from git. If a scheduled run holds the store, the handback waits and is
+retried every minute. With `--target`, the pages are rebuilt after each apply. uvicorn serves it
+and Starlette routes it (`pip install 'dbt-assay[serve]'`; the `mcp` extra brings both). There is
+no authentication, so bind `--host` to an address only trusted people can reach, such as a tailnet.
+
+`assay review --load --verdicts-only` and `load_handback(verdicts_only=True)` do the same from a
+terminal or an agent. `--load` with no path, and `load_handback()` with none, take the newest
+`handback*.json` in the handback folder: `--handbacks`, then `review.handbacks` in `audit.yml`,
+then `~/Downloads`.
+
 It writes `vocab`, `explanations` and `waivers` and nothing else. Gating thresholds want the
 measured agreement rate in front of you, and `assay effectiveness` is that surface.
 
