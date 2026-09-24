@@ -1,3 +1,12 @@
+## Next: the premise ledger, four gaps, and Lean (NOT built yet)
+
+Full spec: `docs/SPEC_LEDGER_AND_PROOF.md` (agreed 2026-09-24). Build order is at its end: ledger
+core, declared keys joined to test results, suppressions registering premises, ledger surfaces,
+fixed_finding_returned, float_sum_is_not_reproducible, Snowflake incremental checks, then Lean in
+three phases (proven rules in CI, `assay prove` certificates, agent-written proofs checked over MCP).
+
+---
+
 # Build queue for 0.51, from FIELD_REPORT section 25 — BUILT. Do not build from this file.
 
 Every item below landed on one branch, one commit each (see `docs/FIELD_NOTES.md`, "Field report
