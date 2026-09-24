@@ -1394,6 +1394,7 @@ def test_config_is_a_navigator_and_policy_is_data_not_a_repr():
 def test_a_run_says_when_it_started():
     """The runs list had a "started" column that was empty on every row: never exported."""
     import inspect
+
     from dbt_assay import explore
     src = inspect.getsource(explore._runs)
     assert '"started_at")' in src and "strftime(started_at" in src
