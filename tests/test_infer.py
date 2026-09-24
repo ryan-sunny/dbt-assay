@@ -21,3 +21,29 @@ def test_columns_are_derived_and_carry_their_provenance(project_dir):
 def test_a_missing_catalog_is_not_an_error(project_dir):
     sch = Schema.load(Project.load(project_dir), project_dir)
     assert sch.catalog_present is False
+
+
+def test_a_distinct_on_in_the_final_select_is_the_grain_and_one_in_a_lookup_is_not():
+    import sqlglot
+
+    from dbt_assay.parse import _final_dedupe
+    final = ("with a as (select distinct on (kind, id) kind, id, x from t order by kind, id) "
+             "select * from a")
+    lookup = ("with l as (select distinct on (code) code, label from lk) "
+              "select t.id, l.label from t join l on l.code = t.code")
+    assert _final_dedupe(sqlglot.parse_one(final, read="duckdb")) == ("distinct_on", ["kind", "id"])
+    assert _final_dedupe(sqlglot.parse_one(lookup, read="duckdb")) == ("", [])
+
+
+def test_a_group_by_two_ctes_down_is_the_grain():
+    import sqlglot
+
+    from dbt_assay.parse import _final_dedupe
+    sql = ("with o as (select owner_id, count(*) n from t group by owner_id), "
+           "c as (select * from o) select owner_id, n from c")
+    assert _final_dedupe(sqlglot.parse_one(sql, read="duckdb")) == ("group_by", ["owner_id"])
+
+
+def test_a_loader_row_hash_is_never_a_grain():
+    from dbt_assay.contracts import LOADER_ROW_IDS
+    assert "_dlt_id" in LOADER_ROW_IDS

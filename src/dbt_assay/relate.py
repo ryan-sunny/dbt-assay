@@ -15,6 +15,7 @@ the chain reviews clean on its own. Nothing else in the dbt ecosystem looks for 
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -89,6 +90,17 @@ def declared_keys(project) -> dict[str, list[str]]:
                 keys[t.tests_model] = [c.lower() for c in cols]
         elif t.kind == "unique" and t.column and t.tests_model not in keys:
             keys[t.tests_model] = [t.column.lower()]
+    # *** AND THE KEY dbt ITSELF MERGES ON. *** An incremental model's `config.unique_key` is the
+    # key dbt upserts by -- as authoritative as a test, and never read. Without it,
+    # `water_source_history`, one row per source PER DAY, inherited its parent's one-per-source key.
+    for uid, n in ((project.raw or {}).get("nodes") or {}).items():
+        if uid in keys or n.get("resource_type") != "model":
+            continue
+        uk = (n.get("config") or {}).get("unique_key")
+        cols = [uk] if isinstance(uk, str) else list(uk or [])
+        cols = [str(c).strip().lower() for c in cols if str(c).strip()]
+        if cols and all(re.fullmatch(r"[a-z_][a-z0-9_]*", c) for c in cols):
+            keys[uid] = cols
     return keys
 
 

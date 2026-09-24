@@ -168,8 +168,32 @@ def candidates(uid: str, project, digests: dict[str, Digest], schema,
                 why += f", renamed on the way out: {', '.join(renamed)}"
             return GrainCandidate(cols, "qualify_dedupe", why)
 
+    if d.final_group_by and not d.group_by_columns:
+        alias = {k.lower(): v for k, v in (d.alias_of or {}).items()}
+        return GrainCandidate([alias.get(c.lower(), c) for c in d.final_group_by], "group_by",
+                              "the model reads through a CTE that aggregates to these columns")
+    if d.distinct_on:
+        # *** `DISTINCT ON` STATES THE GRAIN AND WAS NEVER READ. *** Same rename rule as a qualify
+        # dedupe: the name a consumer can see.
+        alias = {k.lower(): v for k, v in (d.alias_of or {}).items()}
+        return GrainCandidate([alias.get(c.lower(), c) for c in d.distinct_on], "distinct_on",
+                              "the model keeps one row per its DISTINCT ON columns")
+
     drivers = [x for x in (schema.uid_of.get(r.lower()) for r in d.from_relations) if x]
     if not drivers:
+        return None
+    if len(set(drivers)) > 1 and not d.joins:
+        # *** SEVERAL RELATIONS, NO JOIN BETWEEN THEM, AND THE FIRST ONE WITH A KEY WON. ***
+        # With more than one candidate driver the loop below took whichever came first in the
+        # list, so a child's grain changed whenever an unrelated upstream grain did -- measured
+        # when the union fix below moved 40 grains at once. Code cannot say which relation drives
+        # the rows here, and a guessed key is worse than an unresolved one.
+        return None
+    if len(d.union_members or ()) >= 2:
+        # *** ONE ARM'S KEY IS NOT THE KEY OF A UNION. *** Reported from the field:
+        # `int_water_section_match` unions wells, rights, monitoring wells and structures, and its
+        # grain came back as the monitoring wells' `well_id` -- the first driver that had a key,
+        # which is the first-match bug this tool checks other people's SQL for.
         return None
     observed = observed or {}
     for j in d.joins:
@@ -192,7 +216,8 @@ def candidates(uid: str, project, digests: dict[str, Digest], schema,
         # probe exists: a judgment cannot pick an option that was never on the list.
         rel = (schema.relation.get(drv) or "").lower()
         seen = observed.get(rel) or {}
-        uniques = sorted(col for col, o in seen.items() if o.status == "unique")
+        uniques = sorted(col for col, o in seen.items()
+                         if o.status == "unique" and col.lower() not in LOADER_ROW_IDS)
         if len(uniques) == 1:
             return GrainCandidate(uniques, "from_probe",
                                   f"observed unique in {project.name_of(drv)} "
@@ -234,6 +259,14 @@ def _in_this_models_own_names(c: GrainCandidate, uid: str, digests, schema) -> G
             cols.append(col)
             missing.append(col)
     return GrainCandidate(cols, c.route, c.reason, missing)
+
+
+# *** A LOADER'S PER-ROW HASH IS UNIQUE BY CONSTRUCTION AND IS NEVER WHAT ONE ROW IS. ***
+# Reported from the field: `check` took dlt's `_dlt_id` as the grain of 8 models -- the probe
+# counted it unique, which it always is -- and raised 8 `identifier_outside_grain` findings that
+# are not real, while MCP `contract` said `well_id`. A column the loader stamps on every row says
+# which row it is, never which THING.
+LOADER_ROW_IDS = frozenset({"_dlt_id", "_airbyte_raw_id", "_airbyte_ab_id", "_fivetran_id"})
 
 
 def propose_all(project, digests, schema, declared, observed=None) -> dict[str, GrainCandidate]:

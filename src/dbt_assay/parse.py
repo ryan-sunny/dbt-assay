@@ -99,6 +99,43 @@ def _bbox_corners(tree) -> dict:
     return out
 
 
+def _final_dedupe(tree) -> tuple[str, list]:
+    """("distinct_on" | "group_by", columns) that decide the MODEL's rows, or ("", []).
+
+    Only the outermost select, or the chain of CTEs it reads straight through with no join. A
+    DISTINCT ON in a lookup CTE says what one row of the LOOKUP is -- taking the first one found
+    anywhere gave `water_source_history` a grain of `source_table` -- and a GROUP BY two CTEs down
+    is the grain of `mart_owner_portfolios`, which inherited its driver's key through it.
+    """
+    sel = tree if isinstance(tree, exp.Select) else None
+    for depth in range(4):
+        if sel is None:
+            return "", []
+        dist = sel.args.get("distinct")
+        on = dist.args.get("on") if dist is not None else None
+        if on is not None:
+            return "distinct_on", [c.name for c in on.find_all(exp.Column)]
+        grp = sel.args.get("group")
+        if grp is not None and depth == 0:
+            return "", []                 # the top level's GROUP BY has its own route
+        if grp is not None:
+            cols = [c.name for e in grp.expressions for c in ([e] if isinstance(e, exp.Column)
+                                                              else [])]
+            return ("group_by", cols) if cols and len(cols) == len(grp.expressions) else ("", [])
+        frm = _from_of(sel)
+        if sel.args.get("joins") or frm is None:
+            return "", []
+        src = frm.this
+        if not isinstance(src, exp.Table):
+            return "", []
+        # sqlglot 30 spells these `from_` and `with_`; both spellings are read.
+        with_ = tree.args.get("with_") or tree.args.get("with") or exp.With()
+        ctes = {c.alias_or_name.lower(): c.this for c in with_.expressions}
+        sel = ctes.get(src.name.lower())
+        sel = sel if isinstance(sel, exp.Select) else None
+    return "", []
+
+
 def _union_members(tree, dialect: str) -> set:
     """Relations that appear inside a UNION arm of this model.
 
@@ -386,6 +423,11 @@ class Digest:
     # warehouse were this: `dim_business` unions eleven staging feeds and was reported
     # `silently_multiplied` at 16 marts. Readable from the AST, no judgment, no call.
     union_members: set = field(default_factory=set)
+    # `SELECT DISTINCT ON (a, b)`: one row per those columns, stated as plainly as a qualify dedupe.
+    distinct_on: list = field(default_factory=list)
+    # A GROUP BY on the chain of plain CTE reads the final select comes through, when the top
+    # level has none: the model is one row per these, whatever its drivers were.
+    final_group_by: list = field(default_factory=list)
     # *** AN ENVELOPE BUILT FROM STORED BOUNDS IS A TESSELLATION, NOT A RADIUS. ***
     # `ST_MakeEnvelope(cx0, cy0, cx1, cy1)` from columns on the same row IS the intended geometry
     # -- a cell of a grid. `ST_MakeEnvelope(lon-0.02, lat-0.02, lon+0.02, lat+0.02)` approximates a
@@ -566,6 +608,11 @@ def _extract(tree, name: str, dialect: str) -> Digest:
     # any of these marks a deliberate, correct pattern as a defect.
     d.pre_aggregated = _pre_aggregated(tree, dialect)
     d.union_members = _union_members(tree, dialect)
+    kind, cols = _final_dedupe(tree)
+    if kind == "distinct_on":
+        d.distinct_on = cols
+    elif kind == "group_by":
+        d.final_group_by = cols
     d.bbox_corners = _bbox_corners(tree)
     d.absorbs_fanout = (
         any(sel.args.get("distinct") for sel in tree.find_all(exp.Select))
