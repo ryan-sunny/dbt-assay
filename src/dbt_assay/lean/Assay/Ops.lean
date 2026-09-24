@@ -41,12 +41,17 @@ def distinctKeys (cols : List String) : Table → List Key
   | r :: rs => let ks := distinctKeys cols rs
                if keyOf cols r ∈ ks then ks else keyOf cols r :: ks
 
-/-- `group by g`: one row per distinct key, carrying the key. Aggregates are not modelled: the
-rules are about how many rows there are and what identifies them. -/
+/-- `group by g`: one row per distinct key, carrying the key (every other column NULL).
+Aggregates are not modelled: the rules are about how many rows there are and what identifies
+them. The row is built from the group's first member, projected onto `g`. -/
 def groupBy (g : List String) (t : Table) : Table :=
-  (distinctKeys g t).map (fun k => fun c => match g.idxOf? c with
-    | some i => k.getD i none
-    | none => none)
+  (distinctKeys g t).filterMap
+    (fun k => (t.find? (fun r => decide (keyOf g r = k))).map (project g))
+
+/-- Merge a batch into a table on a key, as `merge` / `delete+insert` do: a table row whose key
+the batch carries is replaced; every batch row is inserted. -/
+def mergeByKey (k : List String) (T B : Table) : Table :=
+  T.filter (fun t => !(B.any (fun b => decide (keyOf k b = keyOf k t)))) ++ B
 
 /-- A total order on sort keys, given as a Boolean `≤` with the laws a sort needs. The engine's
 own order on the values (NULLs first or last included) is one of these. -/
