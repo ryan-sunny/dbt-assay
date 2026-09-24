@@ -237,8 +237,41 @@ def source_freshness_stale(project, target_dir=None) -> list[Finding]:
     return out
 
 
+def exposure_undeclared(project, _digests=None) -> list[Finding]:
+    """A model of this project that no model reads and no exposure says what does.
+
+    *** THE CANDIDATES ARE EVIDENCE; THE DECLARATION IS THE PROJECT'S. ***
+    A model nothing inside dbt reads is either dead or read from outside -- a dashboard, an app, a
+    report -- and an exposure is where a project writes the second down. assay can find the
+    candidates from the graph. It cannot know the name, the owner or the URL, and does not propose
+    them: the same rule as the empty `means:`. Absence of a declaration is not a defect, so this is
+    coverage, shaped like `column_has_no_description` (25.24c).
+
+    Silent where `meta.read_by` already names the reader, as it is for a source.
+    """
+    out = []
+    for uid, m in sorted(project.models.items()):
+        if m.is_installed_package or m.children or project.exposures_of(uid):
+            continue
+        if (m.meta or {}).get(READ_BY):
+            continue
+        out.append(Finding(
+            check="exposure_undeclared", subject=uid, subject_name=m.name, file=m.path,
+            summary=f"no model reads `{m.name}` and no exposure says what does",
+            detail=("Nothing inside this dbt project reads this model, so either it is dead or "
+                    "something outside the warehouse reads it -- a dashboard, an app, a report. "
+                    "An `exposures:` entry naming it under `depends_on` is where the project says "
+                    "which, and it is what lets assay rank a finding by the product it reaches "
+                    "rather than by how many marts sit downstream.\n\n"
+                    "The name, the owner and the URL are yours to write; assay does not guess them. "
+                    "If the reader is a script rather than a product, `meta: {read_by: path}` on the "
+                    "model says so and this stops reporting it."),
+            base=1, evidence={"layer": m.layer}))
+    return out
+
+
 SOURCE_CHECKS = (source_reaches_nothing, source_only_a_test_reads, source_freshness_undeclared,
-                 seed_reaches_nothing)
+                 seed_reaches_nothing, exposure_undeclared)
 
 # *** THE COMPLETENESS REPORT SELECTED ITS MEMBERS BY NAME PREFIX. ***
 # `f.check.startswith("source_")`, which is a hand-written membership rule standing in for the

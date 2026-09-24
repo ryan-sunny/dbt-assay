@@ -63,8 +63,10 @@ again once it finishes. Never conclude the tools are broken from a lock.
    Fifteen lines instead of two hundred of SQL. Its `health` says what is already decided: open
    findings and who ruled on each, what is waived or accepted (a decision already made -- do not
    re-litigate it), and whether the grain was counted in the data or only inferred.
-2. `blast_radius(model)` — who reads it, and how many marts are downstream. If this number is
-   large, say so before you change anything.
+2. `blast_radius(model)` — who reads it, how many marts are downstream, and which of the
+   project's `exposures` (the dashboards, apps and reports it declares) the model feeds. If it
+   reaches one, name it before you change anything: "this feeds the paid report" is the sentence
+   a person needs, and "24 marts" is not.
 3. `claims(model)` — **what this project SAYS this model does**, sentence by sentence, with what
    its own code did to each claim. Reading the SQL tells you what the code does; this tells you
    what a person asserted it does, which is the thing your edit is most likely to quietly break.

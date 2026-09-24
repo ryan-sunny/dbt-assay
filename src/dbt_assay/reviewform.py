@@ -106,8 +106,9 @@ def cards(findings, store, project_root, reads: dict | None = None) -> tuple[lis
         c = by_pair.setdefault(key, {
             "key": key, "subject": str(f.subject), "model": f.subject_name,
             "question": str(f.check), "file": f.file or "", "marts": 0, "descendants": 0,
-            "findings": [], "agent": None, "read": None})
+            "exposures": [], "findings": [], "agent": None, "read": None})
         c["marts"] = max(c["marts"], int(f.marts or 0))
+        c["exposures"] = sorted(set(c["exposures"]) | set(getattr(f, "exposures", None) or []))
         c["descendants"] = max(c["descendants"], int(f.descendants or 0))
         ev = f.evidence or {}
         c["findings"].append({
@@ -163,9 +164,10 @@ def cards(findings, store, project_root, reads: dict | None = None) -> tuple[lis
             fd["detail"] = fd["detail"][:1200]
         c["findings"].sort(key=lambda d: d["id"])
 
-    # A wrong verdict costs the most where the most marts are downstream. Ties break on the key,
-    # so two runs over one store produce one order.
-    out = sorted(by_pair.values(), key=lambda c: (-c["marts"], -c["descendants"], c["key"]))
+    # A wrong verdict costs the most where it reaches a product, then where the most marts are
+    # downstream. Ties break on the key, so two runs over one store produce one order.
+    out = sorted(by_pair.values(), key=lambda c: (-len(c["exposures"]), -c["marts"],
+                                                  -c["descendants"], c["key"]))
     return out, sql
 
 
@@ -757,6 +759,7 @@ input[type=text]:focus{outline:none;border-bottom-color:var(--ink)}
 .hd b{font-family:Fell,Georgia,serif;font-size:18px;font-weight:400}
 .tag{font-family:Fell,Georgia,serif;font-size:11.5px;color:var(--ash);
 border:1px solid var(--rule);padding:0 6px}
+.tag.reach{color:var(--ink);border-color:var(--ink)}
 .lbl{font-family:Fell,Georgia,serif;font-size:12px;letter-spacing:.09em;color:var(--faint);
 text-transform:uppercase;margin:12px 0 3px}
 .q{border-left:2px solid var(--rule);padding-left:12px;margin:0 0 4px}
@@ -839,6 +842,10 @@ function card(c) {
   box.append(el('div', {class: 'hd'}, [
     el('b', {text: c.model}),
     el('span', {class: 'tag', text: c.question}),
+    /* What the project says this feeds, ahead of the layer count: "reaches the Water Table
+       report" is a different sentence to rule under than "24 marts". */
+    ...((c.exposures || []).length
+        ? [el('span', {class: 'tag reach', text: 'reaches ' + c.exposures.join(', ')})] : []),
     el('span', {class: 'tag', text: num(c.marts) + ' marts'}),
     el('span', {class: 'tag', text: c.file}),
   ]));

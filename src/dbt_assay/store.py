@@ -327,7 +327,9 @@ class Store:
         # `until`: an `accept` stops suppressing on this date, the way a waiver's expiry does.
         "adjudications": [("source", "varchar"), ("decision_key", "varchar"),
                           ("until", "varchar")],
-        "findings": [("finding_id", "varchar")],
+        # `exposures`: what outside the warehouse a finding reaches, as a JSON list of exposure
+        # names, beside `descendants` and `marts`, which were the only reach there was.
+        "findings": [("finding_id", "varchar"), ("exposures", "varchar")],
         "model_decisions": [("input_tokens", "integer"), ("context", "varchar"),
                             ("file_checksum", "varchar"), ("state_builder", "varchar"),
                             ("state_inputs", "varchar")],
@@ -829,7 +831,7 @@ class Store:
     def write_findings(self, run_id: str, findings) -> None:
         rows = [[run_id, f.check, f.subject, f.subject_name, f.file, f.summary, f.detail,
                  f.base, f.weight, f.descendants, f.marts, json.dumps(f.evidence, default=str),
-                 f.id]
+                 f.id, json.dumps(getattr(f, "exposures", None) or [])]
                 for f in findings]
         if rows:
             # Named, never positional: a migration appends at the END and a positional insert
@@ -837,8 +839,8 @@ class Store:
             self.con.executemany(
                 """insert or replace into findings
                    (run_id, check_name, subject, subject_name, file, summary, detail,
-                    base, weight, descendants, marts, evidence, finding_id)
-                   values (?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
+                    base, weight, descendants, marts, evidence, finding_id, exposures)
+                   values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
 
     def write_edge_facts(self, run_id: str, facts) -> None:
         rows = [[run_id, f.parent, f.child, f.parent_name, f.child_name,

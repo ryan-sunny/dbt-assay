@@ -159,8 +159,23 @@ def all_findings(project, digests, schema, entries=None, *,
         except Exception:                                        # noqa: BLE001
             # A store too old to hold a series still produces every other finding. The comparison
             # is absent, which is honest: `assay probe` twice is what makes it possible.
-            return _distinct(fs)
-    return _distinct(fs)
+            return _distinct(_reach(project, fs))
+    return _distinct(_reach(project, fs))
+
+
+def _reach(project, fs: list) -> list:
+    """Stamp each finding with the exposures its subject reaches, in the ONE stream.
+
+    Four producers copy `descendants` and `marts` onto their findings themselves. Exposures are
+    stamped here instead, once, so no producer can forget -- and before `_distinct`, whose order is
+    by weight and whose weight now counts them.
+    """
+    if not getattr(project, "exposures", None):
+        return fs
+    for f in fs:
+        if f.subject:
+            f.exposures = [e.title for e in project.exposures_of(f.subject)]
+    return fs
 
 
 def _distinct(fs: list) -> list:
@@ -211,6 +226,9 @@ def contract_of(state: LiveState, model: str) -> dict | None:
         "reads": e.reads,
         "descendants": e.descendants,
         "marts_downstream": e.marts,
+        # What outside the warehouse this model feeds, by the project's own exposures: the reason
+        # an edit here is or is not somebody's product breaking.
+        "exposures": list(getattr(e, "exposures", []) or []),
         "description": inventory.describe(e),
         "columns": [
             {"name": c.name, "role": c.role.value if c.role else None,

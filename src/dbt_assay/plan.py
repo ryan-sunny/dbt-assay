@@ -105,6 +105,11 @@ SHAPES: dict[str, tuple[str, str]] = {
         "delete the seed, or wire it up",
         (        "Nothing reads it. Either it is dead and should go, or something was meant to `ref` it "
         "and does not.")),
+    "exposure_undeclared": (
+        "declare the exposure, or retire the model",
+        ("Nothing in the project reads it. If a dashboard, app or report does, add an `exposures:` "
+         "entry with this model under `depends_on` -- the name, owner and URL are yours to write. "
+         "If nothing does, it is dead and should go.")),
     "source_reaches_nothing": (
         "delete the source, or wire it up",
         (        "Declared and unread. The same choice as a dead seed.")),
@@ -220,6 +225,7 @@ def build(findings, store) -> list[dict]:
         row = {
             "finding": f.id, "check": f.check, "model": f.subject_name, "file": f.file,
             "summary": f.summary, "marts": f.marts, "descendants": f.descendants,
+            "exposures": list(getattr(f, "exposures", None) or []),
             "agreed_by": who, "agreed_at": str(when)[:10] if when else "",
             "their_reason": note,
             "fix_shape": shape, "how": how,
@@ -233,8 +239,9 @@ def build(findings, store) -> list[dict]:
             row["how"] = (f"`{f.check}` has no fix shape in assay's table, so this one needs "
                           f"reading. That is a gap in the tool, not a judgment about the model.")
         out.append(row)
-    # Highest blast radius first, ties on the id so two runs agree.
-    return sorted(out, key=lambda r: (-r["marts"], -r["descendants"], r["finding"]))
+    # What reaches a product first, then the widest blast radius, ties on the id so two runs agree.
+    return sorted(out, key=lambda r: (-len(r["exposures"]), -r["marts"], -r["descendants"],
+                                      r["finding"]))
 
 
 def write(rows: list[dict], path: str | Path) -> Path:

@@ -1023,7 +1023,8 @@ function nodeCard(node, name, e) {
       ['grain', fact(m.grain)],
       ['reads', String((EDGES_IN[m.uid] || []).length)],
       ['read by', String((EDGES_OUT[m.uid] || []).length)],
-      ['reach', m.marts + ' mart(s)'],
+      ['reach', (m.exposures && m.exposures.length ? 'reaches ' + m.exposures.join(', ') + '; '
+                 : '') + m.marts + ' mart(s)'],
       ['findings', el('span', {class: m.findings.length ? 'bad' : 'tot',
                                text: String(m.findings.length)})],
       ['claims', String(m.claims.length)],
@@ -1217,6 +1218,10 @@ function modelsTab(host) {
   const list = grid(M, [
     {key: 'name', label: 'model', mono: 1, val: m => m.name},
     {key: 'layer', label: 'layer', val: m => m.layer},
+    {key: 'feeds', label: 'feeds', n: 1, val: m => (m.exposures || []).length,
+     cell: m => el('span', {class: (m.exposures || []).length ? '' : 'tot',
+                            title: (m.exposures || []).join(', '),
+                            text: num((m.exposures || []).length)})},
     {key: 'marts', label: 'marts', n: 1, val: m => m.marts},
     {key: 'findings', label: 'find', n: 1, val: m => m.findings.length,
      cell: m => el('span', {class: m.findings.length ? 'bad' : 'tot',
@@ -1240,6 +1245,11 @@ function modelsTab(host) {
         : el('span', {class: 'tot', text: 'nothing settles it'})],
       ['materialized', m.materialized],
       ['reach', el('span', {text: m.marts + ' mart(s), ' + m.descendants + ' descendant(s)'})],
+      /* What outside the warehouse this model feeds, in the project's own words. Absent is not
+         "nothing reads it": it is "no exposure in the yml says so". */
+      ['feeds', (m.exposures || []).length
+        ? el('span', {text: m.exposures.join(', ')})
+        : el('span', {class: 'tot', text: 'no exposure declares it'})],
     ])));
 
     const colCols = [
@@ -1522,6 +1532,10 @@ function findingsTab(host) {
     {key: 'model', label: 'model', mono: 1, val: f => f.model, cell: f => link(f.model)},
     {key: 'w', label: 'weight', n: 1, val: f => f.weight,
      cell: f => el('span', {text: f.weight.toFixed(1)})},
+    {key: 'feeds', label: 'feeds', n: 1, val: f => (f.exposures || []).length,
+     cell: f => el('span', {class: (f.exposures || []).length ? '' : 'tot',
+                            title: (f.exposures || []).join(', '),
+                            text: num((f.exposures || []).length)})},
     {key: 'marts', label: 'marts', n: 1, val: f => f.marts},
   ], {placeholder: 'filter findings...', scroll: 1, sort: 'w', dir: -1, pick: f => show(f),
       where: f => !only || f.check === only, controls: [pickCheck],
@@ -1537,6 +1551,8 @@ function findingsTab(host) {
       section('what it means', md(f.detail || '')),
       section('severity', kv([
         ['weight', String(f.weight)],
+        ['reaches', (f.exposures || []).length ? f.exposures.join(', ')
+          : el('span', {class: 'tot', text: 'no exposure'})],
         ['marts downstream', String(f.marts)],
         ['descendants', String(f.descendants)],
         ['rests on', f.rests_on

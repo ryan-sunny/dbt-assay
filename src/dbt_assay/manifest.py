@@ -116,6 +116,30 @@ class Source:
     children: list[str] = field(default_factory=list)
 
 
+@dataclass
+class Exposure:
+    """Something OUTSIDE the warehouse that depends on named models: a dashboard, an app, a report.
+
+    *** THE ONLY PLACE A PROJECT WRITES DOWN WHAT ITS MODELS ARE FOR. ***
+    Everything assay ranked by was a proxy: `marts` is a count of downstream models that happen to
+    sit in a layer. An exposure is the project saying "these feed the paid report", which is a
+    different sentence to put in front of somebody deciding what to fix first (25.23d).
+    """
+    unique_id: str
+    name: str
+    label: str
+    type: str
+    owner: str
+    url: str
+    maturity: str
+    depends_on: list[str]
+    path: str
+
+    @property
+    def title(self) -> str:
+        return self.label or self.name
+
+
 class Project:
     """A dbt project, read from its manifest and its compiled output."""
 
@@ -132,6 +156,8 @@ class Project:
         self.models: dict[str, Model] = {}
         self.sources: dict[str, Source] = {}
         self.tests: list[Test] = []
+        self.exposures: dict[str, Exposure] = {}
+        self._exposed: dict[str, set] = {}
         self._build()
 
     # ---------- loading ----------
@@ -206,7 +232,41 @@ class Project:
         for uid, s in self.sources.items():
             s.children = [c for c in child_map.get(uid, []) if c in self.models]
 
+        self._attach_exposures()
         self._attach_compiled()
+
+    def _attach_exposures(self) -> None:
+        """Each exposure, and every model and source upstream of what it names.
+
+        A model an exposure names directly reaches it, and so does everything that model is built
+        from: `stg_blm_plss_sections` reaches the report through the marts it feeds, which is the
+        whole point of saying so.
+        """
+        for uid, e in (self.raw.get("exposures") or {}).items():
+            owner = e.get("owner") or {}
+            self.exposures[uid] = Exposure(
+                unique_id=uid, name=e.get("name", ""), label=e.get("label", "") or "",
+                type=e.get("type", "") or "",
+                owner=(owner.get("name") or owner.get("email") or "") if isinstance(owner, dict)
+                else str(owner or ""),
+                url=e.get("url", "") or "", maturity=e.get("maturity", "") or "",
+                depends_on=list((e.get("depends_on") or {}).get("nodes") or []),
+                path=e.get("original_file_path", "") or "")
+        for uid, e in self.exposures.items():
+            stack, seen = [d for d in e.depends_on if d in self.models or d in self.sources], set()
+            while stack:
+                n = stack.pop()
+                if n in seen:
+                    continue
+                seen.add(n)
+                self._exposed.setdefault(n, set()).add(uid)
+                if n in self.models:
+                    stack.extend(self.models[n].parents)
+
+    def exposures_of(self, uid: str) -> list[Exposure]:
+        """The exposures this model or source reaches, directly or through what it feeds."""
+        return sorted((self.exposures[x] for x in self._exposed.get(uid, ())),
+                      key=lambda x: x.title)
 
     def _raw_sql(self, m: Model) -> str | None:
         if not self.project_root:
@@ -332,6 +392,7 @@ class Project:
         return {
             "descendants": len(d),
             "marts": sum(1 for x in d if self.models[x].layer == "marts"),
+            "exposures": [e.title for e in self.exposures_of(uid)],
         }
 
     # ---------- coverage ----------

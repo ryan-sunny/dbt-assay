@@ -265,6 +265,10 @@ class Backend:
             return {"error": f"no model named {model}"}
         b = st.project.blast_radius(uid)
         return {"model": model, "descendants": b["descendants"], "marts": b["marts"],
+                # The project's own declaration of what outside the warehouse this feeds. Empty
+                # means no exposure reaches it, which is a fact about the project's yml, not a
+                # proof that nothing reads the table.
+                "exposures": b["exposures"],
                 "consumers": [st.project.name_of(x) for x in st.project.models[uid].children]}
 
     def findings(self, model: str | None = None, limit: int = 20, check: str = "") -> dict:
@@ -292,6 +296,7 @@ class Backend:
                              "summary": f.summary, "detail": f.detail,
                              "evidence": f.evidence or {},
                              "downstream": f.descendants, "marts": f.marts,
+                             "exposures": f.exposures,
                              "weight": round(f.weight, 2)} for f in fs]}
         # *** A SURFACE THAT SHOWS A SUBSET AND DOES NOT SAY SO IS THE SAME BUG AS A SCANNER
         # THAT MATCHES NOTHING AND REPORTS A PASS. ***
@@ -1098,7 +1103,8 @@ TOOLS = [
                   "its HEALTH: open findings with who ruled on them, what is waived or "
                   "accepted, and whether the grain was ever counted. Call it before an edit.")),
     ("lineage", "Follow a column back through the DAG to the hop that produced its value."),
-    ("blast_radius", "Who consumes this model, and how many marts are downstream."),
+    ("blast_radius", ("Who consumes this model, how many marts are downstream, and which of the "
+                      "project's exposures -- dashboards, apps, reports -- it reaches.")),
     ("findings", ("Contradictions assay currently sees, optionally for one model or one `check`. "
                   "It reports the TOTAL and a per-check breakdown beside what it returns, so a "
                   "limit never hides a whole family from you.")),

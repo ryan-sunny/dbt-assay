@@ -86,6 +86,9 @@ class Finding:
     evidence: dict = field(default_factory=dict)
     descendants: int = 0
     marts: int = 0
+    # What OUTSIDE the warehouse this reaches, by the project's own exposures. Never in the id:
+    # declaring an exposure must not orphan a ruling.
+    exposures: list = field(default_factory=list)
 
     @property
     def id(self) -> str:
@@ -109,8 +112,15 @@ class Finding:
 
     @property
     def weight(self) -> float:
-        """base, lifted by reach. A defect feeding nine marts outranks the same defect on a leaf."""
-        return self.base * (1 + min(self.descendants, 50) / 25 + min(self.marts, 10) / 5)
+        """base, lifted by reach. A defect feeding nine marts outranks the same defect on a leaf.
+
+        *** WHAT REACHES A PRODUCT OUTRANKS WHAT REACHES A LAYER. ***
+        An exposure is the project saying a model feeds something outside the warehouse. One is
+        worth more than the whole marts-and-descendants lift (which tops out at 4), so an exposed
+        finding ranks above an unexposed one of the same severity everywhere weight orders a list.
+        """
+        return self.base * (1 + min(self.descendants, 50) / 25 + min(self.marts, 10) / 5
+                            + 5 * min(len(self.exposures or ()), 2))
 
 
 # --------------------------------------------------------------------------- tests that can't fail

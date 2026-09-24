@@ -167,6 +167,7 @@ Anything that needs the warehouse goes **through your own dbt**, so assay never 
 | `source_freshness_stale` | the project states how current it should be and the last load does not meet it |
 | `hop_drops_most_rows` | a child with no filter, no group by and no collapse that still emits a fraction of the parent. A join that is not matching |
 | `seed_reaches_nothing` | a file you maintain, loaded on every build, that no model and no test reads |
+| `exposure_undeclared` | a model of yours that no model reads and no dbt exposure covers: dead, or read by a dashboard, app or report the project never named. assay proposes the candidate; the exposure's name, owner and URL are yours to write |
 | `key_stopped_holding` | a column that WAS unique in an earlier observation and is not now. The failure that corrupts a warehouse, and it needs two probes to exist |
 | `key_column_started_mattering` | a column that used to be determined by the others and now adds identifying power, so the minimal key has grown |
 | `column_has_no_description` | columns nobody wrote a sentence for, loudest in an ingestion model where there is no upstream to ask. One finding per model, because it is one decision |

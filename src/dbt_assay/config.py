@@ -204,6 +204,10 @@ class QuestionConfig:
     # `min_adjudications` exists because a judgment's error rate is unknown until measured, which
     # is simply not true of "this test cannot fail".
     action: str | None = None            # annotate | queue | fail, for STRUCTURAL findings
+    # *** GATE HARD ON WHAT REACHES A PRODUCT; ANNOTATE THE REST. *** `when: {exposed: true}`
+    # applies the configured action only to findings whose model reaches one of the project's
+    # exposures. Everything else falls back to the default by severity (25.24c).
+    exposed_only: bool = False
 
     def action_for(self, answer: dict | None, adjudications: int,
                    min_adjudications: int, agreement: float | None = None,
@@ -467,13 +471,18 @@ class Config:
             if action and action not in ACTIONS:
                 raise ThresholdError(
                     f"question `{name}`: unknown action `{action}`. Use one of {ACTIONS}.")
-            sel = (q.get("when") or {}).get("select")
+            when = q.get("when") or {}
+            sel = when.get("select")
             if sel:
                 from .selector import validate as _validate
                 _validate(sel)
+            unknown = sorted(set(when) - {"select", "exposed"})
+            if unknown:
+                raise ThresholdError(
+                    f"question `{name}`: `when` takes `select` and `exposed`, not {unknown}.")
             cfg.questions[name] = QuestionConfig(
                 name=name, enabled=q.get("enabled", True),
-                select=sel, act=act, action=action)
+                select=sel, act=act, action=action, exposed_only=bool(when.get("exposed")))
 
         # *** A CONFIG KEY THAT MATCHES NO CHECK CONFIGURES NOTHING, SILENTLY. ***
         # `questions:` is keyed by the CHECK a finding carries, and the verdict floor is counted
@@ -664,6 +673,9 @@ questions:
   # said which ones matter here.
   source_reaches_nothing:      {action: annotate}
   seed_reaches_nothing:        {action: annotate}
+  # A model nothing reads and no exposure covers. Coverage, not a defect: the name, the owner and
+  # the URL of what reads it are yours to declare.
+  exposure_undeclared:         {action: annotate}
   # *** WHAT CHANGED, WHICH NEEDS TWO `assay probe` RUNS TO EXIST AT ALL. ***
   # A key that held last week and does not now is the failure that corrupts a warehouse: every
   # count past the join inflates, nothing errors, and the tests pass because they were written
@@ -684,9 +696,11 @@ questions:
   # produces nothing at all, which is correct -- an absent measurement is not a pass.
   hop_drops_most_rows:         {action: annotate}
   # `when.select` scopes a question. assay errors on syntax it does not understand rather than
-  # silently matching everything.
+  # silently matching everything. `when.exposed: true` applies the action only to findings whose
+  # model reaches one of your dbt exposures -- gate hard on what feeds a product, annotate the rest.
   #  when:
   #    select: "path:models/water+"
+  #    exposed: true
 
   # Keyed by the CHECK a finding carries, which is NOT the question family a verdict is filed
   # under. `assay check --json` prints every check name; `assay config` warns about a key here

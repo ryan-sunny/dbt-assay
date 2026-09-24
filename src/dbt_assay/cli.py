@@ -615,7 +615,8 @@ def check(
             "findings": [{"finding": f.id,
                           "check": f.check, "model": f.subject_name, "file": f.file,
                           "summary": f.summary, "detail": f.detail, "weight": round(f.weight, 2),
-                          "descendants": f.descendants, "marts": f.marts, "evidence": f.evidence}
+                          "descendants": f.descendants, "marts": f.marts,
+                          "exposures": f.exposures, "evidence": f.evidence}
                          for f in findings],
         }, indent=2))
         raise typer.Exit(1 if new_only and findings else 0)
@@ -670,6 +671,9 @@ def check(
             whole_project = not f.subject and not f.subject_name
             reach = ("the whole project" if whole_project else
                      f"{f.descendants} downstream, {f.marts} marts" if f.descendants else "leaf")
+            if f.exposures:
+                # The project's own words for what this feeds, ahead of the layer count.
+                reach = f"reaches {', '.join(f.exposures[:2])}; " + reach
             act = actions.get((f.check, f.subject), "annotate")
             color = {"fail": "red", "queue": "yellow"}.get(act, "dim")
             console.print(f"[bold]{f.subject_name or project.project_name or 'this project'}[/]"
@@ -2224,7 +2228,8 @@ def completeness(
             ("source_only_a_test_reads", "sources only a test reads"),
             ("source_freshness_undeclared", "sources declaring no freshness"),
             ("source_freshness_stale", "sources behind their own freshness"),
-            ("hop_drops_most_rows", "hops that lose most of the parent")):
+            ("hop_drops_most_rows", "hops that lose most of the parent"),
+            ("exposure_undeclared", "models nothing reads and no exposure covers")):
         n = len(buckets.get(check, []))
         t.add_row(label, f"[red]{_n(n)}[/]" if n else "[dim]0[/]",
                   f"[dim]{_COMPLETENESS_MEANING[check]}[/]")
@@ -2264,6 +2269,7 @@ _COMPLETENESS_MEANING = {
                                    "(silent when dbt_project_evaluator is installed)",
     "source_freshness_stale": "the project states how current it should be and it is not",
     "hop_drops_most_rows": "no filter, no group by, no collapse -- a join that is not matching",
+    "exposure_undeclared": "dead, or read from outside: an exposure is where the project says which",
 }
 
 
@@ -4198,7 +4204,8 @@ def plan(
     by = Counter(r["fix_shape"] for r in rows)
     console.print(f"[bold]{len(rows)}[/] agreed finding(s) to fix, highest blast radius first:\n")
     for r in rows[:12]:
-        console.print(f"  [bold]{r['model']}[/] [dim]{r['check']} - {r['marts']} marts[/]")
+        feeds = f" - reaches {', '.join(r['exposures'][:2])}" if r.get("exposures") else ""
+        console.print(f"  [bold]{r['model']}[/] [dim]{r['check']} - {r['marts']} marts{feeds}[/]")
         console.print(f"    [cyan]{r['fix_shape']}[/] - {r['summary'][:90]}")
         if r["their_reason"]:
             console.print(f"    [dim]they said: {r['their_reason'][:110]}[/]")

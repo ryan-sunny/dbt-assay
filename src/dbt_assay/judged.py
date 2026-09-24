@@ -515,6 +515,10 @@ def apply_policy(findings, cfg, store, project=None) -> tuple[list, list]:
                 waived.append((f, f"out of scope for `{q.select}`"))
                 continue
 
+        if q.exposed_only and not getattr(f, "exposures", None):
+            # Configured for what reaches a product, and this does not: the default by severity.
+            kept.append((f, "queue" if f.base >= 3 else "annotate", "not exposed"))
+            continue
         conf = f.evidence.get("confidence")
         judged_answer = {"kind": "noul", "answer": str(conf)} if conf is not None else None
         # *** COUNT ON THE QUESTION, NOT ON THE FINDING. ***

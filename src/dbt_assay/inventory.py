@@ -103,6 +103,7 @@ class ModelEntry:
     columns: list = field(default_factory=list)
     descendants: int = 0
     marts: int = 0
+    exposures: list = field(default_factory=list)   # names; ranking and gating, never state
     reads: list = field(default_factory=list)
     unreadable: bool = False
     # (claim_id, probability) for every claim this model's own code contradicts.
@@ -255,6 +256,7 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
                            reads=[project.name_of(p) for p in m.parents])
         b = project.blast_radius(uid)
         entry.descendants, entry.marts = b["descendants"], b["marts"]
+        entry.exposures = b["exposures"]
         _d = digests.get(uid)
         if _d is not None and getattr(_d, "union_members", None):
             entry.union_parents = set(_d.union_members)
