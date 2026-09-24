@@ -117,16 +117,19 @@ select{font-family:Fell,Georgia,serif;font-size:14px;cursor:pointer}
 /* ---- tables. Hairlines, no fill, numbers in old-style figures where the face has them. */
 table{border-collapse:collapse;width:100%;font-size:13.5px}
 th{text-align:left;font-family:Fell,Georgia,serif;font-weight:400;font-size:12px;
-text-transform:uppercase;letter-spacing:.07em;color:var(--faint);padding:5px 10px 4px;
+text-transform:uppercase;letter-spacing:.07em;color:var(--faint);padding:5px 8px 4px;
 border-bottom:1px solid var(--ink);position:sticky;top:0;background:var(--paper);cursor:pointer;
-white-space:nowrap}
+vertical-align:bottom}
 th:hover{color:var(--ink)}
-td{padding:6px 10px;border-bottom:1px solid var(--rule2);vertical-align:top}
+td{padding:6px 8px;border-bottom:1px solid var(--rule2);vertical-align:top}
 tr.pick{cursor:pointer}
 tr.pick:hover td{background:#f2efe7}
 tr.on td{background:#efe9dc;box-shadow:inset 3px 0 0 var(--ink)}
 .n{text-align:right;font-variant-numeric:tabular-nums}
-td.clip{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* *** WRAPPED, NEVER CUT. *** A cell used to end in an ellipsis at 300px, which hid the part of a
+   claim that said what it was about. It wraps now, and the row is as tall as what it holds. */
+td.clip{overflow-wrap:break-word;min-width:10em}
+td{overflow-wrap:break-word}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
 
 /* ---- the two-pane shell. Panes are separated by a rule, not by two boxes. */
@@ -137,13 +140,56 @@ align-items:stretch;height:100%}
 .drillhost{display:flex;flex-direction:column;height:100%;min-height:0;gap:8px}
 .drilltop{flex:0 0 auto}
 .drilltop .note{margin:0}
-.drillhost > .wrap2{flex:1 1 auto;min-height:0}
+.drillhost > .wrap2,.drillhost > .wrap3{flex:1 1 auto;min-height:0}
+/* ---- three columns: every group, the picked group's rows, the picked row. */
+.wrap3{display:grid;grid-template-columns:minmax(190px,250px) minmax(340px,1fr) minmax(0,1.2fr);
+gap:0;align-items:stretch;height:100%}
+.wrap3 > *{min-height:0}
+.wrap3 > .pane{padding-left:16px}
+.gnav{display:flex;flex-direction:column;height:100%;min-height:0;padding-right:12px;
+border-right:1px solid var(--rule)}
+.ghead{flex:0 0 auto;margin-bottom:6px}
+.ghead input[type=search]{min-width:0;width:100%}
+.gsorts{display:flex;gap:10px;align-items:baseline;margin-top:5px}
+.gsort{appearance:none;border:0;background:none;padding:0;font:inherit;font-size:13px;
+color:var(--ash);cursor:pointer;border-bottom:1px solid transparent}
+.gsort:hover{color:var(--ink)}
+.gsort.on{color:var(--ink);border-bottom-color:var(--ink)}
+.glist{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden}
+.gitem{appearance:none;border:0;background:none;display:grid;grid-template-columns:minmax(0,1fr) auto;
+gap:1px 10px;width:100%;text-align:left;padding:5px 6px 5px 8px;font:inherit;font-size:13.5px;
+line-height:1.35;color:var(--ink);cursor:pointer;border-bottom:1px solid var(--rule2)}
+.gitem:hover{background:#f2efe7}
+.gitem.on{background:#efe9dc;box-shadow:inset 3px 0 0 var(--ink)}
+.gitem.zero{color:var(--faint)}
+.gname{overflow-wrap:break-word;min-width:0}
+.gn{font-variant-numeric:tabular-nums;color:var(--ash);font-size:12.5px}
+.gsub{grid-column:1 / -1;font-size:12px;color:var(--faint)}
+.gsect{font-family:Fell,Georgia,serif;font-size:12px;text-transform:uppercase;letter-spacing:.08em;
+color:var(--faint);padding:12px 8px 3px;border-bottom:1px solid var(--rule)}
+.pager{display:inline-flex;gap:8px}
+.pager[hidden]{display:none}
+.pg{appearance:none;border:1px solid var(--rule);background:none;font:inherit;font-size:13px;
+color:var(--ink);padding:1px 9px;cursor:pointer}
+.pg:hover:not(:disabled){border-color:var(--ink)}
+.pg:disabled{color:var(--faint);cursor:default}
+.facets{margin:4px 0 10px}
+.fgrid{display:grid;grid-template-columns:minmax(0,max-content) minmax(60px,1fr) auto;gap:2px 12px;
+max-height:190px;overflow-y:auto;align-items:center}
+.frow{display:contents;cursor:pointer;font:inherit;color:inherit}
+.frow > span{padding:2px 0;cursor:pointer;text-align:left}
+.frow > .rval{text-align:right}
+.frow:hover .flab{color:var(--rust)}
+.frow.on .flab{color:var(--ink);text-decoration:underline}
+.flab{font-size:13px;color:var(--ink);overflow-wrap:break-word}
 .gridhost{display:flex;flex-direction:column;height:100%;min-height:0}
 .gridhost > .bar{flex:0 0 auto}
 .gridhost > .list{flex:1 1 auto}
 .pane{display:flex;flex-direction:column;height:100%;min-height:0;padding-right:22px;
 border-right:1px solid var(--rule)}
-.pane > .panehead{flex:0 0 auto}
+/* The group's header -- its question, its breakdown -- never takes the rows' room: on a short
+   window it scrolls on its own, and the rows keep the rest. */
+.pane > .panehead{flex:0 0 auto;max-height:42%;overflow-y:auto}
 .pane > .gridhost{flex:1 1 auto;min-height:0}
 .panebody{flex:1 1 auto;min-height:0;display:flex}
 .panebody > .gridhost{flex:1 1 auto;min-height:0;width:100%}
@@ -393,6 +439,20 @@ const bytes = n => {
    change a displayed probability. */
 const cellText = v => (v == null ? ''
   : (typeof v === 'number' && Number.isInteger(v) ? num(v) : String(v)));
+/* *** A LONG NAME BREAKS AT ITS OWN SEPARATORS, NOT MID-WORD AND NOT OFF THE EDGE. ***
+   `int_water_county_referral_rollup` in a table cell either pushed the table sideways into a
+   scrollbar or was cut with an ellipsis, and both were reported: "side scroll in this table isnt
+   something i really want", "not very helpful when all the shit is just like cut off". A `<wbr>`
+   after each `_ . / ,` lets it wrap where a person would break it, and `<wbr>` is not text, so
+   copying the name or comparing `textContent` still gets the name. */
+function wbr(s) {
+  const f = document.createDocumentFragment();
+  String(s == null ? '' : s).split(/(?<=[_./,])/).forEach((p, i) => {
+    if (i) f.append(document.createElement('wbr'));
+    f.append(document.createTextNode(p));
+  });
+  return f;
+}
 const pct = x => (x == null ? '' : Math.round(x * 100) + '%');
 
 /* A Fact with its provenance. A value with no source is a rumour, so the pill is never dropped. */
@@ -411,22 +471,27 @@ function fact(f) {
    arrives sorted from the assembly layer and that order is what the file's determinism rests on. */
 function grid(rows, cols, opts) {
   opts = opts || {};
-  let sort = opts.sort || null, dir = opts.dir || 1, q = '';
+  let sort = opts.sort || null, dir = opts.dir || 1, q = '', pg = 0;
   const search = el('input', {type: 'search', placeholder: opts.placeholder || 'filter...'});
   const count = el('span', {class: 'count'});
-  const bar = el('div', {class: 'bar'}, [search, count]);
+  const prev = el('button', {class: 'pg', text: '\u2039 prev'});
+  const next = el('button', {class: 'pg', text: 'next \u203a'});
+  prev.onclick = () => { pg = Math.max(0, pg - 1); draw(); listBox.scrollTop = 0; };
+  next.onclick = () => { pg++; draw(); listBox.scrollTop = 0; };
+  const pager = el('span', {class: 'pager'}, [prev, next]);
+  const bar = el('div', {class: 'bar'}, opts.page ? [search, count, pager] : [search, count]);
   for (const extra of (opts.controls || [])) bar.append(extra);
   const head = el('tr', {}, cols.map(c => {
     const th = el('th', {text: c.label, class: c.n ? 'n' : ''});
-    th.onclick = () => { if (sort === c.key) dir = -dir; else { sort = c.key; dir = 1; } draw(); };
+    th.onclick = () => { if (sort === c.key) dir = -dir; else { sort = c.key; dir = 1; } pg = 0; draw(); };
     return th;
   }));
   const body = el('tbody');
   const table = el('table', {}, [el('thead', {}, [head]), body]);
   /* A scrolling grid is a flex column: the bar is what it needs, the list is everything left.
      Without this the bar sits OUTSIDE the height budget and the column overflows its pane. */
-  const host = el('div', {class: opts.scroll ? 'gridhost' : ''},
-                  [bar, el('div', {class: opts.scroll ? 'list' : '', }, [table])]);
+  const listBox = el('div', {class: opts.scroll ? 'list' : ''}, [table]);
+  const host = el('div', {class: opts.scroll ? 'gridhost' : ''}, [bar, listBox]);
 
   function draw() {
     let view = rows;
@@ -439,16 +504,34 @@ function grid(rows, cols, opts) {
         if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
         return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y))) * dir;
       }); }
-    /* A cap with no notice reads as "that is all of them". It says how many it is not showing. */
-    const cap = opts.cap || 1200, shown = view.slice(0, cap);
-    count.textContent = view.length === rows.length
-      ? num(rows.length) + ' row(s)' + (view.length > cap ? ', showing ' + num(cap) : '')
-      : num(view.length) + ' of ' + num(rows.length) + (view.length > cap ? ', showing ' + num(cap) : '');
+    /* *** A PAGE, NOT A CAP. ***
+       A cap with no notice reads as "that is all of them", and a cap WITH a notice still leaves
+       rows 4,001 to 5,820 unreachable. A paged table reaches every row, and 200 wrapped rows
+       draw at once where 4,000 did not. Without `page` the old cap stands, and says so. */
+    let shown;
+    if (opts.page) {
+      const pages = Math.max(1, Math.ceil(view.length / opts.page));
+      if (pg >= pages) pg = pages - 1;
+      shown = view.slice(pg * opts.page, (pg + 1) * opts.page);
+      const from = view.length ? pg * opts.page + 1 : 0, to = pg * opts.page + shown.length;
+      count.textContent = num(from) + '\u2013' + num(to) + ' of ' + num(view.length)
+        + (view.length === rows.length ? '' : ' (' + num(rows.length) + ' before the filter)');
+      prev.disabled = pg === 0; next.disabled = pg >= pages - 1;
+      pager.hidden = pages < 2;
+    } else {
+      const cap = opts.cap || 1200;
+      shown = view.slice(0, cap);
+      count.textContent = view.length === rows.length
+        ? num(rows.length) + ' row(s)' + (view.length > cap ? ', showing ' + num(cap) : '')
+        : num(view.length) + ' of ' + num(rows.length) + (view.length > cap ? ', showing ' + num(cap) : '');
+    }
     body.replaceChildren(...shown.map(r => {
       const tr = el('tr', {class: opts.pick ? 'pick' : ''},
         cols.map(c => el('td', {class: (c.n ? 'n ' : '') + (c.mono ? 'mono ' : '')
                                        + (c.clip ? 'clip' : '')},
-          [c.cell ? c.cell(r) : el('span', {text: cellText(c.val(r))})])));
+          [c.cell ? c.cell(r) : typeof c.val(r) === 'number'
+            ? el('span', {text: cellText(c.val(r))})
+            : el('span', {}, [wbr(cellText(c.val(r)))])])));
       if (opts.pick) tr.onclick = () => { body.querySelectorAll('tr.on').forEach(x => x.classList.remove('on'));
         tr.classList.add('on'); opts.pick(r); };
       return tr;
@@ -456,9 +539,9 @@ function grid(rows, cols, opts) {
     if (!shown.length) body.replaceChildren(el('tr', {}, [el('td', {class: 'empty',
       colspan: cols.length, text: opts.emptyText || 'nothing matches'})]));
   }
-  search.oninput = () => { q = search.value; draw(); };
+  search.oninput = () => { q = search.value; pg = 0; draw(); };
   draw();
-  host.redraw = draw;
+  host.redraw = () => { pg = 0; draw(); };
   return host;
 }
 
@@ -758,8 +841,8 @@ function highlight(panel, name) {
   }
 }
 function link(name, where) {
-  if (!BY_NAME[name]) return el('span', {class: 'mono', text: name || ''});
-  const a = el('a', {class: 'mono lk', href: '#', text: name});
+  if (!BY_NAME[name]) return el('span', {class: 'mono'}, [wbr(name || '')]);
+  const a = el('a', {class: 'mono lk', href: '#'}, [wbr(name)]);
   a.onclick = ev => { ev.preventDefault(); ev.stopPropagation();
     open(where || 'models'); (GO[where || 'models'] || (() => {}))(name); };
   return a;
@@ -768,7 +851,7 @@ function link(name, where) {
 /* A grouped front door. *** NO TAB OPENS ON A FLAT LIST OF EVERYTHING. ***
    5,794 claims in one scroll is not more information than 358 models in one scroll, it is less:
    the first screen tells you nothing about the shape of what is there and gives you nowhere
-   obvious to click. So the summary is the view, and the rows are one click in, already filtered. */
+   obvious to click. So the groups are always on screen, and the rows are the picked group's. */
 function drill(opts) {
   /* *** ONE CLICK. ALWAYS. THE RIGHT PANE IS NEVER EMPTY. ***
      This used to be three screens to read one thing: a table of groups, then a click to a table
@@ -776,78 +859,148 @@ function drill(opts) {
      two of the three steps. Reported exactly as it deserved: "what in the fuck was your decision
      process when you decided this 3 step process was necessary to get any information."
 
-     The grouping was never worth a screen. It is a FILTER, so it is a row of catchwords above the
-     list, and the list underneath is always the leaves -- the claims, the answers, the candidates,
-     the things somebody came here to read. One click on a row fills the right pane. And the pane
-     is filled on arrival with the first row, because a pane that opens empty has spent a screen
-     to say nothing. */
+     So the list in the middle is always the leaves -- the claims, the answers, the candidates,
+     the things somebody came here to read. One click on a row fills the right pane, and the pane
+     is filled on arrival with the first row.
+
+     *** EVERY GROUP, NOT THE TOP EIGHT. ***
+     The groups were a row of chips capped at eight, then "+343 more, use the filter": 343 models'
+     claims and 19 question families of thousands of answers each could only be found by knowing
+     their name first. Reported with a screenshot: "you cant even select some of em ... which is
+     awful UI design". So the groups are their own column, every one of them, with its full name
+     and count, a filter of their own, and a scroll. The chip labels were also cut at 29
+     characters and set small in the display face, and both were called hard to read. */
   const host = el('div', {class: 'drillhost'});
   const top = el('div', {class: 'drilltop'});
-  const cols = el('div', {class: 'wrap2 wide'});
+  const cols = el('div', {class: 'wrap3'});
+  const gnav = el('div', {class: 'gnav'});
   const left = el('div', {class: 'pane'});
   const detail = el('div', {class: 'detail'});
   const head = el('div', {class: 'panehead'});
   const body = el('div', {class: 'panebody'});
 
-  /* The groups become chips: `all`, then one per group, each carrying its count. Picking one
-     narrows the SAME list rather than replacing it with a different table. */
   const ALL = {__all: 1};
-  let pickedGroup = (opts.startGroup && opts.startGroup(opts.groups)) || ALL;
-  /* *** A VIEW SWITCH IS A FILTER, SO IT IS A CHIP LIKE EVERY OTHER FILTER. ***
-     It used to be a `select` in the filter bar, which was the right answer when the alternative
-     was a button floating over the table. Now that the groups themselves are chips, a dropdown
-     beside them is a second grammar for one idea -- and it is in the SAME place in every state,
-     which is the property the select was there to keep. */
+  const withAll = opts.all !== false;
+  let pickedGroup = (opts.startGroup && opts.startGroup(opts.groups))
+    || (withAll ? ALL : opts.groups[0]);
+  /* *** A VIEW SWITCH IS A FILTER, SO IT SITS WITH THE OTHER FILTER. ***
+     A toggle narrows the rows of whichever group is picked, so it is a checkbox in the rows' own
+     filter bar, and the group counts on the left follow it. */
   const toggles = (opts.toggles || []).map(t => ({...t, on: false}));
-  const chips = el('div', {class: 'chips'});
+  /* One value of the facet (an answer, a kind) picked inside the group. Reset when the group
+     changes, because a value picked in one family means nothing in another. */
+  let facet = null;
+  let byName = false;
 
-  function rowsFor(g) {
+  function rowsBefore(g) {
     let out = g === ALL
       ? opts.groups.flatMap(x => opts.rowsOf(x).map(r => [r, x]))
       : opts.rowsOf(g).map(r => [r, g]);
     for (const t of toggles) if (t.on) out = out.filter(p => t.where(p[0]));
     return out;
   }
-
-  function paintChips() {
-    chips.replaceChildren();
-    /* *** A CHIP IS A CATCHWORD. ***
-       `already defined in this project's own column descriptions` as a chip label ran the row to
-       four lines, which is a second list above the list. Truncated, with the whole thing on
-       hover, because the chip's job is to be picked and the detail pane says it in full. */
-    const mk = (label, n, g) => {
-      const short = label.length > 30 ? label.slice(0, 29) + '\u2026' : label;
-      const c = el('button', {class: 'chip' + (g === pickedGroup ? ' on' : ''), title: label},
-                    [el('span', {text: short}), el('b', {text: num(n)})]);
-      c.onclick = () => { pickedGroup = g; paintChips(); draw(); };
-      return c;
-    };
-    chips.append(mk('all ' + opts.noun, opts.groups.reduce(
-      (a, g) => a + opts.rowsOf(g).length, 0), ALL));
-    /* Capped, because a chip row is a way to steer and a hundred chips is a second list. The
-       ones past the cap are still reachable by typing in the filter, which the count says. */
-    const sorted = opts.groups.slice().sort(
-      (a, b) => opts.rowsOf(b).length - opts.rowsOf(a).length);
-    for (const g of sorted.slice(0, 8)) mk_append(mk(opts.chip(g), opts.rowsOf(g).length, g));
-    if (sorted.length > 8)
-      chips.append(el('span', {class: 'count more',
-                               text: '+' + (sorted.length - 8) + ' more, use the filter'}));
-    for (const t of toggles) {
-      const c = el('button', {class: 'chip' + (t.on ? ' on' : ''), title: t.title || t.label},
-                    [el('span', {text: t.label}), el('b', {text: num(t.count)})]);
-      c.onclick = () => { t.on = !t.on; paintChips(); draw(); };
-      chips.append(c);
-    }
-    function mk_append(node) { chips.append(node); }
+  function rowsFor(g) {
+    const out = rowsBefore(g);
+    return facet == null ? out : out.filter(p => String(opts.facet.of(p[0])) === facet);
   }
+
+  const gq = el('input', {type: 'search', placeholder: opts.groupFilter || 'find a group...'});
+  const glist = el('div', {class: 'glist'});
+  const sortBtn = (label, v) => {
+    const b = el('button', {class: 'gsort' + (byName === v ? ' on' : ''), text: label});
+    b.onclick = () => { byName = v; paintGroups(); };
+    return b;
+  };
+  const gsorts = el('div', {class: 'gsorts'});
+  gnav.append(el('div', {class: 'ghead'}, [gq, gsorts]), glist);
+  gq.oninput = () => paintGroups();
+
+  function gitem(label, n, g, sub) {
+    const b = el('button', {class: 'gitem' + (g === pickedGroup ? ' on' : '') + (n ? '' : ' zero'),
+                            title: label},
+                 [el('span', {class: 'gname'}, [wbr(label)]), el('span', {class: 'gn', text: num(n)})]);
+    if (sub) b.append(el('span', {class: 'gsub', text: sub}));
+    b.onclick = () => { pickedGroup = g; facet = null; paintGroups(); draw(); };
+    return b;
+  }
+
+  function paintGroups() {
+    gsorts.replaceChildren(...(opts.keepOrder ? [] : [el('span', {class: 'count', text: 'sort'}),
+                                                     sortBtn('most', false), sortBtn('a–z', true)]));
+    const t = gq.value.trim().toLowerCase();
+    let counted = opts.groups.map(g => [g, rowsBefore(g).length]);
+    const total = counted.reduce((a, p) => a + p[1], 0);
+    if (t) counted = counted.filter(([g]) => (opts.chip(g) + ' ' + (opts.groupText ? opts.groupText(g) : ''))
+                                               .toLowerCase().includes(t));
+    if (!opts.keepOrder)
+      counted.sort((a, b) => byName ? opts.chip(a[0]).localeCompare(opts.chip(b[0]))
+                                    : (b[1] - a[1]) || opts.chip(a[0]).localeCompare(opts.chip(b[0])));
+    const items = [];
+    if (withAll && !t) items.push(gitem('all ' + opts.noun, total, ALL));
+    let lastSect = null;
+    for (const [g, n] of counted) {
+      /* A section heading between runs of groups, where the caller has sections (the kind of
+         edit in What to configure). Only in the caller's own order, where runs exist. */
+      if (opts.sectionOf && opts.keepOrder) {
+        const s = opts.sectionOf(g);
+        if (s !== lastSect) { items.push(el('div', {class: 'gsect', text: s})); lastSect = s; }
+      }
+      items.push(gitem(opts.chip(g), n, g, opts.groupSub ? opts.groupSub(g) : null));
+    }
+    if (!items.length) items.push(el('p', {class: 'empty', text: 'no group matches'}));
+    glist.replaceChildren(...items);
+  }
+
+  /* *** WHAT THE GROUP'S ROWS SAY, BEFORE YOU READ ANY OF THEM. ***
+     A family of 5,820 answers is a distribution before it is a list: how many said each thing.
+     Every value, with its count and a bar, and a click narrows the rows to it. */
+  function facetBlock(g) {
+    if (!opts.facet) return null;
+    const rows = rowsBefore(g);
+    const counts = {};
+    for (const p of rows) { const v = String(opts.facet.of(p[0])); counts[v] = (counts[v] || 0) + 1; }
+    const vals = Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    if (vals.length < 2 && facet == null) return null;
+    const max = Math.max(...vals.map(v => v[1]), 1);
+    const box = el('div', {class: 'facets'});
+    box.append(el('div', {class: 'tlab', text: opts.facet.label + ' · ' + vals.length
+      + ' value(s)' + (facet != null ? '' : ' · click one to narrow the list')}));
+    const grid_ = el('div', {class: 'fgrid'});
+    for (const [v, n] of vals) {
+      const b = el('button', {class: 'frow' + (facet === v ? ' on' : ''), title: v + ': ' + num(n)});
+      b.append(el('span', {class: 'flab'}, [wbr(v)]),
+               el('span', {class: 'rtrack'}, [el('span', {class: 'rfill',
+                 style: 'width:' + Math.max(1.5, n / max * 100) + '%;background:' + BAR})]),
+               el('span', {class: 'rval', text: num(n) + ' · ' + Math.round(n / rows.length * 100) + '%'}));
+      b.onclick = () => { facet = facet === v ? null : v; draw(); };
+      grid_.append(b);
+    }
+    box.append(grid_);
+    if (facet != null) {
+      const clear = el('button', {class: 'back', text: 'show every ' + opts.facet.label + ' again'});
+      clear.onclick = () => { facet = null; draw(); };
+      box.append(clear);
+    }
+    return box;
+  }
+
+  const toggleBoxes = toggles.map(t => {
+    const cb = el('input', {type: 'checkbox'});
+    cb.onchange = () => { t.on = cb.checked; paintGroups(); draw(); };
+    return el('label', {class: 'chk', title: t.title || t.label},
+              [cb, el('span', {text: t.label + ' (' + num(t.count) + ')'})]);
+  });
 
   let list = null;
   function draw() {
     const pairs = rowsFor(pickedGroup);
-    list = grid(pairs, opts.rowCols.map(c => ({...c,
+    const cs = (opts.colsFor ? opts.colsFor(pickedGroup) : null) || opts.rowCols;
+    list = grid(pairs, cs.map(c => ({...c,
       val: p => c.val(p[0]), cell: c.cell ? p => c.cell(p[0]) : null})), {
-      placeholder: opts.rowFilter || 'filter...', cap: 4000,
-      sort: opts.rowSort, dir: opts.rowDir || 1, scroll: 1,
+      placeholder: opts.rowFilter || 'filter...', page: opts.pageSize || 200,
+      sort: (opts.sortFor ? opts.sortFor(pickedGroup) : null) || opts.rowSort,
+      dir: (opts.dirFor ? opts.dirFor(pickedGroup) : null) || opts.rowDir || 1, scroll: 1,
+      controls: toggleBoxes,
       pick: p => showOne(p[0], p[1]),
       text: p => opts.rowText(p[0]) + ' ' + opts.chip(p[1]),
       emptyText: 'nothing matches'});
@@ -855,7 +1008,7 @@ function drill(opts) {
        A group can carry a header -- the question a set of answers answered -- so the thing being
        measured is on screen rather than one click into a detail pane. */
     const gh = opts.groupHead && pickedGroup !== ALL ? opts.groupHead(pickedGroup) : null;
-    head.replaceChildren(...(gh ? [chips, gh] : [chips]));
+    head.replaceChildren(...[gh, facetBlock(pickedGroup)].filter(Boolean));
     body.replaceChildren(list);
     /* *** THE PANE OPENS ON SOMETHING. ***
        `first.click()` rather than calling `showOne` directly, so the row is also MARKED as the
@@ -878,16 +1031,15 @@ function drill(opts) {
     detail.scrollTop = 0;
   }
 
-  head.replaceChildren(chips);
   left.append(head, body);
-  cols.append(left, detail);
+  cols.append(gnav, left, detail);
   top.replaceChildren(el('p', {class: 'note', text: opts.blurb}));
   host.append(top, cols);
-  paintChips();
+  paintGroups();
   draw();
-  /* Kept for the callers that flip a view from outside (Claims' contradicted/all switch). */
-  host.showGroups = () => { pickedGroup = ALL; paintChips(); draw(); };
-  host.showRows = (g) => { pickedGroup = g; paintChips(); draw(); };
+  /* Kept for the callers that flip a view from outside. */
+  host.showGroups = () => { pickedGroup = withAll ? ALL : opts.groups[0]; facet = null; paintGroups(); draw(); };
+  host.showRows = (g) => { pickedGroup = g; facet = null; paintGroups(); draw(); };
   return host;
 }
 
@@ -1478,7 +1630,11 @@ function claimsTab(host) {
     /* The one view worth keeping beside "by model": the claims the code disagrees with. It
        combines with a model chip rather than replacing the view, which the old dropdown could
        not do -- picking `contradicted` there threw away whichever model you were looking at. */
-    toggles: [{label: 'the code contradicts', count: contradicted.length,
+    groupFilter: 'find a model...',
+    groupText: g => g.desc,
+    groupSub: g => g.bad ? num(g.bad) + ' contradicted by the code' : null,
+    facet: {label: 'kind', of: c => c.kind || 'unclassified'},
+    toggles: [{label: 'only where the code contradicts', count: contradicted.length,
                title: 'only claims a judgment read against the SQL and found contradicted',
                where: c => c.contradicted != null}],
     rowFilter: 'filter claims...',
@@ -1636,7 +1792,7 @@ function findingsTab(host) {
     el('p', {class: 'note', text: 'Ranked by weight, which is the base severity lifted by reach: '
              + 'the same defect on a leaf and on a model nine marts read are not the same '
              + 'finding.'}),
-    el('div', {class: 'wrap2'}, [list, detail]));
+    el('div', {class: 'wrap2 wide'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a finding.'}));
   const first = $('tbody tr', list); if (first) first.click();
 }
@@ -1670,6 +1826,9 @@ function answersTab(host) {
   host.replaceChildren(drill({
     noun: 'answers', groups: groups, rowFilter: 'filter answers...',
     chip: g => qByPrefix[g.prefix] || g.prefix,
+    groupFilter: 'find a question...',
+    groupSub: g => g.low ? num(g.low) + ' under 0.60' : null,
+    facet: {label: 'answered', of: a => a.answer == null ? '(no answer)' : a.answer},
     /* *** GROUPED BY QUESTION, AND THE QUESTION IS ON THE SCREEN. ***
        Opening on "all answers" put thousands of rows from every family in one list with no
        question anywhere above them. It opens on the largest question, with that question's own
@@ -2100,7 +2259,8 @@ function suggestTab(host) {
 
   host.replaceChildren(drill({
     noun: 'candidates', groups: groups, rowFilter: 'filter candidates...',
-    chip: g => g.basis,
+    chip: g => g.basis, keepOrder: 1, groupFilter: 'find a reason...',
+    sectionOf: g => LABEL[g.section] || g.section,
     blurb: 'assay measured these and writes no meaning. A means: in a draft is either blank or '
       + 'QUOTED from a sentence this project already uses, with where it came from; a column '
       + 'description draft says per line whether it is quoted or built from recorded facts. '

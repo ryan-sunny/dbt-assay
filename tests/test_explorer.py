@@ -584,9 +584,9 @@ def test_the_view_switch_is_in_the_same_place_in_every_state():
     the field the first time: "I'd greatly prefer that dropdown to remain so it's flipping between
     the two, rather than different UI."
 
-    Now that the groups themselves are chips, a dropdown beside them is a second grammar for one
-    idea -- so it is a chip, and being a chip it COMBINES with a group instead of replacing it.
-    Picking `contradicted` from the old select threw away whichever model you were looking at.
+    It was a chip beside the group chips; the groups are a column of their own now, so it is a
+    checkbox in the rows' filter bar, and it COMBINES with the picked group instead of replacing
+    it. Picking `contradicted` from the old select threw away whichever model you were looking at.
     """
     v = explorer._VIEWS
     cb = v[v.index("function claimsTab"):v.index("function findingsTab")]
@@ -597,8 +597,10 @@ def test_the_view_switch_is_in_the_same_place_in_every_state():
     db = v[v.index("function drill(opts)"):v.index("\nfunction conf(")]
     # A toggle filters the rows; it never swaps the list for a different one.
     assert "out = out.filter(p => t.where(p[0]))" in db
-    # and it is painted with the group chips, in the one chip row
-    assert db.count("chips.append") >= 2, "the toggle is not in the chip row with the groups"
+    # and it sits in the rows' own filter bar, where every other row filter is
+    assert "controls: toggleBoxes" in db, "the toggle is not in the rows' filter bar"
+    # and the group counts follow it, so a group with nothing contradicted says 0
+    assert "rowsBefore(g).length" in db
 
 
 def test_a_package_model_is_separated_by_owner_and_never_by_whether_it_parsed():
@@ -1066,3 +1068,48 @@ def test_every_tab_gets_the_same_pane_geometry():
     two = css[css.index(".wrap2{"):css.index("}", css.index(".wrap2{"))]
     assert "align-items:stretch" in two and "height:100%" in two, (
         "the two panes do not fill the same box")
+
+
+def test_every_group_is_listed_and_every_row_is_reachable():
+    """*** "+343 MORE, USE THE FILTER" HID 343 MODELS AND 19 QUESTION FAMILIES. ***
+
+    The groups were a chip row capped at eight, so a family of 3,543 answers could be found only
+    by knowing its name first, and the rows were capped at 4,000 of 5,820. Reported with
+    screenshots: "you cant even select some of em ... which is awful UI design". The groups are a
+    column now, every one of them with its full name and count, and the rows are paged, so every
+    row is reachable from a button rather than from a guess typed into a box.
+    """
+    v = explorer._VIEWS
+    db = v[v.index("function drill(opts)"):v.index("\nfunction conf(")]
+    assert "sorted.slice(0, 8)" not in db and "more, use the filter'" not in db, "the groups are capped again"
+    assert "label.slice(0, 29)" not in db, "group names are cut again"
+    assert "class: 'gnav'" in db and "class: 'glist'" in db
+    assert "gq.oninput" in db, "the groups have no filter of their own"
+    # the rows page instead of stopping
+    assert "page: opts.pageSize || 200" in db
+    js = explorer.JS
+    g = js[js.index("function grid("):js.index("function mdInline(")]
+    assert "shown = view.slice(pg * opts.page, (pg + 1) * opts.page)" in g
+    assert "prev.disabled = pg === 0" in g
+    # a family is a distribution before it is a list: Answers shows how its answers split
+    ab = v[v.index("function answersTab"):v.index("function kvAny")]
+    assert "facet: {label: 'answered'" in ab
+
+
+def test_a_long_cell_wraps_and_is_never_cut():
+    """*** CUT WITH "..." OR SCROLLED SIDEWAYS, AND BOTH WERE REPORTED. ***
+
+    "not very helpful when all the shit is just like cut off", and of the Findings table: "side
+    scroll in this table isnt something i really want". A cell wraps, and a long name breaks at
+    its own separators through `<wbr>`, which is not text, so `textContent` is still the name.
+    """
+    css = explorer.CSS
+    clip = css[css.index("td.clip{"):]
+    clip = clip[:clip.index("}")]
+    assert "ellipsis" not in clip and "nowrap" not in clip, "a clipped cell is cut again"
+    js, v = explorer.JS, explorer._VIEWS
+    assert "function wbr(" in js
+    assert "document.createElement('wbr')" in js, "the break is text, so copying a name breaks it"
+    lk = v[v.index("function link("):]
+    lk = lk[:lk.index("\n}")]
+    assert "wbr(name)" in lk, "a model name in a table cannot wrap"

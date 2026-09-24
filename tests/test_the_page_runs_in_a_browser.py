@@ -43,8 +43,8 @@ def _chromium_or_skip():
 
 # Every tab the page ships. A new one is covered by adding it here, and a tab that stops existing
 # fails this test rather than quietly losing its coverage.
-TABS = ["models", "chain", "claims", "findings", "suggest", "answers", "spend", "questions",
-        "config", "understood"]
+TABS = ["models", "chain", "claims", "findings", "areas", "monitoring", "suggest", "answers",
+        "spend", "questions", "config", "understood"]
 
 
 @pytest.fixture
@@ -448,5 +448,56 @@ def test_a_waiver_is_written_from_the_card_it_was_decided_on(tmp_path, project_d
             tabs = [t.get_attribute("data-pane") for t in page.locator(".tabs button").all()]
             assert tabs[-1] == "settings", tabs
             assert not errors, errors
+        finally:
+            browser.close()
+
+
+def test_no_table_scrolls_sideways_and_every_group_is_a_click(page_file):
+    """*** "SIDE SCROLL IN THIS TABLE ISNT SOMETHING I REALLY WANT". ***
+
+    The Findings list pushed its last two columns past the pane, and the only way to see them was
+    a horizontal scrollbar nobody notices. Cells wrap now, so no scrolling list is wider than
+    itself, measured at two window sizes because a width that fits one does not fit the other.
+
+    And every group is a button in the group column, so the last family is one click away rather
+    than hidden behind "+19 more, use the filter".
+    """
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            for size in ({"width": 1440, "height": 900}, {"width": 1100, "height": 700}):
+                page = browser.new_page(viewport=size)
+                page.goto(page_file.as_uri())
+                page.wait_for_timeout(120)
+                for tab in TABS:
+                    page.click(f'nav button[data-tab="{tab}"]')
+                    page.wait_for_timeout(50)
+                    wide = page.evaluate(f"""() => [...document.querySelectorAll('#p-{tab} .list')]
+                        .filter(e => e.offsetParent && e.scrollWidth > e.clientWidth + 1)
+                        .map(e => e.scrollWidth - e.clientWidth)""")
+                    assert not wide, (f"`{tab}` at {size['width']}px scrolls sideways by "
+                                      f"{wide}px")
+                page.close()
+
+            # The fixture has no answers, so the check runs on every tab that navigates by
+            # group, and at least one of them must have groups to click.
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page.goto(page_file.as_uri())
+            clicked = 0
+            for tab in ("claims", "answers", "suggest"):
+                page.click(f'nav button[data-tab="{tab}"]')
+                page.wait_for_timeout(80)
+                items = page.query_selector_all(f"#p-{tab} .gnav .gitem")
+                assert items, f"`{tab}` has no group column"
+                if len(items) < 2:
+                    continue
+                items[-1].click()
+                page.wait_for_timeout(50)
+                on = page.query_selector_all(f"#p-{tab} .gnav .gitem.on")
+                assert len(on) == 1, f"`{tab}`: clicking the last group did not pick it"
+                clicked += 1
+            assert clicked, "no tab had two groups to click, so this checked nothing"
         finally:
             browser.close()
