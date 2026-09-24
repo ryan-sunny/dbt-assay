@@ -195,3 +195,21 @@ def test_a_proof_with_sorry_or_an_axiom_is_refused_before_lean(tmp_path):
     got = proofwork.check(p, d, sch, entries, None, "covered", "no_fanout:stg_parent", "x",
                           helpers="axiom cheat : False")
     assert got["status"] == "refused"
+
+
+def test_export_carries_premises_proofs_and_conformance(tmp_path):
+    from dbt_assay import export
+    assert {"premises", "premise_uses", "proofs", "conformance"} <= set(export.TABLES)
+    s = Store(str(tmp_path / "s.duckdb"))
+    s.con.execute("insert into proofs (model, model_name, property, written_by, status, source) "
+                  "values ('m', 'm', 'grain', 'agent', 'proven', 'theorem x : True := trivial')")
+    got = {e.table: e.rows for e in export.to_seeds(s, tmp_path / "seeds")}
+    assert got.get("proofs") == 1
+    from typer.testing import CliRunner
+
+    from dbt_assay.cli import app
+    s.close()
+    r = CliRunner().invoke(app, ["prove", "--store", str(tmp_path / "s.duckdb"),
+                                 "--export-proofs", str(tmp_path / "out")])
+    assert r.exit_code == 0, r.output
+    assert (tmp_path / "out" / "m__grain.lean").read_text().startswith("theorem x")

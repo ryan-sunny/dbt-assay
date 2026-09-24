@@ -1366,6 +1366,11 @@ certificate lists its rule's constructs with their status on the project's engin
 on two, and says so: `/` on integers returns a double, and NULLs sort last under DESC. A Snowflake
 premise reads unchecked until it has run on a real Snowflake connection.
 
+`assay export` carries `premises`, `premise_uses`, `proofs` and `conformance` like its other
+tables, so a dashboard or an orchestrator asset can ask in plain SQL which marts are proven and
+which premises broke. `assay prove --export-proofs <dir>` writes every proof an agent wrote (the
+store holds the only copy) as a `.lean` file, for anyone who wants them in git.
+
 ### An agent writes the proof, Lean checks it
 
 assay never calls a model to write proofs. `proof_goal(model, property)` (or `assay proof-goal`)

@@ -5531,6 +5531,9 @@ def prove(
                                     "dbt connection, priced)"),
     n_random: int = typer.Option(200, "--random",
                                  help="with --conformance: random differential cases"),
+    export_proofs: str = typer.Option(None, "--export-proofs",
+                                      help="instead: write every proof an agent wrote (the only "
+                                           "copy is the store) to this directory, one .lean each"),
     json_out: bool = typer.Option(False, "--json"),
 ):
     """Prove what each model cannot do, with Lean: certificates whose premises are the ledger's.
@@ -5566,6 +5569,21 @@ def prove(
         else:
             console.print(f"[red]{e}[/]")
         raise typer.Exit(1) from None
+    if export_proofs:
+        from . import prove as prove_mod
+        st = Store(store_path)
+        try:
+            st.con.execute(prove_mod.DDL)
+            rows = st.con.execute("select model_name, property, source from proofs where "
+                                  "written_by = 'agent' order by 1, 2").fetchall()
+        finally:
+            st.close()
+        out = Path(export_proofs)
+        out.mkdir(parents=True, exist_ok=True)
+        for name, prop, src in rows:
+            (out / f"{prove_mod._ident(name + '__' + prop)}.lean").write_text(src or "")
+        console.print(f"wrote {len(rows)} agent proof(s) to {out}")
+        return
     if conformance:
         _prove_conformance(target, store_path, engine, n_random, project_dir, profiles_dir,
                            dbt_bin, json_out, say)

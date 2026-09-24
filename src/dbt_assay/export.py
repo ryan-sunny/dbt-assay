@@ -47,6 +47,18 @@ TABLES = {
             "what it could and could not read. The only table here that says which run is CURRENT "
             "-- order by `started_at`, never by how much a run happened to find. A run with a "
             "`scope` was narrowed (`check --check`) and is history, never the current one.",
+    # *** WHAT THE FINDINGS REST ON, AND WHAT IS PROVEN. *** So a dashboard or a Dagster asset
+    # can ask, in plain SQL, which marts are proven and which premises broke.
+    "premises": "One row per (run, premise): a statement about the data something here leans on "
+                "(a key unique, a column never null, rows arriving within a lookback), its status "
+                "(broken / holding / unchecked / assumed / unknown), since when, and its evidence.",
+    "premise_uses": "One row per (run, premise, dependent): the grain, the held-back finding or "
+                    "the proof that rests on the premise.",
+    "proofs": "One row per (model, property, author): a certificate Lean checked, the rule it "
+              "applies, the premises it assumes, or what Lean could not close. Its guarantee is "
+              "live: join `premises` for whether they still hold.",
+    "conformance": "One row per (construct, engine, version): whether the engine does what "
+                   "assay's meaning of SQL says, measured on identical inputs.",
 }
 
 COLUMN_DOCS = {
