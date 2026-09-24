@@ -2278,6 +2278,7 @@ function findingPane(f) {
   const ev = Object.assign({}, f.evidence || {});
   delete ev.why_it_is_back;
   delete ev.timeline;
+  delete ev.proven_rule;
   return pane({
     kind: 'finding · ' + f.check.replace(/_/g, ' '),
     title: link(f.model), mono: 0,
@@ -2321,6 +2322,14 @@ function findingPane(f) {
         ['found by', f.rests_on ? badge('the ' + f.rests_on.replace(/_/g, ' ') + ' question',
                                         'judged')
                                 : badge('the SQL parser', 'declared')],
+        /* L1: the rule this check applies is a theorem in assay's Lean library. */
+        ...((f.evidence || {}).proven_rule ? [['the rule', (() => {
+          const b = badge('proven rule', 'proven');
+          b.setAttribute('data-tip', 'This rule is proven in Lean (`' + f.evidence.proven_rule
+            + '`): it holds for every input that satisfies its premises. The finding depends only '
+            + 'on the parsed structure and the premises listed.');
+          return el('span', {}, [b, el('span', {class: 'mono tot', text: '  ' + f.evidence.proven_rule})]);
+        })()]] : []),
         ['read by a person', f.ruled_finding ? badge('yes', 'on')
           : f.ruled_model ? el('span', {text: 'the model was ruled on, this finding was not'})
           : el('span', {class: 'tot', text: 'nobody yet'})],

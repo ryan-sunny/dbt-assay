@@ -768,3 +768,33 @@ def test_a_float_sum_pane_shows_the_column_its_type_and_the_fix(tmp_path):
             assert "DOUBLE" in text and not errors, errors
         finally:
             b.close()
+
+
+def test_a_finding_from_a_proven_rule_shows_the_badge(tmp_path):
+    import importlib.util
+    from pathlib import Path
+
+    from playwright.sync_api import sync_playwright
+
+    from dbt_assay import explorer
+    spec = importlib.util.spec_from_file_location("te", Path(__file__).with_name("test_explorer.py"))
+    te = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(te)
+    data = te._tiny()
+    data["findings"] = [{"id": "p1", "check": "arbitrary_pick", "model": "a", "subject": "m",
+                         "summary": "s", "detail": "d", "weight": 2.0, "base": 2, "marts": 0,
+                         "descendants": 0, "exposures": [], "file": "m.sql",
+                         "evidence": {"partition_by": ["k"],
+                                      "proven_rule": "pick_total_on_unique_key"}}]
+    out = tmp_path / "p.html"
+    out.write_text(explorer.explorer_html(data, ""))
+    with sync_playwright() as pw:
+        b = pw.chromium.launch()
+        try:
+            page = b.new_page(viewport={"width": 1100, "height": 900})
+            page.goto(out.as_uri() + "#findings")
+            page.wait_for_timeout(300)
+            text = page.locator(".detail").first.inner_text()
+            assert "proven rule" in text and "pick_total_on_unique_key" in text
+        finally:
+            b.close()

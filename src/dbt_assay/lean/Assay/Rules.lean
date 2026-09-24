@@ -49,6 +49,79 @@ theorem inner_join_no_fanout {lk rk us : List String} {L R : Table}
     have := matches_le_one (lk := lk) hu' l
     omega
 
+/-- **left_join_preserves_rows.** A left join onto a right side unique on keys the join covers
+keeps exactly the left side's rows: every left row appears once, matched or not.
+
+Backs `hop_multiplies_rows` for a LEFT join held back on its parent's key. -/
+theorem left_join_preserves_rows {lk rk us : List String} {L R : Table}
+    (hcover : ∀ c ∈ us, c ∈ rk) (hu : Unique us R) :
+    (leftJoin lk rk L R).length = L.length := by
+  have hu' := Unique.mono hcover hu
+  have row : ∀ l : Row, (leftRow l (R.filter (joinMatch lk rk l))).length = 1 := by
+    intro l
+    have h1 := matches_le_one (lk := lk) hu' l
+    generalize R.filter (joinMatch lk rk l) = ms at h1 ⊢
+    match ms, h1 with
+    | [], _ => rfl
+    | [_], _ => rfl
+    | _ :: _ :: _, h => simp at h
+  induction L with
+  | nil => simp [leftJoin]
+  | cons l ls ih =>
+    simp only [leftJoin, List.flatMap_cons, List.length_append, List.length_cons] at *
+    rw [ih, row l]
+    omega
+
+/-- A list of at most one element is pairwise anything. -/
+theorem pairwise_of_length_le_one {α} {P : α → α → Prop} :
+    ∀ {xs : List α}, xs.length ≤ 1 → xs.Pairwise P
+  | [], _ => List.Pairwise.nil
+  | [_], _ => by simp
+  | _ :: _ :: _, h => by simp at h
+
+theorem keyOf_merge {g : List String} {a r : Row} (hn : ∀ c ∈ g, (a c).isSome = true) :
+    keyOf g (merge a r) = keyOf g a := by
+  rw [keyOf_eq_iff]
+  intro c hc
+  have := hn c hc
+  unfold merge
+  cases h : a c with
+  | none => rw [h] at this; simp at this
+  | some v => rfl
+
+/-- **grain_through_join.** A left side unique and not null on `g`, joined onto a right side
+unique on keys the join covers, is still unique on `g`: the join cannot repeat a left row.
+
+Backs the grain assay carries through a join (a child keeps its driving parent's grain). -/
+theorem grain_through_join {g lk rk us : List String} {L R : Table}
+    (hl : Unique g L) (hn : ∀ c ∈ g, NotNull c L)
+    (hcover : ∀ c ∈ us, c ∈ rk) (hu : Unique us R) :
+    Unique g (innerJoin lk rk L R) := by
+  have hu' := Unique.mono hcover hu
+  unfold Unique innerJoin
+  rw [List.pairwise_flatMap]
+  constructor
+  · intro l _
+    apply pairwise_of_length_le_one
+    rw [List.length_map]
+    exact matches_le_one hu' l
+  · unfold Unique at hl
+    refine List.Pairwise.imp_of_mem ?_ hl
+    intro a b ha hb hab x hx y hy
+    obtain ⟨r1, -, rfl⟩ := List.mem_map.mp hx
+    obtain ⟨r2, -, rfl⟩ := List.mem_map.mp hy
+    have na : ∀ c ∈ g, (a c).isSome = true := fun c hc => hn c hc a ha
+    have nb : ∀ c ∈ g, (b c).isSome = true := fun c hc => hn c hc b hb
+    rw [keyOf_merge na, keyOf_merge nb]
+    exact hab
+
+/-- **filter_preserves_unique.** A `where` keeps any uniqueness: it only removes rows.
+
+Backs grain derivation through a filter. -/
+theorem filter_preserves_unique {g : List String} {t : Table} (p : Row → Bool)
+    (h : Unique g t) : Unique g (filterT p t) :=
+  h.sublist List.filter_sublist
+
 /-! ## Picks: `row_number() ... = 1` -/
 
 /-- One step of taking the smallest key: the new key when it is `≤` the smallest so far. -/
@@ -69,7 +142,7 @@ theorem minStep_comm (o : KeyOrder) (a b : Key) (z : Option Key) :
     simp only [minStep, Option.some.injEq]
     by_cases hbm : o.le b m = true <;> by_cases ham : o.le a m = true <;>
       by_cases hab : o.le a b = true <;> by_cases hba : o.le b a = true <;>
-      simp only [hbm, ham, hab, hba, if_true, if_false, Bool.false_eq_true]
+      simp only [hbm, ham, hab, hba, ite_true, ite_false, Bool.false_eq_true]
     all_goals first
       | rfl
       | exact anti _ _ hab hba
@@ -212,6 +285,49 @@ theorem pick_is_order_independent (o : KeyOrder) {part ord cols : List String} {
         have pm' := (List.mem_filter.mp (firstMin_mem o ord e2)).2
         simp only [decide_eq_true_eq] at pm pm'
         exact keyOf_eq_of_parts hc (pm.trans pm'.symm) hk
+  rw [same]
+  exact (distinctKeys_perm part h).filterMap _
+
+/-- No two rows of one partition tie on the order key: the order is total within a partition. -/
+def TotalWithin (part ord : List String) (t : Table) : Prop :=
+  ∀ a ∈ t, ∀ b ∈ t, keyOf part a = keyOf part b → keyOf ord a = keyOf ord b → a = b
+
+/-- **pick_total_on_unique_key.** When no two rows of a partition tie on the order key, the
+dedupe keeps the same rows -- whole rows, every column -- whatever order the input arrives in.
+
+Backs `arbitrary_pick`'s exemption for a last sort key declared unique. -/
+theorem pick_total_on_unique_key (o : KeyOrder) {part ord : List String} {t t' : Table}
+    (ht : TotalWithin part ord t) (h : t.Perm t') :
+    (pick o part ord t).Perm (pick o part ord t') := by
+  unfold pick
+  have same : (fun k => firstMin o ord (t.filter (fun r => decide (keyOf part r = k))))
+            = (fun k => firstMin o ord (t'.filter (fun r => decide (keyOf part r = k)))) := by
+    funext k
+    have hg : (t.filter (fun r => decide (keyOf part r = k))).Perm
+              (t'.filter (fun r => decide (keyOf part r = k))) := h.filter _
+    have hk := minKey_perm o ord hg
+    rw [← firstMin_key, ← firstMin_key] at hk
+    cases e1 : firstMin o ord (t.filter (fun r => decide (keyOf part r = k))) with
+    | none =>
+      rw [firstMin_none] at e1
+      have : t'.filter (fun r => decide (keyOf part r = k)) = [] :=
+        List.Perm.eq_nil (e1 ▸ hg).symm
+      rw [← firstMin_none (o := o) (ord := ord)] at this
+      rw [this]
+    | some m =>
+      cases e2 : firstMin o ord (t'.filter (fun r => decide (keyOf part r = k))) with
+      | none =>
+        rw [firstMin_none] at e2
+        have : t.filter (fun r => decide (keyOf part r = k)) = [] := List.Perm.eq_nil (e2 ▸ hg)
+        rw [← firstMin_none (o := o) (ord := ord)] at this
+        rw [this] at e1; cases e1
+      | some m' =>
+        rw [e1, e2] at hk
+        simp only [Option.map_some, Option.some.injEq] at hk
+        have mm := List.mem_filter.mp (firstMin_mem o ord e1)
+        have mm' := List.mem_filter.mp (firstMin_mem o ord e2)
+        simp only [decide_eq_true_eq] at mm mm'
+        exact congrArg some (ht m mm.1 m' (h.mem_iff.mpr mm'.1) (mm.2.trans mm'.2.symm) hk)
   rw [same]
   exact (distinctKeys_perm part h).filterMap _
 

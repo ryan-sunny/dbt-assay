@@ -26,11 +26,14 @@ def merge (l r : Row) : Row := fun c => match l c with | some v => some v | none
 def innerJoin (lk rk : List String) (L R : Table) : Table :=
   L.flatMap (fun l => (R.filter (joinMatch lk rk l)).map (merge l))
 
+/-- What one left row becomes in a left join, given the right rows it matched. -/
+def leftRow (l : Row) : List Row → List Row
+  | [] => [l]
+  | ms => ms.map (merge l)
+
 /-- `l left join r on l.lk = r.rk`: a left row with no match is kept once, its right side NULL. -/
 def leftJoin (lk rk : List String) (L R : Table) : Table :=
-  L.flatMap (fun l => match R.filter (joinMatch lk rk l) with
-    | [] => [l]
-    | ms => ms.map (merge l))
+  L.flatMap (fun l => leftRow l (R.filter (joinMatch lk rk l)))
 
 /-- The distinct values of a key, in first-appearance order. -/
 def distinctKeys (cols : List String) : Table → List Key

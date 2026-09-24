@@ -85,6 +85,24 @@ jobs:
       - name: the page loads, every tab fills, and nothing throws
         run: uv run pytest tests/test_the_page_runs_in_a_browser.py -q
 
+  # *** A PROOF WITH A HOLE IS NOT A PROOF. *** (L1) Builds the Lean library, refuses any
+  # `sorry` or any axiom beyond Lean's own three, and holds RULES_PROVEN against Rules.lean.
+  # ASSAY_REQUIRE_LEAN makes the Lean test fail rather than skip if the toolchain is missing.
+  lean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+      - name: install the pinned Lean toolchain
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain "$(cat src/dbt_assay/lean/lean-toolchain)"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: the rules are proven, with no sorry and only standard axioms
+        env: {ASSAY_REQUIRE_LEAN: "1"}
+        run: uv run pytest tests/test_rules_proven.py -q
+
   lint:
     runs-on: ubuntu-latest
     steps:

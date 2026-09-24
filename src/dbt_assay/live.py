@@ -203,6 +203,9 @@ def _reach(project, fs: list) -> list:
     stamped here instead, once, so no producer can forget -- and before `_distinct`, whose order is
     by weight and whose weight now counts them.
     """
+    # The rules proven in Lean say so on their findings (L1).
+    from .proofs import stamp
+    stamp(fs)
     if not getattr(project, "exposures", None):
         return fs
     for f in fs:

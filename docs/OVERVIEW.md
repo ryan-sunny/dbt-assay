@@ -1297,6 +1297,27 @@ on a grain that moved, or ask your BI tool which dashboards rest on a judgment n
 
 ---
 
+## What is proven, and from what
+
+Measured evidence says what the data does today; a judgment says what something probably means. A
+proof says what follows for every possible input. assay ships a small Lean 4 library
+(`src/dbt_assay/lean`, no Mathlib, Lean pinned per release) that models tables as bags of rows
+with SQL NULLs, and proves the rules its checks apply:
+
+| theorem | statement | backs |
+|---|---|---|
+| `inner_join_no_fanout` | right side unique on keys the join covers: output rows ≤ left rows | `hop_multiplies_rows`, `join_fans_out` |
+| `left_join_preserves_rows` | the same premise: a left join keeps exactly the left rows | `hop_multiplies_rows` on a left join |
+| `grain_through_join` | left unique and not null on g, right unique on its join key: output unique on g | the grain carried through a join |
+| `filter_preserves_unique` | a filter keeps any uniqueness | the grain carried through a filter |
+| `pick_is_order_independent` | every kept column a partition or order key: the same rows for any input order | `arbitrary_pick`'s exemption |
+| `pick_total_on_unique_key` | no two rows of a partition tie on the order: the same whole rows for any input order | `arbitrary_pick` |
+
+None uses `sorry`, and each rests only on Lean's standard axioms; CI builds the library and checks
+both. A finding from one of these checks carries `proven_rule` and the page shows a *proven rule*
+badge. What is proven is the rule over assay's model of SQL: that a model's SQL was parsed
+faithfully, and that the engine behaves as the model says, are premises of their own.
+
 ## What it will not do
 
 **Reading the rows needs your dbt, and is worth wiring up.** A model can be flawless and still be
