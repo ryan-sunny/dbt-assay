@@ -453,16 +453,12 @@ def test_feedback_n1_skipped_has_one_definition():
     from types import SimpleNamespace
     rep = SimpleNamespace(readings=[], volumes=[], stale_failures=[])
     def fs(cov):
-        try:
-            got = E.monitoring_findings(rep, None, None, cov)
-        except Exception:
-            return None
+        got = E.monitoring_findings(rep, None, None, cov)
         return [f for f in got if f.check == "test_skipped_rather_than_passed"]
     now0 = fs({"declared": 5, "ever_ran": 5, "skipped_results": 1846, "skipped_now": 0})
-    if now0 is not None:
-        assert now0 == [], "a finding about history beside a current count of 0"
-        now3 = fs({"declared": 5, "ever_ran": 5, "skipped_results": 1846, "skipped_now": 3})
-        assert now3 and "3 tests were SKIPPED on their last run" in now3[0].summary
+    assert now0 == [], "a finding about history beside a current count of 0"
+    now3 = fs({"declared": 5, "ever_ran": 5, "skipped_results": 1846, "skipped_now": 3})
+    assert now3 and "3 tests were SKIPPED on their last run" in now3[0].summary
     import inspect
     src = inspect.getsource(E.monitoring_findings)
     assert 'cov.get("skipped_now") is not None' in src
