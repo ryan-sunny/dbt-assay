@@ -492,3 +492,29 @@ def test_feedback_w1_the_newest_handback_is_found(tmp_path):
     assert reviewform.newest_handback([tmp_path]) == newer
     js = reviewform._JS
     assert "assay review --load latest" in js, "the form does not say what to do next"
+
+
+def test_feedback_n3_n4_every_field_is_filled_and_the_reading_is_a_block():
+    from dbt_assay import reviewform
+    js = reviewform._JS
+    fb = js[js.index("function field("):]
+    fb = fb[:fb.index("\n}")]
+    assert "type: 'text'" in fb, "a one-line field is an unstyled input again (N3)"
+    assert "el('dl', {class: 'reading'}" in js and "'why that is a finding'" in js
+
+
+def test_feedback_w1_a_bare_load_means_the_newest_handback():
+    from dbt_assay.cli import _bare_load
+    for argv, want in ((["assay", "review", "--load"], "latest"),
+                       (["assay", "review", "--load", "--apply"], "latest"),
+                       (["assay", "review", "--load", "h.json"], "h.json")):
+        _bare_load(argv)
+        assert argv[argv.index("--load") + 1] == want, argv
+
+
+def test_feedback_p8_the_form_counts_what_check_counts():
+    import inspect
+
+    from dbt_assay import cli
+    assert "live_mod.open_findings(project, digests, schema, entries, store," in \
+        inspect.getsource(cli)

@@ -2142,7 +2142,12 @@ function findingPane(f) {
     where: el('span', {class: 'mono', text: f.file || ''}),
     what: f.summary,
     reading: [
-      section('what it means', md(f.detail || '')),
+      ...((f.evidence || {}).asked ? [section('the reading', kv([
+        ['asked', String(f.evidence.asked).replace(/_/g, ' ')
+          + (f.evidence.context && f.evidence.context !== f.model ? ', about ' + f.evidence.context : '')],
+        ['answered', String(f.evidence.answer || '')],
+        ['sure', f.evidence.probability == null ? '' : Number(f.evidence.probability).toFixed(2)]]))] : []),
+      section((f.evidence || {}).asked ? 'why that is a finding' : 'what it means', md(f.detail || '')),
       section('how much it matters', kv([
         ['weight', weightBox(f)],
         ['reaches', (f.exposures || []).length ? f.exposures.join(', ')
@@ -2200,6 +2205,24 @@ function answerPart(a) {
   return {model: s.name, scope: s.scope, part: part};
 }
 
+/* *** A QUESTION'S WORDS WITH ITS FIELD NAMES IN THEM. *** (N2) "`model` has `marts_downstream`
+   marts reading it" was the question header. Filled from one answer where there is one (the model,
+   and its reach), and in general words where there is not. */
+const FIELD_WORDS = {model: 'the model', marts_downstream: 'N', models_downstream: 'N',
+                     descendants: 'N', test: 'a test', monitor: 'a monitor', column: 'a column'};
+function fillQuestion(text, a) {
+  const m = a ? BY_NAME[subjectOf(a).name] : null;
+  const part = a ? answerPart(a).part : '';
+  const vals = m ? {model: m.name, marts_downstream: m.marts, models_downstream: m.descendants,
+                    descendants: m.descendants} : {};
+  let unknownUsed = false;
+  return String(text || '').replace(/`([a-z][a-z0-9_]*)`/g, (all, f) => {
+    if (vals[f] != null) return vals[f] === m.name ? '`' + m.name + '`' : String(vals[f]);
+    if (a && part && !unknownUsed && !(f in vals)) { unknownUsed = true; return '`' + part + '`'; }
+    return FIELD_WORDS[f] || f.replace(/_/g, ' ');
+  });
+}
+
 function answersTab(host) {
   const fam = {};
   for (const a of DATA.decisions) {
@@ -2230,7 +2253,7 @@ function answersTab(host) {
     facet: {label: 'answer', of: a => a.answer == null ? '(no answer)' : a.answer},
     /* The question, once, above its answers. */
     groupHead: g => el('div', {class: 'qhead'}, [
-      el('p', {class: 'quote', text: words(g) || 'This question is no longer in the bank; its '
+      el('p', {class: 'quote', text: fillQuestion(words(g)) || 'This question is no longer in the bank; its '
         + 'answers are kept as they were given.'})]),
     rowsOf: g => g.rows,
     rowCols: [
@@ -2259,7 +2282,7 @@ function answersTab(host) {
         what: x.part ? [wbr(x.part)] : null,
         reading: [
           ...(all && q && (q.instructions || {}).question
-            ? [section('the question', el('p', {class: 'quote', text: q.instructions.question}))]
+            ? [section('the question', el('p', {class: 'quote', text: fillQuestion(q.instructions.question, a)}))]
             : []),
           section('how sure', kv([
             ['sure', a.confidence != null && a.confidence < 0.6
@@ -2392,7 +2415,7 @@ function questionsTab(host) {
         title: [wbr(q.name)],
         where: el('span', {class: 'mono', text: [q.prompt_version, q.yours ? 'written in this '
           + 'project' : 'ships with assay'].filter(Boolean).join('  ·  ')}),
-        what: el('span', {class: 'quote', text: ins.question || ''}),
+        what: el('span', {class: 'quote', text: fillQuestion(ins.question)}),
         reading: [
           ...(extra.length ? [section('how it is asked', el('div', {}, extra.map(k =>
             el('p', {class: 'prose'}, [el('span', {class: 'tot', text: k + ': '}),

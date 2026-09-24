@@ -202,8 +202,10 @@ def test_the_detail_names_values_and_the_answer_never_the_template(monkeypatch):
     f = judged.declared_findings(None, [e])[0]
     assert "`marts_downstream`" not in f.detail and "`model` has" not in f.detail, f.detail
     assert "`stg_cdss_structures` has 20 marts reading it" in f.detail
-    assert "answered `worth_watching` at 0.70" in f.detail
-    assert "without anything failing." in f.detail
+    # N4: the answer and how sure are the evidence, shown as a block; the detail is the reason
+    assert f.evidence["answer"] == "worth_watching" and f.evidence["probability"] == 0.7
+    assert "was asked about" not in f.detail, "the detail restates the question again"
+    assert f.detail.startswith("Its row count can change")
     # and the summary is the whole criterion, not 110 characters of it
     assert f.summary.endswith("without anything failing."), f.summary
 

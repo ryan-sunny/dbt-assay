@@ -898,11 +898,22 @@ def monitoring_findings(rep: Report, project, cad: Cadence | None = None,
             detail=("A test that never ran and a test that passed are indistinguishable in a "
                     "summary, and only one of them has looked at your data."),
             base=2, evidence={"declared": declared, "ever_ran": ran}))
-    if cov.get("skipped_results"):
+    # *** ONE DEFINITION OF SKIPPED. *** (N1) The page said "0 tests skipped as of their last
+    # run" beside this finding saying 1,846 results were skipped: one was the current state, the
+    # other every run ever. Where the current state was measured, the finding is about it.
+    if cov.get("skipped_now") is not None:
+        if cov["skipped_now"]:
+            out.append(Finding(
+                check="test_skipped_rather_than_passed", subject="", subject_name="", file="",
+                summary=f"{_plural(cov['skipped_now'], 'test')} were SKIPPED on their last run",
+                detail=("dbt skips a test whose model failed upstream, so these have not read "
+                        "your data since."),
+                base=1, evidence={"skipped_now": cov["skipped_now"]}))
+    elif cov.get("skipped_results"):
         out.append(Finding(
             check="test_skipped_rather_than_passed", subject="", subject_name="", file="",
-            summary=f"{_plural(cov['skipped_results'], 'test result')} are SKIPPED, which is not "
-                    f"a pass",
+            summary=f"{_plural(cov['skipped_results'], 'test result')} were SKIPPED across every "
+                    f"run on record",
             detail=("dbt skips a test whose model failed upstream. A green run can contain a "
                     "test that has not evaluated your data in months."),
             base=1, evidence={"skipped": cov["skipped_results"]}))

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import json as _json
+import sys
 import time
 import uuid
 from collections import Counter
@@ -3845,6 +3846,18 @@ def version():
     console.print(f"assay {__version__}")
 
 
+def _bare_load(argv: list) -> None:
+    """`assay review --load` with no path loads the newest handback in ~/Downloads. (W1)
+
+    typer has no option that may be given without its value, so a bare `--load` -- last on the
+    line, or followed by another option -- is read here as `--load latest`.
+    """
+    for i, a in enumerate(argv):
+        if a == "--load" and (i + 1 == len(argv) or argv[i + 1].startswith("-")):
+            argv.insert(i + 1, "latest")
+            return
+
+
 def main() -> None:
     """*** AN EXPECTED FAILURE MUST NOT LOOK LIKE A CRASH. ***
 
@@ -3855,6 +3868,7 @@ def main() -> None:
     from .jev import NoProvider
     from .probe import WarehouseUnreachable
     from .store import StoreUnwritable
+    _bare_load(sys.argv)
     try:
         app()
     except (StoreUnwritable, NoProvider) as e:
@@ -4821,8 +4835,9 @@ def review(
     emit: str = typer.Option(None, "--emit",
                              help="write a form to this .html and record nothing. Needs --target"),
     load: str = typer.Option(None, "--load",
-                             help="a handback.json the form handed back, or `latest` for the "
-                                  "newest handback*.json in ~/Downloads"),
+                             help="a handback.json the form handed back. Given with no path, "
+                                  "or as `latest`, it loads the newest handback*.json in "
+                                  "~/Downloads"),
     report: str = typer.Option(None, "--report",
                                help="path to the report page, relative to the form, so the two "
                                     "link to each other. `assay page --form` is the other half."),
@@ -4974,8 +4989,10 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
     project, digests, _f, schema, _s = _load(tdir, dialect)
     cfg = Config.load(config_path)
     entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store))
-    findings = live_mod.all_findings(project, digests, schema, entries, store=store,
-                                     threshold=cfg.row_loss_threshold)
+    # The same findings `check` reports: its self-audit added and what a person dismissed left
+    # out, so the form says 978 where check does. It said 984. (P8)
+    findings, _waived, _acts = live_mod.open_findings(project, digests, schema, entries, store,
+                                                     cfg, config_path)
     reads = {}
     if reads_path:
         reads = _json.loads(Path(reads_path).read_text())

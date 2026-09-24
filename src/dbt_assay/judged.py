@@ -438,15 +438,11 @@ def _declared_detail(name: str, q: dict, entry, v, answer: str, p_: float) -> st
     ctx = str((v or {}).get("context", "") or "")
     about = ctx if ctx and ctx != who else ""
     marts, desc = getattr(entry, "marts", None), getattr(entry, "descendants", None)
-    out = (f"`{name}` was asked about `{who}`" + (f" (about `{about}`)" if about else "")
-           + f" and answered `{answer}` at {p_:.2f}. ")
+    # *** ONE LONG PARAGRAPH RESTATING THE QUESTION. *** (N4) What was asked, the answer and how
+    # sure are in the finding's evidence and every surface shows them as a short block. The
+    # detail is only why that answer is a finding, and the question with its values filled in.
     crit = _criterion(q, answer)
-    out += (f"This question counts that answer as a finding: {crit}" if crit
-            else "This question counts that answer as a finding.")
-    if marts is not None or desc is not None:
-        out += (f"\n\n`{who}` has {marts if marts is not None else 'an unknown number of'} "
-                f"mart(s) and {desc if desc is not None else 'an unknown number of'} model(s) "
-                f"downstream.")
+    out = crit or f"`{name}` counts `{answer}` as a finding."
     words = " ".join(str((q.get("instructions") or {}).get("question", "") or "").split())
     if words:
         vals = {"model": f"`{who}`", "marts_downstream": marts, "models_downstream": desc,
@@ -459,7 +455,7 @@ def _declared_detail(name: str, q: dict, entry, v, answer: str, p_: float) -> st
         filled = _FIELD.sub(lambda m: str(vals[m.group(1)]) if vals.get(m.group(1)) is not None
                             else m.group(0), words)
         if not [t for t in _FIELD.findall(filled) if t in left and vals.get(t) is None]:
-            out += f"\n\nWhat was asked, with this model's values: {filled}"
+            out += f"\n\nAsked: {filled}"
     return out
 
 

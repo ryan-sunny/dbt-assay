@@ -123,6 +123,10 @@ def cards(findings, store, project_root, reads: dict | None = None,
         ev = f.evidence or {}
         c["findings"].append({
             "id": f.id, "summary": f.summary or "", "detail": f.detail or "",
+            # What a question-based finding was asked and answered, shown as a short block. (N4)
+            **({"asked": {"question": str(ev.get("asked") or ""), "about": str(ev.get("context") or ""),
+                          "answer": str(ev.get("answer") or ""),
+                          "sure": ev.get("probability")}} if ev.get("asked") else {}),
             # The quoted sentence, where the check is about one. Every claim family carries it.
             "claim": str(ev.get("claim") or ""),
         })
@@ -877,6 +881,9 @@ margin:0 0 4px}
 .vmore textarea{width:100%;min-height:64px;resize:vertical}
 .vmore .until{width:180px}
 /* W1. Where the file went, and the one thing to do next. */
+.reading{display:grid;grid-template-columns:auto 1fr;gap:3px 16px;margin:2px 0 8px;font-size:14px}
+.reading dt{color:var(--ash);font-size:13px}
+.reading dd{margin:0}
 .saved{border-top:1px solid var(--ink);border-bottom:1px solid var(--ink);background:#f6f2ea;
 padding:10px 34px;font-size:14px}
 .saved code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
@@ -1044,8 +1051,17 @@ function card(c) {
     'The same construct is in ' + c.group.size + ' models (' + c.group.models.slice(0, 5).join(', ')
     + (c.group.size > 5 ? ', ...' : '') + '): ' +
     (c.group.macro_at ? 'one edit in ' + c.group.macro_at + '.' : 'written inline in each.')}));
+  const asked = c.findings.map(f => f.asked).find(Boolean);
+  if (asked) {
+    box.append(el('div', {class: 'lbl', text: 'the reading'}));
+    box.append(el('dl', {class: 'reading'}, [
+      el('dt', {text: 'asked'}), el('dd', {text: asked.question.replace(/_/g, ' ')
+        + (asked.about && asked.about !== c.model ? ', about ' + asked.about : '')}),
+      el('dt', {text: 'answered'}), el('dd', {text: asked.answer}),
+      el('dt', {text: 'sure'}), el('dd', {text: asked.sure == null ? '' : Number(asked.sure).toFixed(2)})]));
+  }
   if (seenDetail.size) {
-    box.append(el('div', {class: 'lbl', text: 'what it means'}));
+    box.append(el('div', {class: 'lbl', text: asked ? 'why that is a finding' : 'what it means'}));
     for (const d of seenDetail) box.append(el('div', {class: 'q', text: d}));
   }
 
@@ -1357,7 +1373,8 @@ function an(word) {
 
 function field(label, pathParts, current, placeholder, big) {
   const key = pathParts.join('\u001f');
-  const box = el(big ? 'textarea' : 'input', {placeholder: placeholder || ''});
+  const box = el(big ? 'textarea' : 'input', big ? {placeholder: placeholder || ''}
+                                                 : {type: 'text', placeholder: placeholder || ''});
   box.value = key in edits ? edits[key] : (current || '');
   box.oninput = () => setEdit(key, box.value.trim() === (current || '').trim()
                               ? null : box.value.trim());

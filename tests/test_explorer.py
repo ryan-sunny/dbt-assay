@@ -1398,3 +1398,10 @@ def test_a_run_says_when_it_started():
     from dbt_assay import explore
     src = inspect.getsource(explore._runs)
     assert '"started_at")' in src and "strftime(started_at" in src
+
+
+def test_feedback_n2_a_question_never_shows_its_field_names():
+    v = explorer._VIEWS
+    assert "function fillQuestion(" in v
+    ab = v[v.index("function answersTab"):v.index("function goFinding")]
+    assert "fillQuestion(words(g))" in ab and "text: words(g) ||" not in ab
