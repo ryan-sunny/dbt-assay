@@ -725,6 +725,9 @@ background:#f4f1e9;border:0;border-left:2px solid var(--rule);padding:9px 12px;o
    Set into the slip rather than stacked above it, so it costs the height it occupies and the
    instruction runs around it. */
 .taskcut{float:left;height:172px;width:auto;margin:2px 26px 12px 0;mix-blend-mode:multiply}
+/* The slip holds its plate: with the paragraphs moved into the task's tip, the text beside the
+   cut is shorter than the cut, and a float the box does not contain hangs into the next card. */
+.task{display:flow-root}
 
 /* ---- a row you fill in */
 .wrow{border:0;border-bottom:1px solid var(--rule2);padding:16px 0;margin:0}
@@ -793,6 +796,14 @@ code.rests{display:block;white-space:pre-wrap;font:12px/1.5 ui-monospace,SFMono-
 monospace;background:#f4f1e9;border-left:2px solid var(--rule);padding:5px 12px;margin:0 0 4px}
 .warn{color:var(--rust)}
 .measured{color:var(--ash)}
+.hint{text-decoration:underline dotted var(--faint);text-underline-offset:3px;cursor:help}
+code.tick{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+background:#f4f1e9;padding:0 3px;font-style:normal}
+.tipbox{position:fixed;z-index:70;max-width:380px;background:var(--ink);color:var(--paper);
+font:13px/1.45 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;padding:7px 10px;
+pointer-events:none;white-space:pre-line;box-shadow:2px 2px 0 rgba(26,23,20,.14);
+text-transform:none;letter-spacing:normal;font-style:normal;font-weight:400}
+.tipbox[hidden]{display:none}
 footer{padding:13px 26px;color:var(--faint);font-size:12px;border-top:3px double var(--ink);
 font-family:Fell,Georgia,serif;font-style:italic}
 footer code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-style:normal;
@@ -820,16 +831,60 @@ function save() {
   try { localStorage.setItem(KEY + ':pages', JSON.stringify(PAGES)); } catch (e) { /* ignore */ }
   try { localStorage.setItem(KEY + ':pane', pane); } catch (e) { /* ignore */ }
 }
+/* The same tip as the report: `title` and `tip:` become one instant, styled tip, and `tip:`
+   also marks the element with a dotted underline so a reader knows there is more to read. */
 function el(t, a, kids) {
   const n = document.createElement(t);
   for (const k in (a || {})) {
     if (k === 'text') n.textContent = a[k];
     else if (k === 'html') n.innerHTML = a[k];
+    else if (k === 'title') { if (a[k]) n.setAttribute('data-tip', a[k]); }
+    else if (k === 'tip') { if (a[k]) { n.setAttribute('data-tip', a[k]); n.classList.add('hint'); } }
     else n.setAttribute(k, a[k]);
   }
   for (const c of (kids || [])) if (c) n.append(c);
   return n;
 }
+/* The tip: one element, shown at once below what it explains and kept inside the window; a tap
+   shows it on touch, and a click or a scroll puts it away. */
+const TIPBOX = el('div', {class: 'tipbox', hidden: ''});
+document.body.append(TIPBOX);
+function showTip(t) {
+  const txt = t.getAttribute('data-tip');
+  if (!txt) return;
+  TIPBOX.textContent = txt;
+  TIPBOX.hidden = false;
+  const r = t.getBoundingClientRect(), w = TIPBOX.offsetWidth, h = TIPBOX.offsetHeight;
+  TIPBOX.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
+  let top = r.bottom + 6;
+  if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+  TIPBOX.style.top = top + 'px';
+}
+const tipAt = ev => { const t = ev.target.closest && ev.target.closest('[data-tip]');
+                      if (t) showTip(t); else TIPBOX.hidden = true; };
+document.addEventListener('mouseover', tipAt);
+document.addEventListener('touchstart', tipAt, {passive: true});
+document.addEventListener('mousedown', () => { TIPBOX.hidden = true; }, true);
+document.addEventListener('scroll', () => { TIPBOX.hidden = true; }, true);
+/* A backticked span is code here too, by the same rule as the report: backticks only, never
+   inside pre, code or an input, and built from nodes, never HTML. */
+const TICK = /`([^`\n]+)`/;
+function renderTicks(root) {
+  const skip = n => n.closest && n.closest('pre, code, textarea, input, svg');
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {acceptNode: t =>
+    TICK.test(t.nodeValue) && t.parentElement && !skip(t.parentElement)
+      ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT});
+  const hits = [];
+  while (walk.nextNode()) hits.push(walk.currentNode);
+  for (const t of hits)
+    t.replaceWith(...t.nodeValue.split(/(`[^`\n]+`)/).filter(x => x !== '').map(x =>
+      /^`[^`\n]+`$/.test(x) ? el('code', {class: 'tick', text: x.slice(1, -1)})
+                            : document.createTextNode(x)));
+}
+new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) {
+  if (n.nodeType === 1) renderTicks(n);
+  else if (n.nodeType === 3 && n.parentElement) renderTicks(n.parentElement);
+} }).observe(document.querySelector('main'), {childList: true, subtree: true});
 const answered = () => Object.values(answers).filter(a => a && a.verdict).length;
 
 function numbered(sql) {
@@ -1169,13 +1224,16 @@ function explainer(task, how, example, why, cut) {
      something, where the same cut in a row of its own reads as an ornament somebody added. */
   const src = cut && (D.cuts || {})[cut];
   if (src) box.append(el('img', {class: 'taskcut', src: src, alt: ''}));
-  box.append(el('h2', {class: 'taskh', text: task}));
-  box.append(el('p', {class: 'measured', text: how}));
+  /* *** THE TASK AND ITS EXAMPLE ARE READ; THE PARAGRAPHS AROUND THEM WERE NOT. ***
+     "theyre all not being read its random text ... grey and your eyes dont even notice it". What
+     to do and one filled-in example stay on the page, because the example IS the instruction;
+     how it works and why it matters are the task's tip. */
+  box.append(el('h2', {class: 'taskh'}, [el('span', {text: task,
+    tip: [how, why].filter(Boolean).join('\n\n')})]));
   if (example) {
     box.append(el('div', {class: 'tasklab', text: 'one filled in'}));
     box.append(el('pre', {class: 'taskex', text: example}));
   }
-  if (why) box.append(el('p', {class: 'measured dim', text: why}));
   return box;
 }
 
@@ -1272,7 +1330,7 @@ function settingsTab(host) {
     + 'handback.json --apply`, which shows you the diff first.', 'instruments')];
   for (const s of (CTX.settings || [])) {
     const row = el('div', {class: 'wrow'});
-    row.append(el('h3', {text: s.dotted}));
+    row.append(el('h3', {}, [el('span', {text: s.dotted, tip: s.why})]));
     row.append(el('div', {class: 'measured', text: s.what}));
     const shipped = s.shipped == null ? 'nothing' : String(s.shipped);
     row.append(el('div', {class: 'measured', text: s.set_here
@@ -1280,7 +1338,6 @@ function settingsTab(host) {
       : 'not set here, so assay ships ' + shipped + ' and that is what is in force.'}));
     row.append(field(s.kind === 'number' ? 'value (a number)' : 'value',
                      s.path, s.value === '' ? '' : String(s.value), ''));
-    row.append(el('div', {class: 'measured dim', text: s.why}));
     bits.push(row);
   }
   if (!(CTX.settings || []).length)
@@ -1365,10 +1422,7 @@ function waiversTab(host) {
 
 function monitoringTab(host) {
   const m = CTX.monitoring || {};
-  const bits = [el('p', {class: 'measured', text:
-    'assay asserts that a monitor EXISTS, is CURRENT and COVERS what matters. It never measures '
-    + 'volume or freshness itself -- that would be a second monitoring tool with a second '
-    + 'opinion. Everything below is about the monitoring, never about your data.'})];
+  const bits = [];
   if (!m.measured) {
     bits.push(block2('Nothing measured yet',
       'Run `assay volume --json > volume.json` and emit the form with '
@@ -1504,7 +1558,7 @@ assay {e(version)} &middot; manifest {e(str(generated_at))}{report_link}</span>
 <span class="ident">
   <span class="count" id="count"></span>
   <input type="text" id="by" placeholder="your name" style="width:140px">
-  <button class="go" id="dl">download handback.json</button>
+  <button class="go hint" id="dl" data-tip="Answers are kept in this browser as you go, so you can close the tab and come back. Nothing is recorded until you download this file and run: assay review --load handback.json&#10;&#10;Verdicts are recorded then. What you wrote under Words, Explanations, Waivers or Settings is shown as a diff against audit.yml and written only with --apply. A card you did not answer is never submitted.">download handback.json</button>
   <button id="clear">clear</button>
 </span></h1>
 <!-- *** WHAT YOU DO WITH THE WHOLE FORM SITS WITH THE TAB STRIP, NOT INSIDE A TAB. ***
@@ -1512,12 +1566,12 @@ assay {e(version)} &middot; manifest {e(str(generated_at))}{report_link}</span>
      to a tab that has no pager slid them sideways: "so it doesnt get moved around by the UI when
      switching tabs". They belong to the form, so they hold position on the form's own row. -->
 <nav class="tabs">
-  <button data-pane="words" class="on">Words<b id="n-words"></b></button>
-  <button data-pane="explanations">Explanations<b id="n-expl"></b></button>
-  <button data-pane="waivers">Waivers<b id="n-waiv"></b></button>
-  <button data-pane="monitoring">Monitoring<b id="n-mon"></b></button>
-  <button data-pane="findings">Findings<b id="n-find"></b></button>
-  <button data-pane="settings">Settings<b id="n-set"></b></button>
+  <button data-pane="words" class="on" data-tip="Words your warehouse uses that assay has no definition for, and the ones already in your vocabulary.">Words<b id="n-words"></b></button>
+  <button data-pane="explanations" data-tip="The kinds of failing row each mart actually has, in your words.">Explanations<b id="n-expl"></b></button>
+  <button data-pane="waivers" data-tip="Findings somebody accepted, proposed as waivers with the reason they gave.">Waivers<b id="n-waiv"></b></button>
+  <button data-pane="monitoring" data-tip="Whether a monitor EXISTS, is CURRENT and COVERS what matters. assay never measures volume or freshness itself, so everything here is about the monitoring, never about your data.">Monitoring<b id="n-mon"></b></button>
+  <button data-pane="findings" data-tip="Every finding to rule on, twenty at a time, highest blast radius first. Twenty and stopping is a good session: the models with the most marts downstream are where a wrong verdict costs something.">Findings<b id="n-find"></b></button>
+  <button data-pane="settings" data-tip="The numbers this project is judged by, written to audit.yml.">Settings<b id="n-set"></b></button>
 </nav>
 <!-- The pager belongs to one pane, so it appears with that pane and nowhere else. -->
 <div class="bar" id="pager">
@@ -1534,18 +1588,6 @@ assay {e(version)} &middot; manifest {e(str(generated_at))}{report_link}</span>
 <div id="p-settings" class="pane" hidden></div>
 <div id="p-findings" class="pane" hidden><div id="cards"></div></div>
 </main>
-<footer>
-Answers are kept in this browser as you go, so you can close the tab and come back. Nothing is
-recorded anywhere until you download the file and run
-<code>assay review --load handback.json</code>. Verdicts are recorded; anything you wrote under
-Words, Explanations or Waivers is shown to you as a diff against <code>audit.yml</code> and
-written only when you add <code>--apply</code>. A card you did not answer is never submitted:
-`human` means somebody answered it, and a default would make that false.
-<br><br>
-Twenty at a time, highest blast radius first. Twenty and stopping is a good session &mdash; the
-models with the most marts downstream are the ones where a wrong verdict costs something, and
-there is no prize for reaching the end of the list.
-</footer>
 <script id="assay-form" type="application/json">{blob}</script>
 <script>{_JS}</script>
 </body></html>

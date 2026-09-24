@@ -414,3 +414,27 @@ def test_a_reading_puts_its_confidence_and_its_line_on_the_card(store, tmp_path)
     assert rd["rests_on"] == {"text": "join u on u.id = t.id", "file": "models/a.sql",
                               "line": 4, "none": None}
     assert rd["note"].startswith("rests on models/a.sql:4: `join u on u.id = t.id`")
+
+
+def test_the_form_opens_on_the_task_not_on_grey_paragraphs():
+    """*** THE SAME COMPLAINT AS THE REPORT, ON THE FORM. ***
+
+    "all those are pointless, some contain useful info but theyre all not being read". Each tab
+    keeps what to do and one filled-in example, because those ARE the instruction; how it works
+    and why it matters are the task's tip. The italic footer is the download button's tip and the
+    Findings tab's, and the Monitoring intro is the Monitoring tab's.
+    """
+    html = reviewform.form_html([], {}, "p", "x", "0")
+    assert "<footer" not in html, "the footer is back"
+    js = reviewform._JS
+    ex = js[js.index("function explainer("):]
+    ex = ex[:ex.index("\n}")]
+    assert "tip: [how, why]" in ex, "how and why are paragraphs again"
+    assert "class: 'measured', text: how" not in ex
+    assert "assay asserts that a monitor EXISTS" not in js, "the monitoring intro is a paragraph"
+    assert 'id="dl" data-tip="Answers are kept in this browser' in html
+    assert 'data-pane="monitoring" data-tip=' in html
+    # the plate stays inside its slip now that the text beside it is short
+    assert ".task{display:flow-root}" in reviewform._CSS
+    # and a backtick is code here too
+    assert "function renderTicks(" in js and "new MutationObserver" in js
