@@ -141,3 +141,42 @@ def test_the_practices_command_exits_2_without_a_connection(project_dir, tmp_pat
     with pytest.raises(SystemExit) as e:
         main()
     assert e.value.code == 2
+
+
+def test_a_relative_profiles_dir_is_read_from_where_assay_was_run(tmp_path, monkeypatch):
+    """*** `--profiles-dir transform` REACHED dbt AS `transform/transform`. ***
+
+    Every dbt call runs with the project as its working directory, so a relative path typed from
+    the directory above it was resolved from inside it, and dbt said only that it could not find
+    a profile. It is resolved from where it was typed, once, for every call.
+    """
+    (tmp_path / "transform").mkdir()
+    monkeypatch.chdir(tmp_path)
+    assert probe.profiles_args("transform") == ["--profiles-dir", str(tmp_path / "transform")]
+    assert probe.profiles_args(None) == []
+
+
+def test_a_profiles_dir_with_no_profiles_yml_says_so(tmp_path, monkeypatch):
+    import pytest
+    monkeypatch.setattr(probe, "_REACHED", {})
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(probe.WarehouseUnreachable, match="no profiles.yml there"):
+        probe.run_sql("select 1", str(tmp_path), profiles_dir="nowhere", dbt_bin="dbt")
+
+
+def test_dbts_error_survives_a_warning_on_stderr():
+    """*** `stderr or stdout` KEPT THE WARNING AND DROPPED THE ERROR. ***
+
+    dbt prints its error on stdout; `uv run` from inside another environment prints a VIRTUAL_ENV
+    warning on stderr. Measured on the field project: the message a person saw was uv's warning.
+    """
+    from types import SimpleNamespace
+    p = SimpleNamespace(stdout="Encountered an error:\nCould not find profile named 'x'",
+                        stderr="warning: `VIRTUAL_ENV=/a/.venv` does not match")
+    assert "Could not find profile named 'x'" in probe.failure_text(p)
+
+    from dbt_assay.elementary import dbt_error
+    said = dbt_error("preamble" + probe.DBT_OUTPUT + probe.failure_text(p))
+    assert said == "dbt said: Could not find profile named 'x'", said
+    # assay's own reason, when dbt never ran, is passed through without a second preamble
+    assert dbt_error("could not reach the warehouse: no profiles.yml") == "no profiles.yml"

@@ -234,10 +234,9 @@ class Compiler:
             return {}
         self._link_packages()
         proj = os.path.join(self.dir, self.project_subdir)
+        from .probe import profiles_args
         cmd = [*self.dbt_bin.split(), "compile", "--select", *model_names,
-               "--target-path", "target"]
-        if self.profiles_dir:
-            cmd += ["--profiles-dir", self.profiles_dir]
+               "--target-path", "target", *profiles_args(self.profiles_dir)]
         subprocess.run(cmd, cwd=proj, capture_output=True, text=True,
                        timeout=900, check=False)
         out = {}

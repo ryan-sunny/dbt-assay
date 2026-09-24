@@ -230,3 +230,43 @@ def test_disagreements_accepts_the_target_flag_every_neighbour_takes(tmp_path):
     r = CliRunner().invoke(app, ["disagreements", "-t", "target", "--store",
                                  str(tmp_path / "s.duckdb"), "--json"])
     assert "No such option" not in r.output, r.output
+
+
+def test_volume_json_says_it_could_not_reach_the_warehouse_and_why(project_dir, tmp_path,
+                                                                  monkeypatch):
+    """*** EXIT 1 AND AN EMPTY STDOUT. ***
+
+    Reported from the field: `volume --json` printed nothing and exited 1 when it could not reach
+    the warehouse, while the same command without `--json` explained itself. Every line went
+    through `say`, which `--json` silences. A machine now gets JSON saying it was unreachable and
+    dbt's own error, and the person at the terminal gets the explanation on stderr.
+    """
+    import json
+
+    from dbt_assay import probe as probe_mod
+    from dbt_assay.probe import DBT_OUTPUT, Result
+    dbt_log = ("\x1b[0m05:09:32  Running with dbt=1.11.12\n\x1b[0m05:09:32  Encountered an error:\n"
+               "Runtime Error\n  Could not find profile named 'sunny_data'")
+    why = "could not reach the warehouse: `dbt show` failed." + DBT_OUTPUT + dbt_log
+
+    def run_sql(sql, project_dir, profiles_dir=None, dbt_bin="dbt", limit=50, timeout=300, **_kw):
+        return Result(failed=True, why=why)
+    monkeypatch.setattr(probe_mod, "run_sql", run_sql)
+    monkeypatch.setattr(probe_mod, "run_many", lambda stmts, *a, **k:
+                        [Result(failed=True, why=why) for _ in stmts])
+
+    res = runner.invoke(app, ["volume", "--target", str(project_dir),
+                              "--store", str(tmp_path / "s.duckdb"),
+                              "--elementary-schema", "elem", "--json"], catch_exceptions=True)
+    assert res.exit_code == 1, res.output
+    payload = json.loads(res.stdout)
+    assert payload["reachable"] is False
+    assert payload["error"] == "dbt said: Runtime Error Could not find profile named 'sunny_data'"
+    assert "Could not find profile" in res.stderr, "the person at the terminal got no reason"
+
+    # and without --json the reason is printed once, not once per relation, in dbt's words
+    res = runner.invoke(app, ["volume", "--target", str(project_dir),
+                              "--store", str(tmp_path / "s.duckdb"),
+                              "--elementary-schema", "elem"], catch_exceptions=True)
+    assert res.exit_code == 1
+    assert res.output.count("Could not find profile named") == 1, res.output

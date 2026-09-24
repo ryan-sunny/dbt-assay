@@ -401,6 +401,37 @@ def _record(sql: str, res: Result, *, caller: str, kind: str, relation: str = ""
         led.unrecorded += 1
 
 
+DBT_OUTPUT = "\ndbt output:\n"
+
+
+def failure_text(p, keep: int = 600) -> str:
+    """What a failed dbt call printed, from BOTH streams.
+
+    *** `stderr or stdout` KEPT THE WRONG ONE. ***
+    dbt writes its error to STDOUT ("Encountered an error: ... Could not find profile named
+    'sunny_data'"), and `uv run` writes a harmless VIRTUAL_ENV warning to STDERR whenever it is
+    started from inside another environment -- which is exactly how assay runs under `uvx` or
+    `uv run --project`. A non-empty stderr won, so the one line that said what was wrong was
+    thrown away and the warning was printed in its place.
+    """
+    both = "\n".join(x.strip() for x in (p.stdout or "", p.stderr or "") if x and x.strip())
+    return (both or "no output")[-keep:].strip()
+
+
+def profiles_args(profiles_dir: str | None) -> list:
+    """`["--profiles-dir", <absolute>]`, or nothing.
+
+    *** EVERY dbt CALL RUNS IN THE PROJECT, SO A RELATIVE PATH WAS READ FROM INSIDE IT. ***
+    `--profiles-dir transform`, typed from the directory holding `transform/`, reached dbt as
+    `transform` with its working directory already `transform/`, and dbt looked in
+    `transform/transform`. Nothing said why. A path a person types is resolved from where they
+    typed it, once, here, for every call that hands it to dbt.
+    """
+    if not profiles_dir:
+        return []
+    return ["--profiles-dir", os.path.abspath(os.path.expanduser(profiles_dir))]
+
+
 class WarehouseUnreachable(RuntimeError):
     """dbt could not answer `select 1` here, so nothing this command counts would be real."""
 
@@ -421,19 +452,25 @@ def _reach(project_dir: str, profiles_dir: str | None, dbt_bin: str) -> None:
             raise WarehouseUnreachable(_REACHED[key])
         return
     cmd = [*dbt_bin.split(), "show", "--inline", "select 1 as assay_reachable", "--output",
-           "json", "--limit", "1"]
+           "json", "--limit", "1", *profiles_args(profiles_dir)]
     if profiles_dir:
-        cmd += ["--profiles-dir", profiles_dir]
+        where = profiles_args(profiles_dir)[1]
+        if not os.path.isfile(os.path.join(where, "profiles.yml")):
+            _REACHED[key] = (f"could not reach the warehouse: --profiles-dir {profiles_dir} is "
+                             f"{where}, and there is no profiles.yml there. A relative path is "
+                             f"read from the directory assay was run in.")
+            raise WarehouseUnreachable(_REACHED[key])
     try:
         p = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, timeout=180,
                            check=False)
         ok = p.returncode == 0 and parse_dbt_show(p.stdout or "") is not None
-        why = "" if ok else (p.stderr or p.stdout or "no output")[-600:].strip()
+        why = "" if ok else failure_text(p, 1200)
     except (OSError, subprocess.TimeoutExpired) as e:
         why = str(e)[:600]
     _REACHED[key] = (f"could not reach the warehouse: `{dbt_bin} show` in `{project_dir}` "
                      f"failed, so nothing counted here would be real. Pass --project-dir (the "
-                     f"dbt project) and --dbt (how dbt runs, e.g. \"uv run dbt\").\n{why}"
+                     f"dbt project) and --dbt (how dbt runs, e.g. \"uv run dbt\")."
+                     f"{DBT_OUTPUT}{why}"
                      if why else "")
     if _REACHED[key]:
         raise WarehouseUnreachable(_REACHED[key])
@@ -451,9 +488,8 @@ def _execute(sql: str, project_dir: str, profiles_dir: str | None = None,
     slow, and enormous, so it is off unless `cost.measure_bytes` is set.
     """
     _reach(project_dir, profiles_dir, dbt_bin)
-    cmd = [*dbt_bin.split(), "show", "--inline", sql, "--output", "json", "--limit", str(limit)]
-    if profiles_dir:
-        cmd += ["--profiles-dir", profiles_dir]
+    cmd = [*dbt_bin.split(), "show", "--inline", sql, "--output", "json", "--limit", str(limit),
+           *profiles_args(profiles_dir)]
     if measure:
         cmd += ["--log-format", "json", "--log-level", "debug"]
     started = time.monotonic()
@@ -473,13 +509,13 @@ def _execute(sql: str, project_dir: str, profiles_dir: str | None = None,
         rows, resp, secs = parse_dbt_json_logs(p.stdout or "")
         if p.returncode != 0:
             return Result(failed=True, wall_ms=ms,
-                          why=(p.stderr or p.stdout or "no output")[-300:].strip())
+                          why=failure_text(p))
         return Result(rows=rows, wall_ms=ms, adapter=resp,
                       engine_ms=None if secs is None else int(secs * 1000))
     data = parse_dbt_show(p.stdout or "")
     if p.returncode != 0 or data is None:
         return Result(failed=True, wall_ms=ms,
-                      why=(p.stderr or p.stdout or "no output")[-300:].strip())
+                      why=failure_text(p))
     # dbt answered. An empty `show` is now an EMPTY TABLE and says so, which is the whole point.
     return Result(rows=list(data.get("show") or []), wall_ms=ms)
 

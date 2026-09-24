@@ -85,9 +85,8 @@ def looks_like_a_model_file(path: str, project_root: Path) -> str | None:
 
 def compile_model(name: str, project_root: Path, dbt_bin: str,
                   profiles_dir: str | None, timeout: float = 600) -> tuple[bool, str]:
-    cmd = [*shlex.split(dbt_bin), "compile", "--select", name]
-    if profiles_dir:
-        cmd += ["--profiles-dir", profiles_dir]
+    from .probe import profiles_args
+    cmd = [*shlex.split(dbt_bin), "compile", "--select", name, *profiles_args(profiles_dir)]
     try:
         r = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True,
                            timeout=timeout, check=False)

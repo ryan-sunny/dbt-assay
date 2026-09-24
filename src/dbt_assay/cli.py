@@ -43,6 +43,8 @@ from .store import Store
 
 app = typer.Typer(add_completion=False, help="Recover the semantics your warehouse never wrote down.")
 console = Console()
+# For what a person must see when stdout belongs to a machine (`--json`).
+err_console = Console(stderr=True)
 
 
 def _default_ticker():
@@ -876,9 +878,7 @@ def _run_dbt_compile(target: Path, dbt_bin: str = "dbt", profiles_dir: str | Non
         except OSError:
             kept = None
 
-    cmd = [*dbt_bin.split(), "compile"]
-    if profiles_dir:
-        cmd += ["--profiles-dir", profiles_dir]
+    cmd = [*dbt_bin.split(), "compile", *probe_mod.profiles_args(profiles_dir)]
     try:
         r = subprocess.run(cmd, cwd=pd, capture_output=True, text=True,
                            timeout=timeout, check=False)
@@ -3387,6 +3387,33 @@ def volume(
         t.add_row(r.relation, f"[{colour}]{r.state.replace('_', ' ')}[/]",
                   _n(r.rows) if r.rows else "[dim]0[/]",
                   f"{r.newest:%Y-%m-%d}" if r.newest else "[dim]-[/]")
+    if not rep.reachable:
+        # *** ONE EXPLANATION, WITH dbt'S OWN WORDS, AND ON BOTH OUTPUTS. ***
+        # It printed the same "check your flags" sentence once per relation, and never the error
+        # dbt gave, which was stored on every reading. And `--json` printed nothing at all and
+        # exited 1, because every line went through `say`, which `--json` silences -- a machine
+        # got an empty stdout and no reason. The JSON now says it was unreachable and why, and
+        # the person reading a terminal gets the same explanation on stderr.
+        why = elem.dbt_error(next((r.detail for r in rep.readings if r.detail), ""), keep=6)
+        where = probe_mod.profiles_args(profiles_dir)
+        ran = (f"It ran `{dbt_bin} show` in `{Path(project_dir).resolve()}`"
+               + (f" with --profiles-dir {where[1]}" if where else "") + ".")
+        if as_json:
+            print(_json.dumps({"reachable": False, "error": why, "ran": ran,
+                               "readings": [{"relation": r.relation, "state": r.state,
+                                             "says": r.says()} for r in rep.readings]},
+                              default=str))
+        out = err_console if as_json else console
+        out.print("\n[red]assay could not reach your warehouse[/], so nothing here was "
+                  "measured and nothing here is a statement about Elementary.")
+        out.print(why or "dbt printed no error.", markup=False, highlight=False)
+        out.print(f"[dim]{ran} If dbt lives in a project environment, pass it whole: "
+                  f"`--dbt \"uv run dbt\"`. A relative --profiles-dir is read from where assay "
+                  f"was run.[/]")
+        if store:
+            store.close()
+        raise typer.Exit(1)
+
     say()
     say(t)
     say()
@@ -3396,19 +3423,15 @@ def volume(
         elif r.detail:
             say(f"[yellow]{r.relation}: {r.detail}[/]")
 
-    if not rep.reachable:
-        say("\n[red]assay could not reach your warehouse[/], so nothing here was "
-                      "measured and nothing here is a statement about Elementary.")
-        say(f"[dim]It ran `dbt show` as `{dbt_bin}` in `{project_dir}`. If dbt lives in "
-                      f"a project environment, pass it whole: "
-                      f"`--dbt \"uv run dbt\"`.[/]")
-        if store:
-            store.close()
-        raise typer.Exit(1)
-
     if not rep.installed:
         # *** WITHOUT THE PACKAGE, SAY WHAT IT WOULD BUY, COMPUTED FROM WHAT assay KNOWS. ***
         n_unwatched = len(elem.unwatched(rep, project))
+        if as_json:
+            # Silent under --json, the same way the unreachable case was: exit 0, empty stdout.
+            print(_json.dumps({"reachable": True, "installed": False,
+                               "readings": [{"relation": r.relation, "state": r.state,
+                                             "says": r.says()} for r in rep.readings],
+                               "unwatched_with_marts": n_unwatched}, default=str))
         say(f"\n[dim]{elem._plural(n_unwatched, 'model')} with a mart downstream have no volume "
                       f"history here, and assay does not measure that and does not intend to. "
                       f"`elementary-data` does, and it is a dbt package.[/]")
@@ -5604,9 +5627,8 @@ def watch(
             names = sorted({Path(p).stem for p in moved})
             if compile_on_save:
                 sel = " ".join(f"{n}+" for n in names[:8])
-                cmd = [*dbt_bin.split(), "compile", "--select", *sel.split()]
-                if profiles_dir:
-                    cmd += ["--profiles-dir", profiles_dir]
+                cmd = [*dbt_bin.split(), "compile", "--select", *sel.split(),
+                       *probe_mod.profiles_args(profiles_dir)]
                 subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, check=False)
 
             state = live_mod.read(tdir, store, obs)

@@ -35,6 +35,8 @@ Elementary's own, and every threshold has a default and a config key.
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -50,6 +52,37 @@ STALE_AFTER_DAYS = 14
 
 ABSENT, NEVER_RUN, ONE_BUCKET, ABANDONED, LIVE, UNREACHABLE = (
     "package_absent", "never_run", "one_bucket", "abandoned", "live", "unreachable")
+
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def dbt_error(detail: str | None, keep: int = 4) -> str:
+    """The sentence to print for a warehouse assay could not reach: dbt's own error when dbt
+    gave one, prefixed `dbt said:`, and assay's reason when assay stopped before running dbt.
+
+    dbt's failure is the tail of a log -- a version line, `Encountered an error:`, then the
+    reason. A person needs the reason, so what follows `Encountered an error` is kept when it is
+    there, and colour codes, timestamps and `uv`'s environment warning are dropped.
+    """
+    if not detail:
+        return ""
+    from .probe import DBT_OUTPUT
+    text = str(detail)
+    mark = DBT_OUTPUT.lstrip("\n")       # a caller that strips the text keeps the marker's words
+    if mark not in text:
+        # assay's own reason; dbt never ran. Every caller has already said it could not reach
+        # the warehouse, so the reason is given without saying it twice.
+        return " ".join(text.split()).removeprefix("could not reach the warehouse: ")
+    lines = []
+    for ln in _ANSI.sub("", text.split(mark, 1)[1]).splitlines():
+        ln = re.sub(r"^\s*\d{2}:\d{2}:\d{2}(\.\d+)?\s*", "", ln).strip()
+        if ln and not ln.startswith("warning: `VIRTUAL_ENV"):
+            lines.append(ln)
+    cut = next((i for i, ln in enumerate(lines) if "Encountered an error" in ln), None)
+    lines = lines[cut + 1:] if cut is not None and cut + 1 < len(lines) else lines[-keep:]
+    return "dbt said: " + " ".join(lines[:keep]) if lines else ""
 
 
 @dataclass
@@ -88,9 +121,13 @@ class Reading:
             # "package absent" -- announcing that nothing monitors volume, on a warehouse where
             # Elementary was running fine. A tool that cannot reach the warehouse and says the
             # warehouse is empty is the exact defect this module is about.
+            # *** AND IT SAID "CHECK YOUR FLAGS" WITH dbt'S OWN ERROR IN HAND. ***
+            # The reason was stored on the reading and never printed, so the one sentence that
+            # said what was wrong -- a missing profile, a bad target -- was the one not shown.
+            why = dbt_error(self.detail)
             return (f"assay could not reach the warehouse, so `{self.relation}` was never read. "
                     f"This is NOT a statement about Elementary: nothing here was measured. "
-                    f"Check `--dbt`, `--project-dir` and `--profiles-dir`.")
+                    + (why or "Check `--dbt`, `--project-dir` and `--profiles-dir`."))
         if self.state == ABSENT:
             return (f"`{self.relation}` does not exist here, so volume is not measured by this "
                     f"report and nothing in it covers that.")
