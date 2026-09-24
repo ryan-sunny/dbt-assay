@@ -95,11 +95,8 @@ premise_uses (run_id, premise_id, dependent_kind, dependent_id)
 
 ### Surfaces
 
-- Page: a **Premises** section in the navigator style (groups: broken, unchecked, assumed,
-  holding), each premise showing evidence and dependents. A model's pane lists "correct as long
-  as" with statuses. A finding raised by a broken premise names it.
-- MCP: `premises(model)` returns what a model's facts and findings rest on, with status.
-- `check`: prints premises that changed status since the previous run.
+Designed in section 4: the Guarantees tab, the model pane's "correct as long as", the "why it
+is back" block on a raised finding, MCP `premises(model)`, and `check` printing status changes.
 
 **Fixed means:** on the field store, a declared key whose test never ran shows `unchecked`; a probe
 duplicate turns a suppressed `hop_multiplies_rows` into a raised finding naming the premise;
@@ -343,9 +340,131 @@ Three layers; only the first is written by hand.
   tables, so a dashboard or a Dagster asset can read which marts are proven and which premises are
   broken with plain SQL.
 
+## 4. The UI, for every item above
+
+Every item ships with its UI in the same commit, built to the page's existing rules (from
+sunny-data's `docs/audit/assay-feedback.md` and the 0.51.x rounds), and screenshotted at 1500px,
+1100px and 420px before it is called done. The rules:
+
+- **Navigator:** a high-volume list is the three-column layout (groups on the left with counts,
+  rows in the middle, paged at 200, the picked row on the right), built with `drill()`. Never a
+  stacked report to scroll.
+- **One detail layout:** `pane()`, in the order kind, title, where, the one-line what, the reading,
+  what to do.
+- **No grey sentences:** an explanation is a tip on the tab, heading, column header or label;
+  only facts about this warehouse are text, in ink.
+- **One badge:** `badge(label, class, confidence)`, one line, spaced from the text before it, the
+  confidence as a number beside it. Status colour only on status: `bad` (rust) for broken and
+  failing, ink for holding and proven, ember for assumed and judged, faint for unchecked and
+  unknown. Never a colour without its word.
+- **One-row tab strip,** grouped under its labels, a menu below 940px.
+- Long names break at `_` with `wbr()`; nothing scrolls sideways; wording is plain, with no
+  "X, not Y" cadence.
+
+### The page (assay.html)
+
+**Tab strip: one new tab, `Guarantees`, in the "what is wrong" group** after Monitoring. It holds
+premises and proofs together, because a proof is only as good as its premises and splitting them
+would send a reader between two tabs to answer one question. The strip currently ends at 1287px
+on a 1366px screen (79px spare) and a tab with a count is about 110px, so exactly one tab is
+allowed: the 1360px step moves to 1440px and the counts-off step from 1180px to 1280px, and the
+existing one-row browser test (960 to 1920px) is the gate. The tab's number is the premises that
+are not holding (broken + unchecked + assumed + unknown); its tip says so.
+
+**Guarantees tab** (navigator):
+- A fixed strip on top, like Monitoring's at a glance: premises by status as one stacked bar
+  (broken, unchecked, assumed, holding, unknown) with counts, and once L2 exists, proven properties
+  out of attempted. A fact line in ink when anything is broken: "3 premises broke since the
+  previous run".
+- Groups on the left: `broken`, `unchecked`, `assumed`, `unknown`, `holding`, and (L2) `proven`,
+  `not proven`, `parse unproven`. Each group's sub-line says what it costs, e.g. "12 findings held
+  back on these".
+- Rows: the premise in words ("`parcel_id` unique in `stg_co_parcels_composite`"), its status
+  badge, `since`, and how many things rest on it.
+- Pane: kind "premise · unique"; title the statement; where: the relation, linked to Models;
+  the reading:
+  - **evidence**, one row per source with its own badge and date: the dbt test with its last
+    result ("`unique_stg_x_parcel_id` · never ran"), the probe count ("118 duplicates in
+    412,901 rows · 2026-09-14"), the judgment ("column_is_part_of_the_key · 0.91");
+  - **what rests on it**: grains, findings held back, proofs, each linked to its tab;
+  - **what to do**, only when not holding: the single concrete step ("run `unique_stg_x_parcel_id`
+    in the next build", "`assay probe --select stg_x`", "the key is broken: 118 duplicates; either
+    dedupe upstream or change the join to include `county`").
+- For a proof row (L2): kind "proof · no fan-out"; title the model; the reading: the property in
+  words, its premises each with a status badge, the rule it applied (`left_join_preserves_rows`,
+  tip: "proven once in assay's Lean library"), the parse premise, and the Lean version. A proof
+  whose premises are not all holding reads "guarantee lost: `p_7f3a` broke on 2026-09-14".
+
+**Models pane:**
+- The grain row keeps its value; its badge shows the evidence behind it ("declared · never ran",
+  "declared · passing", "counted", "judged 0.91"). (G-A)
+- A new section **correct as long as**: that model's premises with status badges, one line each,
+  linked to Guarantees. Omitted when the model has none.
+- A new section **proven** (L2): each property, proven / not proven / guarantee lost, with its
+  missing premise when not proven.
+- Incremental models (G-D): a section **incremental** with strategy, `unique_key`, lookback or
+  `event_time`, `on_schema_change`, each as a key-value row; anything a G-D check flagged carries
+  its badge on the row.
+
+**Findings:**
+- New checks slot into the existing navigator as groups: `fixed_finding_returned`,
+  `float_sum_is_not_reproducible`, the five incremental checks. Their panes use `pane()`.
+- `fixed_finding_returned` pane: a short timeline as key-value rows (agreed by, on; fixed at
+  commit, run; came back at commit, run), each commit linked when the repo has a remote, and the
+  original finding linked. Weight shows its parts as today.
+- A finding RAISED by a broken premise (held back until now) shows a block **why it is back**:
+  the premise, its badge, the date it broke, and the measurement.
+- A finding from a rule in `RULES_PROVEN` shows a badge `proven rule` beside "found by", tip:
+  "this rule is proven in Lean; the finding depends only on the parsed structure and the premises
+  listed".
+- `float_sum_is_not_reproducible` pane shows the column, its type, the aggregate, and the one-line
+  recommendation `cast(<col> as decimal(18, 2))`.
+
+**Overview:**
+- The loop tiles gain **regressed** beside fixed and still open, `bad` when above zero. (G-B)
+- A tile **guarantees**: "N premises not holding · M broken", linking to Guarantees.
+- Once L2 exists, a tile **proven**: "X of Y properties proven", tip naming the trust boundary.
+
+**Monitoring:** a never-ran or skipped test that backs a premise says so in its row detail:
+"backs the grain of 3 models", linked to Guarantees.
+
+**Spend:** warehouse statements from the L2 round-trip and L4 conformance runs appear under their
+own callers (`assay.prove`, `assay.conformance`) in the existing by-caller table.
+
+**Areas, Claims, Answers, Questions, Config:** no layout change. The arrival-time question for G-D
+appears in Answers and Questions as any family does.
+
+### The review form (review.html)
+
+- New finding types appear in the Findings navigator like any other and are ruled the same way.
+- A `fixed_finding_returned` card shows the timeline block from the page, and its verdict meanings
+  are specific: agree ("it is back and must be fixed again"), disagree ("it is not the same
+  defect"), accept ("it is back on purpose").
+- A card raised by a broken premise shows the **why it is back** block.
+- Premises are never ruled in the form: they are measured. An `assumed` premise's card-free route
+  is the judgment it rests on, which Answers already shows.
+
+### Terminal and MCP (also UI)
+
+- `assay check` prints, after the loop line, premises whose status changed since the previous run
+  ("broke: `parcel_id` unique in `stg_co_parcels_composite` · 118 duplicates") and the regressed
+  count. Nothing printed when nothing changed.
+- `assay prove` prints one line per model: proven properties, not proven with the missing premise,
+  parse proven / measured / unproven, and at the end the totals and where the files were written.
+- MCP `premises(model)`, `proofs(model)`, `proof_goal`, `check_proof` return the same fields the
+  page shows, so an agent and a person read the same thing.
+
+### Checks that gate the UI work
+
+- The one-row tab strip test passes at 960 to 1920px with the Guarantees tab added.
+- `docs/audit/assay_page_checks.py` (sunny-data) still passes 7 of 7.
+- A browser test opens Guarantees, picks a broken premise, and finds its evidence and its
+  dependents in the pane; another opens a `fixed_finding_returned` finding and finds both commits.
+
 ## Build order
 
-One commit per item, tests with each, the page screenshotted where it changes.
+One commit per item, tests with each. Each item ships with its UI from section 4 in the same
+commit, screenshotted at 1500, 1100 and 420px.
 
 1. Ledger core: `premises` / `premise_uses`, status from declared + observed + judged evidence.
 2. G-A: test results joined onto declared keys (first ledger consumer).
