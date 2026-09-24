@@ -62,9 +62,9 @@ reading_rests_on:
       defect in a model. A finding produced from it would be a finding about a finding.
   type: choice
   subject: finding
-  # Asked in the same call as `finding_is_correct`, so it shares that question's version: a call
-  # carries one. Bump both together.
-  prompt_version: "read.v2"
+  # Asked in the same call as `finding_is_correct`, under its OWN version: `decide` files each
+  # question in a call under its family's version.
+  prompt_version: "rests.v1"
   instructions:
     question: >-
       `findings` state something about `model`. Which ONE of the listed lines of `sql` decides

@@ -230,6 +230,7 @@ FAMILIES_WITHOUT_FINDINGS = frozenset({
     "options_overlap",                     # lints a question, not a project
     "same_defect",                         # groups RULINGS: about the tool, not about a project
     "finding_is_correct",                  # a reading for a review card, written to a file
+    "reading_rests_on",                    # locates a reading on a card; never a finding
 })
 
 def code_contradicts_a_claim(project, entries) -> list[Finding]:

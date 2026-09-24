@@ -51,6 +51,11 @@ def bank() -> dict:
     return QUESTIONS[FAMILY]
 
 
+def versions() -> dict:
+    """{id_prefix: prompt_version} for the two families a `read` call carries."""
+    return {QUESTIONS[f]["id_prefix"]: QUESTIONS[f]["prompt_version"] for f in (FAMILY, LOCATOR)}
+
+
 def _names(sub_state: dict) -> set[str]:
     """Identifiers the findings mention: backticked names, and string values in their evidence."""
     out: set[str] = set()

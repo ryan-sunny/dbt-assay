@@ -241,14 +241,14 @@ def _judging(label: str, total: int, plan=None):
             bits.append(f"about {_jev._duration(rate * left)} left")
         return " · ".join(bits)
 
-    live = console.status(text()) if console.is_terminal else None
+    status_ = console.status(text()) if console.is_terminal else None
 
     def tick(sent: bool, client) -> None:
         seen["done"] += 1
         seen["sent" if sent else "cached"] += 1
         seen["client"] = client
-        if live is not None:
-            live.update(text())
+        if status_ is not None:
+            status_.update(text())
         elif _t.monotonic() - last[0] >= 30 or seen["done"] == total:
             last[0] = _t.monotonic()
             console.print(f"[dim]{text()}[/]")
@@ -256,8 +256,8 @@ def _judging(label: str, total: int, plan=None):
     prev = _jev.ON_DECIDE
     _jev.ON_DECIDE = tick
     try:
-        if live is not None:
-            with live:
+        if status_ is not None:
+            with status_:
                 yield
         else:
             yield
@@ -5645,8 +5645,8 @@ def read(
         work.append((sub, rec, {**qs, **(loc_q or {})}, lines))
     console.print(f"[bold]{len(subs)}[/] card(s) to read of {len(cards)} unruled "
                   f"[dim]({len(have)} already in {out})[/]")
-    plan_ = _plan_line(store, [(rec, qq, q["prompt_version"]) for _s, rec, qq, _l in work],
-                       "assay.read")
+    versions = reads_mod.versions()
+    plan_ = _plan_line(store, [(rec, qq, versions) for _s, rec, qq, _l in work], "assay.read")
     est = plan_.usd
     if dry_run:
         if work:
@@ -5676,7 +5676,7 @@ def read(
                 store.use_project(project)
                 ans = decide(store, client, rec, qq,
                              contexts={q["id_prefix"]: sub.name},
-                             prompt_version=q["prompt_version"], caller="assay.read")
+                             prompt_version=versions, caller="assay.read")
             except BudgetExceeded as e:
                 console.print(f"[yellow]stopped at the cap: {e}[/]")
                 break

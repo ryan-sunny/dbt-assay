@@ -447,7 +447,8 @@ def _checksum_for(store, decision_key: str) -> str | None:
 
 
 def decide(store, client: Client, recipe, questions: dict, *,
-           prompt_version: str, caller: str = "assay", contexts: dict | None = None) -> dict:
+           prompt_version: str | dict, caller: str = "assay",
+           contexts: dict | None = None) -> dict:
     """Cached judgments. Returns {question: {kind, answer, confidence, probabilities, cached}}.
 
     *** IT TAKES A RECIPE, NOT A STATE, AND THAT IS THE WHOLE POINT. ***
@@ -504,7 +505,7 @@ def decide(store, client: Client, recipe, questions: dict, *,
             hits[q] = {"kind": kind, "answer": answer, "confidence": conf,
                        "probabilities": json.loads(probs), "cached": False}
             rows.append([decision_key, q, kind, answer, conf, probs, sh,
-                         prompt_version, served, call_id, caller,
+                         version_of(prompt_version, q), served, call_id, caller,
                          (contexts or {}).get(q, ""), used, checksum,
                          recipe.builder, inputs_json])
         # *** THE STATE ITSELF, KEYED BY ITS HASH. ***
@@ -534,7 +535,20 @@ def decide(store, client: Client, recipe, questions: dict, *,
     return hits
 
 
-def cache_split(store, recipe, questions: dict, prompt_version: str,
+def version_of(prompt_version: str | dict, question: str) -> str:
+    """The version one question is filed under.
+
+    *** TWO FAMILIES IN ONE CALL, EACH UNDER ITS OWN VERSION. ***
+    A call carried one version, so the `read` locator had to borrow `finding_is_correct`'s -- and
+    two questions under one version cannot have their verdicts told apart. A dict maps each
+    question's prefix to its version; a string still means every question in the call.
+    """
+    if isinstance(prompt_version, dict):
+        return prompt_version[question.split("__")[0]]
+    return prompt_version
+
+
+def cache_split(store, recipe, questions: dict, prompt_version: str | dict,
                 sh: str | None = None) -> tuple[dict, dict]:
     """(answers the store already holds for this exact state, questions it does not).
 
@@ -549,7 +563,7 @@ def cache_split(store, recipe, questions: dict, prompt_version: str,
                from model_decisions
                where decision_key = ? and question = ? and prompt_version = ?
                order by decided_at desc limit 1""",
-            [recipe.key, q, prompt_version]).fetchone()
+            [recipe.key, q, version_of(prompt_version, q)]).fetchone()
         # A hit whose state moved is a MISS. The subject changed under a key that did not, and
         # serving the old answer is how a cache starts lying about the present.
         if row and row[4] == sh:

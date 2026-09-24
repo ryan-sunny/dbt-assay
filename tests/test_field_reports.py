@@ -259,17 +259,21 @@ def test_ask_estimates_before_it_spends_and_refuses_over_the_cap():
     """
     import inspect
 
-    from dbt_assay.cli import _estimate, ask
-    from dbt_assay.subjects import Subject
+    from test_cost import _questions, recipe
 
-    subs = [Subject("expression", f"k{i}", "m", f"n{i}", state={"expression": "a + b" * 20})
-            for i in range(1000)]
-    q = {"id_prefix": "x", "type": "choice", "instructions": {"question": "?"},
-         "criteria": {"a": {"what": "x"}, "cannot_tell": {"what": "y"}}}
-    cheap = _estimate(subs[:10], q)
-    dear = _estimate(subs, q)
-    assert dear > cheap * 50, "the estimate must scale with the number of subjects"
-    assert _estimate([], q) == 0.0
+    from dbt_assay.cli import ask
+    from dbt_assay.jev import plan
+    from dbt_assay.store import Store
+
+    s = Store(":memory:")
+    try:
+        recs = [(recipe(s, f"model.p.m{i}"), _questions(1), "v1") for i in range(100)]
+        cheap = plan(s, recs[:10], "assay.ask.x").usd
+        dear = plan(s, recs, "assay.ask.x").usd
+        assert dear > cheap * 9, "the estimate must scale with the number of subjects"
+        assert plan(s, [], "assay.ask.x").usd == 0.0
+    finally:
+        s.close()
 
     src = inspect.getsource(ask)
     assert "refused before spending anything" in src
@@ -677,7 +681,7 @@ def test_an_agent_can_ask_what_would_actually_fail_the_build():
     assert "violations()" in SKILL_MD, "the procedure must tell the agent to call it"
 
 
-def test_every_mcp_tool_is_described_by_its_own_name(): 
+def test_every_mcp_tool_is_described_by_its_own_name(project_dir):
     """*** A DESCRIPTION WAS FETCHED BY POSITION, AND POSITION IS NOT IDENTITY. ***
 
     The decorators read `TOOLS[6][1]`, `TOOLS[11][1]` and so on, so inserting one entry re-points
@@ -689,19 +693,22 @@ def test_every_mcp_tool_is_described_by_its_own_name():
     keyed by name now, so the hazard is gone; what is left to check is that the two SETS agree --
     a tool registered with no entry raises, and an entry with no tool is dead text nobody reads.
     """
-    import inspect
-    import re
+    import asyncio
 
-    from dbt_assay import mcp_server
-    src = inspect.getsource(mcp_server.build_app)
-    registered = set(re.findall(r'@app\.tool\(description=_desc\("(\w+)"\)\)', src))
-    assert registered, "the registration reader found nothing; it is broken"
-    described = {name for name, _d in mcp_server.TOOLS}
-    assert registered <= described, f"registered with no description: {registered - described}"
-    assert described <= registered, f"described but never registered: {described - registered}"
-    # and each decorator sits directly above the function it names
-    for name in registered:
-        assert re.search(rf'_desc\("{name}"\)\)\n    def {name}\(', src), name
+    import pytest
+    pytest.importorskip("mcp")
+    from dbt_assay import cli_tools, mcp_server
+    # Read off the REAL server: every tool is registered through one guard that looks its
+    # description up by the function's own name, so what is left to check is the two sets.
+    generated = {cli_tools.tool_name(c["name"]) for c in cli_tools.commands()}
+    tools = {t.name: t.description for t in asyncio.run(
+        mcp_server.build_app(str(project_dir)).list_tools()) if t.name not in generated}
+    assert tools, "the registration reader found nothing; it is broken"
+    described = dict(mcp_server.TOOLS)
+    assert set(tools) <= set(described), f"registered with no description: {set(tools) - set(described)}"
+    assert set(described) <= set(tools), f"described but never registered: {set(described) - set(tools)}"
+    for name, desc in tools.items():
+        assert desc == described[name], f"{name} carries another tool's description"
 
 
 def test_an_empty_table_is_not_a_verified_grain():
