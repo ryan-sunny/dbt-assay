@@ -141,3 +141,25 @@ def test_parsing_a_structured_string_is_not_picking_from_a_list():
     for pick in ("SPLIT_PART(associated_case_numbers, ',', 1)", "owner_names[1]",
                  "SPLIT_PART(contact_ids, ';', 1)", "SPLIT_PART(all_codes, ',', 1)"):
         assert _LISTY.search(pick), pick
+
+
+def test_arbitrary_pick_evidence_carries_the_partition_as_written_without_moving_the_id():
+    """*** THE EVIDENCE NAMED A PARTITION THE WINDOW DOES NOT USE. *** (25.9)
+
+    `partition by matched_name`, with `matched_name` projected as `owner_key`: the resolved key is
+    right for the finding's identity and wrong for a reader looking for the window.
+    """
+    from dbt_assay.checks.structural import Finding
+    sql = ("select matched_name as owner_key, scraped_at, "
+           "row_number() over (partition by matched_name order by scraped_at desc) as rn "
+           "from raw.owners")
+    d = digest(sql, "int_owners", "duckdb")
+    w = d.windows[0]
+    assert w.partition_by == ["matched_name"]
+    ev = {"partition_by": w.partition_columns, "order_by": w.order_sql[:3]}
+    before = Finding(check="arbitrary_pick", subject="model.p.int_owners", subject_name="int_owners",
+                     file="", summary="s", detail="", evidence=ev)
+    after = Finding(check="arbitrary_pick", subject="model.p.int_owners", subject_name="int_owners",
+                    file="", summary="s", detail="",
+                    evidence={**ev, "partition_as_written": w.partition_by})
+    assert before.id == after.id, "the rulings on these findings must not move"

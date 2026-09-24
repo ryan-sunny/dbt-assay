@@ -53,8 +53,11 @@ BBOX_FUNCS = {"ST_MAKEENVELOPE", "ST_EXPAND", "ST_ENVELOPE"}
 # every ruling on it is filed under.
 # `store` is what the store held when a config comment was checked against it: it moves every
 # time somebody rules, and the finding is the same comment being wrong.
+# `partition_as_written` is a READING AID too: the window's partition as the SQL spells it, beside
+# the resolved column that identifies the finding. Kept out of the id so the rulings already filed
+# on these findings stay where they are (25.9).
 _MEASURED = frozenset({"downstream", "marts", "probability", "confidence", "one_of_each",
-                       "store"})
+                       "store", "partition_as_written"})
 
 
 def _identity(evidence: dict) -> str:
@@ -413,7 +416,13 @@ def arbitrary_pick(project, digests: dict[str, Digest]) -> list[Finding]:
                         "whatever the engine returned, and the winner can change between builds "
                         "on identical data. Add a unique column as the last sort key."),
                 base=2,
-                evidence={"partition_by": w.partition_columns, "order_by": w.order_sql[:3]},
+                # *** THE EVIDENCE NAMED A PARTITION THE WINDOW DOES NOT USE. *** (25.9)
+                # `partition by matched_name` resolves forward to the output alias `owner_key`,
+                # which is right for lineage and wrong for a reader: two of three windows in one
+                # file read as `owner_key`, and one of them pointed at the wrong window. The
+                # construct as written rides beside the resolved key.
+                evidence={"partition_by": w.partition_columns, "order_by": w.order_sql[:3],
+                          "partition_as_written": w.partition_by},
             ))
     return found
 
