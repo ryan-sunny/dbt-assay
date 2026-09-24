@@ -391,6 +391,7 @@ EMITTED_IDS = {
     "description_contradicts_the_code": ("desc", "semantics.description_question"),
     "practice_exception":               ("exception", "practices.question_for"),
     "options_overlap":                  ("overlap", "lint.judge_overlap"),
+    "reading_rests_on":                 ("rests", "reads.locator"),
 }
 
 

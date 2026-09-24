@@ -550,8 +550,12 @@ folder. Ask for the path the moment they say they have filled it in, and load it
 
 **The expensive half is what makes each card cheap, and the judged tier does it.** `assay read`
 reads every unruled card once and writes the file the form takes -- a verdict in the form's own
-vocabulary and a reason selected from the question's criteria, never written. It costs about a
-third of a hundredth of a cent a card, prices itself first, and records NO verdict:
+vocabulary, how sure it was, a reason selected from the question's criteria, and the line of SQL
+the reading rests on, chosen from lines code listed and copied, never written. A dismissal read
+below 0.5 arrives as `unclear`: too unsure to suggest removing a finding. It costs about a
+hundredth of a cent a card (measured: $0.0522 for 407), prices itself first net of what the store
+already answers, and records NO verdict. Run it AFTER the last judged command (`traverse`,
+`semantics`, `volume --judge`), or the findings those add arrive on the form cold:
 
 ```bash
 assay read --out reads.json --target <target/> --store assay.duckdb --dry-run   # count, price

@@ -141,6 +141,24 @@ def cards(findings, store, project_root, reads: dict | None = None) -> tuple[lis
         if r:
             c["read"] = {"verdict": str(r.get("verdict", "")),
                          "why": str(r.get("why", "") or r.get("note", ""))}
+            # *** MY READ READ IDENTICALLY AT 0.92 AND AT 0.10. *** (25.1) The number goes on the
+            # card, and so does the line the reading rests on, copied from the SQL.
+            if r.get("confidence") is not None:
+                c["read"]["confidence"] = round(float(r["confidence"]), 2)
+            if r.get("floored"):
+                c["read"]["floored"] = True
+            for k in ("answer", "reason", "runner_up"):
+                if r.get(k):
+                    c["read"][k] = str(r[k])
+            ro = r.get("rests_on")
+            if ro:
+                c["read"]["rests_on"] = {k: ro.get(k) for k in ("text", "file", "line", "none")}
+            # What "use the agent's reason" puts in the note: the LINE first, because a reason
+            # with no locator is what `rule()` refuses from an agent, then the criterion.
+            if ro and ro.get("text"):
+                where = f"{ro.get('file')}:{ro['line']}" if ro.get("line") else "the compiled SQL"
+                c["read"]["note"] = (f"rests on {where}: `{ro['text'][:200]}`. "
+                                     f"{r.get('reason') or c['read']['why']}")
         for fd in c["findings"]:
             fd["detail"] = fd["detail"][:1200]
         c["findings"].sort(key=lambda d: d["id"])
@@ -758,6 +776,8 @@ font-family:Fell,Georgia,serif;font-size:15px;color:var(--ash)}
 .ans .note{flex:1;min-width:240px}
 .note-none{color:var(--faint);font-style:italic}
 .q.dim{color:var(--ash);font-size:13.5px}
+code.rests{display:block;white-space:pre-wrap;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,
+monospace;background:#f4f1e9;border-left:2px solid var(--rule);padding:5px 12px;margin:0 0 4px}
 .warn{color:var(--rust)}
 .measured{color:var(--ash)}
 footer{padding:13px 26px;color:var(--faint);font-size:12px;border-top:3px double var(--ink);
@@ -851,7 +871,28 @@ function card(c) {
      Nothing on this page is the reader's until the reader clicks a radio. */
   box.append(el('div', {class: 'lbl', text: 'an agent read this'}));
   if (c.read) {
-    box.append(el('div', {class: 'q', text: c.read.verdict + ' — ' + c.read.why}));
+    /* How sure, beside the verdict, because a suggestion at 0.22 and one at 0.92 are different
+       suggestions -- ONE number, named. A dismissal read below the floor arrives as unclear and
+       says so. A reads file written before these fields existed still shows its whole `why`. */
+    const sure = c.read.confidence == null ? '' : ' · confidence ' + c.read.confidence.toFixed(2);
+    if (c.read.reason) {
+      box.append(el('div', {class: 'q', text: c.read.verdict + sure}));
+      if (c.read.floored) box.append(el('div', {class: 'q warn',
+        text: 'read as ' + c.read.answer + ', too unsure to suggest a dismissal'}));
+      box.append(el('div', {class: 'q dim', text: c.read.reason +
+        (c.read.runner_up ? ' (next most likely: ' + c.read.runner_up + ')' : '')}));
+    } else {
+      box.append(el('div', {class: 'q', text: c.read.verdict + sure + ' — ' + c.read.why}));
+    }
+    const ro = c.read.rests_on;
+    if (ro && ro.text) {
+      const where = ro.line ? ro.file + ':' + ro.line : 'compiled SQL (no single line in ' +
+                    (ro.file || 'the file') + ' carries it)';
+      box.append(el('div', {class: 'q dim', text: 'rests on ' + where}));
+      box.append(el('code', {class: 'rests', text: ro.text}));
+    } else if (ro && ro.none) {
+      box.append(el('div', {class: 'q dim', text: 'rests on no single line of the SQL'}));
+    }
   }
   if (c.agent) {
     if (c.read) box.append(el('div', {class: 'lbl', text: 'and a ruling stored on this model'}));
@@ -948,7 +989,7 @@ function card(c) {
      Re-typing a reason you just read and agree with is the kind of work a form should not ask
      for. It fills the box and nothing more: the verdict is still the reader's click, and the
      text lands in a field they can edit before it is recorded. */
-  const agentWhy = (c.read && c.read.why) || (c.agent && c.agent.note) || '';
+  const agentWhy = (c.read && (c.read.note || c.read.why)) || (c.agent && c.agent.note) || '';
   if (agentWhy) {
     const use = el('button', {class: 'accept', type: 'button',
                               text: 'use the agent\u2019s reason'});

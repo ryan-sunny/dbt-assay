@@ -47,3 +47,42 @@ finding_is_correct:
         filter, a column, a count or a claim it got wrong.
     cannot_tell:
       what: "The evidence and the code do not settle it. Choose this rather than guess."
+
+# *** A READING THAT NAMES NO LINE IS THE THING `rule()` REFUSES FROM AN AGENT. ***
+# Reported from the field (25.1): 407 readings carried four distinct sentences between them, each
+# the chosen option's own criterion echoed back, and not one named a line, a column or a join. Jev
+# does not write prose and should not be asked to. So code lists the lines of `sql` the findings
+# could rest on and this picks ONE -- the value-extraction pattern: the model chooses, code owns
+# the string, and the line on the card is copied from the SQL, never composed.
+reading_rests_on:
+  id_prefix: "rests"
+  acknowledge:
+    finding_when: >-
+      deliberate. The answer is a locator for a reading a person checks on a review card, never a
+      defect in a model. A finding produced from it would be a finding about a finding.
+  type: choice
+  subject: finding
+  # Asked in the same call as `finding_is_correct`, so it shares that question's version: a call
+  # carries one. Bump both together.
+  prompt_version: "read.v2"
+  instructions:
+    question: >-
+      `findings` state something about `model`. Which ONE of the listed lines of `sql` decides
+      whether what they state is true?
+    note: >-
+      Pick the line a reader would have to look at to check the findings: the join, the filter,
+      the window, the column or the expression they are about. If they are about something no
+      listed line contains, choose none_of_these rather than the nearest line.
+  # `a_listed_line` is a TEMPLATE: `reads.locator` replaces it with one option per candidate line,
+  # keyed by a hash of the line and described by this sentence followed by the line itself.
+  # `none_of_these` is the option every card carries.
+  criteria:
+    a_listed_line:
+      what: >-
+        This line of `sql` is the one the findings are about: checking it settles whether what
+        they state is true.
+    none_of_these:
+      what: >-
+        The findings are not about any single listed line -- they are about the model as a whole,
+        about its documentation, or about a line that is not listed. Choose this rather than the
+        nearest line.

@@ -393,3 +393,22 @@ def test_the_counter_counts_what_the_pane_holds():
     js = reviewform._JS
     assert "pane === 'findings'" in js, "the counter does not switch with the pane"
     assert "box(es) filled" in js, "a non-findings pane still reports verdicts"
+
+
+def test_a_reading_puts_its_confidence_and_its_line_on_the_card(store, tmp_path):
+    """*** MY READ READ IDENTICALLY AT 0.92 AND AT 0.10, AND NAMED NO LINE. *** (25.1)"""
+    from dbt_assay import reads
+    fs = [_f("model.p.a", "check_one", "f1")]
+    _q, lines = reads.locator({"sql": "select a\nfrom t\njoin u on u.id = t.id",
+                               "findings": [{"summary": "joins `u` on `id`", "evidence": {}}]})
+    key = next(k for k, v in lines.items() if "join u" in v["text"])
+    r = reads.reading({"answer": "misreads_the_sql", "confidence": 0.3,
+                       "probabilities": {"misreads_the_sql": 0.5, "correct": 0.4}},
+                      {"answer": key, "confidence": 0.9}, lines, "models/a.sql",
+                      "-- a\nselect a\nfrom t\njoin u on u.id = t.id\n")
+    cards, _sql = reviewform.cards(fs, store, tmp_path, reads={"model.p.a::check_one": r})
+    rd = cards[0]["read"]
+    assert rd["verdict"] == "unclear" and rd["floored"] and rd["confidence"] == 0.3
+    assert rd["rests_on"] == {"text": "join u on u.id = t.id", "file": "models/a.sql",
+                              "line": 4, "none": None}
+    assert rd["note"].startswith("rests on models/a.sql:4: `join u on u.id = t.id`")

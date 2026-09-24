@@ -220,7 +220,10 @@ def test_the_docs_do_not_state_a_family_count_that_is_wrong():
     # "N families ship" is the only phrasing that unambiguously claims the TOTAL. "nine of ten
     # families satisfied nothing" is a historical subset and correct; matching it made this guard
     # fail on true sentences, which is how a guard gets deleted.
-    totals = re.compile(r"\b([A-Za-z]+|\d+) (?:question )?famil(?:ies|y) ship\b", re.IGNORECASE)
+    # A hyphenated number is ONE word here: "Thirty-one" read as "one" the first time a release
+    # crossed a tens boundary without landing on it.
+    totals = re.compile(r"\b([A-Za-z]+(?:-[A-Za-z]+)?|\d+) (?:question )?famil(?:ies|y) ship\b",
+                        re.IGNORECASE)
     seen, wrong = 0, []
     for m in totals.finditer(docs):
         said = m.group(1).lower()

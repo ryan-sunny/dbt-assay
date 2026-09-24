@@ -5618,11 +5618,16 @@ def read(
     work = []
     for sub in subs:
         rec = states.make("subject", ctx, key=sub.key, inputs={"kind": "finding", "key": sub.key})
-        if rec is not None:
-            work.append((sub, rec))
+        if rec is None:
+            continue
+        # The locator rides in the same call: one more question over the same state, never a
+        # second request. `lines` is what code will copy onto the card for the option chosen.
+        loc_q, lines = reads_mod.locator(rec.state)
+        work.append((sub, rec, {**qs, **(loc_q or {})}, lines))
     console.print(f"[bold]{len(subs)}[/] card(s) to read of {len(cards)} unruled "
                   f"[dim]({len(have)} already in {out})[/]")
-    plan_ = _plan_line(store, [(rec, qs, q["prompt_version"]) for _s, rec in work], "assay.read")
+    plan_ = _plan_line(store, [(rec, qq, q["prompt_version"]) for _s, rec, qq, _l in work],
+                       "assay.read")
     est = plan_.usd
     if dry_run:
         if work:
@@ -5645,11 +5650,12 @@ def read(
         raise typer.Exit(1)
     got = dict(have)
     tally = Counter()
+    root = Path(tdir).parent
     with _judging("read", len(work), plan_):
-        for sub, rec in work:
+        for sub, rec, qq, lines in work:
             try:
                 store.use_project(project)
-                ans = decide(store, client, rec, qs,
+                ans = decide(store, client, rec, qq,
                              contexts={q["id_prefix"]: sub.name},
                              prompt_version=q["prompt_version"], caller="assay.read")
             except BudgetExceeded as e:
@@ -5658,13 +5664,26 @@ def read(
             a = ans.get(q["id_prefix"])
             if not a:
                 continue
-            got[sub.key] = reads_mod.reading(a)
+            try:
+                file_text = (root / sub.file).read_text(errors="replace") if sub.file else ""
+            except OSError:
+                file_text = ""
+            got[sub.key] = reads_mod.reading(a, ans.get("rests"), lines, sub.file, file_text)
             tally[got[sub.key]["verdict"]] += 1
     store.close()
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(_json.dumps(got, indent=2, sort_keys=True, default=str) + "\n")
     console.print(f"wrote [bold]{out}[/]: {sum(tally.values())} new reading(s) "
                   + ", ".join(f"{n} {v}" for v, n in tally.most_common()))
+    held = sum(1 for k in got if k not in have and got[k].get("floored"))
+    if held:
+        console.print(f"[dim]{held} of the unclear were a dismissal read below "
+                      f"{reads_mod.DISMISS_FLOOR}: too unsure to suggest removing a finding.[/]")
+    located = [got[k] for k in got if k not in have and "rests_on" in got[k]]
+    if located:
+        on_line = sum(1 for r in located if r["rests_on"].get("line"))
+        console.print(f"[dim]{len(located)} reading(s) name the line they rest on; {on_line} of "
+                      f"those were placed in the model's own file.[/]")
     console.print(f"[dim]{client.calls} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}. Nothing was recorded as a verdict: "
                   f"`assay review --emit form.html --reads {out}` puts these on the cards, and "
