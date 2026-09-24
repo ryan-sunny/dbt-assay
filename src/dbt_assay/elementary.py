@@ -802,12 +802,18 @@ def test_coverage(runner, schema: str, limit: int = 40000) -> dict:
     skipped results.
     """
     from .probe import ask_many
-    declared, ran, skipped = ask_many(runner, [
+    # *** 1,846 SKIPPED OUT OF 1,291 TESTS. *** Skipped RESULTS are counted once per run, so they
+    # outnumber the tests, and the page set the two side by side as if they were one unit. The
+    # fourth count is in tests: how many are skipped as of their latest result.
+    declared, ran, skipped, skipped_now = ask_many(runner, [
         (f"select count(*) as n from {schema}.{DBT_TESTS}", 1),
         ((f"select count(distinct test_unique_id) as n from {schema}.{TEST_RESULTS} "
           f"where test_type = 'dbt_test'"), 1),
         ((f"select count(*) as n from {schema}.{TEST_RESULTS} "
-          f"where test_type = 'dbt_test' and status = 'skipped'"), 1)])
+          f"where test_type = 'dbt_test' and status = 'skipped'"), 1),
+        ((f"select count(*) as n from (select status, row_number() over (partition by "
+          f"test_unique_id order by detected_at desc) as rn from {schema}.{TEST_RESULTS} "
+          f"where test_type = 'dbt_test') as latest where rn = 1 and status = 'skipped'"), 1)])
 
     def one(res):
         """None when the statement did not run. A coverage figure built from a failed count
@@ -819,9 +825,10 @@ def test_coverage(runner, schema: str, limit: int = 40000) -> dict:
         except (IndexError, TypeError, ValueError, AttributeError):
             return None
     return {"declared": one(declared), "ever_ran": one(ran),
-            "skipped_results": one(skipped),
+            "skipped_results": one(skipped), "skipped_now": one(skipped_now),
             "unreadable": [name for name, res in (("declared", declared), ("ever_ran", ran),
-                                                  ("skipped_results", skipped)) if res.failed]}
+                                                  ("skipped_results", skipped),
+                                                  ("skipped_now", skipped_now)) if res.failed]}
 
 
 def monitoring_findings(rep: Report, project, cad: Cadence | None = None,

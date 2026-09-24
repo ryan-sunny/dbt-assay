@@ -2387,6 +2387,10 @@ def page(
                             probe_mod.read(store) if store else {}, facts=facts)
     fs = live.all_findings(project, digests, schema, entries,
                             threshold=cfg.row_loss_threshold, store=store)
+    # The config's own findings, as `check` adds them, so the page counts what `check` counts.
+    if store is not None:
+        from . import selfaudit
+        fs += selfaudit.config_findings(config_path, store, cfg)
 
     ruled_keys: set = set()
     agent_n, eff, moved = 0, [], {}

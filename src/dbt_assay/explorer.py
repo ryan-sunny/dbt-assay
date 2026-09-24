@@ -68,7 +68,14 @@ font-family:Fell,Georgia,serif}
 
 /* The tab strip reads as a running head: small caps, generous tracking, a rule under the lot and
    a heavy rule under the one you are on. */
-nav{display:flex;gap:0;flex-wrap:wrap;margin-top:11px}
+nav{display:flex;gap:4px 0;flex-wrap:wrap;margin-top:8px;align-items:flex-end}
+.navgroup{display:inline-flex;flex-direction:column;flex:0 0 auto;padding-right:8px;
+margin-right:8px;border-right:1px solid var(--rule)}
+.navgroup:last-child{border-right:0;margin-right:0}
+.navlab{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);
+padding:0 11px;font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif}
+.navbtns{display:flex;flex-wrap:nowrap}
+nav .navbtns button{padding:5px 11px 6px}
 nav button{appearance:none;border:0;border-bottom:3px solid transparent;background:none;
 font-family:Fell,Georgia,serif;font-size:15px;letter-spacing:.06em;text-transform:uppercase;
 color:var(--ash);padding:7px 15px 6px;cursor:pointer;margin-bottom:-3px}
@@ -88,6 +95,19 @@ main{padding:20px 26px 22px;max-width:1560px;width:100%;flex:1 1 auto;min-height
 mix-blend-mode:multiply}
 .plate{margin:0;text-align:center}
 .plate img{max-width:100%;height:auto}
+.mchart{margin:2px 0 12px}
+.mrow{display:grid;grid-template-columns:minmax(0,210px) minmax(60px,1fr) auto;gap:10px;
+align-items:center;padding:3px 0}
+.mlab{font-size:12px;overflow-wrap:anywhere}
+.mtrack{position:relative;height:12px;border-bottom:1px solid var(--rule2);display:block}
+.mfill{position:absolute;left:0;top:0;height:12px;background:var(--iron)}
+.mfill.late{background:var(--rust)}
+.mmark{position:absolute;top:-3px;width:2px;height:18px;background:var(--ink)}
+.mval{font-size:13px;color:var(--ash);white-space:nowrap;font-variant-numeric:tabular-nums}
+.apart{font-size:13px;color:var(--ash);margin-top:2px}
+.pkind{font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
+margin:0 0 2px}
+.plead{font-size:15px;color:var(--ink);margin:6px 0 4px;line-height:1.5}
 .plate figcaption{font-family:Fell,Georgia,serif;font-style:italic;font-size:12.5px;
 color:var(--faint);margin-top:5px}
 /* *** SET INTO THE TEXT BLOCK, NOT ABOVE IT. ***
@@ -171,20 +191,13 @@ line-height:1.35;color:var(--ink);cursor:pointer;border-bottom:1px solid var(--r
 .gsect{font-family:Fell,Georgia,serif;font-size:12px;text-transform:uppercase;letter-spacing:.08em;
 color:var(--faint);padding:12px 8px 3px;border-bottom:1px solid var(--rule)}
 .pager{display:inline-flex;gap:8px}
+.split{display:inline-flex;gap:14px;align-items:baseline}
+.split .gsort{font-size:14px}
 .pager[hidden]{display:none}
 .pg{appearance:none;border:1px solid var(--rule);background:none;font:inherit;font-size:13px;
 color:var(--ink);padding:1px 9px;cursor:pointer}
 .pg:hover:not(:disabled){border-color:var(--ink)}
 .pg:disabled{color:var(--faint);cursor:default}
-.facets{margin:4px 0 10px}
-.fgrid{display:grid;grid-template-columns:minmax(0,max-content) minmax(60px,1fr) auto;gap:2px 12px;
-max-height:190px;overflow-y:auto;align-items:center}
-.frow{display:contents;cursor:pointer;font:inherit;color:inherit}
-.frow > span{padding:2px 0;cursor:pointer;text-align:left}
-.frow > .rval{text-align:right}
-.frow:hover .flab{color:var(--rust)}
-.frow.on .flab{color:var(--ink);text-decoration:underline}
-.flab{font-size:13px;color:var(--ink);overflow-wrap:break-word}
 .gridhost{display:flex;flex-direction:column;height:100%;min-height:0}
 .gridhost > .bar{flex:0 0 auto}
 .gridhost > .list{flex:1 1 auto}
@@ -436,6 +449,82 @@ details.strip{margin:0 0 14px;border:0;border-top:1px solid var(--rule);
 border-bottom:1px solid var(--rule);padding:8px 0}
 details.strip summary{color:var(--ink);font-size:13.5px}
 
+/* ==== the feedback round (assay-feedback.md G2, G3, G5, P6, P10) ====================== */
+/* G3. The display face is for display. Anything small is set in the text face, upright, at a size
+   that reads without zooming. */
+.sub,nav button b,.count,th,.gsect,.kv dt,.tlab,.rsub,.srclab,.daylab,summary,label.chk,
+.linhint,.plate figcaption,.detail h3,.ovblock h3,.sval,.gsort,.pg,select{
+font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-style:normal}
+.sub{font-size:13px}
+nav button b{font-size:12.5px;color:var(--ash)}
+.count{font-size:13px;color:var(--ash)}
+th{font-size:12px;letter-spacing:.05em}
+.kv dt{font-size:13px;color:var(--ash)}
+.tlab,.detail h3,.ovblock h3,.gsect{font-size:12.5px;letter-spacing:.06em}
+.daylab{font-size:11px}
+.srclab{font-size:13.5px}
+label.chk{font-size:13.5px}
+/* G2, P6. One badge: outlined, the text face, one line, and never flush against what precedes it. */
+.pill{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-size:12px;
+line-height:1.5;padding:0 7px;white-space:nowrap;vertical-align:1px;margin-left:7px}
+.pill:first-child{margin-left:0}
+td > .pill:first-child,td > .badge:first-child > .pill,dd > .pill:first-child{margin-left:0}
+.badge{white-space:nowrap;margin-left:7px}
+.badge:first-child{margin-left:0}
+.badge .pill{margin-left:0}
+.pconf{font-size:12px;color:var(--ash);margin-left:5px;font-variant-numeric:tabular-nums}
+td .pill{white-space:nowrap}
+/* G5. An input looks like an input: a light field, a border, room inside it, and a placeholder
+   that is plainly a placeholder. */
+input[type=search],input[type=text],select{background:#f1ede4;border:1px solid var(--rule);
+padding:6px 10px;font-size:14px}
+input[type=search]:focus,input[type=text]:focus,select:focus{border-color:var(--ink);
+outline:none;background:#fbf9f4}
+::placeholder{color:var(--faint);font-style:italic;opacity:1}
+/* P10. Narrow screens: one column, the document scrolls, and a table too wide for its box
+   scrolls inside that box rather than off the edge of the screen. */
+@media (max-width:820px){
+  body{height:auto;overflow:auto}
+  main{padding:14px 16px}
+  .panel{height:auto;overflow:visible}
+  .wrap2,.wrap2.wide,.wrap3{display:block;height:auto}
+  .pane,.gnav{height:auto;border-right:0;padding-right:0;padding-left:0;margin-bottom:14px}
+  .wrap3 > .pane{padding-left:0}
+  .glist{max-height:260px}
+  .list{max-height:70vh;overflow:auto}
+  .gridhost{height:auto}
+  .detail{height:auto;padding:12px 0 20px;border-top:1px solid var(--rule)}
+  .detail h2,.detail .path,.kv dd,.prose,.quote,p,h2,h3,.mdlist{overflow-wrap:anywhere}
+  .ticket{grid-template-columns:1fr}
+  .tcol + .tcol{padding-left:0;border-left:0;border-top:1px solid var(--rule)}
+  .ticketwrap{grid-template-columns:1fr}.ticketcut{display:none}
+  .rank{grid-template-columns:minmax(0,40%) minmax(40px,1fr) auto}
+  .rlab{white-space:normal;overflow-wrap:anywhere}
+  .rval{white-space:normal}
+  .tiles{grid-template-columns:1fr 1fr}
+  .tile + .tile{padding-left:0;border-left:0}
+  .days{overflow-x:auto}
+  .tabcut{display:none}
+  input[type=search]{min-width:0;width:100%}
+  .bar{flex-wrap:wrap}
+  .linwrap{height:320px}
+  nav button{padding:6px 9px 5px;font-size:13px}
+  .day{min-width:0;flex:1 1 0}
+  .daylab{display:none}
+  .day:nth-last-child(7n+1) .daylab{display:block;white-space:nowrap}
+}
+/* A phone has no room for columns, so a row becomes lines: each value under its own label. */
+@media (max-width:560px){
+  table,thead,tbody,tr,td{display:block;width:100%}
+  thead{display:none}
+  tr{border-bottom:1px solid var(--rule2);padding:6px 0}
+  td{border:0;padding:2px 4px;text-align:left}
+  td.n{text-align:left}
+  td[data-label]:not([data-label=""])::before{content:attr(data-label);display:block;
+  font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint)}
+  tr.on td{box-shadow:none}
+  tr.on{box-shadow:inset 3px 0 0 var(--ink);background:#efe9dc}
+}
 footer{color:var(--faint);font-size:12px;padding:14px 26px;border-top:3px double var(--ink);
 font-family:Fell,Georgia,serif;font-style:italic}
 footer b{font-style:normal;font-weight:400;color:var(--ash)}
@@ -481,24 +570,44 @@ const cellText = v => (v == null ? ''
    after each `_ . / ,` lets it wrap where a person would break it, and `<wbr>` is not text, so
    copying the name or comparing `textContent` still gets the name. */
 function wbr(s) {
+  /* *** AND A BREAK POINT MUST NOT CUT A CODE SPAN IN TWO. *** (P9) Splitting at `_` and `.`
+     put the two backticks of `on a.known_section_id is null` in different text nodes, so the
+     backtick renderer never saw a pair and the ticks stayed on the page. Code spans are made
+     here, before the text is split. */
   const f = document.createDocumentFragment();
-  String(s == null ? '' : s).split(/(?<=[_./,|])/).forEach((p, i) => {
-    if (i) f.append(document.createElement('wbr'));
-    f.append(document.createTextNode(p));
+  const brk = (into, t) => t.split(/(?<=[_./,|])/).forEach((p, i) => {
+    if (i) into.append(document.createElement('wbr'));
+    into.append(document.createTextNode(p));
+  });
+  String(s == null ? '' : s).split(/(`[^`\n]+`)/).forEach(part => {
+    if (/^`[^`\n]+`$/.test(part)) {
+      const c = document.createElement('code'); c.className = 'tick';
+      brk(c, part.slice(1, -1)); f.append(c);
+    } else if (part) brk(f, part);
   });
   return f;
 }
 const pct = x => (x == null ? '' : Math.round(x * 100) + '%');
 
 /* A Fact with its provenance. A value with no source is a rumour, so the pill is never dropped. */
+/* *** ONE BADGE, EVERYWHERE. ***
+   Badges wrapped onto two lines inside narrow columns, mixed filled and outlined, serif and mono,
+   and "@0.33" read as part of the label. A badge is now one word or phrase that never wraps, and
+   how sure the reading was sits beside it as a plain number, outside the border. */
+function badge(label, cls, conf) {
+  const b = el('span', {class: 'pill ' + (cls || ''), text: label});
+  if (conf == null) return b;
+  return el('span', {class: 'badge'}, [b, el('span', {class: 'pconf', text: Number(conf).toFixed(2),
+    tip: 'How sure the reading was, from 0 to 1.'})]);
+}
+
 function fact(f) {
   if (!f) return el('span', {class: 'tot', text: 'not settled'});
   const v = Array.isArray(f.value) ? f.value.join(', ') : String(f.value);
   const s = el('span', {});
-  s.append(el('span', {text: v + ' '}));
-  s.append(el('span', {class: 'pill ' + (f.source || ''),
-    text: f.source + (f.confidence != null ? ' @' + f.confidence.toFixed(2) : '')}));
-  if (f.resting_on) s.append(el('span', {class: 'pill bad', text: 'rests on a premise'}));
+  s.append(el('span', {text: v}));
+  s.append(badge(f.source, f.source || '', f.confidence));
+  if (f.resting_on) s.append(badge('rests on a premise', 'bad'));
   return s;
 }
 
@@ -563,7 +672,7 @@ function grid(rows, cols, opts) {
     body.replaceChildren(...shown.map(r => {
       const tr = el('tr', {class: opts.pick ? 'pick' : ''},
         cols.map(c => el('td', {class: (c.n ? 'n ' : '') + (c.mono ? 'mono ' : '')
-                                       + (c.clip ? 'clip' : '')},
+                                       + (c.clip ? 'clip' : ''), 'data-label': c.label || null},
           [c.cell ? c.cell(r) : typeof c.val(r) === 'number'
             ? el('span', {text: cellText(c.val(r))})
             : el('span', {}, [wbr(cellText(c.val(r)))])])));
@@ -754,11 +863,11 @@ def explorer_html(data: dict, record_html: str) -> str:
     # It is the only surface here with an argument to make rather than a table to show, and a
     # person opening this file has not yet picked a model to look at. Landing on 358 rows asks
     # them to choose before they have been told anything.
+    # *** TWELVE TABS IN A ROW, AND NO HINT WHERE TO START. *** (P7)
+    # The strip is in reading order and grouped under small labels: start here, what is wrong,
+    # the project itself, what assay asked, and the setup. `NAV_GROUPS` below names the runs.
     tabs = [
         ("understood", "Overview", None),
-        ("models", "Models", counts["models"]),
-        ("chain", "The chain", counts["edges"]),
-        ("claims", "Claims", counts["claims"]),
         ("findings", "Findings", counts["findings"]),
         ("areas", "Areas", counts["areas"]),
         # *** IS ANYTHING WATCHING THIS, AND ARE THE TESTS ACTUALLY RUNNING. ***
@@ -766,11 +875,14 @@ def explorer_html(data: dict, record_html: str) -> str:
         # passed `--monitoring` is a tab nobody learns exists, and its absence reads as a tool
         # that does not do this rather than as a measurement not yet made.
         ("monitoring", "Monitoring", counts["monitoring"]),
-        ("suggest", "What to configure", counts["suggestions"]),
+        ("models", "Models", counts["models"]),
+        ("chain", "The chain", counts["edges"]),
+        ("claims", "Claims", counts["claims"]),
         ("answers", "Answers", counts["decisions"]),
-        ("spend", "Spend", None),
         ("questions", "Questions", counts["questions"]),
+        ("suggest", "What to configure", counts["suggestions"]),
         ("config", "Config", None),
+        ("spend", "Spend", None),
     ]
     # *** THIS PAGE IS READ-ONLY AND THE FORM IS WHERE YOU CHANGE THINGS. ***
     # Two artifacts that link, rather than one that half-does both: the report says WHAT, the form
@@ -805,15 +917,28 @@ def explorer_html(data: dict, record_html: str) -> str:
     counted = {"models": "models", "chain": "hops between models", "claims": "sentences",
                "findings": "findings", "areas": "rows across its three lists",
                "monitoring": "findings about the monitoring", "suggest": "candidates",
-               "answers": "live answers", "questions": "question families"}
+               "answers": "live answers", "questions": "questions"}
     for t, _label, n in tabs:
         if n is not None and t in counted:
             tips[t] = f"{tips.get(t, '')}\nThe number is {n:,} {counted[t]}."
+    nav_groups = [("start here", ["understood"]),
+                  ("what is wrong", ["findings", "areas", "monitoring"]),
+                  ("your project", ["models", "chain", "claims"]),
+                  ("what assay asked", ["answers", "questions"]),
+                  ("setup", ["suggest", "config", "spend"])]
+    button = {t: (i, label, n) for i, (t, label, n) in enumerate(tabs)}
     nav = "".join(
-        f'<button role="tab" data-tab="{t}" '
-        f'aria-selected="{"true" if i == 0 else "false"}" data-tip="{e(tips.get(t, ""))}">'
-        f'{e(label)}{f"<b>{n:,}</b>" if n is not None else ""}</button>'
-        for i, (t, label, n) in enumerate(tabs))
+        f'<span class="navgroup"><span class="navlab">{e(glabel)}</span><span class="navbtns">'
+        + "".join(
+            f'<button role="tab" data-tab="{t}" '
+            f'aria-selected="{"true" if button[t][0] == 0 else "false"}" '
+            f'data-tip="{e(tips.get(t, ""))}">'
+            f'{e(button[t][1])}{f"<b>{button[t][2]:,}</b>" if button[t][2] is not None else ""}'
+            f'</button>' for t in members if t in button)
+        + '</span></span>'
+        for glabel, members in nav_groups)
+    grouped = {t for _g, ms in nav_groups for t in ms}
+    assert grouped == {t for t, _l, _n in tabs}, "a tab is in no nav group"
     panels = "".join(f'<div class="panel" id="p-{t}"{"" if i == 0 else " hidden"}></div>'
                      for i, (t, _l, _n) in enumerate(tabs))
 
@@ -960,7 +1085,7 @@ function drill(opts) {
     return out;
   }
   function rowsFor(g) {
-    const out = rowsBefore(g);
+    const out = rowsSplit(g);
     return facet == null ? out : out.filter(p => String(opts.facet.of(p[0])) === facet);
   }
 
@@ -979,7 +1104,7 @@ function drill(opts) {
     const b = el('button', {class: 'gitem' + (g === pickedGroup ? ' on' : '') + (n ? '' : ' zero')},
                  [el('span', {class: 'gname'}, [wbr(label)]), el('span', {class: 'gn', text: num(n)})]);
     if (sub) b.append(el('span', {class: 'gsub', text: sub}));
-    b.onclick = () => { pickedGroup = g; facet = null; paintGroups(); draw(); };
+    b.onclick = () => { pickedGroup = g; facet = null; pickSplit(g); paintGroups(); draw(); };
     return b;
   }
 
@@ -1010,46 +1135,68 @@ function drill(opts) {
     glist.replaceChildren(...items);
   }
 
-  /* *** WHAT THE GROUP'S ROWS SAY, BEFORE YOU READ ANY OF THEM. ***
-     A family of 5,820 answers is a distribution before it is a list: how many said each thing.
-     Every value, with its count and a bar, and a click narrows the rows to it. */
-  function facetBlock(g) {
+  /* *** A FILTER IS A CONTROL, NOT A CHART. *** (P3)
+     The answer values were a bar chart you clicked to filter, and clicking a bar to narrow a list
+     "feels broken". It is a dropdown in the filter bar now, with each value's count in it. */
+  function facetSelect(g) {
     if (!opts.facet) return null;
-    const rows = rowsBefore(g);
+    const rows = rowsSplit(g);
     const counts = {};
     for (const p of rows) { const v = String(opts.facet.of(p[0])); counts[v] = (counts[v] || 0) + 1; }
     const vals = Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-    if (vals.length < 2 && facet == null) return null;
-    const max = Math.max(...vals.map(v => v[1]), 1);
-    const box = el('div', {class: 'facets'});
-    box.append(el('div', {class: 'tlab'}, [el('span', {text: opts.facet.label + ' \u00b7 '
-      + vals.length + ' value(s)', tip: 'How this group\u2019s rows split. Click a value to '
-      + 'narrow the list to it, and again to clear it.'})]));
-    const grid_ = el('div', {class: 'fgrid'});
-    for (const [v, n] of vals) {
-      const b = el('button', {class: 'frow' + (facet === v ? ' on' : '')});
-      b.append(el('span', {class: 'flab'}, [wbr(v)]),
-               el('span', {class: 'rtrack'}, [el('span', {class: 'rfill',
-                 style: 'width:' + Math.max(1.5, n / max * 100) + '%;background:' + BAR})]),
-               el('span', {class: 'rval', text: num(n) + ' · ' + Math.round(n / rows.length * 100) + '%'}));
-      b.onclick = () => { facet = facet === v ? null : v; draw(); };
-      grid_.append(b);
-    }
-    box.append(grid_);
-    if (facet != null) {
-      const clear = el('button', {class: 'back', text: 'show every ' + opts.facet.label + ' again'});
-      clear.onclick = () => { facet = null; draw(); };
-      box.append(clear);
-    }
-    return box;
+    if (facet != null && !counts[facet]) facet = null;
+    const sel = el('select', {title: 'Show only the rows with this ' + opts.facet.label + '.'});
+    const opt = (v, t) => { const o = el('option', {value: v, text: t}); if (v === (facet ?? '')) o.selected = true; return o; };
+    sel.append(opt('', 'every ' + opts.facet.label + ' (' + num(rows.length) + ')'));
+    for (const [v, n] of vals) sel.append(opt(v, v + ' (' + num(n) + ')'));
+    sel.onchange = () => { facet = sel.value === '' ? null : sel.value; draw(); };
+    return sel;
   }
 
+  /* *** THE ROWS THAT MATTER FIRST, ONE CLICK FROM THE REST. *** (P4)
+     A split is a plain two-way switch above the list -- the answers that became findings, and
+     the ones that did not -- each with its count, opening on the first that has any. */
+  let splitVal = null;
+  function rowsSplit(g) {
+    const out = rowsBefore(g);
+    return opts.split && splitVal != null ? out.filter(p => opts.split.of(p[0]) === splitVal) : out;
+  }
+  function pickSplit(g) {
+    if (!opts.split) return;
+    const base = rowsBefore(g);
+    const first = opts.split.choices.find(([k]) => base.some(p => opts.split.of(p[0]) === k));
+    splitVal = first ? first[0] : opts.split.choices[0][0];
+  }
+  function splitControl(g) {
+    if (!opts.split) return null;
+    const base = rowsBefore(g);
+    return el('span', {class: 'split'}, opts.split.choices.map(([k, label, tipText]) => {
+      const n = base.filter(p => opts.split.of(p[0]) === k).length;
+      const b = el('button', {class: 'gsort' + (splitVal === k ? ' on' : ''),
+                              text: label + ' (' + num(n) + ')', tip: tipText});
+      b.onclick = () => { splitVal = k; facet = null; draw(); };
+      return b;
+    }));
+  }
+
+  /* *** THE COUNT IS FOR WHAT IS PICKED. *** (P1) The label said 122 with a model picked that
+     had none, and the list under it was empty. It says the picked group's count first and the
+     project's after it, and a group with none says so in the list. */
   const toggleBoxes = toggles.map(t => {
     const cb = el('input', {type: 'checkbox'});
     cb.onchange = () => { t.on = cb.checked; paintGroups(); draw(); };
-    return el('label', {class: 'chk', title: t.title || t.label},
-              [cb, el('span', {text: t.label + ' (' + num(t.count) + ')'})]);
+    t.text = el('span');
+    return el('label', {class: 'chk', title: t.title || t.label}, [cb, t.text]);
   });
+  function paintToggles() {
+    for (const t of toggles) {
+      const base = pickedGroup === ALL
+        ? opts.groups.flatMap(x => opts.rowsOf(x)) : opts.rowsOf(pickedGroup);
+      const here = base.filter(t.where).length;
+      t.text.textContent = t.label + (pickedGroup === ALL ? ' (' + num(t.count) + ')'
+        : ' (' + num(here) + ' here \u00b7 ' + num(t.count) + ' in all)');
+    }
+  }
 
   let list = null;
   function draw() {
@@ -1060,15 +1207,20 @@ function drill(opts) {
       placeholder: opts.rowFilter || 'filter...', page: opts.pageSize || 200,
       sort: (opts.sortFor ? opts.sortFor(pickedGroup) : null) || opts.rowSort,
       dir: (opts.dirFor ? opts.dirFor(pickedGroup) : null) || opts.rowDir || 1, scroll: 1,
-      controls: toggleBoxes,
+      controls: [splitControl(pickedGroup), facetSelect(pickedGroup), ...toggleBoxes]
+        .filter(Boolean),
       pick: p => showOne(p[0], p[1]),
       text: p => opts.rowText(p[0]) + ' ' + opts.chip(p[1]),
-      emptyText: 'nothing matches'});
+      emptyText: toggles.some(t => t.on)
+        ? 'nothing matches: ' + toggles.filter(t => t.on).map(t => t.none || ('none ' + t.label))
+            .join(', ')
+        : 'nothing matches'});
+    paintToggles();
     /* *** WHAT THE ROWS ARE ANSWERS TO, ABOVE THE ROWS. ***
        A group can carry a header -- the question a set of answers answered -- so the thing being
        measured is on screen rather than one click into a detail pane. */
     const gh = opts.groupHead && pickedGroup !== ALL ? opts.groupHead(pickedGroup) : null;
-    head.replaceChildren(...[gh, facetBlock(pickedGroup)].filter(Boolean));
+    head.replaceChildren(...[gh].filter(Boolean));
     body.replaceChildren(list);
     /* *** THE PANE OPENS ON SOMETHING. ***
        `first.click()` rather than calling `showOne` directly, so the row is also MARKED as the
@@ -1087,7 +1239,7 @@ function drill(opts) {
   }
 
   function showOne(row, g) {
-    detail.replaceChildren(...[].concat(opts.detailOf(row, g)));
+    detail.replaceChildren(...[].concat(opts.detailOf(row, g, pickedGroup === ALL)));
     detail.scrollTop = 0;
   }
 
@@ -1096,6 +1248,7 @@ function drill(opts) {
   /* No sentence above the columns: what the tab is, is the tab's own tip, and what a column
      means is that column's. */
   host.append(cols);
+  pickSplit(pickedGroup);
   paintGroups();
   draw();
   /* Kept for the callers that flip a view from outside. */
@@ -1452,7 +1605,7 @@ function modelsTab(host) {
     d.append(el('h2', {text: m.name}));
     d.append(el('div', {class: 'path mono', text: m.path}));
     if (m.unreadable) d.append(el('p', {class: 'pill bad',
-      text: 'assay could not read this model, so it is absent from everything below. That is not a pass.'}));
+      text: 'assay could not read this model\u2019s SQL, so nothing below was checked.'}));
     if (m.description) d.append(md(m.description));
 
     d.append(section('what one row is', kv([
@@ -1515,7 +1668,7 @@ function modelsTab(host) {
       {key: 'ruled', label: 'ruled', val: f => f.ruled_finding ? 1 : 0,
        cell: f => el('span', {class: 'pill ' + (f.ruled_finding ? 'on' : ''),
          text: f.ruled_finding ? 'read by a person'
-           : (f.ruled_model ? 'model ruled, not this' : 'unread')})},
+           : (f.ruled_model ? 'model ruled' : 'unread')})},
     ], {placeholder: 'filter findings...', cap: 200})
       : el('p', {class: 'empty', text: 'nothing found on this model'})));
 
@@ -1527,7 +1680,7 @@ function modelsTab(host) {
         {key: 'where', label: 'written', mono: 1, val: c => c.source_ref},
         {key: 'v', label: 'the code', val: c => c.contradicted == null ? -1 : c.contradicted,
          cell: c => c.contradicted == null ? el('span', {class: 'tot', text: 'not contradicted'})
-           : el('span', {class: 'pill bad', text: 'contradicts @' + c.contradicted.toFixed(2)})},
+           : badge('contradicts', 'bad', c.contradicted)},
       ], {placeholder: 'filter claims...', cap: 300})
         : el('p', {class: 'empty', text: 'no claims extracted for this model'})));
 
@@ -1681,9 +1834,9 @@ function claimsTab(host) {
        pane on the right, one click away. */
     {key: 'v', label: 'code', n: 1, val: c => c.contradicted == null ? -1 : c.contradicted,
      tip: 'Whether the SQL contradicts the sentence, and how sure that reading is. A dash means '
-       + 'never asked, which is not the same as supported.',
+       + 'not checked yet.',
      cell: c => c.contradicted == null ? el('span', {class: 'tot', text: '\u2014'})
-       : el('span', {class: 'pill bad', text: c.contradicted.toFixed(2)})},
+       : el('span', {class: 'bad', text: c.contradicted.toFixed(2)})},
   ];
   const contradicted = DATA.claims.filter(c => c.contradicted != null);
 
@@ -1697,6 +1850,7 @@ function claimsTab(host) {
     groupSub: g => g.bad ? num(g.bad) + ' contradicted by the code' : null,
     facet: {label: 'kind', of: c => c.kind || 'unclassified'},
     toggles: [{label: 'only where the code contradicts', count: contradicted.length,
+               none: 'the code contradicts no claim about this model',
                title: 'only claims a judgment read against the SQL and found contradicted',
                where: c => c.contradicted != null}],
     rowFilter: 'filter claims...',
@@ -1704,19 +1858,17 @@ function claimsTab(host) {
     rowText: c => [c.text, c.source_ref, c.kind].join(' '),
     /* The claim itself is a SENTENCE, and a sentence in a table cell is a sentence you skim.
        The right pane is where it gets read. */
-    detailOf: c => [
-      el('h2', {text: c.subject_name}),
-      el('div', {class: 'path', text: c.source_ref || ''}),
-      el('div', {}, [el('span', {class: 'pill', text: c.kind || 'unclassified'})]),
-      section('what it says', el('p', {class: 'quote', text: c.text})),
-      section('has the code contradicted it',
-        c.contradicted == null
-          ? el('p', {class: 'note', text: 'Never asked. Not the same as supported: no question '
-              + 'about this claim has been put to a model, so there is no answer to trust.'})
-          : el('p', {class: 'note'}, [
-              el('span', {class: 'pill bad', text: 'contradicts @' + c.contradicted.toFixed(2)}),
-              el('span', {text: ' The SQL was read against this sentence and they disagree.'})])),
-    ],
+    detailOf: c => pane({
+      kind: 'claim \u00b7 ' + (c.kind || 'unclassified').replace(/_/g, ' '),
+      title: link(c.subject_name),
+      where: el('span', {class: 'mono', text: c.source_ref || ''}),
+      what: el('span', {class: 'quote'}, [wbr(c.text)]),
+      reading: [section('the code', c.contradicted == null
+        ? el('p', {class: 'prose', text: 'Not checked. No question has read the SQL against this '
+            + 'sentence yet.'})
+        : el('p', {class: 'prose'}, [badge('contradicts', 'bad', c.contradicted),
+            el('span', {text: ' The SQL was read against this sentence and they disagree.'})]))],
+    }),
   });
   host.replaceChildren(d);
 }
@@ -1728,8 +1880,7 @@ function claimsTab(host) {
 function areasTab(host) {
   const A = DATA.areas || {};
   const pcs = A.predicate_clusters || [], odds = A.odd_ones_out || [], same = A.same_claim || [];
-  const read = r => r ? el('span', {class: 'pill judged',
-                                    text: r.answer.replace(/_/g, ' ') + ' @' + r.confidence})
+  const read = r => r ? badge(r.answer.replace(/_/g, ' '), 'judged', r.confidence)
                       : el('span', {class: 'tot', text: 'not asked'});
   const models = ms => el('span', {}, ms.map(m => link(m)).flatMap((x, i) =>
     i ? [el('span', {text: ', '}), x] : [x]));
@@ -1780,34 +1931,40 @@ function areasTab(host) {
       : [r.model, r.difference, r.shared, r.this].join(' '),
     detailOf: r => {
       const k = kind(r);
-      if (k === 'filters') return [
-        el('h2', {class: 'mono', text: r.shape}),
-        section('where', kv([
-          ['models', models(r.models)],
-          ['written once?', r.macro_at || 'no: each model writes it'],
+      if (k === 'filters') return pane({
+        kind: 'filter written the same way \u00b7 ' + r.models.length + ' models',
+        title: [wbr(r.shape)], mono: 1,
+        where: models(r.models),
+        what: r.macro_at ? 'Written once, in ' + r.macro_at + '.' : 'Each model writes it itself.',
+        reading: [section('the reading', kv([
           ['one rule?', r.macro_at ? el('span', {class: 'tot', text: 'settled: it is one macro'})
                                    : read(r.one_rule)],
-          ['fix belongs', r.macro_at ? el('span', {class: 'tot', text: '—'})
-                                     : read(r.fix_belongs)]]))];
-      if (k === 'odd') return [
-        el('h2', {}, [link(r.model)]),
-        el('p', {class: 'prose', text: r.difference}),
-        section('what it writes', el('pre', {text: r.this || ''})),
-        section('what the others write', el('pre', {text: r.shared || ''})),
-        section('the others', models(r.shared_by || [])),
-        section('read as', read(r.read_as))];
+          ['fix belongs', r.macro_at ? el('span', {class: 'tot', text: '\u2014'})
+                                     : read(r.fix_belongs)]]))]});
+      if (k === 'odd') return pane({
+        kind: 'the one that differs',
+        title: link(r.model),
+        where: el('span', {}, [el('span', {class: 'tot', text: 'the others: '}),
+                               models(r.shared_by || [])]),
+        what: r.difference,
+        reading: [section('what it writes', el('pre', {text: r.this || ''})),
+                  section('what the others write', el('pre', {text: r.shared || ''})),
+                  section('the reading', kv([['read as', read(r.read_as)]]))]});
       /* The members' own words: the claim is "the same" by a judgment, not by string equality,
          so each wording is shown as it was written -- once, with every model that wrote it,
          because ten models writing one sentence is one wording and not ten. */
       const byText = {};
       for (const x of r) (byText[x.claim] = byText[x.claim] || []).push(x.model);
       const words = Object.entries(byText);
-      return [
-        el('h2', {text: 'one claim, ' + r.length + ' models'}),
-        section(words.length === 1 ? 'what every one of them says'
-                                   : words.length + ' wordings of it', el('div', {}, words.map(
-          ([t, ms]) => el('div', {class: 'opt'}, [el('p', {class: 'quote', text: t}),
-                                                  models(ms)]))))];
+      return pane({
+        kind: 'one claim, several models',
+        title: r.length + ' models',
+        where: models([...new Set(r.map(x => x.model))]),
+        what: words.length === 1 ? el('span', {class: 'quote'}, [wbr(words[0][0])])
+                                 : words.length + ' wordings of one claim',
+        reading: words.length === 1 ? [] : [section('each wording', el('div', {}, words.map(
+          ([t, ms]) => el('div', {class: 'opt'}, [el('p', {class: 'quote'}, [wbr(t)]),
+                                                  models(ms)]))))]});
     },
   }));
 }
@@ -1855,86 +2012,114 @@ function weightBox(f) {
   return box;
 }
 
+/* *** ONE SHAPE FOR EVERY DETAIL PANE. *** (G4)
+   Claims, Areas, Answers and Findings each put their own headings in their own order, so every
+   tab had to be learned separately. Every pane is now: what kind of thing it is, its name, where
+   it is, the one line that says it, the reading under headings, and what to do about it last. */
+function pane(o) {
+  const out = [];
+  if (o.kind) out.push(el('div', {class: 'pkind', text: o.kind}));
+  out.push(el('h2', {class: o.mono ? 'mono' : ''}, [].concat(o.title)));
+  if (o.where) out.push(el('div', {class: 'path'}, [].concat(o.where)));
+  if (o.what) out.push(el('p', {class: 'plead'}, [].concat(o.what)));
+  for (const r of (o.reading || [])) if (r) out.push(r);
+  if (o.act) out.push(section('what to do', o.act));
+  return out;
+}
+
 function findingsTab(host) {
-  const detail = el('div', {class: 'detail'});
-  let only = null;
+  /* *** THE SAME THREE COLUMNS AS CLAIMS AND AREAS. *** (P2)
+     Findings was one flat list with a dropdown of checks. The checks are the groups now, each
+     with its count and how many a person has read; picking one lists the models it fired on, and
+     picking a model fills the pane. */
   const byCheck = {};
   for (const f of DATA.findings) {
-    const g = byCheck[f.check] = byCheck[f.check] ||
-      {check: f.check, n: 0, marts: 0, ruled: 0, rests_on: f.rests_on};
-    g.n++; g.marts = Math.max(g.marts, f.marts); g.ruled += f.ruled_finding ? 1 : 0;
+    const g = byCheck[f.check] = byCheck[f.check] || {check: f.check, rows: [], ruled: 0};
+    g.rows.push(f); g.ruled += f.ruled_finding ? 1 : 0;
   }
-  const checks = Object.values(byCheck).sort((a, b) => b.n - a.n);
-
-  /* *** ELEVEN CHIPS, EACH CARRYING A NAME, A COUNT AND "0 read", IS A WALL OF TEXT. ***
-     Reported from the field with a screenshot: two rows of controls above the thing they filter,
-     spending more space than the table. A select says the same thing in one line and sits in the
-     filter bar that already exists, so nothing is added above the list at all. */
-  const pickCheck = el('select');
-  const opt = (v, t) => { const o = document.createElement('option'); o.value = v; o.textContent = t;
-    return o; };
-  pickCheck.append(opt('', 'every check \u00b7 ' + DATA.findings.length));
-  for (const c of checks)
-    pickCheck.append(opt(c.check, c.check + ' \u00b7 ' + c.n + (c.ruled ? ' \u00b7 ' + c.ruled + ' read' : '')));
-  pickCheck.onchange = () => { only = pickCheck.value || null; list.redraw(); };
-
-  const list = grid(DATA.findings, [
-    {key: 'check', label: 'check', mono: 1, val: f => f.check},
-    {key: 'model', label: 'model', mono: 1, val: f => f.model, cell: f => link(f.model)},
-    {key: 'w', label: 'weight', n: 1, val: f => f.weight,
-     tip: 'The list is ranked by this: the check\u2019s base severity lifted by reach, so the same '
-       + 'defect on a leaf and on a model nine marts read are not the same finding.\n'
-       + 'weight = base \u00d7 (1 + descendants \u00f7 25 + marts \u00f7 5 + 5 per exposure), '
-       + 'counting at most 50 descendants, 10 marts and 2 exposures. Hover a weight for its parts.',
-     cell: f => el('span', {text: f.weight.toFixed(1), title: weightLine(f)})},
+  const groups = Object.values(byCheck);
+  const weightCol = {key: 'w', label: 'weight', n: 1, val: f => f.weight,
+    tip: 'The list is ranked by this: the check’s severity lifted by how far the model reaches.\n'
+      + 'weight = base × (1 + descendants ÷ 25 + marts ÷ 5 + 5 per exposure), '
+      + 'counting at most 50 descendants, 10 marts and 2 exposures. Hover a weight for its parts.',
+    cell: f => el('span', {text: f.weight.toFixed(1), title: weightLine(f)})};
+  const rest = [
+    {key: 'marts', label: 'marts', n: 1, val: f => f.marts,
+     tip: 'Marts downstream of the model.'},
     {key: 'feeds', label: 'feeds', n: 1, val: f => (f.exposures || []).length,
+     tip: 'Exposures the model reaches: products outside the warehouse.',
      cell: f => el('span', {class: (f.exposures || []).length ? '' : 'tot',
                             title: (f.exposures || []).join(', '),
                             text: num((f.exposures || []).length)})},
-    {key: 'marts', label: 'marts', n: 1, val: f => f.marts},
-  ], {placeholder: 'filter findings...', scroll: 1, sort: 'w', dir: -1, pick: f => show(f),
-      where: f => !only || f.check === only, controls: [pickCheck],
-      text: f => [f.check, f.model, f.summary].join(' ')});
+  ];
+  const modelCol = {key: 'model', label: 'model', mono: 1, val: f => f.model,
+                    cell: f => link(f.model)};
+  /* Every finding at once carries its check, so it drops what the pane already says (marts and
+     exposures): five columns did not fit the middle column at 1100px. */
+  const withCheck = [{key: 'check', label: 'check', mono: 1, val: f => f.check},
+                     modelCol, weightCol];
+  const perCheck = [modelCol, weightCol, ...rest];
 
+  const d = drill({
+    noun: 'findings', groups: groups, chip: g => g.check, groupFilter: 'find a check...',
+    groupSub: g => g.ruled ? num(g.ruled) + ' read by a person' : null,
+    rowsOf: g => g.rows, rowCols: withCheck,
+    colsFor: g => (g && g.__all) ? withCheck : perCheck,
+    rowSort: 'w', rowDir: -1, rowFilter: 'filter by model or text...',
+    rowText: f => [f.check, f.model, f.summary].join(' '),
+    detailOf: f => findingPane(f),
+  });
+  host.replaceChildren(d);
+  GO.findings = id => {
+    const f = FIND[id]; if (!f) return;
+    d.showRows(byCheck[f.check]);
+    for (const tr of host.querySelectorAll('tbody tr')) {
+      const td = tr.querySelector('td');
+      if (td && td.textContent.trim() === f.model && tr.innerText.includes(f.weight.toFixed(1))) {
+        tr.click(); if (tr.scrollIntoView) tr.scrollIntoView({block: 'nearest'}); return;
+      }
+    }
+  };
+}
 
-  function show(f) {
-    detail.replaceChildren(
-      el('h2', {text: f.check}),
-      el('div', {class: 'path'}, [link(f.model), el('span', {class: 'mono tot',
-        text: '  ·  ' + (f.file || '')})]),
-      el('p', {class: 'prose', text: f.summary}),
+function findingPane(f) {
+  return pane({
+    kind: 'finding · ' + f.check.replace(/_/g, ' '),
+    title: link(f.model), mono: 0,
+    where: el('span', {class: 'mono', text: f.file || ''}),
+    what: f.summary,
+    reading: [
       section('what it means', md(f.detail || '')),
-      section('severity', kv([
+      section('how much it matters', kv([
         ['weight', weightBox(f)],
         ['reaches', (f.exposures || []).length ? f.exposures.join(', ')
           : el('span', {class: 'tot', text: 'no exposure'})],
-        /* First SEEN by a full check, at the commit HEAD was on. Not "introduced": the commit that
-           introduced it can be earlier, and `backtest` is what finds that. */
-        ...(f.first_seen ? [['first seen', el('span', {text: f.first_seen.at +
-            (f.first_seen.commit ? ' at ' + f.first_seen.commit : '') +
-            (f.first_seen.subject ? ' \u00b7 ' + f.first_seen.subject.slice(0, 80) : '')})]] : []),
+        ['marts downstream', num(f.marts)],
+        ['descendants', num(f.descendants)],
         ...(f.group ? [['same construct', el('span', {text: f.group.size + ' models (' +
-            f.group.models.slice(0, 5).join(', ') + (f.group.size > 5 ? ', ...' : '') + ') — ' +
+            f.group.models.slice(0, 5).join(', ') + (f.group.size > 5 ? ', ...' : '') + '), ' +
             (f.group.macro_at ? 'one edit in ' + f.group.macro_at : 'written inline in each')})]]
           : []),
-        ['marts downstream', String(f.marts)],
-        ['descendants', String(f.descendants)],
-        ['rests on', f.rests_on
-          ? el('span', {class: 'pill judged', text: f.rests_on})
-          : el('span', {class: 'pill declared', text: 'structural: a parser decided it'})],
-        ['ruled', el('span', {class: 'pill ' + (f.ruled_finding ? 'on' : ''),
-          text: f.ruled_finding ? 'a person read this finding'
-            : (f.ruled_model ? 'a person ruled on this model, but not on this finding'
-                             : 'nobody has read it')})],
+        /* First SEEN by a full check, at the commit HEAD was on. `backtest` finds the commit
+           that introduced it. */
+        ...(f.first_seen ? [['first seen', el('span', {text: f.first_seen.at +
+            (f.first_seen.commit ? ' at ' + f.first_seen.commit : '')})]] : []),
+      ])),
+      section('who decided it', kv([
+        ['found by', f.rests_on ? badge('the ' + f.rests_on.replace(/_/g, ' ') + ' question',
+                                        'judged')
+                                : badge('the SQL parser', 'declared')],
+        ['read by a person', f.ruled_finding ? badge('yes', 'on')
+          : f.ruled_model ? el('span', {text: 'the model was ruled on, this finding was not'})
+          : el('span', {class: 'tot', text: 'nobody yet'})],
       ])),
       section('evidence', kvAny(f.evidence)),
-      section('rule on it', el('p', {class: 'mono prose',
-        text: "assay review -i\nrule(finding='" + f.id + "', verdict=..., why=...)"})));
-  }
-
-  host.replaceChildren(el('div', {class: 'wrap2 wide'}, [list, detail]));
-  detail.append(el('p', {class: 'empty', text: 'Pick a finding.'}));
-  const first = $('tbody tr', list); if (first) first.click();
+    ],
+    act: el('div', {}, [
+      el('p', {class: 'prose', text: 'Rule on it in the review form, or from an agent:'}),
+      el('pre', {text: "rule(finding='" + f.id + "', verdict='agree' | 'disagree' | 'accept', "
+                       + "why='...')"})]),
+  });
 }
 
 /* ------------------------------------------------------------------------------ Answers */
@@ -1949,103 +2134,104 @@ function subjectOf(a) {
   return {name: head.split('.').pop() || key, scope: rest.split('::')[0] || ''};
 }
 
+/* What an answer was about, in words: the model, and the part of it the question named. A
+   column question names the column in its id (`role__addr_key`); a sentence, an edge or a
+   monitor carries it in the context, which for a sentence starts with the model's own name. */
+function answerPart(a) {
+  const s = subjectOf(a);
+  const q = String(a.question || '');
+  const ctx = String(a.context || '');
+  let part = ctx.startsWith(s.name + ': ') ? ctx.slice(s.name.length + 2) : ctx;
+  if (part === s.name) part = '';
+  if (!part && q.includes('__') && !/^\d+$/.test(q.split('__')[1])) part = q.split('__')[1];
+  return {model: s.name, scope: s.scope, part: part};
+}
+
 function answersTab(host) {
   const fam = {};
   for (const a of DATA.decisions) {
     const p = a.question.split('__')[0];
-    const g = fam[p] = fam[p] || {prefix: p, rows: [], sum: 0, n: 0, low: 0, versions: {}};
+    const g = fam[p] = fam[p] || {prefix: p, rows: [], low: 0, found: 0};
     g.rows.push(a);
-    if (a.confidence != null) { g.sum += a.confidence; g.n++; if (a.confidence < 0.6) g.low++; }
-    if (a.prompt_version) g.versions[a.prompt_version] = 1;
+    if (a.confidence != null && a.confidence < 0.6) g.low++;
+    if (a.finding) g.found++;
   }
   const qByPrefix = {};
   for (const q of DATA.questions) if (q.id_prefix) qByPrefix[q.id_prefix] = q.name;
-  const groups = Object.values(fam).sort((a, b) => b.rows.length - a.rows.length);
-
+  const groups = Object.values(fam);
   const qOf = g => (DATA.questions || []).find(x => x.id_prefix === g.prefix);
+  const words = g => { const q = qOf(g); return q && (q.instructions || {}).question; };
+
   host.replaceChildren(drill({
-    noun: 'answers', groups: groups, rowFilter: 'filter answers...',
+    noun: 'answers', groups: groups, rowFilter: 'filter by model or text...',
     chip: g => qByPrefix[g.prefix] || g.prefix,
     groupFilter: 'find a question...',
-    groupSub: g => g.low ? num(g.low) + ' under 0.60' : null,
-    facet: {label: 'answered', of: a => a.answer == null ? '(no answer)' : a.answer},
-    /* *** GROUPED BY QUESTION, AND THE QUESTION IS ON THE SCREEN. ***
-       Opening on "all answers" put thousands of rows from every family in one list with no
-       question anywhere above them. It opens on the largest question, with that question's own
-       words over its answers and how many were unsure. */
-    startGroup: gs => gs[0],
-    groupHead: g => {
-      const q = qOf(g);
-      const words = q && (q.instructions || {}).question;
-      return el('div', {class: 'qhead'}, [
-        el('div', {class: 'tlab', text: (qByPrefix[g.prefix] || g.prefix) + ' \u00b7 '
-          + num(g.rows.length) + ' answers \u00b7 ' + num(g.low) + ' under 0.60'}),
-        el('p', {class: 'quote', text: words || 'This question\u2019s wording is not in the '
-          + 'bank any more; its answers are kept and served dated.'})]);
-    },
+    groupSub: g => g.found ? num(g.found) + ' became findings' : null,
+    /* It opens on the question whose answers produced the most findings: the answers somebody
+       came here to check. */
+    startGroup: gs => gs.slice().sort((a, b) => b.found - a.found || b.rows.length - a.rows.length)[0],
+    split: {of: a => a.finding ? 'found' : 'none', choices: [
+      ['found', 'became a finding', 'Answers that produced a finding on the Findings tab.'],
+      ['none', 'no finding', 'Answers that produced no finding: the answer was not a defect, or '
+        + 'the model was under 0.60 and could not tell.']]},
+    facet: {label: 'answer', of: a => a.answer == null ? '(no answer)' : a.answer},
+    /* The question, once, above its answers. */
+    groupHead: g => el('div', {class: 'qhead'}, [
+      el('p', {class: 'quote', text: words(g) || 'This question is no longer in the bank; its '
+        + 'answers are kept as they were given.'})]),
     rowsOf: g => g.rows,
-    /* *** SEVEN COLUMNS, AND ONE OF THEM HELD TWO DIFFERENT KINDS OF THING. ***
-       `subject` fell back to the decision's CONTEXT when it could not resolve a model name, and
-       a claim-scoped decision's context is the claim's own text -- so one cell in a column of
-       model names held 120 characters of prose. Reported from the field as "is that about an
-       assay column or water table shit?", which is the right question to ask of a column that
-       answers two things.
-
-       The subject is now always the subject, derived from the decision key, with a pill for the
-       scope. What it was asked ABOUT has its own column, and the full text is in the pane. */
-    /* *** THE SORT KEY HAS TO BE ON THE SCREEN. ***
-       Four columns in this pane clipped `confidence` off the right edge -- and the list is
-       sorted by it ascending, because the lowest is where the model is telling you it cannot
-       tell. A list sorted by a column you cannot see is a list in no apparent order.
-
-       So three columns: what it is about, what it answered, how sure. The subject, the scope and
-       the question id are all in the pane, one click away, with room to be read. */
     rowCols: [
-      {key: 'about', label: 'about', clip: 1, val: a => a.context || subjectOf(a).name,
-       tip: 'What was asked about: a model, a column, a sentence. One row per subject and question, '
-         + 'the latest answer.'},
-      {key: 'a', label: 'answered', clip: 1, val: a => a.answer},
+      {key: 'about', label: 'asked about', val: a => answerPart(a).model + ' ' + answerPart(a).part,
+       tip: 'The model the question was asked about, and the part of it: a column, a sentence, a '
+         + 'hop or a test.',
+       cell: a => { const x = answerPart(a);
+         return el('div', {}, [BY_NAME[x.model] ? link(x.model) : el('span', {class: 'mono'},
+             [wbr(x.model)]),
+           ...(x.part ? [el('div', {class: 'apart'}, [wbr(x.part)])] : [])]); }},
+      {key: 'a', label: 'answer', val: a => a.answer, cell: a => el('span', {}, [wbr(a.answer)])},
       {key: 'c', label: 'sure', n: 1, val: a => a.confidence, cell: a => conf(a.confidence),
-       tip: 'How confident the answer was. Under 0.60 nothing becomes a finding: it is the model '
-         + 'saying it cannot tell, usually because what it was given does not carry the answer.'},
+       tip: 'How confident the answer was, from 0 to 1. Under 0.60 nothing becomes a finding.'},
     ],
-    rowSort: 'c', rowDir: 1,
-    rowText: a => [a.question, a.key, a.context, a.answer, a.prompt_version].join(' '),
-    /* *** THE QUESTION TEXT ABOVE ITS ANSWERS, WHICH IS THE THING BEING MEASURED. ***
-       A row read `column_role__what_is_it = dimension, 0.62` and the question it answered was
-       somewhere else entirely -- another tab. An answer without its question is a value with no
-       unit. */
-    detailOf: a => {
-      const q = (DATA.questions || []).find(x => a.question.startsWith(x.id_prefix + '__')
-                                                 || x.id_prefix === a.question.split('__')[0]);
-      const s = subjectOf(a);
-      const bits = [
-        el('h2', {text: a.answer || '(no answer)'}),
-        el('div', {class: 'path', text: a.question}),
-      ];
-      /* Which thing this answer is ABOUT, linked where it is a model somebody can open. */
-      const who = el('div', {class: 'note'});
-      who.append(BY_NAME[s.name] ? link(s.name) : el('span', {class: 'mono', text: s.name}));
-      if (s.scope) who.append(el('span', {class: 'pill', text: s.scope}));
-      bits.push(who);
-      if (q && (q.instructions || {}).question)
-        bits.push(section('the question it answered',
-                          el('p', {class: 'quote', text: q.instructions.question})));
-      bits.push(section('about', el('p', {class: 'prose', text: a.context || a.key})));
-      bits.push(section('how sure', kv([
-        ['confidence', a.confidence != null && a.confidence < 0.6
-          ? el('span', {}, [conf(a.confidence), el('span', {class: 'low', text: '  not reported',
-              tip: 'Under 0.60 nothing becomes a finding. It is the model saying it cannot tell, '
-                + 'which usually means the state it was given does not carry what the question '
-                + 'asks for.'})])
-          : conf(a.confidence)],
-        ['next best', a.runner_up ? a.runner_up[0] + ' at ' + a.runner_up[1].toFixed(2)
-                                  : 'nothing else scored'],
-        ['ruled under', a.prompt_version || 'no recorded version'],
-      ])));
-      return bits;
+    rowSort: 'c', rowDir: -1,
+    rowText: a => [a.question, a.key, a.context, a.answer].join(' '),
+    detailOf: (a, g, all) => {
+      const x = answerPart(a);
+      const f = a.finding ? FIND[a.finding] : null;
+      const q = qOf(g || {prefix: a.question.split('__')[0]});
+      return pane({
+        kind: 'answer · ' + (qByPrefix[a.question.split('__')[0]] || a.question).replace(/_/g, ' '),
+        title: [wbr(a.answer == null ? '(no answer)' : a.answer)],
+        where: [BY_NAME[x.model] ? link(x.model) : el('span', {class: 'mono', text: x.model}),
+                ...(x.scope ? [badge(x.scope)] : [])],
+        what: x.part ? [wbr(x.part)] : null,
+        reading: [
+          ...(all && q && (q.instructions || {}).question
+            ? [section('the question', el('p', {class: 'quote', text: q.instructions.question}))]
+            : []),
+          section('how sure', kv([
+            ['sure', a.confidence != null && a.confidence < 0.6
+              ? el('span', {}, [conf(a.confidence), el('span', {class: 'low', text: '  not reported',
+                  tip: 'Under 0.60 nothing becomes a finding: the model could not tell, usually '
+                    + 'because what it was given does not carry the answer.'})])
+              : conf(a.confidence)],
+            ['next best', a.runner_up ? a.runner_up[0] + ' at ' + a.runner_up[1].toFixed(2)
+                                      : 'nothing else scored'],
+            ['asked with', a.prompt_version || 'no recorded version'],
+          ])),
+          section('what came of it', f
+            ? el('div', {}, [el('p', {class: 'prose'}, [md(f.summary || '')]), goFinding(f.id)])
+            : el('p', {class: 'prose', text: 'No finding.'})),
+        ],
+      });
     },
   }));
+}
+
+/* A link that opens the Findings tab on one finding: its check picked, its row selected. */
+function goFinding(id) {
+  const a = el('a', {class: 'lk', href: '#', text: 'open the finding'});
+  a.onclick = ev => { ev.preventDefault(); open('findings'); (GO.findings || (() => {}))(id); };
+  return a;
 }
 
 /* *** THE THINGS YOU CONFIGURE BY HAND WERE THE ONES DUMPED AS RAW JSON. ***
@@ -2076,93 +2262,99 @@ function kvAny(v, depth) {
 }
 
 /* ---------------------------------------------------------------------------- Questions */
+/* What each bank is about, in words. A bank this project wrote is named as its own. */
+const BANK_TOPIC = {align: 'joins and grain', clusters: 'repeated filters and claims',
+  columns: 'what columns are', feeds: 'source fields', grain: 'keys', meaning: 'what values mean',
+  practices: 'dbt practices', reads: 'reading findings', rows: 'failing rows',
+  rulings: 'rulings', semantics: 'descriptions and claims', testing: 'tests',
+  volume: 'monitoring'};
+const bankLabel = q => q.yours ? 'yours: ' + (q.bank || '').replace(/_/g, ' ')
+                               : (BANK_TOPIC[q.bank] || (q.bank || 'other').replace(/_/g, ' '));
+
 function questionsTab(host) {
-  const detail = el('div', {class: 'detail'});
-  const byFam = {};
+  /* *** A "FAMILY" WAS ONE QUESTION. *** (P5)
+     Every entry here is one question, and calling it a family sent a reader looking for a group
+     that was not there. The real groups are the banks the questions are written in -- what
+     values mean, monitoring, descriptions and claims, this project's own -- so those are the
+     groups on the left, and each question shows its text, what it is asked about, and what came
+     back. */
+  const verdicts = {};
   for (const a of DATA.adjudications) {
-    const k = a.family || ''; byFam[k] = byFam[k] || {human: 0, all: 0};
-    byFam[k].all++; if (a.source === 'human') byFam[k].human++;
+    const k = a.family || ''; verdicts[k] = verdicts[k] || {human: 0, all: 0};
+    verdicts[k].all++; if (a.source === 'human') verdicts[k].human++;
   }
-  const asked = {};
-  for (const d of DATA.decisions) { const p = d.question.split('__')[0];
-    asked[p] = (asked[p] || 0) + 1; }
+  const answersOf = {};
+  for (const d of DATA.decisions)
+    (answersOf[d.question.split('__')[0]] = answersOf[d.question.split('__')[0]] || []).push(d);
+  const byBank = {};
+  for (const q of DATA.questions) {
+    const k = bankLabel(q);
+    (byBank[k] = byBank[k] || {label: k, yours: q.yours, rows: []}).rows.push(q);
+  }
+  const groups = Object.values(byBank).sort((a, b) =>
+    (a.yours - b.yours) || b.rows.length - a.rows.length || a.label.localeCompare(b.label));
+  const asked = q => (answersOf[q.id_prefix] || []).length;
+  const human = q => (verdicts[q.name] || {}).human || 0;
 
-  const list = grid(DATA.questions, [
-    {key: 'name', label: 'family', mono: 1, val: q => q.name},
-    {key: 'v', label: 'version', mono: 1, val: q => q.prompt_version},
-    {key: 'asked', label: 'asked', n: 1, val: q => asked[q.id_prefix] || 0,
-     tip: 'Subjects in this project with a live answer from this family.'},
-    {key: 'human', label: 'human', n: 1, val: q => (byFam[q.name] || {}).human || 0,
-     tip: 'Verdicts a person recorded on this family\u2019s findings. Only a human verdict can '
-       + 'let a check gate a build; an agent\u2019s ruling triages and counts toward nothing.',
-     cell: q => { const n = (byFam[q.name] || {}).human || 0;
-       return el('span', {class: n ? 'ok' : 'tot', text: num(n)}); }},
-  ], {placeholder: 'filter questions...', scroll: 1, sort: 'name', pick: q => show(q),
-      text: q => [q.name, q.id_prefix, q.prompt_version, JSON.stringify(q.instructions)].join(' ')});
-
-  function show(q) {
-    const n = (byFam[q.name] || {}).human || 0;
-    const d = detail; d.replaceChildren();
-    d.append(el('h2', {text: q.name}));
-    d.append(el('div', {class: 'path mono',
-      text: [q.id_prefix, q.prompt_version, q.kind, q.origin].filter(Boolean).join('  ·  ')}));
-
-    d.append(section('how many verdicts, and whose', kv([
-      ['asked on this project', num(asked[q.id_prefix] || 0) + ' subject(s)'],
-      ['human verdicts', el('span', {class: 'pill ' + (n ? 'on' : 'bad'), text: String(n)})],
-      ['all verdicts', String((byFam[q.name] || {}).all || 0)],
-    ])));
-    /* *** IT EXPLAINED THE DIFFERENCE BETWEEN TWO NUMBERS THAT WERE BOTH ZERO. ***
-       This paragraph printed on every card, including one reading `human 0, all 0`, where the
-       distinction it draws has nothing to draw it between. It is a fact about the tab, so it
-       lives in the tab header; here it appears only when a card actually holds both kinds. */
-    const allV = (byFam[q.name] || {}).all || 0;
-    if (allV > n)
-      d.append(el('p', {class: 'note', text: (allV - n) + ' of these came from an agent. '
-        + 'They are evidence, not authority: they cannot gate a build or count toward '
-        + 'min_adjudications.'}));
-
-    /* The question as it is SENT, as prose rather than as a JSON object. */
-    const ins = q.instructions || {};
-    const qs = el('div');
-    if (ins.question) qs.append(el('p', {class: 'quote', text: ins.question}));
-    for (const k of Object.keys(ins).sort()) {
-      if (k === 'question') continue;
-      qs.append(el('p', {class: 'note'}, [el('b', {text: k + ': '}),
-                                          el('span', {text: String(ins[k])})]));
-    }
-    d.append(section('what it asks', qs));
-
-    /* Every option it may return, each one a block: the name, what it means, what it is NOT for,
-       and the examples. This is the text `effectiveness` measures agreement against, so it is
-       the text a person needs when a version number moves. */
-    const crit = q.criteria || {};
-    const opts = el('div');
-    for (const name of Object.keys(crit).sort()) {
-      const c = crit[name], blk = el('div', {class: 'opt'});
-      blk.append(el('div', {class: 'optname mono', text: name}));
-      if (typeof c === 'string') { blk.append(el('p', {class: 'prose', text: c})); }
-      else {
-        if (c.what) blk.append(el('p', {class: 'prose', text: c.what}));
-        if (c.not_for) blk.append(el('p', {class: 'note'},
-          [el('b', {text: 'not for: '}), el('span', {text: String(c.not_for)})]));
-        for (const k of Object.keys(c).sort()) {
-          if (k === 'what' || k === 'not_for' || k === 'examples') continue;
-          blk.append(el('p', {class: 'note'},
-            [el('b', {text: k + ': '}), el('span', {text: String(c[k])})]));
+  host.replaceChildren(drill({
+    noun: 'questions', groups: groups, chip: g => g.label, groupFilter: 'find a topic...',
+    keepOrder: 1,
+    rowsOf: g => g.rows,
+    rowCols: [
+      {key: 'name', label: 'question', mono: 1, val: q => q.name},
+      {key: 'asked', label: 'asked', n: 1, val: q => asked(q),
+       tip: 'How many things in this project this question has a live answer about.'},
+      {key: 'human', label: 'human', n: 1, val: q => human(q),
+       tip: 'Verdicts a person recorded on the findings this question produced. Only these let '
+         + 'a check fail a build.',
+       cell: q => el('span', {class: human(q) ? 'ok' : 'tot', text: num(human(q))})},
+    ],
+    rowSort: 'asked', rowDir: -1, rowFilter: 'filter questions...',
+    rowText: q => [q.name, q.bank, JSON.stringify(q.instructions)].join(' '),
+    detailOf: q => {
+      const ins = q.instructions || {};
+      const got = answersOf[q.id_prefix] || [];
+      const counts = {};
+      for (const d of got) counts[d.answer] = (counts[d.answer] || 0) + 1;
+      const crit = q.criteria || {};
+      const opts = el('div');
+      for (const name of Object.keys(crit).sort()) {
+        const c = crit[name], blk = el('div', {class: 'opt'});
+        blk.append(el('div', {class: 'optname'}, [el('span', {class: 'mono', text: name}),
+          el('span', {class: 'tot', text: '  ' + num(counts[name] || 0) + ' answered this'})]));
+        if (typeof c === 'string') blk.append(el('p', {class: 'prose', text: c}));
+        else {
+          if (c.what) blk.append(el('p', {class: 'prose', text: c.what}));
+          if (c.not_for) blk.append(el('p', {class: 'prose'},
+            [el('span', {class: 'tot', text: 'not for: '}), el('span', {text: String(c.not_for)})]));
+          if ((c.examples || []).length)
+            blk.append(el('div', {class: 'chips flat'},
+              c.examples.map(x => el('span', {class: 'chip mono', text: String(x)}))));
         }
-        if ((c.examples || []).length)
-          blk.append(el('div', {class: 'chips flat'},
-            c.examples.map(x => el('span', {class: 'chip mono', text: String(x)}))));
+        opts.append(blk);
       }
-      opts.append(blk);
-    }
-    d.append(section('the ' + Object.keys(crit).length + ' answers it may give', opts));
-  }
-
-  host.replaceChildren(el('div', {class: 'wrap2'}, [list, detail]));
-  detail.append(el('p', {class: 'empty', text: 'Pick a question to read its instructions and every option, exactly as they are sent.'}));
-  const first = $('tbody tr', list); if (first) first.click();
+      const extra = Object.keys(ins).filter(k => k !== 'question').sort();
+      return pane({
+        kind: 'question · ' + bankLabel(q),
+        title: [wbr(q.name)],
+        where: el('span', {class: 'mono', text: [q.prompt_version, q.yours ? 'written in this '
+          + 'project' : 'ships with assay'].filter(Boolean).join('  ·  ')}),
+        what: el('span', {class: 'quote', text: ins.question || ''}),
+        reading: [
+          ...(extra.length ? [section('how it is asked', el('div', {}, extra.map(k =>
+            el('p', {class: 'prose'}, [el('span', {class: 'tot', text: k + ': '}),
+                                       el('span', {text: String(ins[k])})]))))] : []),
+          section('on this project', kv([
+            ['asked about', num(got.length) + (got.length === 1 ? ' subject' : ' subjects')],
+            ['became findings', num(got.filter(d => d.finding).length)],
+            ['verdicts', num(human(q)) + ' by a person' + (((verdicts[q.name] || {}).all || 0) > human(q)
+              ? ', ' + num(((verdicts[q.name] || {}).all || 0) - human(q)) + ' by an agent' : '')],
+          ])),
+          section('the answers it can give', opts),
+        ],
+      });
+    },
+  }));
 }
 
 /* ------------------------------------------------------------------------------- Config */
@@ -2245,9 +2437,8 @@ function configTab(host) {
         {key: 'path', label: 'path', mono: 1, val: u => u.path},
         {key: 'why', label: 'why', val: u => u.why},
       ], {placeholder: 'filter...', cap: 500}),
-      'A model whose SQL would not parse is missing from every other tab, which looks exactly '
-      + 'like a model with nothing wrong with it. So it is named here. An absent audit is never a '
-      + 'pass.'));
+      'These models are missing from every other tab because their SQL would not parse. Nothing '
+      + 'was checked on them.'));
   }
   host.replaceChildren(...bits);
 }
@@ -2371,10 +2562,8 @@ function suggestTab(host) {
   if (!S.length) {
     /* An empty list is not a complete config, and the two must not read alike. */
     host.replaceChildren(section('nothing to suggest', el('p', {class: 'note', text:
-      'No rule found a candidate. That is not the same as the config being complete: each rule '
-      + 'needs its own evidence, and most of it is written during `assay check` and `assay probe`. '
-      + 'A store with no rulings in it cannot propose a waiver, and says so rather than implying '
-      + 'there is nothing to waive.'})));
+      'No rule found a candidate. Each rule needs evidence that `assay check` and `assay probe` '
+      + 'record, and waivers need rulings, so a new store has none to propose.'})));
     return;
   }
 
@@ -2526,7 +2715,7 @@ function understoodTab(host) {
            + ' classified by what job it does; ' + num(meta.models)
            + ' models and ' + num(DATA.edges.length) + ' hops parsed.'),
     column('judged', num(answered), 'answers',
-           'from ' + num(DATA.questions.length) + ' question families',
+           'from ' + num(DATA.questions.length) + ' questions',
            'Questions no parser can settle -- what a filter is for, what a NULL means -- each '
            + 'answer stored with what it was asked from.'),
     column('found', num(F.length), 'defects', 'across ' + num(checks) + ' checks',
@@ -2554,11 +2743,11 @@ function understoodTab(host) {
       tile(num(ruledN) + ' of ' + num(F.length), 'findings ruled on',
            humanN + ' human verdict(s), ' + agentN + ' agent', ruledN ? '' : 'bad'),
       tile(num((meta.coverage || {}).readable || 0), 'assay could read',
-           unread ? num(unread) + ' it could not, and that is not a pass' : 'all of them',
+           unread ? num(unread) + ' could not be read, so were not checked' : 'all of them',
            unread ? 'bad' : ''),
       tile(num(DATA.claims.filter(c => c.contradicted != null).length), 'claims the code contradicts',
            'of ' + num(DATA.claims.length) + ' extracted'),
-      tile(num(DATA.questions.length), 'question families', num(meta.sources) + ' sources read'),
+      tile(num(DATA.questions.length), 'questions', num(meta.sources) + ' sources read'),
     ])));
 
   // ---- grain: a composition of a known whole, ordered by evidence, so one hue dark->light
@@ -2594,8 +2783,8 @@ function understoodTab(host) {
     rankedBars(rows)));
 
   // ---- what would happen on a build. STATUS colors, always with their label.
-  const acts = {fail: 0, queue: 0, annotate: 0, waived: 0};
-  for (const f of F) if (acts[f.action] != null) acts[f.action]++;
+  const acts = {fail: 0, queue: 0, annotate: 0, waived: (DATA.waived || []).length};
+  for (const f of F) if (acts[f.action] != null && f.action !== 'waived') acts[f.action]++;
   const aparts = [
     {label: 'would FAIL the build', n: acts.fail, color: ACT.fail},
     {label: 'queued for a person', n: acts.queue, color: ACT.queue},
@@ -2607,7 +2796,7 @@ function understoodTab(host) {
                                 el('span', {text: p.label + ' ' + num(p.n)})])));
   bits.push(block('What this would do to a build',
     'Your audit.yml, applied. Nothing gates before it has verdicts.',
-    el('div', {}, [stackedBar(aparts.filter(p => p.n), F.length), alegend])));
+    el('div', {}, [stackedBar(aparts.filter(p => p.n), F.length + acts.waived), alegend])));
 
   // ---- the configuration gap
   /* *** TWENTY BARS, ALL THE SAME LENGTH, NONE OF THEM LABELLED. ***
@@ -2666,14 +2855,14 @@ function understoodTab(host) {
         note: (r.agreement == null ? '' : Math.round(r.agreement * 100) + '% agreed')
               + (r.unclear ? '  \u00b7 ' + r.unclear + ' unclear' : '')
               + (r.open_disagreements ? '  \u00b7 ' + r.open_disagreements + ' open' : ''),
-        tip: `${r.family}, ruled under ${r.prompt_version || 'no recorded version'}: `
+        tip: `${r.family.replace(/_/g, ' ')}, ruled under ${r.prompt_version || 'no recorded version'}: `
              + `${r.n} ruled, `
              + `${r.agreement == null ? 'no rate' : Math.round(r.agreement * 100) + '% agreed'}, `
              + `${r.unclear} unclear, ${r.open_disagreements} open disagreement(s)`,
       }))));
     }
     bits.push(block('Did the questions get better?',
-      'Per family, per version. Unclear is excluded: wrong criteria and a thin state need '
+      'Per question, per version. Unclear is excluded: wrong criteria and a thin state need '
       + 'different fixes.', wrap));
   }
 
@@ -2829,8 +3018,8 @@ function spendTab(host) {
       box.replaceChildren(pickers, spice);
     };
     paint();
-    bits.push(block('Per day', 'A day that ran and spent nothing is a ZERO with the reason '
-      + 'beside it, and a day nothing ran is an empty column, never a missing one.', box));
+    bits.push(block('Per day', 'A day that ran and spent nothing shows zero with the reason '
+      + 'beside it. A day nothing ran is an empty column.', box));
   }
 
   const cols = [
@@ -2840,7 +3029,7 @@ function spendTab(host) {
     {key: 'usd', label: 'usd', n: 1, val: r => r[3], cell: r => el('span', {text: money(r[3])})},
   ];
   for (const [title, rows] of [['by caller, the whole ledger', c.by_caller],
-                             ['by question family, the whole ledger', c.by_family]]) {
+                             ['by question, the whole ledger', c.by_family]]) {
     if (rows && rows.length) bits.push(block(title, null, grid(rows, cols, {sort: 'usd'})));
   }
   if (wh.calls) {
@@ -2866,7 +3055,7 @@ function spendTab(host) {
   const notes = [];
   if (c.calls_without_usage)
     notes.push(num(c.calls_without_usage) + ' call(s) returned no usage and are not in this '
-      + 'total. Not estimated: an absent measurement is not a zero.');
+      + 'total, and are not estimated.');
   const recon = (c.id_source || {}).reconstructed || 0;
   if (recon)
     notes.push(num(recon) + ' call(s) were reconstructed from the decision rows, because the '
@@ -2923,7 +3112,7 @@ function monitoringTab(host) {
         + 'and assay never holds a credential, so the page carries it only when handed the file.',
         el('pre', {text: 'assay volume --json > volume.json\n'
                          + 'assay page assay.html --monitoring volume.json'}),
-        'This is not a statement about your monitoring. The numbers were not taken.'));
+        'The monitoring numbers were not taken for this page.'));
     return;
   }
 
@@ -2940,8 +3129,7 @@ function monitoringTab(host) {
     glance.push({what: 'how often this project builds', value: cad.gap_text
                    ? 'every ' + cad.gap_text : (cad.runs ? num(cad.runs) + ' writes' : 'unread'),
                  why: (cad.explain || 'the build cadence could not be read')
-                   + '. Every threshold on this tab is derived from this rather than picked: a '
-                   + 'number somebody guesses cries wolf or stays quiet for a quarter.'
+                   + '. Every threshold on this tab is derived from it.'
                    + (cad.unreadable ? ' The statement that reads it did not run: ' + (cad.why || '') : '')});
   if (late != null)
     glance.push({what: 'a monitor is called late after', value: late + ' day(s)',
@@ -2966,8 +3154,21 @@ function monitoringTab(host) {
     glance.push({what: 'tests declared', value: num(cov.declared), why: why, bar: bar});
     glance.push({what: 'have produced a result', value: num(cov.ever_ran || 0), why: why, bar: bar});
     glance.push({what: 'declared, never run', value: num(never), bad: never > 0, why: why, bar: bar});
-    glance.push({what: 'results that are SKIPPED', value: num(cov.skipped_results || 0),
-                 bad: (cov.skipped_results || 0) > 0, why: why, bar: bar});
+    /* Tests and results are different units: a test skipped on 40 runs is 40 results. The
+       count in TESTS is shown when `volume` measured it; otherwise the result count, named as
+       what it is, so it is never read against the number of tests declared. */
+    if (cov.skipped_now != null)
+      glance.push({what: 'tests skipped as of their last run', value: num(cov.skipped_now),
+                   bad: cov.skipped_now > 0, bar: bar,
+                   why: 'Tests whose most recent result was SKIPPED: dbt skips a test when the '
+                     + 'model under it failed, so these have not read your data since. Across '
+                     + 'every run there are ' + num(cov.skipped_results || 0) + ' skipped results.'});
+    else
+      glance.push({what: 'skipped results, across every run', value: num(cov.skipped_results || 0),
+                   bad: (cov.skipped_results || 0) > 0, bar: bar,
+                   why: 'Each run that skipped a test adds one, so this counts results and can be '
+                     + 'larger than the ' + num(cov.declared) + ' tests declared. Run '
+                     + '`assay volume --json` again to count the tests that are skipped now.'});
   }
 
   const groups = [
@@ -3010,9 +3211,8 @@ function monitoringTab(host) {
      detail: r => [el('h2', {}, [link(r.table)]),
        kv([['what failed', r.kind + (r.sub_type ? ' · ' + r.sub_type : '')],
            ['days since it last ran', r.age_days == null ? '—' : r.age_days.toFixed(0)]]),
-       el('p', {class: 'prose', text: 'Its last result was a FAILURE and it has not run since. '
-         + 'That is not a live failure and it is not a pass: it is an answer gone out of date, and '
-         + 'any view that sorts by status shows it as a live failure.'})]},
+       el('p', {class: 'prose', text: 'Its last result was a FAILURE and it has not run since, so the failure is out of date. '
+          + 'Views that sort by status still show it as failing.'})]},
     {key: 'findings', label: 'findings about the monitoring', rows: mf,
      cols: [
        {key: 'check', label: 'check', mono: 1, val: f => f.check},
@@ -3037,9 +3237,40 @@ function monitoringTab(host) {
   ].filter(g => g.rows.length);
   const kindOf = r => groups.find(g => g.rows.includes(r));
 
+  /* *** THE TAB OPENED ON TEXT AND A TABLE. *** (P11) The picture that answers "is anything
+     watching" first: each monitor's days since its last write against the threshold that makes
+     it late, so a stopped monitor is a long bar past its mark. */
+  function monitorsChart() {
+    if (!readings.length) return null;
+    const pr = cad.per_relation || {};
+    const rows = readings.map(r => ({r: r, age: r.age_days, th: (pr[r.relation] || {}).threshold_days}));
+    const max = Math.max(...rows.map(x => Math.max(x.age || 0, x.th || 0)), 1);
+    const box = el('div', {class: 'mchart'});
+    box.append(el('div', {class: 'tlab'}, [el('span', {text: 'days since each monitor last wrote',
+      tip: 'The bar is days since the monitor last wrote a row. The mark is the point after which '
+        + 'it counts as stopped, derived from its own write history.'})]));
+    for (const x of rows) {
+      const late = x.th != null && x.age != null && x.age > x.th;
+      const track = el('span', {class: 'mtrack'});
+      track.append(el('span', {class: 'mfill' + (late ? ' late' : ''),
+        style: 'width:' + Math.max(1, (x.age || 0) / max * 100) + '%'}));
+      if (x.th != null) track.append(el('span', {class: 'mmark', style: 'left:' + (x.th / max * 100) + '%',
+        title: 'late after ' + x.th + ' day(s)'}));
+      box.append(el('div', {class: 'mrow'}, [
+        el('span', {class: 'mono mlab'}, [wbr(x.r.relation)]), track,
+        el('span', {class: 'mval' + (late ? ' bad' : ''), text: x.age == null ? 'never'
+          : x.age.toFixed(1) + ' days' + (x.th != null ? ', late after ' + x.th : '')})]));
+    }
+    const marts = unwatched.filter(u => u.marts).length;
+    if (unwatched.length) box.append(el('p', {class: 'fact', text: num(marts) + ' model(s) with a '
+      + 'mart downstream have nothing watching their volume.'}));
+    return box;
+  }
+
   host.replaceChildren(drill({
     noun: 'rows', groups: groups, all: false, keepOrder: 1,
     chip: g => g.label, groupFilter: 'find a section...',
+    groupHead: g => g.key === 'glance' || g.key === 'monitors' ? monitorsChart() : null,
     groupSub: g => g.key === 'monitors'
       ? (() => { const off = g.rows.filter(r => r.state !== 'live').length;
                  return off ? num(off) + ' stopped' : 'all live'; })()

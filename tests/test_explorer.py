@@ -328,6 +328,7 @@ def _tiny():
                            "test_coverage": {"declared": 12, "ever_ran": 10,
                                              "skipped_results": 3},
                            "stale_failures": [], "unwatched": [], "monitoring": []},
+            "waived": [],
             "areas": {"predicate_clusters": [{"size": 3, "shape": "<col> <> ''",
                                               "models": ["a", "b", "c"]}],
                       "odd_ones_out": [], "same_claim": [],
@@ -469,10 +470,12 @@ def test_no_tab_opens_on_a_flat_list_of_everything():
     # That control was eleven chips carrying a name, a count and "0 read" each, which is two rows
     # of furniture above the table it filters. Reported from the field with a screenshot. It is a
     # select in the filter bar that already exists, so it adds no row at all.
+    # *** AND FINDINGS GROUPS BY CHECK ON THE LEFT, LIKE CLAIMS AND AREAS. *** (P2) It was one
+    # flat list with a dropdown of checks; the checks are the groups of the navigator now.
     fb = v[v.index("function findingsTab"):]
-    fb = fb[:fb.index("function answersTab")]
-    assert "el('select')" in fb, "the check filter is gone"
-    assert "controls: [pickCheck]" in fb, "the filter is not in the existing bar"
+    fb = fb[:fb.index("function findingPane")]
+    assert "drill({" in fb, "Findings is a flat list again"
+    assert "chip: g => g.check" in fb, "the groups are not the checks"
     assert "class: 'chips'" not in fb, "the chip wall is back"
 
 
@@ -602,7 +605,7 @@ def test_the_view_switch_is_in_the_same_place_in_every_state():
     # A toggle filters the rows; it never swaps the list for a different one.
     assert "out = out.filter(p => t.where(p[0]))" in db
     # and it sits in the rows' own filter bar, where every other row filter is
-    assert "controls: toggleBoxes" in db, "the toggle is not in the rows' filter bar"
+    assert "...toggleBoxes]" in db, "the toggle is not in the rows' filter bar"
     # and the group counts follow it, so a group with nothing contradicted says 0
     assert "rowsBefore(g).length" in db
 
@@ -1102,7 +1105,11 @@ def test_every_group_is_listed_and_every_row_is_reachable():
     assert "prev.disabled = pg === 0" in g
     # a family is a distribution before it is a list: Answers shows how its answers split
     ab = v[v.index("function answersTab"):v.index("function kvAny")]
-    assert "facet: {label: 'answered'" in ab
+    # the answer filter is a dropdown in the filter bar, never a chart to click (P3)
+    assert "facet: {label: 'answer'" in ab
+    db2 = v[v.index("function drill(opts)"):v.index("\nfunction conf(")]
+    assert "function facetSelect(" in db2 and "el('select'" in db2
+    assert "rfill" not in db2, "the answer filter is a bar chart again"
 
 
 def test_a_long_cell_wraps_and_is_never_cut():
@@ -1245,3 +1252,113 @@ def test_monitoring_is_a_navigator_and_no_list_is_capped():
         assert "key: " + key in mb, f"the {key} group is gone"
     assert "cap: 400" not in mb, "the unwatched models are capped again"
     assert "class: 'note'" not in mb, "a grey note is back"
+
+
+# ---- sunny-data docs/audit/assay-feedback.md, 2026-09-24: one test per item it names ----------
+
+def test_feedback_p1_the_toggle_counts_what_is_picked():
+    """P1: the label said 122 with a model picked that had none, over an empty list."""
+    v = explorer._VIEWS
+    db = v[v.index("function drill(opts)"):v.index("\nfunction conf(")]
+    assert "' here \\u00b7 '" in db and "' in all)'" in db
+    assert "t.none ||" in db, "a group with none shows an empty list again"
+
+
+def test_feedback_p3_p4_answers_lead_with_findings_and_show_the_question_once():
+    v = explorer._VIEWS
+    ab = v[v.index("function answersTab"):v.index("function goFinding")]
+    assert "split: {of: a => a.finding ? 'found' : 'none'" in ab
+    assert "rowSort: 'c', rowDir: -1" in ab, "the least sure answers lead again"
+    # the question is in the group header, and in the detail only with "all answers" picked
+    assert "(all && q && (q.instructions || {}).question" in ab
+
+
+def test_feedback_p4_an_answer_is_linked_to_the_finding_it_produced(monkeypatch):
+    from dbt_assay import contracts, explore
+    monkeypatch.setattr(contracts, "QUESTIONS", {
+        "mon": {"id_prefix": "mcov"}, "role": {"id_prefix": "role"}, "edge": {"id_prefix": "edge"}})
+    finds = [
+        {"id": "f1", "rests_on": "mon", "subject": "model.p.a",
+         "evidence": {"asked": "mon", "context": "a", "answer": "yes"}},
+        {"id": "f2", "rests_on": "role", "subject": "model.p.a", "evidence": {"column": "k"}},
+        {"id": "f3", "rests_on": "edge", "subject": "model.p.b", "evidence": {"hop": "a -> b"}},
+    ]
+    ds = [
+        {"question": "mcov", "key": "model.p.a::unwatched", "context": "a", "answer": "yes"},
+        {"question": "mcov", "key": "model.p.a::unwatched", "context": "a", "answer": "no"},
+        {"question": "role__k", "key": "model.p.a", "context": "", "answer": "identifier"},
+        {"question": "role__j", "key": "model.p.a", "context": "", "answer": "measure"},
+        {"question": "edge", "key": "model.p.b::edge::x", "context": "a -> b", "answer": "x"},
+    ]
+    got = [d["finding"] for d in explore._with_findings(ds, finds)]
+    assert got == ["f1", None, "f2", None, "f3"], got
+
+
+def test_feedback_p5_a_question_is_a_question_and_the_bank_is_the_family():
+    import re
+    from dbt_assay import explore
+    qs = explore._questions()
+    assert qs and all(q.get("bank") for q in qs), "a question does not say which bank it is in"
+    v = explorer._VIEWS
+    qb = v[v.index("function questionsTab"):v.index("function configTab")]
+    assert "chip: g => g.label" in qb and "bankLabel(q)" in qb
+    visible = re.findall(r"(?:label|text|tip): '([^']*)'", v)
+    assert not [t for t in visible if re.search(r"\bfamil(y|ies)\b", t, re.I)], \
+        "the page calls a question a family again"
+
+
+def test_feedback_p7_the_tabs_are_grouped_in_reading_order():
+    import re
+    data = {"meta": {"project": "p", "models": 0, "sources": 0, "version": "0",
+                     "generated_at": "x", "coverage": {}},
+            "models": [], "edges": [], "claims": [], "findings": [], "decisions": [],
+            "questions": [], "adjudications": [], "config": {}, "runs": [], "unreadable": []}
+    doc = explorer.explorer_html(data, "<html></html>")
+    labels = re.findall(r'<span class="navlab">([^<]+)</span>', doc)
+    assert labels == ["start here", "what is wrong", "your project", "what assay asked", "setup"]
+    order = re.findall(r'<button role="tab" data-tab="([a-z]+)"', doc)
+    assert order[:4] == ["understood", "findings", "areas", "monitoring"], order
+
+
+def test_feedback_p8_the_page_counts_what_check_counts():
+    """The page skipped the config's own findings and counted dismissed ones: 984 against 978."""
+    import inspect
+    from dbt_assay import cli, explore
+    src = inspect.getsource(cli.page)
+    assert "selfaudit.config_findings(config_path, store, cfg)" in src
+    asm = inspect.getsource(explore.assemble)
+    assert 'r.get("action") != "waived"' in asm and '"waived": waived_rows' in asm
+    assert "waived" in explore._LINES
+
+
+def test_feedback_p9_a_break_point_never_cuts_a_code_span():
+    js = explorer.JS
+    w = js[js.index("function wbr("):]
+    w = w[:w.index("\n}\n")]
+    assert "split(/(`[^`\\n]+`)/)" in w, "wbr splits a code span in two again"
+
+
+def test_feedback_g2_p6_p10_one_badge_and_a_phone_layout():
+    css = explorer.CSS
+    assert ".pill{" in css and "white-space:nowrap" in css and "margin-left:7px" in css
+    assert "@media (max-width:820px)" in css and "@media (max-width:560px)" in css
+    assert "td[data-label]" in css, "a table does not stack on a phone"
+    v = explorer._VIEWS
+    assert "' @' + " not in v, "a confidence is part of a badge's label again"
+
+
+def test_feedback_p11_monitoring_leads_with_a_picture():
+    v = explorer._VIEWS
+    mb = v[v.index("function monitoringTab"):v.index("function monitoringTab") + 20000]
+    assert "function monitorsChart()" in mb
+    assert "groupHead: g => g.key === 'glance'" in mb
+
+
+def test_skipped_tests_and_skipped_results_are_not_one_unit():
+    """1,846 skipped against 1,291 declared: results per run, set beside a count of tests."""
+    import inspect
+    from dbt_assay import elementary
+    src = inspect.getsource(elementary.test_coverage)
+    assert '"skipped_now": one(skipped_now)' in src
+    v = explorer._VIEWS
+    assert "'tests skipped as of their last run'" in v and "'skipped results, across every run'" in v

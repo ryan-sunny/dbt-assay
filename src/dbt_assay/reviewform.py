@@ -1458,8 +1458,10 @@ function monitoringTab(host) {
   if (cov.declared)
     bits.push(block2('what your tests are doing',
       num(cov.declared) + ' test(s) declared, ' + num(cov.ever_ran) + ' have ever produced a '
-      + 'result, ' + num(cov.skipped_results) + ' result(s) are SKIPPED. A test that never ran '
-      + 'and a test that passed look the same in a summary, and only one has read your data.'));
+      + 'result' + (cov.skipped_now != null
+        ? ', ' + num(cov.skipped_now) + ' are SKIPPED as of their last run.'
+        : ', and ' + num(cov.skipped_results) + ' results were SKIPPED across every run (a test '
+          + 'counts once per run, so this can exceed the number of tests).')));
 
   for (const f of (m.findings || [])) {
     const b = el('div', {class: 'wrow'});

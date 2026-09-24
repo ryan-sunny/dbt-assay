@@ -122,6 +122,11 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
             c = history_mod.commit(store, sha) or {}
             r["first_seen"] = {"at": str(t)[:10], "commit": (sha or "")[:9],
                                "subject": c.get("subject", "")}
+    # *** THE TAB SAID 984 AND `check` SAID 978. *** (P8) The page counted the findings a person
+    # dismissed, which `check` does not report. They travel apart, so the Findings list is what
+    # `check` reports and the Overview can still say how many were waived.
+    waived_rows = [r for r in find_rows if r.get("action") == "waived"]
+    find_rows = [r for r in find_rows if r.get("action") != "waived"]
     find_by_subject: dict = {}
     for f in find_rows:
         find_by_subject.setdefault(f["subject"], []).append(f["id"])
@@ -190,7 +195,8 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         "edges": _edges(store, by_uid),
         "claims": claims,
         "findings": find_rows,
-        "decisions": decisions,
+        "waived": waived_rows,
+        "decisions": _with_findings(decisions, find_rows),
         "questions": _questions(),
         "adjudications": _adjudications(store),
         "config": _config(cfg),
@@ -432,6 +438,66 @@ def _findings(findings, store, acted: dict | None = None, member: dict | None = 
     return sorted(out, key=lambda f: (-f["weight"], f["check"], f["model"], f["id"]))
 
 
+def _with_findings(decisions: list, find_rows: list) -> list:
+    """Each answer, with the id of the finding it produced, or None.
+
+    *** THE ANSWERS THAT MATTERED WERE ELEVEN PAGES IN. *** (P4) Answers led with 0.11, 0.12, 0.12
+    -- the ones the model could not settle -- and nothing on the page said which answers had
+    become findings. A finding does not carry the answer it came from, so the match uses what each
+    kind of question does carry: the context for a declared question, the claim's text, the hop,
+    the column in the question id, a cluster's reading, or the model for a question asked once
+    per model. An answer matches only a finding that gave the same answer.
+    """
+    from . import contracts
+    name_of = {(q or {}).get("id_prefix"): n for n, q in contracts.QUESTIONS.items()}
+    by_key: dict = {}
+    for f in find_rows:
+        if f.get("rests_on"):
+            by_key.setdefault((f["rests_on"], f["subject"]), []).append(f)
+    clusters: dict = {}
+    for f in find_rows:
+        if f.get("rests_on") and "shape" in (f.get("evidence") or {}):
+            clusters.setdefault(f["rests_on"], []).append(f)
+
+    def match(d) -> str | None:
+        q = str(d.get("question") or "")
+        fam = name_of.get(q.split("__")[0])
+        if not fam:
+            return None
+        suffix = q.split("__", 1)[1] if "__" in q else ""
+        key = str(d.get("key") or "")
+        ctx = str(d.get("context") or "")
+        ans = d.get("answer")
+        if key.startswith("cluster::"):
+            for f in clusters.get(fam, []):
+                ev = f["evidence"]
+                if ev.get("answer") == ans and d.get("confidence") is not None \
+                        and abs(float(ev.get("probability") or -1) - d["confidence"]) < 0.006:
+                    return f["id"]
+            return None
+        for f in by_key.get((fam, key.split("::")[0]), []):
+            ev = f.get("evidence") or {}
+            if "answer" in ev and ev["answer"] != ans:
+                continue
+            if ev.get("asked"):
+                if ctx == str(ev.get("context") or ""):
+                    return f["id"]
+            elif "claim" in ev:
+                if ev["claim"] and str(ev["claim"]) in ctx:
+                    return f["id"]
+            elif "hop" in ev:
+                if ctx == str(ev["hop"]):
+                    return f["id"]
+            elif "column" in ev:
+                if suffix == str(ev["column"]):
+                    return f["id"]
+            else:
+                return f["id"]
+        return None
+
+    return [{**d, "finding": match(d)} for d in decisions]
+
+
 def _decisions(store) -> list:
     """The live answer to every question asked about this project.
 
@@ -485,17 +551,27 @@ def _questions() -> list:
     nothing about what changed. The bank is small, static per release, and putting it in the file
     makes the file a complete record of what was asked as well as what came back.
     """
-    from .contracts import load_all_banks
+    from pathlib import Path
+
+    from .contracts import load_all_banks, user_bank_dir
+    mine = user_bank_dir()
     out = []
     for name, q in sorted(load_all_banks().items()):
         crit = q.get("criteria") or {}
+        src = Path(str(q.get("_source") or ""))
+        # *** THE BANK IS THE FAMILY. *** (P5) Each entry is ONE question; the related questions
+        # live together in one bank file, so that file is what groups them. A question from this
+        # project's own `assay_questions/` says so rather than passing for a shipped one.
+        yours = bool(mine) and mine in src.parents
         out.append({
             "name": name,
+            "bank": src.stem,
+            "yours": yours,
             "id_prefix": q.get("id_prefix") or "",
             "prompt_version": q.get("prompt_version") or "",
             "kind": q.get("kind") or "choice",
             "subject": q.get("subject") or "",
-            "origin": q.get("origin") or "shipped",
+            "origin": q.get("origin") or ("this project" if yours else "shipped"),
             "instructions": q.get("instructions") or {},
             "options": sorted(crit) if isinstance(crit, dict) else [],
             "criteria": crit,
@@ -638,7 +714,7 @@ def _unreadable(store, project) -> list:
 #
 # The page still EMBEDS this rather than fetching it, because browsers block `fetch` on `file://`.
 # Reading the artifact is a build step, not a runtime load.
-_LINES = ("models", "edges", "claims", "findings", "decisions", "questions",
+_LINES = ("models", "edges", "claims", "findings", "waived", "decisions", "questions",
           "adjudications", "unreadable", "runs", "effectiveness", "suggestions")
 # *** AND ITS EMPTY VALUE, BECAUSE A LIST DEFAULTING TO `{}` IS THE SAME BUG AS `[]` -> `{}`. ***
 # Caught by the round-trip guard: an artifact with no `unconfigured.json` handed back a dict where
