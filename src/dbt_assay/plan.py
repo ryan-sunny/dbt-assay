@@ -131,6 +131,11 @@ SHAPES: dict[str, tuple[str, str]] = {
         "declare the fan-out, or collapse it",
         (        "A join multiplies rows and nothing says so. Either the multiplication is intended and "
         "the child's grain should say it, or the hop needs a group by.")),
+    "float_sum_is_not_reproducible": (
+        "cast to decimal before aggregating",
+        (        "The measure is added up as a floating-point number, so its total depends on row "
+        "order and moves between builds on the same data. `sum(cast(x as decimal(18, 2)))` "
+        "makes the addition exact; the evidence carries the expression.")),
     "fixed_finding_returned": (
         "find what undid the fix",
         (        "A finding a person agreed with was fixed and is back. Compare the model at the "

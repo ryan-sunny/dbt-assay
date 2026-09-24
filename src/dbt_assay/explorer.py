@@ -2251,6 +2251,14 @@ function findingPane(f) {
     reading: [
       backBlock(back),
       timelineBlock(f),
+      /* A float sum's fix is one expression, so it is shown as one. (G-C) */
+      f.check === 'float_sum_is_not_reproducible' && ev.recommendation
+        ? section('the column', kv([['column', el('span', {class: 'mono', text: ev.column})],
+            ['adds up', el('span', {class: 'mono', text: ev.aggregate + '(' + ev.input + ')'})],
+            ['its type', el('span', {}, [el('span', {class: 'mono', text: ev.input_type}),
+              el('span', {class: 'tot', text: '  from ' + (ev.type_from || '').replace(/`/g, '')})])],
+            ['write instead', el('code', {class: 'tick', text: ev.recommendation})]]))
+        : null,
       ...((f.evidence || {}).asked ? [section('the reading', kv([
         ['asked', String(f.evidence.asked).replace(/_/g, ' ')
           + (f.evidence.context && f.evidence.context !== f.model ? ', about ' + f.evidence.context : '')],

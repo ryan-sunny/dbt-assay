@@ -732,3 +732,39 @@ def test_the_model_pane_says_what_it_is_correct_as_long_as(broken_page):
             assert "counted duplicates" in pane
         finally:
             browser.close()
+
+
+def test_a_float_sum_pane_shows_the_column_its_type_and_the_fix(tmp_path):
+    from playwright.sync_api import sync_playwright
+
+    import importlib.util
+    from pathlib import Path
+
+    from dbt_assay import explorer
+    spec = importlib.util.spec_from_file_location("te", Path(__file__).with_name("test_explorer.py"))
+    te = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(te)
+    data = te._tiny()
+    data["findings"] = [{
+        "id": "ff1", "check": "float_sum_is_not_reproducible", "model": "a", "subject": "m",
+        "summary": "`total` is a sum over a floating-point input", "detail": "d", "weight": 2.0,
+        "base": 2, "marts": 1, "descendants": 1, "exposures": [], "file": "m.sql",
+        "evidence": {"column": "total", "aggregate": "sum", "input": "t.amount",
+                     "input_type": "DOUBLE", "type_from": "`t`'s declared type",
+                     "recommendation": "sum(cast(t.amount as decimal(18, 2)))"}}]
+    data["models"][0]["findings"] = ["ff1"]
+    out = tmp_path / "p.html"
+    out.write_text(explorer.explorer_html(data, ""))
+    with sync_playwright() as pw:
+        b = pw.chromium.launch()
+        try:
+            page = b.new_page(viewport={"width": 1100, "height": 900})
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(out.as_uri() + "#findings")
+            page.wait_for_timeout(300)
+            text = page.locator(".detail").first.inner_text()
+            assert "write instead" in text and "sum(cast(t.amount as decimal(18, 2)))" in text
+            assert "DOUBLE" in text and not errors, errors
+        finally:
+            b.close()

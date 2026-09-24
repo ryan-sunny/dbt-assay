@@ -165,6 +165,9 @@ def _all_findings(project, digests, schema, entries, threshold, store) -> list:
         fs += prac_mod.hop_drops_most_rows(project, entries, threshold)
         from .checks.structural import test_outruns_its_source
         fs += test_outruns_its_source(project, digests, schema, entries)
+        # A measure summed in floating point: needs the judged roles, so it lives here. (G-C)
+        from .checks.floats import float_sum_is_not_reproducible
+        fs += float_sum_is_not_reproducible(project, digests, schema, entries)
     # *** WHAT CHANGED, WHICH NEEDS TWO OBSERVATIONS AND SO NEEDS THE STORE. ***
     # A key that held last week and does not now is the failure that corrupts a warehouse, and it
     # is invisible to every other check here: they all describe the present. A column with one

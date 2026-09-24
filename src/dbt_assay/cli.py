@@ -7453,6 +7453,10 @@ def _report_refused_claim_findings() -> None:
     never refused by anything, so the read path refuses them too -- and a silent skip there would
     make a shrinking findings count read as a warehouse getting better.
     """
+    # *** A CHECK THAT COULD NOT LOOK SAYS SO. *** (G-C) Sums whose input type was not read.
+    from .checks.floats import UNREAD as _float_unread
+    for why, _n in _float_unread:
+        console.print(f"[yellow]not read:[/] [dim]{why}[/]")
     from .checks.sources import DEFERRED
     if DEFERRED:
         console.print(f"[yellow]{len(DEFERRED)} check(s) deferred to another package.[/] "

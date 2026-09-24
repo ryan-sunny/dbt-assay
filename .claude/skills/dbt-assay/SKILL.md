@@ -293,6 +293,9 @@ back is raised as `fixed_finding_returned` with both commits in its `timeline`, 
   feed, or the thing that makes the model mean what it means. `contract` and the model's own
   comments say which. Removing the wrong one deletes a rule nobody can reconstruct.
 - **A column that arrives `from_source` has no explanation inside this project.** Do not invent one.
+- **Never `sum` or `avg` a DOUBLE measure.** Cast it first: `sum(cast(x as decimal(18, 2)))`.
+  A float total moves between builds on identical data, and `float_sum_is_not_reproducible`
+  reports it.
 - **If `changed_contracts` shows a grain change with aggregating consumers, that is a breaking
   change.** Say so plainly in your summary, name the consumers, and do not describe it as a
   refactor.

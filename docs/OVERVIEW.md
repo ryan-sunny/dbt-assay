@@ -298,6 +298,14 @@ with a `why_it_is_back` block naming the premise, the day it broke and the measu
 `check` prints every premise whose status moved. The page's Guarantees tab and MCP `premises()`
 read the same rows.
 
+**A measure summed as a float.** `float_sum_is_not_reproducible` fires on a `sum` or `avg` over a
+DOUBLE / FLOAT / REAL input, in a mart or a model with one downstream, when the column's judged
+role is `measure`. Floating-point addition is not associative, so the total depends on the order
+the warehouse adds rows in and can move between builds on identical data; the evidence carries the
+one-line fix, `sum(cast(x as decimal(18, 2)))`. Types come from `catalog.json`, then the manifest.
+A sum whose type could not be read is counted and `check` says so; it is never a pass. A column
+whose role was never judged is counted, not flagged. Queued by default.
+
 **The judged tier** — needs a key
 
 ```bash
