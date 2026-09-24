@@ -743,7 +743,9 @@ def _command_reference() -> str:
         doc = (c.help or c.callback.__doc__ or "").strip()
         # The first sentence only. These docstrings run to forty lines of argument, which belongs
         # in `--help` and would drown a reference.
-        first = doc.split("\n\n")[0].replace("\n", " ").strip()
+        # Whitespace collapsed: Python 3.13 dedents docstrings at compile time and 3.12 does not,
+        # so a wrapped first sentence rendered differently depending on the interpreter.
+        first = " ".join(doc.split("\n\n")[0].split())
         if "." in first:
             first = first[:first.index(".") + 1]
         params = typer.main.get_params_convertors_ctx_param_name_from_function(c.callback)[0]
