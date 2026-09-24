@@ -3677,3 +3677,60 @@ worth keeping here is what doing them found that the queue did not say.
 - **The queue's example for `what_would_break_silently`, `stg_mesa_permits.permit_class`, is
   protected**: beside its vacuous `accepted_values` it carries a `not_null`, which catches the
   CASE-with-no-ELSE fall-through.
+
+## Field report section 25, and what building it found
+
+Everything in `docs/BUILD_QUEUE.md` (0.51) was built on one branch, one commit per item. The items
+are in the commit log; what is worth keeping here is where the report was wrong, and what doing it
+found that the report did not say.
+
+**Where the report was wrong, checked in the source before anything was built:**
+
+- **25.13 had the direction backwards.** `onboard` said 208 `column_has_no_description` and `check`
+  said 129, and the report took the stored 129 for the truth. `live.all_findings` called the
+  structural checks without the schema, so `check`, MCP and every surface on that stream saw only
+  DECLARED columns; `onboard`'s 208 was right. The `arbitrary_pick` gap (37 against 33) went the
+  other way: `onboard` skipped the dedupe. The next full run on the field store will show 79 new
+  findings, and they are real.
+- **25.19 is not data-dependent.** Python makes a name local to the whole function, so on a project
+  with no merged sentence `_n(...)` raised `UnboundLocalError` instead of `TypeError`. `claims
+  --extract` crashed on every project with anything to classify, and `verify` the same way.
+- **25.5's cause is a path, not a package.** The 30 Elementary models' compiled SQL exists, under
+  `target/compiled/elementary/`; assay looks only under `target/compiled/<root project>/`. The
+  approved fix -- count them apart and name the package -- shipped. Resolving each node against its
+  own package would make those models readable and AUDITED, which is a decision left open.
+- **25.21 and 25.23b said the evidence carries the macro's file:line.** It carries the compiled
+  expression. The collapse was built from that and the manifest: a macro is credited only when
+  every member depends on it AND its file carries the construct.
+- **25.1 overstated one thing:** the form never pre-selected a radio. The reading was shown as a
+  suggestion, with no confidence and no line, which was the real problem.
+
+**Found while building, in no report:**
+
+- **Five callers passed `all_findings` its store as the threshold** (`plan`, `suggest`, `review
+  --emit`, `read`, the resolved-cluster count). The key-change comparison raised on a float and a
+  bare `except` read it as an old store, so `key_stopped_holding` never reached any of them.
+- **`suggestions` over MCP had a second shadow waiting.** The fix calls `live.findings_for`, and
+  the function bound a local named `live` two lines later. The shadowing guard written for 25.19
+  now covers imports as well as helpers, and it has caught three.
+- **Two questions shared `read.v2`,** because a `decide` call carried one version. It takes one per
+  question now, and the locator is `rests.v1`.
+- **The family-count guard could not read "Thirty-one".** Its regex took `one` out of the
+  hyphenated word -- a guard that had never met the case it was built for.
+- **`read`'s state cuts a model's SQL at 6,000 characters, and 69 of 328 field models are longer.**
+  A card whose construct sits past the cut is read without it: the locator answered
+  `none_of_these` on two `arbitrary_pick` cards for exactly that reason, which is the honest
+  answer. The fix is an excerpt around the construct rather than the head -- a change to the state
+  every cached reading was computed from, so it is left as a decision.
+- **dbt's checksum is sha256 of the file's text, whitespace stripped.** Not of the bytes: 0 of 328
+  matched that way, 328 of 328 the other. It is what lets a git blob from any commit find the
+  compiled SQL kept for it.
+- **Two `assay-replay-*` worktrees from 09:04 and 09:10 today are still registered in the
+  sunny-data repo** -- before this session, most likely field-session `--compile` runs that did not
+  finish. Left alone.
+
+**Calibration, read by hand against the SQL:** 147 paid calls, $0.0129 against a $0.50 cap. The
+`read` locator on 17 cards: 12 on the deciding construct, 2 defensible `none`, 3 `none` where one
+exists (two from the SQL cut above). The cluster families on 15 clusters, 6 odd ones out and 49
+claim pairs are in VERIFICATION.md; `the_odd_one_out` needed a second version, because the first
+state did not carry the comment that explained a 540-day window.
