@@ -535,3 +535,33 @@ def test_a_backtick_anywhere_in_a_panel_renders_as_code(page_file):
             assert got[2], "a backtick inside a pre was turned into markup"
         finally:
             browser.close()
+
+
+def test_the_spend_window_is_calendar_days_ending_on_the_last_day_recorded(page_file):
+    """*** "MAYBE ENSURE IT CAN HAVE A CONFIGURABLE WINDOW ... LAST 7 DAYS OR LAST 30 DAYS". ***
+
+    The per-day charts were fixed at the last 30 days that had a row, so a quiet week vanished
+    from the axis. The window is calendar days now, a day with no row is an empty day rather than
+    a missing one, and it ends on the last day recorded -- never the viewer's clock, which would
+    make an old ledger look empty.
+    """
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.goto(page_file.as_uri())
+            page.wait_for_timeout(100)
+            got = page.evaluate("""() => {
+                const days = [{day: '2026-01-05', usd: 1}, {day: '2026-01-01', usd: 2}];
+                const w = calendar(days, 7), all = calendar(days, 0);
+                return [w.map(d => d.day), w.filter(d => d.empty).length,
+                        all.map(d => d.day), all.filter(d => d.empty).length];
+            }""")
+            assert got[0] == ["2025-12-30", "2025-12-31", "2026-01-01", "2026-01-02",
+                              "2026-01-03", "2026-01-04", "2026-01-05"], got[0]
+            assert got[1] == 5, "a day with no row is not shown as an empty day"
+            assert got[2][0] == "2026-01-01" and got[2][-1] == "2026-01-05" and got[3] == 3
+        finally:
+            browser.close()

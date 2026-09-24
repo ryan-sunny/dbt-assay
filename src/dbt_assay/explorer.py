@@ -308,6 +308,9 @@ min-width:22px;flex:1 1 22px;height:100%}
 border-bottom:1px solid var(--rule)}
 .dayfill{width:100%;background:var(--rust)}
 .day.zero .dayfill{background:var(--rule)}
+.days.dense{gap:1px}
+.days.dense .day{min-width:5px;flex:1 1 5px}
+.days.dense .daylab{overflow:visible}
 .daylab{font-size:10px;color:var(--faint);margin-top:4px;white-space:nowrap;
 font-family:Fell,Georgia,serif}
 .srclab{font-size:13px;color:var(--ash);margin:14px 0 5px;font-family:Fell,Georgia,serif;
@@ -2653,21 +2656,44 @@ function understoodTab(host) {
    The tab used to render `by_day` straight, so a day nothing was spent on simply was not there --
    indistinguishable from broken recording. Every day that RAN gets a column, and a zero column
    carries the reason it is zero. */
+/* *** A WINDOW IS CALENDAR DAYS, AND A DAY NOTHING RAN IS STILL A DAY. ***
+   The chart drew the last 30 days that had a row, so a quiet week vanished and the axis lied
+   about time. `calendar` lays the ledger's days on a real calendar ending on the LAST DAY
+   RECORDED -- never the viewer's clock, which would make an old ledger look empty and a rerun of
+   the same file look different -- and a day with no row is an empty column that says so. */
+function calendar(days, n) {
+  if (!days.length) return [];
+  const by = Object.fromEntries(days.map(d => [d.day, d]));
+  const sorted = days.map(d => d.day).sort();
+  const last = new Date(sorted[sorted.length - 1] + 'T00:00:00Z');
+  const first = n ? new Date(last.getTime() - (n - 1) * 86400000)
+                  : new Date(sorted[0] + 'T00:00:00Z');
+  const out = [];
+  for (let t = first.getTime(); t <= last.getTime(); t += 86400000) {
+    const k = new Date(t).toISOString().slice(0, 10);
+    out.push(by[k] || {day: k, empty: 1});
+  }
+  return out;
+}
+
 function daySeries(days, pick, fmt) {
   const max = Math.max(...days.map(d => pick(d) || 0), 0);
-  const host = el('div', {class: 'days'});
-  for (const d of days.slice(0, 30).slice().reverse()) {
-    const v = pick(d) || 0;
+  /* Past a month the columns get narrow, so only some carry a date: every 7th, and the last. */
+  const every = days.length > 45 ? 7 : 1;
+  const host = el('div', {class: 'days' + (days.length > 45 ? ' dense' : '')});
+  days.forEach((d, i) => {
+    const v = d.empty ? 0 : (pick(d) || 0);
     const col = el('div', {class: 'day' + (v ? '' : ' zero'),
-                           title: d.day + ' · ' + fmt(d)
+                           title: d.day + ' · ' + (d.empty ? 'nothing recorded' : fmt(d))
                                   + (d.why ? '\n' + d.why : '')});
     const track = el('div', {class: 'daytrack'});
     track.append(el('div', {class: 'dayfill',
-                            style: `height:${max ? Math.max(2, (v / max) * 100) : 2}%`}));
+                            style: `height:${max ? Math.max(d.empty ? 0 : 2, (v / max) * 100) : 2}%`}));
     col.append(track);
-    col.append(el('div', {class: 'daylab', text: d.day.slice(5)}));
+    const lab = (days.length - 1 - i) % every === 0 ? d.day.slice(5) : '';
+    col.append(el('div', {class: 'daylab', text: lab}));
     host.append(col);
-  }
+  });
   return host;
 }
 
@@ -2700,19 +2726,45 @@ function spendTab(host) {
 
   const days = c.days || [];
   if (days.length) {
-    const spice = el('div');
-    spice.append(el('p', {class: 'srclab', text: 'model spend per day'}));
-    spice.append(daySeries(days, d => d.usd, d => money(d.usd) + ' · '
-                                                 + num(d.calls) + ' call(s)'));
-    if (wh.calls) {
-      spice.append(el('p', {class: 'srclab', text: 'warehouse statements per day'}));
-      spice.append(daySeries(days, d => d.warehouse_calls,
-                             d => num(d.warehouse_calls) + ' statement(s), '
-                                  + bytes(d.warehouse_bytes)));
-    }
-    bits.push(block('Per day', 'A day that ran and spent nothing is a ZERO with the reason '
-      + 'beside it, never a missing column.',
-      el('div', {}, [spice, grid(days, [
+    /* *** "MAYBE ENSURE IT CAN HAVE A CONFIGURABLE WINDOW". ***
+       The per-day charts were fixed at the last 30 days that had a row. The window is a choice
+       now, remembered for this viewer, and the charts, the window's total and the day table all
+       follow it. The by-caller and by-family tables below are the whole ledger and say so. */
+    const WINDOWS = [[7, '7 days'], [30, '30 days'], [90, '90 days'], [0, 'everything']];
+    let win = 30;
+    try { const v = localStorage.getItem('assay.spend.window'); if (v != null) win = Number(v); }
+    catch (e) { /* no storage: the default stands */ }
+    if (!WINDOWS.some(w => w[0] === win)) win = 30;
+    const box = el('div');
+    const pickers = el('div', {class: 'gsorts'});
+    const paint = () => {
+      pickers.replaceChildren(el('span', {class: 'count', text: 'show'}), ...WINDOWS.map(([n, label]) => {
+        const b = el('button', {class: 'gsort' + (n === win ? ' on' : ''), text: label});
+        b.onclick = () => { win = n;
+          try { localStorage.setItem('assay.spend.window', String(n)); } catch (e) { /* none */ }
+          paint(); };
+        return b;
+      }));
+      const cal = calendar(days, win);
+      const got = cal.filter(d => !d.empty);
+      const usd = got.reduce((a, d) => a + (d.usd || 0), 0);
+      const calls = got.reduce((a, d) => a + (d.calls || 0), 0);
+      const ran = got.filter(d => d.runs).length;
+      const spice = el('div');
+      spice.append(el('p', {class: 'note', text: cal.length + ' day(s), ' + cal[0].day + ' to '
+        + cal[cal.length - 1].day + ', ending on the last day anything was recorded. In them: '
+        + money(usd) + ' over ' + num(calls) + ' model call(s), and something ran on ' + ran
+        + ' of the ' + cal.length + ' day(s).'}));
+      spice.append(el('p', {class: 'srclab', text: 'model spend per day'}));
+      spice.append(daySeries(cal, d => d.usd, d => money(d.usd) + ' · '
+                                                  + num(d.calls) + ' call(s)'));
+      if (wh.calls) {
+        spice.append(el('p', {class: 'srclab', text: 'warehouse statements per day'}));
+        spice.append(daySeries(cal, d => d.warehouse_calls,
+                               d => num(d.warehouse_calls) + ' statement(s), '
+                                    + bytes(d.warehouse_bytes)));
+      }
+      spice.append(grid(got, [
         {key: 'day', label: 'day', mono: 1, val: d => d.day},
         {key: 'runs', label: 'runs', n: 1, val: d => d.runs},
         {key: 'calls', label: 'calls', n: 1, val: d => d.calls},
@@ -2720,7 +2772,12 @@ function spendTab(host) {
          cell: d => el('span', {text: money(d.usd)})},
         {key: 'wh', label: 'statements', n: 1, val: d => d.warehouse_calls},
         {key: 'why', label: 'why', val: d => d.why},
-      ], {sort: 'day'})])));
+      ], {sort: 'day', dir: -1}));
+      box.replaceChildren(pickers, spice);
+    };
+    paint();
+    bits.push(block('Per day', 'A day that ran and spent nothing is a ZERO with the reason '
+      + 'beside it, and a day nothing ran is an empty column, never a missing one.', box));
   }
 
   const cols = [
@@ -2729,7 +2786,8 @@ function spendTab(host) {
     {key: 'tok', label: 'input tokens', n: 1, val: r => r[2]},
     {key: 'usd', label: 'usd', n: 1, val: r => r[3], cell: r => el('span', {text: money(r[3])})},
   ];
-  for (const [title, rows] of [['by caller', c.by_caller], ['by question family', c.by_family]]) {
+  for (const [title, rows] of [['by caller, the whole ledger', c.by_caller],
+                             ['by question family, the whole ledger', c.by_family]]) {
     if (rows && rows.length) bits.push(block(title, null, grid(rows, cols, {sort: 'usd'})));
   }
   if (wh.calls) {
