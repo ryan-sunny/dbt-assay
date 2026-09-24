@@ -189,6 +189,8 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
             # *** AN EMPTY STORE AND A CLEAN WAREHOUSE RENDER THE SAME PAGE. ***
             # Every zero on this page -- ruled, spent, answered -- reads as "nothing is wrong"
             # when it can equally mean "nothing has run". The page says which.
+            # Where a commit can be opened in a browser, for the commits a finding names.
+            "repo_url": _repo_url(project),
             "new_store": (store.new_store_warning() if store is not None else
                           "no store was read, so every count that comes from one is absent "
                           "rather than zero."),
@@ -241,7 +243,30 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         # findings above, so a held-back finding and its premise cannot disagree; `moves` are the
         # statuses that changed at the latest `check`.
         **_premises(ledger, store, find_rows),
+        # *** THE LOOP: OF THE FINDINGS A PERSON AGREED WITH, HOW MANY WENT, AND CAME BACK. ***
+        "loop": _loop(store, findings, project),
     }
+
+
+def _repo_url(project) -> str:
+    try:
+        from . import history as history_mod
+        return history_mod.remote_url(history_mod.repo_of(project))
+    except Exception:                                            # noqa: BLE001
+        return ""
+
+
+def _loop(store, findings, project) -> dict:
+    if store is None:
+        return {}
+    from .outcomes import confirmed_and_fixed
+    run = store.latest_run(getattr(project, "project_name", None))
+    try:
+        got = confirmed_and_fixed(store, findings, store.unchecked(run) if run else (), project)
+    except Exception:                                            # noqa: BLE001
+        return {}
+    return {k: got.get(k, 0) for k in ("agreed", "fixed", "still_open", "regressed")} | {
+        "retired": len(got.get("retired") or [])}
 
 
 def _premises(led, store, find_rows: list) -> dict:
@@ -776,7 +801,7 @@ _LINES = ("models", "edges", "claims", "findings", "waived", "decisions", "quest
 # `areas` was missing, so `--from` rendered a page with no Areas tab and nothing said why: the
 # round-trip guard below compared the artifact against a fixture that lacked it too.
 _WHOLE = (("meta", dict), ("config", dict), ("unconfigured", list),
-          ("moved", dict), ("cost", dict), ("monitoring", dict), ("areas", dict))
+          ("moved", dict), ("cost", dict), ("monitoring", dict), ("areas", dict), ("loop", dict))
 
 
 def write_data(data: dict, directory, record: str = "") -> list:

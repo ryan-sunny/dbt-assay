@@ -178,6 +178,21 @@ def churn(store, top: int = 12) -> list[tuple[str, int]]:
     return sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))[:top]
 
 
+def remote_url(repo) -> str:
+    """The web address of `origin`, for linking a commit: `https://host/owner/name`. Empty when
+    there is no remote or it is not a shape a browser can open (a local path)."""
+    import re
+    url = _git(repo, "remote", "get-url", "origin").strip() if repo else ""
+    m = re.match(r"^(?:git@|ssh://git@)([^:/]+)[:/](.+?)(?:\.git)?/?$", url)
+    if m:
+        host = m.group(1)
+        # an ssh alias (github-sunny) is not a host a browser knows; a github alias is github
+        host = "github.com" if host.startswith("github") else host
+        return f"https://{host}/{m.group(2)}"
+    m = re.match(r"^(https?://[^\s]+?)(?:\.git)?/?$", url)
+    return m.group(1) if m else ""
+
+
 def repo_of(project) -> Path | None:
     root = getattr(project, "project_root", None)
     return Path(root) if root and Path(root).exists() else None

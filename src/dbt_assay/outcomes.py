@@ -220,8 +220,147 @@ def confirmed_and_fixed(store, findings, unchecked=(), project=None) -> dict:
                 retired.append(r)
     rows_in = [r for r in rows if not r.get("retired")]
     gone = sum(1 for r in rows_in if r["gone"])
+    # *** A THIRD NUMBER: FIXED, AND BACK. *** (G-B) Still open, and worse than never fixed: the
+    # loop worked once and something undid it. Counted inside `still_open`, named apart.
+    back = {r["agreed_id"] for r in returned(store, findings, project)} if store is not None \
+        else set()
+    for r in rows_in:
+        if not r["gone"] and r["finding"] in back:
+            r["regressed"] = True
     return {"agreed": len(rows_in), "fixed": gone, "still_open": len(rows_in) - gone,
+            "regressed": sum(1 for r in rows_in if r.get("regressed")),
             "rows": rows_in, "retired": retired}
+
+
+def returned(store, findings, project=None) -> list:
+    """Agreed findings that were FIXED and are here again. (G-B)
+
+    Fixed means what the loop counts as fixed: a person agreed it was real, a later full run no
+    longer had it, and the model's file had changed -- not retired by an assay release, not
+    absent because its check did not run. Returned means the current findings have it again,
+    under its id or a reworded one (`store.finding_key`). The latest such gap is the one named.
+
+    One dict per returned finding: the finding now, the id that was agreed, who agreed and when,
+    the run and commit where it was gone, and the run and commit where it came back (`now` when
+    it is this computation). Nothing here is written; `check` writes the findings as usual.
+    """
+    if store is None:
+        return []
+    from .store import finding_key
+    agreed = store.ruled_findings("agree")
+    for fid in store.ruled_findings("disagree"):
+        agreed.pop(fid, None)
+    if not agreed:
+        return []
+    now = {finding_key(f.check, f.subject, f.evidence): f for f in findings}
+    try:
+        rows = store.con.execute(
+            "select distinct finding_id, check_name, subject, evidence, summary from findings "
+            "where finding_id in (select unnest(?))", [list(agreed)]).fetchall()
+        runs = store.con.execute(
+            "select run_id, started_at, coalesce(git_sha, ''), unchecked from runs "
+            "where scope is null order by started_at, run_id").fetchall()
+    except Exception:                                            # noqa: BLE001
+        return []
+    order = {r[0]: i for i, r in enumerate(runs)}
+    out, seen = [], set()
+    for fid, check, subject, ev, summary in sorted(rows):
+        key = finding_key(check, subject, ev)
+        f = now.get(key)
+        if f is None or key in seen:
+            continue
+        who, when, _note = agreed[fid]
+        # Where this finding was, run by run: the runs that had it, and the checksum it had.
+        had: dict = {}
+        for rid, cs, e2 in store.con.execute(
+                "select run_id, file_checksum, evidence from findings "
+                "where check_name = ? and subject = ?", [check, subject]).fetchall():
+            if rid in order and finding_key(check, subject, e2) == key:
+                had[rid] = cs or ""
+        gap = None
+        for i in range(1, len(runs)):
+            rid, at, sha, unchecked = runs[i]
+            prev = runs[i - 1][0]
+            if rid in had or prev not in had:
+                continue
+            if when is not None and at < when:
+                continue                  # gone before anybody agreed: not a fix of the loop
+            if check in (json.loads(unchecked) if unchecked else []):
+                continue                  # the check did not run: nobody looked
+            gap = (i, prev)
+        if gap is None:
+            continue
+        i, prev = gap
+        # Fixed means the FILE changed between the run that had it and the run that did not.
+        # The gone run has no row for this finding, but any other finding on the model carries
+        # the file's checksum then. Unknown counts as changed, as `confirmed_and_fixed` does.
+        then = had.get(prev) or ""
+        at_gone = store.con.execute(
+            "select max(file_checksum) from findings where run_id = ? and subject = ?",
+            [runs[i][0], subject]).fetchone()
+        at_gone = (at_gone[0] if at_gone else "") or ""
+        if not at_gone:
+            # No finding on the model then (the usual shape of a fix): the version `check` kept
+            # of it, the newest one first seen before the NEXT full run started -- the run that
+            # saw it harvests it a moment after it starts.
+            name = subject.split(".")[-1]
+            nxt = runs[i + 1][1] if i + 1 < len(runs) else None
+            got = store.con.execute(
+                "select checksum from compiled_sql where model = ?"
+                + (" and first_seen < ?" if nxt is not None else "")
+                + " order by first_seen desc limit 1",
+                [name, nxt] if nxt is not None else [name]).fetchone()
+            at_gone = (got[0] if got else "") or ""
+        if then and at_gone and then == at_gone:
+            continue                      # the same file when it went: assay moved, not code
+        back = next((runs[j] for j in range(i + 1, len(runs)) if runs[j][0] in had), None)
+        seen.add(key)
+        out.append({
+            "finding": f, "agreed_id": fid, "agreed_by": who,
+            "agreed_at": str(when)[:10] if when else "", "summary": summary,
+            "gone_run": runs[i][0], "gone_at": str(runs[i][1])[:10], "gone_commit": runs[i][2],
+            "back_run": back[0] if back else "now",
+            "back_at": str(back[1])[:10] if back else "",
+            "back_commit": back[2] if back else "",
+        })
+    return out
+
+
+def fixed_finding_returned(store, findings, project=None) -> list:
+    """The check: a finding somebody agreed with, that was fixed, is back. Base 3, and queued by
+    default: a regression of something a person already paid to have fixed."""
+    from .checks.structural import Finding
+    out = []
+    head = ""
+    if project is not None:
+        try:
+            from . import history as history_mod
+            repo = history_mod.repo_of(project)
+            head = history_mod.head(repo) if repo else ""
+        except Exception:                                        # noqa: BLE001
+            head = ""
+    for r in returned(store, findings, project):
+        f = r["finding"]
+        out.append(Finding(
+            check="fixed_finding_returned",
+            subject=f.subject, subject_name=f.subject_name, file=f.file,
+            summary=f"came back after it was fixed: {f.check}: {f.summary[:120]}",
+            detail=("A person agreed this finding was real, a later run no longer had it after "
+                    "the model's file changed, and it is here again. Whatever fixed it was undone, "
+                    "or a later edit reintroduced the same defect. It is counted as regressed, "
+                    "and not as fixed again until it goes again."),
+            base=3,
+            evidence={"returned": r["agreed_id"], "check_returned": f.check,
+                      # when and where, which move with every run and are not what the finding is
+                      "timeline": {"agreed_by": r["agreed_by"], "agreed_at": r["agreed_at"],
+                                   "gone_run": r["gone_run"], "gone_at": r["gone_at"],
+                                   "gone_commit": r["gone_commit"], "back_run": r["back_run"],
+                                   "back_at": r["back_at"],
+                                   "back_commit": r["back_commit"] or head,
+                                   "finding_now": f.id}},
+            descendants=f.descendants, marts=f.marts,
+        ))
+    return out
 
 
 def _code_unchanged(store, project, fid: str) -> bool:

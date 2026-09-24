@@ -131,6 +131,11 @@ SHAPES: dict[str, tuple[str, str]] = {
         "declare the fan-out, or collapse it",
         (        "A join multiplies rows and nothing says so. Either the multiplication is intended and "
         "the child's grain should say it, or the hop needs a group by.")),
+    "fixed_finding_returned": (
+        "find what undid the fix",
+        (        "A finding a person agreed with was fixed and is back. Compare the model at the "
+        "commit where it was gone with the commit where it came back (both are in the "
+        "timeline): the change between them reintroduced it.")),
     "join_fans_out": (
         "join on the whole key",
         (        "The join uses part of the key the parent declares unique, so one parent row matches "

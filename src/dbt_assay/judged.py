@@ -582,7 +582,7 @@ def apply_policy(findings, cfg, store, project=None) -> tuple[list, list]:
 
         if q.exposed_only and not getattr(f, "exposures", None):
             # Configured for what reaches a product, and this does not: the default by severity.
-            kept.append((f, "queue" if f.base >= 3 else "annotate", "not exposed"))
+            kept.append((f, default_action(f), "not exposed"))
             continue
         conf = f.evidence.get("confidence")
         judged_answer = {"kind": "noul", "answer": str(conf)} if conf is not None else None
@@ -597,5 +597,18 @@ def apply_policy(findings, cfg, store, project=None) -> tuple[list, list]:
                            agreement=rate[0] if rate else None,
                            min_agreement=cfg.min_agreement)
         why = "audit.yml" if act else "default by severity"
-        kept.append((f, act or ("queue" if f.base >= 3 else "annotate"), why))
+        kept.append((f, act or default_action(f), why))
     return kept, waived
+
+
+# *** A NEW CHECK DEFAULTS TO `queue`, WHATEVER ITS BASE. *** (spec, 2026-09-24) A project opts
+# into `fail` in audit.yml. Everything not named here keeps the default by severity.
+DEFAULT_ACTION = {"fixed_finding_returned": "queue", "float_sum_is_not_reproducible": "queue",
+                  "incremental_merge_without_key": "queue", "incremental_key_not_unique": "queue",
+                  "incremental_filter_without_lookback": "queue",
+                  "microbatch_without_lookback": "queue",
+                  "incremental_schema_change_ignored": "queue"}
+
+
+def default_action(f) -> str:
+    return DEFAULT_ACTION.get(f.check) or ("queue" if f.base >= 3 else "annotate")

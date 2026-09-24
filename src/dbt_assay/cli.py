@@ -794,7 +794,9 @@ def check(
         if loop["agreed"]:
             console.print(
                 f"\n[bold]of the {loop['agreed']} finding(s) a person agreed with, "
-                f"{loop['fixed']} are gone[/] and {loop['still_open']} are still here.")
+                f"{loop['fixed']} are gone[/] and {loop['still_open']} are still here"
+                + (f", [red]{loop['regressed']} of them back after they were fixed[/]"
+                   if loop.get("regressed") else "") + ".")
             console.print("[dim]The only number on this screen that measures the LOOP rather "
                           "than the tool: a release cannot move it and neither can an agent.[/]")
             if loop.get("retired"):

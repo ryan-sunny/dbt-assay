@@ -251,6 +251,10 @@ class Backend:
                                  "sampled": bool(o.sampled), "detail": o.detail})
         agreed_open = sum(1 for f in open_ if (f["ruled_by"] or {}).get("verdict") == "agree"
                           and (f["ruled_by"] or {}).get("as") == "human")
+        # Fixed once and back: the finding that says so carries both commits. (G-B)
+        regressed = [{"finding": f.id, "summary": f.summary,
+                      "timeline": (f.evidence or {}).get("timeline")}
+                     for f, _a, _w in kept if f.check == "fixed_finding_returned"]
         return {
             "open_findings": open_,
             "waived_or_accepted": in_force,
@@ -258,8 +262,10 @@ class Backend:
             "grain_note": (None if measured or not grain else
                            "the grain has not been counted in the data. `assay probe` counts it "
                            "through your own dbt."),
-            "summary": (f"{len(open_)} open finding(s), {agreed_open} a person agreed with; "
-                        f"{len(in_force)} waived, accepted or dismissed"),
+            "regressed": regressed,
+            "summary": (f"{len(open_)} open finding(s), {agreed_open} a person agreed with"
+                        + (f", {len(regressed)} fixed once and back" if regressed else "")
+                        + f"; {len(in_force)} waived, accepted or dismissed"),
         }
 
     def premises(self, model: str = "", status: str = "") -> dict:

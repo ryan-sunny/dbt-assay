@@ -180,7 +180,12 @@ def _all_findings(project, digests, schema, entries, threshold, store) -> list:
         except Exception:                                        # noqa: BLE001
             # A store too old to hold a series still produces every other finding. The comparison
             # is absent, which is honest: `assay probe` twice is what makes it possible.
-            return _distinct(_reach(project, fs))
+            pass
+        # *** LAST, BECAUSE IT READS EVERY OTHER FINDING. *** (G-B) An agreed finding that was
+        # fixed and is here again.
+        # `returned` reads a store too old to answer as nothing returned; anything else raises.
+        from . import outcomes
+        fs += outcomes.fixed_finding_returned(store, fs, project)
     return _distinct(_reach(project, fs))
 
 

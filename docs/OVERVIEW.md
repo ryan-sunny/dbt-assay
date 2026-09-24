@@ -582,6 +582,14 @@ against `(model, check)` cannot say which of that model's eight findings was the
 Agreeing and later dismissing does not count as fixed. That is a retraction, and counting it would
 make the one honest number gameable by the person it measures.
 
+**And whether a fix stayed fixed.** A finding that was agreed with, went after its model's file
+changed, and is back is raised as `fixed_finding_returned` (queued by default; set `action: fail`
+to gate on it). Its evidence is the timeline: who agreed and when, the run and commit where it was
+gone, the run and commit where it came back. The loop line gains a third number, *N of them back
+after they were fixed*, and a returned finding is never counted as fixed again until it goes
+again. A finding that went while the file stayed the same was retired by an assay release, so its
+return is not a regression either.
+
 The ten tables, what each answers, and how they join are in **[SCHEMA.md](SCHEMA.md)**, with an ER diagram.
 
 **What it has cost, and what has gone stale**

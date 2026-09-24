@@ -132,6 +132,9 @@ def cards(findings, store, project_root, reads: dict | None = None,
             # Held back on a premise that has since broken: the reason it is on the list.
             **({"back": ev["why_it_is_back"]} if isinstance(ev.get("why_it_is_back"), dict)
                else {}),
+            # Fixed once and back: when it was agreed, gone, and back. (G-B)
+            **({"timeline": {**ev["timeline"], "returned": ev.get("returned", "")}}
+               if isinstance(ev.get("timeline"), dict) else {}),
         })
         a = agent.get(f.id) or agent.get((str(f.subject).split("::")[0], str(f.check)))
         if a and not c["agent"]:
@@ -1028,6 +1031,13 @@ const VERDICTS = [
     + 'it can also be written as a waiver.'],
   ['unclear', 'can’t tell', 'What is here is not enough to decide.'],
 ];
+/* What a verdict means on a check where the general words would mislead. */
+const VERDICT_FOR = {
+  fixed_finding_returned: {
+    agree: 'It is back, and must be fixed again.',
+    disagree: 'It is not the same defect. Say what differs.',
+    accept: 'It is back on purpose. Needs a reason.'},
+};
 const REASON_LABEL = {agree: 'anything to add (optional)', disagree: 'why it is wrong',
                       accept: 'why it stays', unclear: 'what is missing (optional)'};
 
@@ -1062,6 +1072,18 @@ function card(c) {
       ...(b.broke_on ? [el('dt', {text: 'broke'}), el('dd', {text: b.broke_on})] : []),
       ...(b.why ? [el('dt', {text: 'measured'}), el('dd', {text: b.why})] : []),
       ...(b.held_back ? [el('dt', {text: 'held back while'}), el('dd', {text: b.held_back})] : [])]));
+  }
+  for (const f of c.findings) {
+    const t = f.timeline;
+    if (!t) continue;
+    const sha = x => x ? String(x).replace('+dirty', '').slice(0, 9) : 'no commit recorded';
+    box.append(el('div', {class: 'lbl', text: 'what happened'}));
+    box.append(el('dl', {class: 'reading'}, [
+      el('dt', {text: 'agreed'}), el('dd', {text: (t.agreed_by || 'a person')
+        + (t.agreed_at ? ', ' + t.agreed_at : '') + ' (finding ' + (t.returned || '') + ')'}),
+      el('dt', {text: 'gone'}), el('dd', {text: (t.gone_at || '') + ' at ' + sha(t.gone_commit)}),
+      el('dt', {text: 'back'}), el('dd', {text: (t.back_at || 'this run') + ' at '
+        + sha(t.back_commit)})]));
   }
   if (c.group) box.append(el('div', {class: 'q dim', text:
     'The same construct is in ' + c.group.size + ' models (' + c.group.models.slice(0, 5).join(', ')
@@ -1149,7 +1171,8 @@ function card(c) {
     untilRow.hidden = v !== 'accept';
     wlab.hidden = v !== 'accept';
   }
-  for (const [v, label, meaning] of VERDICTS) {
+  for (const [v, label, meaning0] of VERDICTS) {
+    const meaning = (VERDICT_FOR[c.question] || {})[v] || meaning0;
     const r = el('input', {type: 'radio', name: 'v-' + c.key, value: v});
     if (a.verdict === v) r.checked = true;
     r.onchange = () => {

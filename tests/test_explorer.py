@@ -312,6 +312,7 @@ def _tiny():
                           "uses": [{"kind": "grain", "dependent": "m", "model": "m",
                                     "model_name": "a", "detail": "the grain"}], "raised": []}],
             "premise_moves": [{"id": "p1", "before": "holding", "after": "unchecked"}],
+            "loop": {"agreed": 3, "fixed": 1, "still_open": 2, "regressed": 1, "retired": 0},
             # A real ledger shape, so the round trip exercises the section rather than comparing
             # two empty dicts and passing for the wrong reason.
             "cost": {"usd": 0.0132, "input_tokens": 314265, "calls": 102, "output_tokens": 0,

@@ -2193,9 +2193,11 @@ function findingsTab(host) {
 function backBlock(b) {
   if (!b) return null;
   const prem = el('span', {}, [wbr(b.premise || ''), premBadge(b.status, b.status, b.why)]);
-  if (GO.guarantees && b.premise_id)
-    prem.append(el('a', {class: 'lk plink', text: 'in Guarantees', href: '#guarantees',
-      onclick: ev => { ev.preventDefault(); GO.guarantees(b.premise_id); }}));
+  if (b.premise_id && (DATA.premises || []).some(p => p.id === b.premise_id)) {
+    const a = el('a', {class: 'lk plink', text: 'in Guarantees', href: '#guarantees'});
+    a.onclick = ev => { ev.preventDefault(); open('guarantees'); GO.guarantees(b.premise_id); };
+    prem.append(a);
+  }
   return section('why it is back', kv([
     ['premise', prem],
     ['broke', b.broke_on || null],
@@ -2203,10 +2205,44 @@ function backBlock(b) {
     ['held back while', b.held_back ? wbr(b.held_back) : null]]));
 }
 
+/* A commit, linked when the repository has a web remote, short either way. */
+function commitLink(sha) {
+  if (!sha) return el('span', {class: 'tot', text: 'no commit recorded'});
+  const short = String(sha).replace('+dirty', '').slice(0, 9)
+    + (String(sha).includes('+dirty') ? ' with uncommitted changes' : '');
+  const url = (DATA.meta || {}).repo_url;
+  if (!url) return el('span', {class: 'mono', text: short});
+  return el('a', {class: 'mono lk', href: url + '/commit/' + String(sha).replace('+dirty', ''),
+                  target: '_blank', rel: 'noopener', text: short});
+}
+
+/* *** FIXED, AND BACK. *** (G-B) When it was agreed, where it was gone, where it came back. */
+function timelineBlock(f) {
+  const t = (f.evidence || {}).timeline;
+  if (f.check !== 'fixed_finding_returned' || !t) return null;
+  const orig = el('span', {class: 'mono', text: (f.evidence || {}).returned || ''});
+  let now = null;
+  if (t.finding_now && FIND[t.finding_now]) {
+    now = el('a', {class: 'lk mono', href: '#findings', text: t.finding_now});
+    now.onclick = ev => { ev.preventDefault(); GO.findings(t.finding_now); };
+  }
+  return section('what happened', kv([
+    ['agreed by', el('span', {text: (t.agreed_by || 'a person') + (t.agreed_at ? ', ' + t.agreed_at : '')})],
+    ['agreed finding', orig],
+    ['gone', el('span', {}, [el('span', {text: (t.gone_at || '') + ' at '}), commitLink(t.gone_commit),
+      el('span', {class: 'tot', text: '  run ' + (t.gone_run || '')})])],
+    ['back', el('span', {}, [el('span', {text: (t.back_at || 'this run') + ' at '}),
+      commitLink(t.back_commit),
+      ...(t.back_run && t.back_run !== 'now' ? [el('span', {class: 'tot', text: '  run ' + t.back_run})] : [])])],
+    ['the finding now', now],
+  ]), 'Agreed real by a person, gone after the model’s file changed, and here again.');
+}
+
 function findingPane(f) {
   const back = (f.evidence || {}).why_it_is_back;
   const ev = Object.assign({}, f.evidence || {});
   delete ev.why_it_is_back;
+  delete ev.timeline;
   return pane({
     kind: 'finding · ' + f.check.replace(/_/g, ' '),
     title: link(f.model), mono: 0,
@@ -2214,6 +2250,7 @@ function findingPane(f) {
     what: f.summary,
     reading: [
       backBlock(back),
+      timelineBlock(f),
       ...((f.evidence || {}).asked ? [section('the reading', kv([
         ['asked', String(f.evidence.asked).replace(/_/g, ' ')
           + (f.evidence.context && f.evidence.context !== f.model ? ', about ' + f.evidence.context : '')],
@@ -2907,6 +2944,25 @@ function understoodTab(host) {
            'of ' + num(DATA.claims.length) + ' extracted'),
       tile(num(DATA.questions.length), 'questions', num(meta.sources) + ' sources read'),
     ])));
+
+  // ---- the loop: of what a person agreed was real, how much went, and how much came back
+  const LP = DATA.loop || {};
+  if (LP.agreed) {
+    const back = el('button', {class: 'back', text: 'the ones that came back →'});
+    back.onclick = () => { open('findings');
+      const f = (DATA.findings || []).find(x => x.check === 'fixed_finding_returned');
+      if (f) GO.findings(f.id); };
+    bits.push(block('Did fixing them work',
+      'Of the findings a person agreed were real: gone after the code changed, still here, and '
+      + 'fixed then back again. A release cannot move these, and neither can an agent.',
+      el('div', {}, [el('div', {class: 'tiles'}, [
+        tile(num(LP.fixed || 0), 'fixed', 'of ' + num(LP.agreed) + ' agreed with'),
+        tile(num(LP.still_open || 0), 'still open', 'agreed with and not dealt with',
+             LP.still_open ? 'bad' : ''),
+        tile(num(LP.regressed || 0), 'regressed', 'fixed, and back again',
+             LP.regressed ? 'bad' : ''),
+      ]), ...(LP.regressed ? [back] : [])])));
+  }
 
   // ---- what the findings rest on, and whether it still holds
   const PR = DATA.premises || [];

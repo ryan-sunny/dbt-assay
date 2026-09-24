@@ -289,7 +289,9 @@ a judgment about the model, and it says so rather than omitting the row.
 
 After the edit, run `changed_contracts` and `violations` as always, then `assay check`. It reports
 how many of the agreed findings are now gone — the only number that measures whether the loop did
-anything, and one neither a release nor an agent can move.
+anything, and one neither a release nor an agent can move. A finding that was fixed and has come
+back is raised as `fixed_finding_returned` with both commits in its `timeline`, and `contract`'s
+`health.regressed` lists them: treat one as a regression you may have just caused, not as noise.
 
 ## Rules that are not negotiable
 
