@@ -75,6 +75,33 @@ Deferred and not proposed: snapshot checks (this project has 0 snapshots), seed 
 - **UI:** each change that shows up on a surface lands on the page, the review form and MCP in the
   same commit, with a Playwright screenshot read before the item is called done.
 
+
+## Next: UI problems Ryan found on 0.51.2 (NOT built yet)
+
+Screenshots were from the page (`assay page`). Each needs a look at the rendered page before and
+after, per the repo rule.
+
+1. **Unrendered template variables in a finding's "what it means".** `monitor_covers_what_matters`
+   shows "`model` has `marts_downstream` marts reading it and no volume monitor. Given what it is
+   and what it reads, is it worth watching?" -- the raw QUESTION text with state-field names, not
+   values. Likely `judged.declared_findings`, whose `detail` is the bank's `instructions.question`.
+   Every family that becomes a finding through `finding_when` probably has this. Fix: a detail that
+   names the values (model, the counts) and says what the answer was, never the question template.
+   Also the summary is cut mid-word ("...without anything faili") -- a hard slice somewhere.
+2. **`weight` is never explained.** The page shows "weight 7.6" with no formula. It is
+   `base * (1 + min(descendants,50)/25 + min(marts,10)/5 + 5*min(exposures,2))`
+   (`checks/structural.py Finding.weight`). Show the parts wherever weight is shown.
+3. **Suggestion `rank` is opaque.** "What to configure" shows ranks like 190,032 / 100,014 for
+   vocab candidates, 2 for per-check policy, -1 for `_label_stubs`. The rank encodes a section
+   scale plus a count (see `suggest.py`, each rule's `rank=`). Show what it is made of (e.g. "joined
+   in 19 models, 32 hops") or replace the number with its basis; never a bare integer.
+4. **The Answers tab cannot navigate 25k answers.** A chip bar shows ~9 families and "+19 more, use
+   the filter", hiding most families; each holds thousands of answers. Needs a real navigator: every
+   family listed with counts (a side list or grouped table), answer-type breakdown per family, and
+   paging -- the same shape as the Claims tab's drill (`drill(...)` in explorer.py).
+
+Open decisions from earlier sessions: none outstanding.
+
 ---
 
 # Previous queue (0.50.0), SHIPPED. Kept for its evidence.
