@@ -74,7 +74,7 @@ def library(version: str = VERSION) -> Path:
 
 
 def status() -> dict:
-    lake = lake_path()
+    lake = lake_for_build()
     lib = library()
     return {"lean": VERSION, "toolchain": str(home()), "installed": lake is not None,
             "library": str(lib), "library_built": (lib / ".lake" / "build").exists()}
@@ -82,7 +82,7 @@ def status() -> dict:
 
 def setup(offline: bool = False, say=print) -> dict:
     """Install the pinned toolchain if absent, then compile the library. Idempotent."""
-    if lake_path() is None:
+    if lake_for_build() is None:
         if offline:
             raise RuntimeError(f"Lean {VERSION} is not installed at {home()} and --offline "
                                f"refuses to download it. Run `assay prove --setup` once where "
@@ -136,13 +136,30 @@ def _sha256(p: Path) -> str:
     return h.hexdigest()
 
 
+def version_of(lake: str) -> str:
+    """The Lean version a `lake` binary belongs to, or ''."""
+    try:
+        out = subprocess.run([lake, "--version"], capture_output=True, text=True, timeout=60,
+                             check=False).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    import re
+    m = re.search(r"Lean version (\d+\.\d+\.\d+)", out)
+    return m.group(1) if m else ""
+
+
 def lake_for_build() -> str | None:
-    """The Lake to build with: assay's own, else one the environment names or has."""
+    """The Lake to prove with: assay's own, else one already installed at EXACTLY the pinned
+    version ($ASSAY_LAKE, PATH, elan). A different version is never used: the same model must
+    prove the same way on every machine."""
     own = lake_path()
     if own is not None:
         return str(own)
     from .proofs import lake_bin
-    return lake_bin()
+    other = lake_bin()
+    if other and version_of(other) == VERSION:
+        return other
+    return None
 
 
 def build_library(say=print) -> dict:

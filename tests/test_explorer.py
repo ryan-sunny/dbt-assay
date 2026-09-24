@@ -313,6 +313,13 @@ def _tiny():
                                     "model_name": "a", "detail": "the grain"}], "raised": []}],
             "premise_moves": [{"id": "p1", "before": "holding", "after": "unchecked"}],
             "loop": {"agreed": 3, "fixed": 1, "still_open": 2, "regressed": 1, "retired": 0},
+            "proofs": [{"model": "m", "model_name": "a", "model_checksum": "c",
+                        "property": "grain", "statement": "`a` is one row per (k)",
+                        "theorem": "a__grain", "rule": "group_by_unique", "premises": [],
+                        "status": "proven", "detail": "", "missing": "", "written_by": "assay",
+                        "lean_version": "v4.34.1", "proved_at": "2026-09-24",
+                        "guarantee": "holding", "lost_because": "",
+                        "parse": {"status": "holding", "label": "round trip agrees", "why": ""}}],
             # A real ledger shape, so the round trip exercises the section rather than comparing
             # two empty dicts and passing for the wrong reason.
             "cost": {"usd": 0.0132, "input_tokens": 314265, "calls": 102, "output_tokens": 0,

@@ -1739,6 +1739,20 @@ function modelsTab(host) {
         + 'The compiled SQL is the full refresh; this is the other branch, read from the raw code.'));
     }
 
+    /* *** PROVEN. *** (L2) Each certificate about this model, what it rests on, and whether
+       that still holds. */
+    const pr = PROOFS_BY_MODEL[m.uid] || [];
+    if (pr.length) d.append(section('proven (' + pr.filter(r => r.status === 'proven').length
+      + ' of ' + pr.length + ')', el('div', {class: 'ulist'}, pr.map(r => el('div', {class: 'urow'}, [
+        el('span', {}, [wbr(r.statement)]), gbadge(r),
+        el('div', {class: 'usub'}, [wbr(r.status === 'proven'
+          ? ((r.premises || []).length ? 'as long as ' + r.premises.map(p =>
+              String(p.statement || '').replace(/`/g, '') + ' (' + p.label + ')').join('; ')
+             : 'needs no premise')
+            + (r.lost_because ? '. Lost: ' + r.lost_because.replace(/`/g, '') : '')
+          : (r.missing || 'no proven rule covers it'))])]))),
+      'Checked by Lean from the parsed structure: each holds for every input its premises allow.'));
+
     /* *** CORRECT AS LONG AS. *** Every premise something about this model rests on, one line
        each with its status, linked to Guarantees. Omitted when there are none. */
     const prem = PREM_BY_MODEL[m.uid] || [];
@@ -1747,7 +1761,8 @@ function modelsTab(host) {
         const a = el('a', {class: 'lk', href: '#guarantees'}, [wbr(p.statement)]);
         a.onclick = ev => { ev.preventDefault(); open('guarantees'); GO.guarantees(p.id); };
         const why = (p.uses || []).filter(u => u.model === m.uid)
-          .map(u => u.kind === 'grain' ? 'its grain' : u.dependent.split(':')[0].replace(/_/g, ' '));
+          .map(u => u.kind === 'grain' ? 'its grain' : u.kind === 'proof' ? 'a proof'
+            : u.dependent.split(':')[0].replace(/_/g, ' '));
         return el('div', {class: 'urow'}, [a, premBadge(p.status, p.label, p.why),
           el('div', {class: 'usub', text: 'for ' + [...new Set(why)].join(', ')})]);
       })), 'The statements about the data that what assay says about this model leans on. If '
@@ -3033,6 +3048,11 @@ function understoodTab(host) {
         tile(num(brk.length), 'broken', brk.length ? 'a finding held back on one is raised again'
              : 'none measured false', brk.length ? 'bad' : ''),
         tile(num(held), 'findings held back', 'on a premise that is not holding'),
+        ...(PROOFS.length ? [tile(num(PROOFS.filter(r => r.status === 'proven').length) + ' of '
+            + num(PROOFS.length), 'properties proven',
+            num(PROOFS.filter(r => r.guarantee === 'lost').length) + ' guarantee(s) lost; '
+            + 'proven from the parsed structure',
+            PROOFS.some(r => r.guarantee === 'lost') ? 'bad' : '')] : []),
       ]), go])));
   }
 
@@ -3608,6 +3628,48 @@ const PTIP = {
 const USEWORD = {grain: 'the grain of', held_back: 'a finding held back on',
                  raised_on: 'a finding reading it on', proof: 'a proof about'};
 
+/* ---- certificates (L2): a guarantee's word, badge class and tip. */
+const GWORD = {holding: 'proven', conditional: 'proven, conditional', lost: 'guarantee lost',
+               stale: 'file changed', not_proven: 'not proven', not_attempted: 'not proven'};
+const GCLASS = {holding: 'proven', conditional: 'unchecked', lost: 'broken', stale: 'unchecked',
+                not_proven: 'assumed', not_attempted: 'unknown'};
+const GTIP = {
+  holding: 'Checked by Lean, and every premise it rests on is holding.',
+  conditional: 'Checked by Lean. It holds for every input its premises allow, and one of them '
+    + 'has not been checked.',
+  lost: 'Checked by Lean, and a premise it rests on broke: the guarantee no longer applies.',
+  stale: 'The model’s file changed since this was proven. `assay prove` proves it again.',
+  not_proven: 'Lean could not close the goal. What is missing is shown.',
+  not_attempted: 'No proven rule applies to this structure yet, or a premise is missing.'};
+const PROOFS = DATA.proofs || [];
+const PROOFS_BY_MODEL = {};
+for (const r of PROOFS) (PROOFS_BY_MODEL[r.model] = PROOFS_BY_MODEL[r.model] || []).push(r);
+function gbadge(r) {
+  const b = badge(GWORD[r.guarantee] || r.guarantee, GCLASS[r.guarantee] || 'unknown');
+  b.setAttribute('data-tip', GTIP[r.guarantee] || '');
+  return b;
+}
+function proofBlock(r) {
+  const prem = el('div', {class: 'ulist'}, (r.premises || []).map(p => {
+    const a = el('a', {class: 'lk', href: '#guarantees'}, [wbr(p.statement || p.id)]);
+    a.onclick = ev => { ev.preventDefault(); open('guarantees'); GO.guarantees(p.id); };
+    return el('div', {class: 'urow'}, [a, premBadge(p.status, p.label, p.why)]);
+  }));
+  const rows = [
+    ['guarantee', gbadge(r)],
+    ...(r.lost_because ? [['lost because', wbr(r.lost_because)]] : []),
+    ...(r.status === 'proven' ? [['as long as', (r.premises || []).length ? prem
+        : el('span', {class: 'tot', text: 'nothing: it needs no premise'})]] : []),
+    ...(r.status !== 'proven' ? [['what is missing', wbr(r.missing || r.detail || '')]] : []),
+    ['the rule', el('span', {}, [el('span', {class: 'mono', text: r.rule || ''}),
+      el('span', {class: 'tot', text: '  proven once in assay’s Lean library'})])],
+    ['the parse', r.parse ? premBadge(r.parse.status, r.parse.label, r.parse.why) : null],
+    ['checked', el('span', {class: 'tot', text: (r.lean_version ? 'Lean ' + r.lean_version + ', ' : '')
+      + (r.proved_at || '').slice(0, 10) + (r.written_by === 'agent' ? ', written by an agent' : '')})],
+  ];
+  return kv(rows);
+}
+
 function premiseWhatToDo(p) {
   const test = (p.evidence || []).find(e => e.kind === 'declared');
   const obs = (p.evidence || []).find(e => e.kind === 'observed');
@@ -3674,6 +3736,15 @@ function guaranteesTab(host) {
       {v: num(grainsOn(notHolding)), l: 'grains resting on these',
        tip: 'Declared grains whose key is not holding. The value stands; it is not firm.'},
     ];
+    if (PROOFS.length) {
+      const pv = PROOFS.filter(r => r.status === 'proven').length;
+      const lost = PROOFS.filter(r => r.guarantee === 'lost').length;
+      facts.push({v: num(pv) + ' of ' + num(PROOFS.length), l: 'properties proven',
+                  tip: 'Checked by Lean from the parsed structure. Each holds for every input its '
+                    + 'premises allow.'});
+      if (lost) facts.push({v: num(lost), l: 'guarantees lost', bad: true,
+                            tip: GTIP.lost});
+    }
     box.append(bar, el('div', {class: 'mfacts'}, facts.map(f => el('div', {class: 'mfact'}, [
       el('div', {class: 'mfv' + (f.bad ? ' bad' : ''), text: f.v}),
       el('div', {class: 'mfl'}, [el('span', {text: f.l, tip: f.tip})])]))));
@@ -3683,6 +3754,28 @@ function guaranteesTab(host) {
   }
 
   const groups = PSTATUS.filter(s => by[s]).map(s => ({key: s, label: PWORD[s], rows: by[s]}));
+  /* Certificates, grouped by what their guarantee is now. */
+  const pby = {};
+  for (const r of PROOFS) {
+    const k = r.guarantee === 'not_attempted' ? 'not_proven' : r.guarantee;
+    (pby[k] = pby[k] || []).push(r);
+  }
+  for (const k of ['lost', 'conditional', 'stale', 'holding', 'not_proven'])
+    if (pby[k]) groups.push({key: 'proof_' + k, proof: 1, label: {lost: 'proofs: guarantee lost',
+      conditional: 'proofs: conditional', stale: 'proofs: file changed', holding: 'proven',
+      not_proven: 'not proven'}[k], rows: pby[k]});
+  const proofCols = [
+    {key: 'model', label: 'model', mono: 1, val: r => r.model_name, cell: r => link(r.model_name)},
+    {key: 'what', label: 'property', val: r => r.statement,
+     cell: r => el('span', {}, [wbr(r.statement)])},
+    {key: 'g', label: 'guarantee', val: r => r.guarantee, cell: r => gbadge(r)}];
+  const proofPane = r => pane({kind: 'proof · ' + String(r.property).split(':')[0].replace(/_/g, ' '),
+    title: link(r.model_name), where: el('span', {class: 'mono', text: r.theorem}),
+    what: r.statement, reading: [proofBlock(r)],
+    act: r.guarantee === 'lost' ? el('p', {class: 'prose'}, [wbr('The premise broke: fix the data or '
+          + 'the key it names, then `assay check`. Lean need not run again.')])
+      : r.status !== 'proven' ? el('p', {class: 'prose'}, [wbr(r.missing || 'Nothing to do until '
+          + 'a proven rule covers this structure.')]) : null});
   const cols = [
     {key: 'statement', label: 'premise', val: p => p.statement,
      cell: p => el('span', {}, [wbr(p.statement)])},
@@ -3762,10 +3855,13 @@ function guaranteesTab(host) {
         .filter(Boolean).join(' · ') || null;
     },
     rowsOf: g => g.rows, rowCols: cols,
+    colsFor: g => g.proof ? proofCols : cols,
+    sortFor: g => g.proof ? 'model' : 'rests', dirFor: g => g.proof ? 1 : -1,
     rowSort: 'rests', rowDir: -1,
     rowFilter: 'filter by model or column...',
-    rowText: p => p.statement + ' ' + p.name + ' ' + (p.uses || []).map(u => u.model_name).join(' '),
-    detailOf: detailOf,
+    rowText: p => p.theorem ? (p.model_name + ' ' + p.statement)
+      : p.statement + ' ' + p.name + ' ' + (p.uses || []).map(u => u.model_name).join(' '),
+    detailOf: p => p.theorem ? proofPane(p) : detailOf(p),
   });
   host.replaceChildren(top(), d);
   GO.guarantees = id => {

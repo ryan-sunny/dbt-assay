@@ -83,7 +83,11 @@ again once it finishes. Never conclude the tools are broken from a lock.
 5. `lineage(model, column)` when you are about to change a column — it tells you the hop that
    actually produces the value, which is often several models upstream.
 
-6. `premises(model)` — **what assay's reading of this model rests on.** A declared grain rests on
+6. `proofs(model)` — **what is proven about it, by Lean**, and as long as what. A certificate
+   whose guarantee is `holding` is a fact for every input its premises allow: rely on it. One
+   that is `lost` names the premise that broke; `not_proven` names what is missing -- usually a
+   key the join does not cover. An edit that removes a proven property is a regression.
+   `premises(model)` — **what assay's reading of this model rests on.** A declared grain rests on
    its key's test; a hop assay did not flag rests on the parent's key being unique. Each premise
    carries its evidence (the test's last result, a count, a judgment) and a status: `broken`
    (a count found duplicates or the test failed), `unchecked` (declared, never checked),
@@ -338,6 +342,7 @@ and nothing is lost:
 | `practices(model)` | `assay practices --keys-only --no-verify --model <model>` |
 | `lineage(model, column)` | `assay trace <model>.<column>` |
 | `premises(model, status)` | `assay premises --model <model> --json` (`--status broken`) |
+| `proofs(model)` | `assay prove --json`, then read `rows` for the model |
 | `findings(model)` | `assay check --json` — one object with a `findings` list |
 | `changed_contracts()` | `assay diff --baseline <main target>` |
 | `violations()` | `assay check --json`, then read `action` |

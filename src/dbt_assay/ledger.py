@@ -107,6 +107,8 @@ class Premise:
             return f"{cols} never null in {where}"
         if self.prop == "unique_per_batch":
             return f"{cols} unique within each run's new rows of {where}"
+        if self.prop == "parse_faithful":
+            return f"assay's parse of {where} is what its SQL says"
         if self.prop == "max_lateness":
             if str(self.param).startswith("0"):
                 return f"no row of {where} arrives after a later {cols} is already loaded"
@@ -375,6 +377,92 @@ def unique(led: Ledger, relation: str, columns) -> Premise:
     return p
 
 
+def not_null(led: Ledger, relation: str, column: str) -> Premise:
+    """`column` never null in `relation`: its not_null test's last result, and the count."""
+    project = led.project
+    col = column.lower()
+    name = project.name_of(relation) if hasattr(project, "name_of") else relation
+    p = Premise(relation, name, (col,), "not_null")
+    if p.id in led.premises:
+        return led.premises[p.id]
+    ev: list = []
+    for t in project.tests:
+        if t.tests_model != relation or t.kind != "not_null" or (t.column or "").lower() != col:
+            continue
+        if not led.tests_read:
+            ev.append(Evidence("declared", f"`{t.name}`: no test results were read, so whether "
+                               f"it runs is not known", UNCHECKED))
+            continue
+        got = led.tests.get(t.unique_id)
+        if got is None:
+            ev.append(Evidence("declared", f"`{t.name}` never ran: no build or Elementary "
+                               f"result assay read has it", UNCHECKED))
+        else:
+            ev.append(Evidence("declared", f"`{t.name}` last result: {got[0]}",
+                               _from_test(got[0]), got[1]))
+    if led.schema is not None:
+        rel = (led.schema.relation.get(relation) or "").replace('"', "").lower()
+        o = (led.observed.get(rel) or {}).get(col)
+        if o is not None and o.row_count:
+            nulls = (o.row_count or 0) - (o.non_null or 0)
+            at = str(o.observed_at or "")[:19]
+            if nulls > 0:
+                ev.append(Evidence("observed", f"{nulls:,} NULL(s) in {o.row_count:,} rows",
+                                   BROKEN, at))
+            elif not getattr(o, "sampled", False):
+                ev.append(Evidence("observed", f"no NULL in {o.row_count:,} rows", HOLDING, at))
+    p.evidence = ev
+    p.status = _verdict(ev)
+    return p
+
+
+DDL_PARSE = """
+create table if not exists parse_checks (
+    model          varchar,        -- unique_id
+    model_checksum varchar,        -- dbt's checksum of the file it checked
+    status         varchar,        -- holding | broken | unchecked
+    detail         varchar,
+    rows_compared  bigint,
+    via            varchar,        -- duckdb | warehouse
+    checked_at     timestamp,
+    primary key (model, model_checksum, via)
+);
+"""
+
+
+def parse_faithful(led: Ledger, model_uid: str, store=None) -> Premise:
+    """The structure assay parsed from a model is what its SQL says: the round trip (L2), and
+    later the proof (L4). Evidence is only the check of the CURRENT version of the file."""
+    project = led.project
+    m = project.models.get(model_uid)
+    name = m.name if m is not None else model_uid
+    p = Premise(model_uid, name, (), "parse_faithful")
+    if p.id in led.premises:
+        return led.premises[p.id]
+    ev = []
+    rows = []
+    if store is not None:
+        try:
+            store.con.execute(DDL_PARSE)
+            rows = store.con.execute(
+                "select model_checksum, status, detail, via, checked_at from parse_checks "
+                "where model = ? order by checked_at desc", [model_uid]).fetchall()
+        except Exception:                                        # noqa: BLE001
+            rows = []
+    now = getattr(m, "checksum", "") if m is not None else ""
+    cur = [r for r in rows if r[0] == now]
+    if cur:
+        _cs, st, detail, via, at = cur[0]
+        kind = "proven" if via == "lean" else "observed"
+        ev.append(Evidence(kind, f"{detail} ({via})", st, str(at or "")[:19]))
+    elif rows:
+        ev.append(Evidence("observed", "checked on an earlier version of the file; this one "
+                           "has not been", UNCHECKED, str(rows[0][4] or "")[:19]))
+    p.evidence = ev
+    p.status = _verdict(ev) if ev else UNKNOWN
+    return p
+
+
 def uid_of(project, name: str) -> str:
     """A model's or source's unique_id from the name a check holds."""
     for uid, m in project.models.items():
@@ -463,6 +551,12 @@ def apply_to_grains(led: Ledger, entries) -> None:
 def label(p: Premise) -> str:
     """The few words a badge carries about a declared key: what its strongest evidence says."""
     kinds = {e.kind: e for e in p.evidence}
+    if p.prop == "parse_faithful":
+        return {BROKEN: "parse differs", HOLDING: "round trip agrees", UNCHECKED: "not checked",
+                UNKNOWN: "not checked"}.get(p.status, p.status)
+    if p.prop == "not_null":
+        return {BROKEN: "nulls", HOLDING: "no nulls", UNCHECKED: "not run",
+                UNKNOWN: "nothing says"}.get(p.status, p.status)
     if p.prop == "max_lateness":
         return {BROKEN: "rows arrive later", HOLDING: "measured within",
                 UNCHECKED: "not measured", UNKNOWN: "no arrival column"}.get(p.status, p.status)

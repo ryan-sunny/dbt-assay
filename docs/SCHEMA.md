@@ -1,6 +1,6 @@
 # The store
 
-One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Eighteen
+One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Twenty
 tables. The whole design turns on one split, so it is worth stating before the diagram:
 
 **Some of these cost nothing and some of them cost money or somebody's afternoon.** A table
@@ -12,7 +12,7 @@ prune` deletes only the first kind, and the split is declared in code rather tha
 PRUNABLE     = ("findings", "edge_facts", "unreadable", "premises", "premise_uses")
 NEVER_PRUNED = ("model_calls", "model_decisions", "claims", "adjudications", "observed_keys",
                 "runs", "calibrations", "compiled_sql", "commits", "states", "warehouse_calls",
-                "test_status", "observed_lateness")
+                "test_status", "observed_lateness", "proofs", "parse_checks")
 ```
 
 A new table belongs to one list or the other and a test fails until it does, so nothing becomes
@@ -37,6 +37,8 @@ erDiagram
     TEST_STATUS |o--o{ PREMISES : "a declared test's last result is evidence"
     OBSERVED_KEYS |o--o{ PREMISES : "a count is evidence"
     OBSERVED_LATENESS |o--o{ PREMISES : "how late rows arrive is evidence"
+    PREMISES ||--o{ PROOFS : "a certificate assumes them"
+    PARSE_CHECKS |o--o{ PREMISES : "parse_faithful"
 
     STATES ||--o{ MODEL_DECISIONS : "one state, many answers"
     MODEL_CALLS ||--o{ MODEL_DECISIONS : "one call, many answers"
@@ -190,6 +192,32 @@ erDiagram
         bigint rows_read
         varchar via
     }
+    PROOFS {
+        varchar model PK "unique_id"
+        varchar property PK "no_fanout:<parent> / pick:<n> / grain / incremental"
+        varchar written_by PK "assay / agent"
+        varchar model_name
+        varchar model_checksum "the file the certificate is about"
+        varchar statement "the property in words"
+        varchar theorem "its name in Lean"
+        varchar rule "the shipped theorem it applies"
+        varchar premises "json: the ledger premises it assumes"
+        varchar status "proven / not_proven / not_attempted"
+        varchar detail "Lean's error and goal, or what is missing"
+        varchar missing
+        varchar source "the Lean text"
+        varchar lean_version
+        timestamp proved_at
+    }
+    PARSE_CHECKS {
+        varchar model PK
+        varchar model_checksum PK
+        varchar via PK "duckdb / warehouse / lean"
+        varchar status "holding / broken / unchecked"
+        varchar detail
+        bigint rows_compared
+        timestamp checked_at
+    }
     TEST_STATUS {
         varchar test_id PK "the dbt test's unique_id"
         timestamp ran_at PK
@@ -314,6 +342,8 @@ rulings were structural, so a calibration report has to exclude them by construc
 | `premises` | what each fact, suppression and proof rests on, its evidence and status | free |
 | `premise_uses` | which grain, held-back finding or proof rests on which premise | free |
 | `observed_lateness` | how late rows arrive after their event time, for an incremental model's lookback | **a warehouse query** |
+| `proofs` | what Lean proved about each model, from which premises, and what it could not | **Lean time**, and an agent's proof cannot be written again for free |
+| `parse_checks` | whether a model's parse is what its SQL says, by round trip | free in DuckDB, **a warehouse query** otherwise |
 | `test_status` | each dbt test's last actual result, from Elementary or a build's `run_results.json` | **a build that is gone** |
 | `commits` | every commit touching the project, and the models it touched; with `runs.git_sha`, when a finding was first seen | free from git |
 

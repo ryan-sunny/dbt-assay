@@ -5502,6 +5502,115 @@ def _probe_lateness(target, project_dir, profiles_dir, dbt_bin, store_path, dry_
 
 
 @app.command()
+def prove(
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    dialect: str = typer.Option(None, "--dialect"),
+    select: str = typer.Option(None, "--select", "-s",
+                               help="only these models, in dbt's selector syntax"),
+    setup: bool = typer.Option(False, "--setup",
+                               help="install the pinned Lean toolchain and compile assay's "
+                                    "library, then stop: for a Docker image or CI, so a "
+                                    "scheduled run never downloads"),
+    offline: bool = typer.Option(False, "--offline",
+                                 help="never download; say what is missing instead"),
+    force: bool = typer.Option(False, "--force", help="re-prove models whose file has not "
+                                                      "changed"),
+    parse_on: str = typer.Option("duckdb", "--parse-on",
+                                 help="where the parse round trip runs: duckdb (in memory, free), "
+                                      "warehouse (your dbt connection, priced), or none"),
+    project_dir: str = typer.Option(".", "--project-dir"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
+    json_out: bool = typer.Option(False, "--json"),
+):
+    """Prove what each model cannot do, with Lean: certificates whose premises are the ledger's.
+
+    For every join, dedupe, grain and incremental merge a proven rule applies to, assay writes a
+    theorem about THIS model (to target/assay/lean/, never beside the models), and Lean checks
+    it. A certificate holds while its premises do; the page and `premises` say when one breaks.
+    It is proven from the parsed structure: `--parse-on` also checks the parse against the SQL.
+    """
+    from . import prove as prove_mod
+    from . import toolchain
+    if parse_on not in ("duckdb", "warehouse", "none"):
+        console.print("[red]--parse-on is duckdb, warehouse or none[/]")
+        raise typer.Exit(2)
+    say = (lambda *a, **k: None) if json_out else (lambda m: console.print(f"[dim]{m}[/]"))
+    try:
+        if setup:
+            st = toolchain.setup(offline=offline, say=say)
+            if json_out:
+                print(_json.dumps(st, indent=2, default=str))
+            else:
+                console.print(f"Lean {st['lean']} ready; library compiled at {st['library']}")
+            return
+        if toolchain.lake_for_build() is None:
+            if offline:
+                toolchain.setup(offline=True, say=say)
+            say(f"Lean {toolchain.VERSION} is not installed: installing it once (--offline "
+                f"refuses)")
+            toolchain.setup(offline=False, say=say)
+    except RuntimeError as e:
+        if json_out:
+            print(_json.dumps({"error": str(e)}))
+        else:
+            console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
+    from .selector import resolve
+    scope = resolve(project, select) if select else None
+    store = Store(store_path)
+    try:
+        facts, _ = relate.run_all(project, digests, schema)
+        entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store),
+                                facts=facts)
+        parsed = None
+        if parse_on != "none":
+            from . import parsecheck
+            parsed = parsecheck.run(project, digests, schema, store, via=parse_on,
+                                    select=scope, project_dir=project_dir,
+                                    profiles_dir=profiles_dir, dbt_bin=dbt_bin, say=say)
+        rep = prove_mod.run(project, digests, schema, entries, store, tdir, force=force,
+                            select=scope, say=say)
+        rep["parse"] = parsed
+    except RuntimeError as e:
+        store.close()
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    store.close()
+    rows = [r for r in rep["rows"] if scope is None or r["model"] in scope]
+    if json_out:
+        print(_json.dumps({**rep, "rows": rows}, indent=2, default=str))
+        return
+    by: dict = {}
+    for r in rows:
+        by.setdefault(r["model_name"], []).append(r)
+    colour = {"holding": "green", "conditional": "yellow", "lost": "red", "stale": "yellow"}
+    for name, rs in sorted(by.items()):
+        proven = [r for r in rs if r["status"] == "proven"]
+        line = f"[bold]{name}[/]  {len(proven)} of {len(rs)} proven"
+        pf = (parsed or {}).get("by_model", {}).get(name)
+        if pf:
+            line += f"  [dim]parse {pf}[/]"
+        console.print(line)
+        for r in rs:
+            if r["status"] == "proven":
+                g = r["guarantee"]
+                console.print(f"  [{colour.get(g, 'dim')}]{g}[/]  {r['statement']}"
+                              + (f"  [red]{r['lost_because']}[/]" if r["lost_because"] else ""))
+            else:
+                console.print(f"  [yellow]not proven[/]  {r['statement']}  "
+                              f"[dim]{(r['missing'] or r['detail'] or '')[:160]}[/]")
+    n = len(rows)
+    np_ = sum(1 for r in rows if r["status"] == "proven")
+    console.print(f"\n{np_} of {n} properties proven across {len(by)} model(s); "
+                  f"{rep['checked_now']} checked by Lean now, {rep['reused']} unchanged since. "
+                  f"[dim]Files in {rep['written_to']}. Proven from the parsed structure.[/]")
+
+
+@app.command()
 def premises(
     model: str = typer.Option("", "--model", "-m", help="only what this model rests on"),
     status: str = typer.Option("", "--status",

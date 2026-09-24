@@ -148,6 +148,10 @@ def all_findings(project, digests, schema, entries=None, *,
     from . import ledger as ledger_mod
     led = ledger_mod.build(project, schema, entries, store)
     ledger_mod.register_grains(led, entries)
+    # A certificate `assay prove` wrote rests on its premises like any other dependent (L2).
+    if store is not None:
+        from . import prove as prove_mod
+        prove_mod.register(led, prove_mod.stored(store))
     with ledger_mod.collecting(led):
         return _all_findings(project, digests, schema, entries, threshold, store)
 
@@ -338,6 +342,33 @@ def premises_report(project, digests, schema, entries, store, model: str = "",
                      "no test results were read, so every declared key is unchecked. `assay "
                      "volume` reads each test's last result from Elementary; a `dbt build` "
                      "leaves them in target/.")}
+
+
+def proofs_report(project, digests, schema, entries, store, model: str = "") -> dict:
+    """Every certificate `assay prove` wrote, with its premises' statuses now and the guarantee
+    they make: the same rows the page shows. Lean does not run here."""
+    from . import ledger as ledger_mod
+    from . import prove as prove_mod
+    all_findings(project, digests, schema, entries, store=store)
+    led = ledger_mod.last()
+    rows = prove_mod.with_guarantees(prove_mod.stored(store), led, project) \
+        if store is not None else []
+    if model:
+        rows = [r for r in rows if r["model_name"] == model]
+        if not rows and not any(m.name == model for m in project.models.values()):
+            return {"error": f"no model named {model}"}
+    for r in rows:
+        pf = ledger_mod.parse_faithful(led, r["model"], store)
+        r["parse"] = {"status": pf.status, "label": ledger_mod.label(pf), "why": ledger_mod.why(pf)}
+    counts: dict = {}
+    for r in rows:
+        counts[r["guarantee"]] = counts.get(r["guarantee"], 0) + 1
+    return {"proofs": rows, "by_guarantee": counts,
+            "note": ("" if rows else "nothing has been proven here yet: `assay prove` writes the "
+                                     "certificates (it needs Lean, which `assay prove --setup` "
+                                     "installs)"),
+            "trust": ("proven from the parsed structure: each certificate holds for every input "
+                      "satisfying its premises; that the parse is the SQL is the `parse` premise")}
 
 
 def sql_files(target: str | Path, project_root: str | Path | None = None) -> dict:

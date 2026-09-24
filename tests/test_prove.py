@@ -1,0 +1,164 @@
+"""L2: per-model certificates, checked by Lean, and the parse round trip."""
+import hashlib
+import json
+
+import pytest
+
+from dbt_assay import inventory, ledger, parsecheck, prove, toolchain
+from dbt_assay.infer import Schema, derive_columns
+from dbt_assay.manifest import Project
+from dbt_assay.parse import digest
+from dbt_assay.store import Store
+
+MODELS = {
+    "stg_parent": "select id, name from raw.parent",
+    "covered": "select c.k, p.name from raw.kids c join main.stg_parent p on c.pid = p.id",
+    "uncovered": "select c.k, p.name from raw.kids c join main.stg_parent p on c.pname = p.name",
+    "grouped": "select k, count(*) as n from raw.kids group by k",
+}
+
+
+def build(tmp_path):
+    nodes = {}
+    for name, sql in MODELS.items():
+        uid = f"model.p.{name}"
+        path = f"models/{name}.sql"
+        nodes[uid] = {"resource_type": "model", "name": name, "original_file_path": path,
+                      "schema": "main", "database": "", "description": "", "columns": {},
+                      "config": {"materialized": "table", "meta": {}},
+                      "checksum": {"name": "sha256",
+                                   "checksum": hashlib.sha256(sql.encode()).hexdigest()}}
+        f = tmp_path / "target" / "compiled" / "p" / path
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(sql)
+    nodes["test.p.unique_parent_id"] = {
+        "resource_type": "test", "name": "unique_stg_parent_id", "column_name": "id",
+        "attached_node": "model.p.stg_parent", "config": {"severity": "ERROR"},
+        "test_metadata": {"name": "unique", "kwargs": {"column_name": "id"}},
+        "depends_on": {"nodes": ["model.p.stg_parent"]}}
+    pm = {u: [] for u in nodes}
+    pm["model.p.covered"] = ["model.p.stg_parent"]
+    pm["model.p.uncovered"] = ["model.p.stg_parent"]
+    cm = {u: [] for u in nodes}
+    cm["model.p.stg_parent"] = ["model.p.covered", "model.p.uncovered"]
+    (tmp_path / "target" / "manifest.json").write_text(json.dumps({
+        "metadata": {"project_name": "p", "adapter_type": "duckdb"}, "nodes": nodes,
+        "sources": {}, "parent_map": pm, "child_map": cm}))
+    return tmp_path / "target"
+
+
+def _load(target):
+    p = Project.load(target)
+    d = {u: digest(m.compiled, m.name) for u, m in p.models.items() if m.readable}
+    sch = Schema.load(p, target)
+    derive_columns(p, d, sch)
+    return p, d, sch
+
+
+needs_lean = pytest.mark.skipif(toolchain.lake_for_build() is None,
+                                reason="no Lean toolchain at the pinned version here")
+
+
+def test_the_obligations_state_each_join_against_the_parents_key(tmp_path):
+    target = build(tmp_path)
+    p, d, sch = _load(target)
+    entries = inventory.build(p, d, sch, store=None)
+    led = ledger.build(p, sch, entries, None, tests={}, observed={})
+    obs = {(o.name, o.prop): o for o in prove.obligations(p, d, sch, entries, led)}
+    cov = obs[("covered", "no_fanout:stg_parent")]
+    assert "inner_join_no_fanout" in cov.lean and 'Unique ["id"] R' in cov.lean
+    assert not cov.missing
+    unc = obs[("uncovered", "no_fanout:stg_parent")]
+    assert "join on id too" in unc.missing
+    assert obs[("grouped", "grain")].rule == "group_by_unique"
+
+
+@needs_lean
+def test_lean_proves_the_covered_join_and_refutes_the_uncovered_one(tmp_path):
+    target = build(tmp_path)
+    p, d, sch = _load(target)
+    s = Store(str(tmp_path / "s.duckdb"))
+    entries = inventory.build(p, d, sch, store=s)
+    rep = prove.run(p, d, sch, entries, s, target, say=lambda *_: None)
+    got = {(r["model_name"], r["property"]): r for r in rep["rows"]}
+    assert got[("covered", "no_fanout:stg_parent")]["status"] == "proven"
+    assert got[("grouped", "grain")]["status"] == "proven"
+    bad = got[("uncovered", "no_fanout:stg_parent")]
+    assert bad["status"] == "not_proven" and "is false" in bad["detail"], bad["detail"]
+    assert (target / "assay" / "lean" / "Models" / "covered.lean").exists()
+    # unchanged files are not proven again
+    again = prove.run(p, d, sch, entries, s, target, say=lambda *_: None)
+    assert again["checked_now"] == 0 and again["reused"] == rep["certificates"]
+
+
+@needs_lean
+def test_a_broken_premise_loses_the_guarantee_without_lean(tmp_path, monkeypatch):
+    target = build(tmp_path)
+    p, d, sch = _load(target)
+    s = Store(str(tmp_path / "s.duckdb"))
+    entries = inventory.build(p, d, sch, store=s)
+    prove.run(p, d, sch, entries, s, target, say=lambda *_: None)
+    rel = (sch.relation.get("model.p.stg_parent") or "").replace('"', "").lower()
+    s.con.execute("insert into observed_keys (relation, column_name, row_count, non_null, "
+                  "distinct_ct, status, detail, observed_at, via, minimality, sampled, "
+                  "sample_pct) values (?, 'id', 10, 10, 7, 'has_duplicates', '', now(), 't', "
+                  "'', false, 0)", [rel])
+    monkeypatch.setattr(prove, "check_files", lambda *a, **k: pytest.fail("Lean ran"))
+    from dbt_assay import live
+    rep = live.proofs_report(p, d, sch, entries, s, model="covered")
+    (r,) = [x for x in rep["proofs"] if x["property"] == "no_fanout:stg_parent"]
+    assert r["guarantee"] == "lost" and "3 duplicate" in r["lost_because"]
+
+
+def test_nothing_is_proven_when_lean_did_not_check_the_file(tmp_path):
+    f = tmp_path / "M.lean"
+    f.write_text("import Assay\n\ntheorem m__a : True := trivial\n")
+    o = prove.Obligation("m", "m", "", "a", "s")
+    prove._mark(f, [o], "no such file or directory (error code: 2)", 1)
+    assert o.status == prove.NOT_PROVEN
+    o2 = prove.Obligation("m", "m", "", "a", "s")
+    prove._mark(f, [o2], "M.lean:1:0: error: unknown module prefix 'Assay'", 1)
+    assert o2.status == prove.NOT_PROVEN
+
+
+def test_the_parse_round_trip_agrees_on_a_plain_model(tmp_path):
+    target = build(tmp_path)
+    p, d, sch = _load(target)
+    st, detail, n = parsecheck.check_duckdb(p, sch, MODELS["grouped"], "duckdb")
+    assert st in (ledger.HOLDING, ledger.UNCHECKED), detail
+
+
+def test_a_parse_that_changes_the_result_is_broken(tmp_path, monkeypatch):
+    target = build(tmp_path)
+    p, d, sch = _load(target)
+    sql = "select id, name from main.stg_parent where id > 1"
+    good = parsecheck.check_duckdb(p, sch, sql, "duckdb")
+    assert good[0] == ledger.HOLDING, good
+    monkeypatch.setattr(parsecheck, "printed", lambda s, dl: s.replace("> 1", ">= 1"))
+    bad = parsecheck.check_duckdb(p, sch, sql, "duckdb")
+    assert bad[0] == ledger.BROKEN and "differ" in bad[1]
+
+
+def test_an_order_dependent_aggregate_is_not_evidence(tmp_path, monkeypatch):
+    assert parsecheck.order_dependent("select string_agg(name, ',') from t", "duckdb")
+    assert not parsecheck.order_dependent(
+        "select string_agg(name, ',' order by name) from t", "duckdb")
+
+
+def test_a_udf_is_named_as_the_reason(tmp_path):
+    msg = parsecheck._why_not_run(
+        "Catalog Error: Scalar Function with name canon_addr_key does not exist!")
+    assert "canon_addr_key" in msg and "outside its SQL" in msg
+
+
+def test_the_parse_premise_reads_only_the_current_file(tmp_path):
+    target = build(tmp_path)
+    p, d, sch = _load(target)
+    s = Store(str(tmp_path / "s.duckdb"))
+    parsecheck.run(p, d, sch, s, say=lambda *_: None)
+    led = ledger.build(p, sch, [], s, tests={}, observed={})
+    pf = ledger.parse_faithful(led, "model.p.covered", s)
+    assert pf.status in (ledger.HOLDING, ledger.UNCHECKED) and pf.evidence
+    p.models["model.p.covered"].checksum = "changed"
+    led = ledger.build(p, sch, [], s, tests={}, observed={})
+    assert "earlier version" in ledger.parse_faithful(led, "model.p.covered", s).evidence[0].detail

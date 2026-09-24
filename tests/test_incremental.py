@@ -234,3 +234,22 @@ def test_a_branch_that_opens_with_a_comment_is_still_read():
         "-- the mark\n/* high-water */ and loaded > (select max(loaded) from {{ this }})",
         "snowflake")
     assert read_ and col == "loaded" and not lb and "{{ this }}" in sql
+
+
+@pytest.mark.skipif(__import__("dbt_assay.toolchain", fromlist=["x"]).lake_for_build() is None,
+                    reason="no Lean toolchain at the pinned version here")
+def test_a_row_by_row_merge_model_is_proven_equal_to_its_full_refresh(snow, tmp_path):
+    from dbt_assay import prove
+    from dbt_assay.store import Store
+    s = Store(str(tmp_path / "s.duckdb"))
+    p, d, sch = _load(snow)
+    entries = inventory.build(p, d, sch, store=s)
+    rep = prove.run(p, d, sch, entries, s, snow, say=lambda *_: None)
+    got = {(r["model_name"], r["property"]): r for r in rep["rows"]}
+    ok = got[("key_unknown", "incremental")]
+    assert ok["status"] == "proven" and ok["rule"] == "incremental_equals_full_refresh"
+    props = {x["property"] for x in ok["premises"]}
+    assert props == {"max_lateness", "unique", "not_null"}
+    # a dedupe inside the model is not row by row: said, not attempted
+    assert got[("all_good", "incremental")]["status"] == "not_attempted"
+    assert "row by row" in got[("all_good", "incremental")]["missing"]

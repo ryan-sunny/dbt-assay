@@ -247,6 +247,8 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         # findings above, so a held-back finding and its premise cannot disagree; `moves` are the
         # statuses that changed at the latest `check`.
         **_premises(ledger, store, find_rows),
+        # What is PROVEN, by Lean, and whether the premises under it still hold (L2).
+        "proofs": _proofs(ledger, store, project),
         # *** THE LOOP: OF THE FINDINGS A PERSON AGREED WITH, HOW MANY WENT, AND CAME BACK. ***
         "loop": _loop(store, findings, project),
     }
@@ -258,6 +260,18 @@ def _repo_url(project) -> str:
         return history_mod.remote_url(history_mod.repo_of(project))
     except Exception:                                            # noqa: BLE001
         return ""
+
+
+def _proofs(led, store, project) -> list:
+    if store is None or led is None:
+        return []
+    from . import ledger as ledger_mod
+    from . import prove as prove_mod
+    rows = prove_mod.with_guarantees(prove_mod.stored(store), led, project)
+    for r in rows:
+        pf = ledger_mod.parse_faithful(led, r["model"], store)
+        r["parse"] = {"status": pf.status, "label": ledger_mod.label(pf), "why": ledger_mod.why(pf)}
+    return rows
 
 
 def _loop(store, findings, project) -> dict:
@@ -797,7 +811,7 @@ def _unreadable(store, project) -> list:
 # Reading the artifact is a build step, not a runtime load.
 _LINES = ("models", "edges", "claims", "findings", "waived", "decisions", "questions",
           "adjudications", "unreadable", "runs", "effectiveness", "suggestions", "premises",
-          "premise_moves")
+          "premise_moves", "proofs")
 # *** AND ITS EMPTY VALUE, BECAUSE A LIST DEFAULTING TO `{}` IS THE SAME BUG AS `[]` -> `{}`. ***
 # Caught by the round-trip guard: an artifact with no `unconfigured.json` handed back a dict where
 # a list belongs, and `.length` on a dict is `undefined` rather than an error -- so the page would

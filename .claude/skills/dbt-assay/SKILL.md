@@ -75,7 +75,11 @@ again once it finishes. Never conclude the tools are broken from a lock.
 5. `lineage(model, column)` when you are about to change a column — it tells you the hop that
    actually produces the value, which is often several models upstream.
 
-6. `premises(model)` — **what assay's reading of this model rests on.** A declared grain rests on
+6. `proofs(model)` — **what is proven about it, by Lean**, and as long as what. A certificate
+   whose guarantee is `holding` is a fact for every input its premises allow: rely on it. One
+   that is `lost` names the premise that broke; `not_proven` names what is missing -- usually a
+   key the join does not cover. An edit that removes a proven property is a regression.
+   `premises(model)` — **what assay's reading of this model rests on.** A declared grain rests on
    its key's test; a hop assay did not flag rests on the parent's key being unique. Each premise
    carries its evidence (the test's last result, a count, a judgment) and a status: `broken`
    (a count found duplicates or the test failed), `unchecked` (declared, never checked),
@@ -330,6 +334,7 @@ and nothing is lost:
 | `practices(model)` | `assay practices --keys-only --no-verify --model <model>` |
 | `lineage(model, column)` | `assay trace <model>.<column>` |
 | `premises(model, status)` | `assay premises --model <model> --json` (`--status broken`) |
+| `proofs(model)` | `assay prove --json`, then read `rows` for the model |
 | `findings(model)` | `assay check --json` — one object with a `findings` list |
 | `changed_contracts()` | `assay diff --baseline <main target>` |
 | `violations()` | `assay check --json`, then read `action` |
@@ -533,6 +538,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay practices` | `assay_practices` | Standard dbt practice: deferred to where it exists, adjudicated where it is noisy. | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--evaluator-schema` `--dialect` `--verify` `--keys-only` `--model/-m` `--store` `--config` |
 | `assay premises` | `assay_premises` | What the findings rest on: every key a declared grain or a held-back finding assumes is unique, with its evidence, its status, and what rests on it. | `--model/-m` `--status` `--target/-t` `--store` `--dialect` `--json` |
 | `assay probe` | `assay_probe` | Count what the SQL cannot settle. | `--target/-t` `--project-dir` `--profiles-dir` `--dialect` `--dbt/--dbt-bin` `--dry-run` `--emit` `--load` `--limit/-n` `--store` `--config` `--sample` `--lateness` `--json` |
+| `assay prove` | `assay_prove` | Prove what each model cannot do, with Lean: certificates whose premises are the ledger's. | `--target/-t` `--store` `--dialect` `--select/-s` `--setup` `--offline` `--force` `--parse-on` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--json` |
 | `assay prune` | `assay_prune` | Drop old runs from the tables a parser can regenerate. | `--keep/-k` `--store` `--dry-run` |
 | `assay read` | `assay_read` | Read every unruled review card once, by the judged tier, into a file a person checks. | `--out/-o` `--target/-t` `--store` `--config` `--select/-s` `--check` `--limit/-n` `--dry-run` `--dialect` |
 | `assay regress` | `assay_regress` | Re-ask every question a person already agreed with, and report what moved. | `--target/-t` `--store` `--config` `--family/-f` |

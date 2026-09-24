@@ -280,6 +280,18 @@ class Backend:
             if store is not None:
                 store.close()
 
+    def proofs(self, model: str = "") -> dict:
+        """What is proven about each model, as long as what: the certificates `assay prove`
+        wrote, each premise's status now, and whether the guarantee holds."""
+        st = self.state()
+        store = self._open_store()
+        try:
+            return live.proofs_report(st.project, st.digests, st.schema, st.entries, store,
+                                      model=model)
+        finally:
+            if store is not None:
+                store.close()
+
     def lineage(self, model: str, column: str) -> dict:
         from . import provenance
         st = self.state()
@@ -1171,6 +1183,11 @@ TOOLS = [
                   "judgment), its status (broken / unchecked / assumed / unknown / holding) and "
                   "what rests on it. Pass `model` for one model, `status` to narrow. A broken "
                   "premise raises the finding it held back; `raised` lists them.")),
+    ("proofs", ("What is PROVEN about a model, checked by Lean: each certificate (a join cannot "
+                "multiply rows, a dedupe keeps the same rows in any order, the grain survives, an "
+                "incremental run equals a full refresh), its premises with their status now, and "
+                "the guarantee: holding, conditional (a premise unchecked), lost (a premise "
+                "broke), stale (the file changed). `assay prove` writes them.")),
     ("lineage", "Follow a column back through the DAG to the hop that produced its value."),
     ("blast_radius", ("Who consumes this model, how many marts are downstream, and which of the "
                       "project's exposures -- dashboards, apps, reports -- it reaches.")),
@@ -1394,6 +1411,10 @@ def build_app(target: str, store_path: str | None = None, handbacks: str | None 
     @tool()
     def premises(model: str = "", status: str = "") -> str:
         return _out(be.premises(model, status))
+
+    @tool()
+    def proofs(model: str = "") -> str:
+        return _out(be.proofs(model))
 
     @tool()
     def lineage(model: str, column: str) -> str:

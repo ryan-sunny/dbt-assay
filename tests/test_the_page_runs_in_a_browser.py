@@ -798,3 +798,46 @@ def test_a_finding_from_a_proven_rule_shows_the_badge(tmp_path):
             assert "proven rule" in text and "pick_total_on_unique_key" in text
         finally:
             b.close()
+
+
+@pytest.mark.skipif(__import__("dbt_assay.toolchain", fromlist=["x"]).lake_for_build() is None,
+                    reason="no Lean toolchain at the pinned version here")
+def test_the_page_shows_what_is_proven_and_what_lean_refuted(tmp_path):
+    import importlib.util
+    from pathlib import Path
+
+    from playwright.sync_api import sync_playwright
+    spec = importlib.util.spec_from_file_location("tp", Path(__file__).with_name("test_prove.py"))
+    tp = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tp)
+    target = tp.build(tmp_path)
+    store = tmp_path / "s.duckdb"
+    CliRunner().invoke(app, ["check", "--target", str(target), "--store", str(store)])
+    r = CliRunner().invoke(app, ["prove", "--target", str(target), "--store", str(store)])
+    assert r.exit_code == 0, r.output
+    assert "proven" in r.output
+    out = tmp_path / "p.html"
+    r = CliRunner().invoke(app, ["page", str(out), "--target", str(target), "--store", str(store)])
+    assert r.exit_code == 0, r.output
+    with sync_playwright() as pw:
+        b = pw.chromium.launch()
+        try:
+            errors = []
+            page = b.new_page(viewport={"width": 1500, "height": 900})
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(out.as_uri() + "#models")
+            page.wait_for_timeout(300)
+            page.evaluate("() => GO.models('uncovered')")
+            text = page.locator(".detail").first.inner_text()
+            assert "proven (0 of 1)" in text.lower() and "join on id too" in text
+            page.evaluate("() => GO.models('covered')")
+            text = page.locator(".detail").first.inner_text()
+            assert "proven (1 of 1)" in text.lower() and "as long as" in text
+            page.click('nav button[data-tab="guarantees"]')
+            page.wait_for_timeout(200)
+            page.locator(".gitem", has_text="not proven").first.click()
+            pane = page.locator(".detail").first.inner_text()
+            assert "proof" in pane.lower() and "what is missing" in pane.lower()
+            assert not errors, errors
+        finally:
+            b.close()

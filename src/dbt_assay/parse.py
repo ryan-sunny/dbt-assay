@@ -74,6 +74,26 @@ def _picks_only_keys(window, keys: set) -> bool:
     return True
 
 
+def _kept_columns(window) -> list | None:
+    """Every column the select holding this window keeps, or None when it keeps a star or an
+    expression other than the window itself."""
+    sel = window.find_ancestor(exp.Select)
+    if sel is None:
+        return None
+    out = []
+    for proj in sel.expressions:
+        if proj.find(exp.Window) is not None:
+            continue
+        inner = proj.unalias() if isinstance(proj, exp.Alias) else proj
+        if isinstance(inner, (exp.Literal, exp.Null)):
+            continue
+        if not isinstance(inner, exp.Column) or isinstance(inner, exp.Star) \
+                or inner.find(exp.Star) is not None:
+            return None
+        out.append(inner.name.lower())
+    return out
+
+
 def _base_column(e: exp.Expression) -> str | None:
     """The single column an expression rests on, if there is exactly one."""
     if isinstance(e, exp.Alias):
@@ -374,6 +394,12 @@ class WindowFact:
     # enclosing select projects is a partition or an ORDER BY key: two rows still tied after the
     # sort are then identical in everything kept, so which one survives changes nothing.
     picks_only_keys: bool = False
+    # The same facts in the window's own scope, for a certificate to state (L2): the partition's
+    # base columns, the order's columns (an expression is `None`), and every column the enclosing
+    # select keeps (`None` when it keeps a star or an expression, so nothing can be claimed).
+    part_keys: list = field(default_factory=list)
+    order_keys: list = field(default_factory=list)
+    kept_columns: list | None = None
 
 
 @dataclass
@@ -665,6 +691,10 @@ def _extract(tree, name: str, dialect: str) -> Digest:
             order_sql=[o.sql(dialect=dialect)[:90] for o in (order.expressions if order else [])],
             order_reprojected=[_reprojected(o) for o in (order.expressions if order else [])],
             picks_only_keys=_picks_only_keys(w, _keys),
+            part_keys=[c for c in (_base_column(p) for p in parts) if c],
+            order_keys=[o.this.name.lower() if isinstance(getattr(o, "this", None), exp.Column)
+                        else None for o in (order.expressions if order else [])],
+            kept_columns=_kept_columns(w),
         ))
 
     d.has_qualify = bool(list(tree.find_all(exp.Qualify)))

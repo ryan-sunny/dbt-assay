@@ -1239,10 +1239,10 @@ a column is, what the grain is, and what would break before it writes a line. Th
 it the **obligation** — without it an agent checks when it remembers, and with it, checking is the
 procedure.
 
-Twenty-five tools, and beside them every command as a tool of its own: `assay_<command>` takes the
+Twenty-six tools, and beside them every command as a tool of its own: `assay_<command>` takes the
 command's flags as one string and runs the real command, so an agent with no shell can run all of
 assay. A run longer than its wait comes back as a job, which `job_status`, `job_stop` and `jobs`
-follow. Of the twenty-five, most report; nine do something else:
+follow. Of the twenty-six, most report; nine do something else:
 
 | tool | what it is for |
 |---|---|
@@ -1317,6 +1317,28 @@ None uses `sorry`, and each rests only on Lean's standard axioms; CI builds the 
 both. A finding from one of these checks carries `proven_rule` and the page shows a *proven rule*
 badge. What is proven is the rule over assay's model of SQL: that a model's SQL was parsed
 faithfully, and that the engine behaves as the model says, are premises of their own.
+
+### Certificates: `assay prove`
+
+```bash
+assay prove --setup        # once: the pinned Lean toolchain + assay's library (Docker, CI)
+assay prove                # certificates for every model a proven rule applies to
+assay prove --parse-on warehouse --project-dir . --dbt "uv run dbt"   # parse check, your dbt
+```
+
+For each join, dedupe, grain and incremental merge, assay writes a theorem about THAT model to
+`target/assay/lean/` (build output, never beside the models): "a join onto `stg_x` cannot
+multiply this model's rows, as long as `id` is unique in `stg_x`". Its hypotheses are the model's
+premises, named by their ledger ids, and its proof applies a shipped rule; Lean checks it. When
+Lean refutes one -- the join does not cover the parent's declared key -- the certificate says
+what is missing. A certificate is live: when a premise it assumes breaks, it reads *guarantee
+lost* on the next `check`, with no Lean run; when the model's file changes, it is proven again.
+Each model's parse is also checked against its SQL (the premise `parse_faithful`): both run on
+generated rows that duplicate keys, hold NULLs and tie, in an in-memory DuckDB by default or
+through your connection with `--parse-on warehouse`. MCP `proofs(model)` and the page's
+Guarantees tab and model pane read the same rows. On a 358-model warehouse: 585 properties, 404
+proven, 137 refuted by Lean with the missing premise named, 44 with no rule that applies, in 16
+seconds.
 
 ## What it will not do
 
