@@ -84,6 +84,11 @@ class Suggestion:
     draft: str = ""         # YAML to paste, with every meaning field left empty
     basis: str = ""         # which derivation rule produced it
     rank: float = 0.0
+    # *** WHAT THE RANK IS MADE OF, IN WORDS. ***
+    # The rank folds a scale and a count into one number (19 models and 32 joins is 190,032), so
+    # the bare number was shown as "rank 190,032" and meant nothing. This says what the position
+    # rests on, in the rule's own terms. The number still orders; this is what a person reads.
+    ordered_by: str = ""
     # *** WHAT THIS RULE REFUSES TO DECIDE. ***
     # A signal that points at two different files is reported as pointing at two different files.
     decide: str = ""
@@ -91,7 +96,8 @@ class Suggestion:
     def as_dict(self) -> dict:
         return {"section": self.section, "key": self.key, "headline": self.headline,
                 "measured": list(self.measured), "draft": self.draft, "basis": self.basis,
-                "rank": round(self.rank, 3), "decide": self.decide}
+                "rank": round(self.rank, 3), "ordered_by": self.ordered_by,
+                "decide": self.decide}
 
 
 # --------------------------------------------------------------------------- vocab
@@ -189,6 +195,7 @@ def _vocab_from_joins(store, cfg, run_id: str | None, project=None) -> list[Sugg
             # Models dominate and hops break the tie, in one number, so the rank is the order a
             # reader sees rather than a second opinion about it.
             rank=float(n_models * 10_000 + n_hops),
+            ordered_by=f"{n_models} models join on it, over {n_hops} hops",
             basis="shared across the most models, absent from vocab",
             headline=f"{n_models} models join on `{col}` ({n_hops} hops) "
                      f"and the vocab does not define it",
@@ -277,6 +284,7 @@ def _vocab_from_descriptions(cfg, project) -> list[Suggestion]:
             # Ranked below the join rule's scale on purpose: this proposes WORDS somebody already
             # wrote, and the join rule proposes the ones the warehouse actually turns on.
             rank=float(len(uses)),
+            ordered_by=f"described the same way in {len(uses)} models",
             basis="already defined in this project's own column descriptions",
             headline=f"`{col}` is described identically in {len(uses)} model(s) and the vocab "
                      f"does not carry it",
@@ -340,6 +348,7 @@ def _vocab_from_contradicted_names(store) -> list:
             m.append(f"...and {len(obs) - 4} more relation(s)")
         out.append(Suggestion(
             section="vocab", key=col, rank=best[3] * 100.0,
+            ordered_by=f"{best[3]:.2%} unique in {best[0]}",
             basis="named like a key, and nearly -- but not -- unique",
             headline=f"`{col}` is {best[3]:.2%} unique in {best[0]} and is named like a key",
             measured=m,
@@ -470,6 +479,7 @@ def _descriptions(project, entries, schema, digests=None) -> list[Suggestion]:
         quoted = sum(1 for x in cites if ": quoted" in x)
         out.append(Suggestion(
             section="descriptions", key=e.name, rank=float(e.marts * 1000 + len(rows)),
+            ordered_by=f"{e.marts} mart(s) downstream, {len(rows)} column(s) drafted",
             basis="drafted from what assay already holds, for columns nobody described",
             headline=(f"{e.name}: {len(rows)} undescribed column(s) drafted, {quoted} quoted "
                       f"from a sentence a person wrote"),
@@ -572,6 +582,9 @@ def _repeated_reasons(store, cfg, live: set | None) -> list[Suggestion]:
             section="open", key=sh[:60],
             # *** RANKED ON WHAT IS STILL TRUE, NOT ON HOW MANY WERE EVER RULED ON. ***
             rank=float(len(still)) if live is not None else float(len(subjects)),
+            ordered_by=(f"{len(still)} of {len(subjects)} still produce a finding"
+                        if live is not None else
+                        f"{len(subjects)} subject(s); which still fire was not measured"),
             basis="one reason, given on several subjects",
             headline=f"the same reason is given on {len(subjects)} subjects "
                      f"({', '.join(subjects[:3])}{'...' if len(subjects) > 3 else ''})",
@@ -629,6 +642,7 @@ def _waivers_from_acceptances(store, cfg) -> list[Suggestion]:
         seen.add((name, q))
         out.append(Suggestion(
             section="waivers", key=f"{name}:{q}", rank=1.0,
+            ordered_by="one accept ruling; every waiver ranks the same",
             basis="an accept ruling, whose reason is already written",
             headline=f"{name}: `{q}` was accepted -- correct, and left on purpose -- and only the "
                      f"store records it. A waiver puts the decision in git",
@@ -667,6 +681,7 @@ def _questions_unconfigured(cfg, firing: set) -> list[Suggestion]:
                      f"    # point rather than a recommendation.")
         out.append(Suggestion(
             section="questions", key=name, rank=2.0,
+            ordered_by="fired and unconfigured; every one ranks the same",
             basis="fired, and the config does not name it",
             headline=f"`{name}` is firing and audit.yml does not say what to do about it, "
                      f"so it warns and cannot fail a build",
@@ -753,6 +768,7 @@ def _questions_from_agreement(store, cfg) -> list[Suggestion]:
                    "no rulings at all. Run `assay review -i` before gating this family.")
             out.append(Suggestion(
                 section="questions", key=fam, rank=0.5,
+                ordered_by="no measured agreement, so after every family that has one",
                 basis="no measured agreement, and why",
                 headline=(f"`{fam}` has never been ruled on, so nothing measures whether it "
                           f"is right"
@@ -773,6 +789,9 @@ def _questions_from_agreement(store, cfg) -> list[Suggestion]:
             continue
         out.append(Suggestion(
             section="questions", key=fam, rank=float(ruled) * (1.0 if thin else 2.0),
+            ordered_by=(f"{ruled} ruling(s), under the floor of {floor}, so counted once" if thin
+                        else f"{ruled} ruling(s), at or over the floor of {floor}, so counted "
+                             f"twice"),
             basis="measured agreement per family",
             headline=(
                 f"`{fam}` has only {ruled} ruling(s), under the floor of {floor}, so its "
@@ -809,6 +828,7 @@ def _explanations(store) -> list[Suggestion]:
             continue
         out.append(Suggestion(
             section="explanations", key=f"{fam}:{sh[:40]}", rank=float(len(notes)),
+            ordered_by=f"given {len(notes)} times",
             basis="a reason given repeatedly on rulings",
             headline=f"the same explanation was given {len(notes)} times on `{fam}`",
             measured=[f"{len(notes)} occurrences",
@@ -867,6 +887,7 @@ def build(store, cfg, firing: set, run_id: str | None = None, live: set | None =
         if skipped:
             out.append(Suggestion(
                 section="open", key="_label_stubs", rank=-1.0,
+                ordered_by="listed last: it reports what was left out, and is not an edit",
                 basis="rulings excluded for carrying no written reason",
                 headline=f"{skipped} disagreement(s) are project LABELS, not written reasons",
                 measured=[(f"{skipped} rows with source `label`: the project's own "

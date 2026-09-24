@@ -2373,7 +2373,10 @@ function suggestTab(host) {
       {key: 'k', label: 'candidate', mono: 1, val: r => r.key || r.headline},
       {key: 'sec', label: 'edit', val: r => LABEL[r.section] || r.section,
        cell: r => el('span', {class: 'pill', text: LABEL[r.section] || r.section})},
-      {key: 'rank', label: 'rank', n: 1, val: r => r.rank},
+      /* *** "RANK 190,032" WAS A SCALE AND A COUNT FOLDED INTO ONE NUMBER. ***
+         What the position rests on, in the rule's own words. It still sorts by the number. */
+      {key: 'rank', label: 'ordered by', val: r => r.rank,
+       cell: r => el('span', {class: 'tot', text: r.ordered_by || ''})},
     ],
     rowSort: 'rank', rowDir: -1,
     rowText: r => [r.headline, r.key, (r.measured || []).join(' ')].join(' '),
@@ -2382,6 +2385,7 @@ function suggestTab(host) {
       bits.push(el('div', {class: 'path mono', text: (LABEL[r.section] || r.section)
                                                      + '  \u00b7  ' + (r.basis || '')}));
       bits.push(el('p', {class: 'prose', text: r.headline}));
+      if (r.ordered_by) bits.push(el('p', {class: 'note', text: 'Placed by: ' + r.ordered_by + '.'}));
       if (r.measured && r.measured.length)
         bits.push(section('what was measured',
           el('ul', {class: 'sug-m'}, r.measured.map(m => el('li', {text: m})))));

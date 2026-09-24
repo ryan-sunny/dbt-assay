@@ -455,3 +455,26 @@ def test_the_rule_says_what_the_drafts_do():
     assert "is empty and must stay empty" not in src
     assert "comes back empty, and you must hand it over empty" not in skilltext.SKILL_MD
     assert "verbatim" in skilltext.SKILL_MD
+
+
+def test_every_suggestion_says_what_its_rank_is_made_of(tmp_path):
+    """*** "RANK 190,032" WAS SHOWN AS IF IT MEANT SOMETHING ON ITS OWN. ***
+
+    The rank folds a scale and a count into one number -- 19 models and 32 hops is 190,032 --
+    and the page printed it bare, beside 2 for a policy and -1 for a note. Every rule now says, in
+    words, what its position rests on, and the page shows that instead of the number.
+    """
+    s = _store(tmp_path)
+    for i in range(4):
+        _edge(s, f"a{i}", f"b{i}", ["section_id", "parcel_pk"])
+    for subj in ("model.p.x", "model.p.y", "model.p.z"):
+        _rule(s, subj, "hop_multiplies_rows", "disagree", "a union member edge cannot multiply")
+    _rule(s, "model.p.w", "hop_multiplies_rows", "disagree", "")
+    out = suggest.build(s, Config(), {"grain_unresolved"}, "r1")
+    assert len({i.section for i in out}) >= 2, "the fixture reaches one rule; it measures nothing"
+    for item in out:
+        assert item.ordered_by, f"{item.section}/{item.basis}: rank {item.rank} with no words"
+        assert item.as_dict()["ordered_by"] == item.ordered_by
+    shared = [i for i in out if i.basis.startswith("shared across")]
+    assert shared and shared[0].ordered_by == "4 models join on it, over 4 hops", \
+        shared and shared[0].ordered_by
