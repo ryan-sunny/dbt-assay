@@ -1,0 +1,145 @@
+# Questions about several models at once, asked of call sites `clusters` builds for free.
+#
+# *** CODE GROUPS WHAT IT CAN PROVE; A JUDGMENT SEES ONLY WHAT CODE CANNOT SETTLE. ***
+# Filters written the same way in three or more models are grouped by their shape, exactly, before
+# any question is asked. A claim written word for word in two models is grouped the same way and
+# never sent. What reaches these questions is the part a parser cannot decide: whether one shape in
+# five places is one rule or five decisions, whether the one that differs meant to, where a shared
+# fix belongs, and whether two differently worded sentences assert the same thing.
+#
+# *** NO ANSWER HERE IS A VERDICT ON A GROUP. ***
+# A cluster read as one rule becomes a finding on EACH member, ruled one at a time. A claim pair is
+# one edge of a graph. Nothing is ever ruled on as a unit (25.24a).
+version: 1
+
+one_rule_or_a_coincidence:
+  id_prefix: "orule"
+  type: choice
+  subject: predicate_cluster
+  prompt_version: "orule.v1"
+  finding_when: [one_rule_repeated]
+  instructions:
+    question: >-
+      `as_each_model_writes_it` lists `how_many_models` models that each filter their rows with the
+      same shape, `filter_shape`. Is this ONE rule written again in each model, or separate
+      decisions that happen to be written alike?
+    note: >-
+      Read what each filter is filtering: the columns and their descriptions. The same rule is the
+      same intent applied to the same kind of value, so that changing it in one model and not the
+      others would be a mistake. Separate decisions are filters that look alike and protect
+      different things, so each could change on its own without anything going wrong.
+  criteria:
+    one_rule_repeated:
+      what: >-
+        The same intent applied to the same kind of value in every model. If it changed in one
+        and not the others, that would be a mistake.
+      examples:
+        - "every model drops rows whose address is an empty string before building a key from it"
+        - "each staging model keeps only the same list of status codes"
+    independent_decisions:
+      what: >-
+        The filters look alike but protect different things in different models, so each could
+        change on its own without anything going wrong.
+      examples:
+        - "`amount > 0` on a payment in one model and `amount > 0` on an inventory count in another"
+    cannot_tell:
+      what: "The filters and their columns do not settle it. Choose this rather than guess."
+
+where_the_fix_belongs:
+  id_prefix: "route"
+  # *** IT NARROWS A DECISION TO ITS EVIDENCE AND DOES NOT MAKE IT. *** (25.23c) The answer is
+  # shown beside the cluster; a fix recommendation is not a defect, so it is never a finding.
+  acknowledge:
+    finding_when: >-
+      deliberate. The answer says where a shared fix would belong, beside the counts that decide
+      it. Where to fix something is a person's decision, never a defect in a model.
+  type: choice
+  subject: predicate_cluster_route
+  prompt_version: "route.v1"
+  instructions:
+    question: >-
+      `how_many_models` models filter their rows with the same shape, `filter_shape`. `models`
+      says which layer each sits in, whether it reads a source directly, and how many sources lie
+      behind it. If this one filter were to be fixed once, where would that fix belong?
+    note: >-
+      Read the counts; do not work them out again. Many staging models over many different sources
+      means the feeds themselves ship the problem. Models in several layers over one source means
+      one model upstream should have handled it and the others inherited the problem.
+      `a_shared_macro_already_writes_it` names a macro that already carries this filter, or says no.
+  criteria:
+    at_the_source:
+      what: >-
+        The feeds themselves ship the problem: the models reading them directly each patch it, so
+        the fix is where the data is loaded, before any model sees it.
+    in_a_shared_macro:
+      what: >-
+        The same handling is needed in several models that each read their own data, so it belongs
+        in one macro every one of them calls, not written again in each.
+    upstream_in_one_model:
+      what: >-
+        The models share a parent, and one model upstream should have handled it once for all of
+        the ones below it.
+    correct_where_it_is:
+      what: >-
+        Each model filters its own rows for its own reasons, and moving the filter anywhere else
+        would change what one of them means.
+    cannot_tell:
+      what: "The counts do not settle it. Choose this rather than guess."
+
+the_odd_one_out:
+  id_prefix: "odd"
+  type: choice
+  subject: cluster_member
+  prompt_version: "odd.v2"
+  finding_when: [undeclared_divergence]
+  instructions:
+    question: >-
+      `how_many_models_write_it` models write the filter `shared_filter`, as
+      `as_the_others_write_it` shows. `this_model` writes `this_models_filter` instead, and
+      `the_difference` says exactly what differs. Is this a deliberate exception, or has it drifted
+      from what the others do?
+    note: >-
+      Judge only the difference. A deliberate exception has a reason visible in what differs: a
+      value that only this model's data can carry, a different column meaning a different thing,
+      or a narrower scope the model exists for -- and `what_this_model_says_about_it` quotes any
+      comment or description line that mentions the differing value. Only those, or the code
+      itself, count as evidence of intent. A drift is the same rule on the same kind of column
+      with a value added, lost or changed, and nothing to say why.
+  criteria:
+    deliberate_exception:
+      what: >-
+        The difference fits what this one model is for, and the others have no reason to carry it.
+      examples: ["one region's model lists a code only that region issues"]
+    undeclared_divergence:
+      what: >-
+        The same rule with a value added, lost or changed, and nothing in the difference says why.
+        One of them has drifted from the other.
+      examples: ["nine models list four status codes and one lists three of the same four"]
+    cannot_tell:
+      what: "The difference alone does not settle it. Choose this rather than guess."
+
+claims_are_the_same_assertion:
+  id_prefix: "same"
+  # *** ONE EDGE OF A GRAPH, AS `same_defect` IS. *** The components are what a person reads: the
+  # same assertion made about several models, so a claim found false in one is suspect in all.
+  acknowledge:
+    finding_when: >-
+      deliberate. The answer is one edge of a graph, not a verdict about a model. `assay clusters`
+      takes the connected components and prints them; a single pair is not a finding.
+  type: noul
+  subject: claim_pair
+  prompt_version: "same.v1"
+  instructions:
+    question: >-
+      `first_claim` is written about `first_model` and `second_claim` about `second_model`. Do the
+      two sentences assert the SAME thing -- so that if one were false, the other would be false
+      for the same reason?
+    note: >-
+      Judge what is asserted, not the wording and not the model names. Two sentences sharing most
+      of their words can assert different things, and two worded differently can assert one.
+      Identical sentences are never sent here -- code already grouped those.
+  criteria:
+    "true":
+      what: "They assert the same thing: one being false would make the other false for the same reason."
+    "false":
+      what: "They assert different things, and one could be false while the other is true."

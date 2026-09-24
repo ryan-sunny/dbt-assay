@@ -627,6 +627,7 @@ def explorer_html(data: dict, record_html: str) -> str:
         # None when nothing was measured, so the tab shows no count rather than a zero.
         "monitoring": (len((data.get("monitoring") or {}).get("monitoring") or [])
                        if (data.get("monitoring") or {}) else None) or None,
+        "areas": len((data.get("areas") or {}).get("predicate_clusters") or []) or None,
     }
     # *** THE OVERVIEW IS THE WAY IN, NOT THE LAST TAB. ***
     # It is the only surface here with an argument to make rather than a table to show, and a
@@ -638,6 +639,7 @@ def explorer_html(data: dict, record_html: str) -> str:
         ("chain", "The chain", counts["edges"]),
         ("claims", "Claims", counts["claims"]),
         ("findings", "Findings", counts["findings"]),
+        ("areas", "Areas", counts["areas"]),
         # *** IS ANYTHING WATCHING THIS, AND ARE THE TESTS ACTUALLY RUNNING. ***
         # Present whether or not the numbers were taken: a tab that appears only when somebody
         # passed `--monitoring` is a tab nobody learns exists, and its absence reads as a tool
@@ -1501,6 +1503,58 @@ function claimsTab(host) {
     ],
   });
   host.replaceChildren(d);
+}
+
+/* -------------------------------------------------------------------------------- Areas */
+/* *** A CLUSTER IS AN AREA, NOT A FINDING, AND NOTHING HERE IS RULED ON AS ONE. ***
+   What code settled is exact and free; what a judgment read is shown beside it with how sure it
+   was, and a cluster read as one rule is ruled on member by member, in the Findings tab. */
+function areasTab(host) {
+  const A = DATA.areas || {};
+  const pcs = A.predicate_clusters || [], odds = A.odd_ones_out || [], same = A.same_claim || [];
+  const read = r => r ? el('span', {class: 'pill judged',
+                                    text: r.answer.replace(/_/g, ' ') + ' @' + r.confidence})
+                      : el('span', {class: 'tot', text: 'not asked'});
+  const bits = [el('p', {class: 'note', text: 'Filters written the same way in several models, '
+    + 'the one that differs from what most of its family writes, and one claim made about several '
+    + 'models. Grouping is exact and free; the readings come from `assay clusters --judge`.'})];
+  bits.push(section('filters written the same way (' + pcs.length + ')', grid(pcs, [
+    {key: 'size', label: 'models', n: 1, val: c => c.size},
+    {key: 'shape', label: 'filter', mono: 1, clip: 1, val: c => c.shape},
+    {key: 'one', label: 'one rule?', val: c => c.one_rule ? c.one_rule.answer : '',
+     cell: c => c.macro_at ? el('span', {class: 'pill declared', text: 'written once, in '
+                                         + c.macro_at}) : read(c.one_rule)},
+    {key: 'fix', label: 'fix belongs', val: c => c.fix_belongs ? c.fix_belongs.answer : '',
+     cell: c => c.macro_at ? el('span', {class: 'tot', text: '\u2014'}) : read(c.fix_belongs)},
+  ], {placeholder: 'filter by shape or model...', cap: 200, sort: 'size', dir: -1,
+      text: c => [c.shape, c.models.join(' ')].join(' '),
+      pick: c => showCluster(c)})));
+  /* Inline, and empty until a row is picked: the `.detail` pane of the other tabs reserves a
+     column's height, which here left a screen of blank page between two sections. */
+  const detail = el('div', {});
+  function showCluster(c) {
+    detail.replaceChildren(el('h2', {class: 'mono', text: c.shape}),
+      kv([['models', el('span', {}, c.models.map(m => link(m)).flatMap((x, i) =>
+            i ? [el('span', {text: ', '}), x] : [x]))],
+          ['written once?', c.macro_at || 'no: each model writes it'],
+          ['one rule?', read(c.one_rule)], ['fix belongs', read(c.fix_belongs)]]));
+  }
+  bits.push(detail);
+  bits.push(section('the one that differs (' + odds.length + ')', grid(odds, [
+    {key: 'model', label: 'model', mono: 1, val: o => o.model, cell: o => link(o.model)},
+    {key: 'diff', label: 'what differs', clip: 1, val: o => o.difference},
+    {key: 'n', label: 'others', n: 1, val: o => o.shared_by.length},
+    {key: 'read', label: 'read as', val: o => o.read_as ? o.read_as.answer : '',
+     cell: o => read(o.read_as)},
+  ], {placeholder: 'filter...', cap: 200, sort: 'model', dir: 1,
+      text: o => [o.model, o.difference, o.shared].join(' ')})));
+  bits.push(section('one claim, several models (' + same.length + ')', grid(same, [
+    {key: 'n', label: 'models', n: 1, val: g => g.length},
+    {key: 'claim', label: 'claim', clip: 1, val: g => g[0].claim},
+    {key: 'who', label: 'about', clip: 1, val: g => g.map(x => x.model).join(', ')},
+  ], {placeholder: 'filter claims...', cap: 200, sort: 'n', dir: -1,
+      text: g => g.map(x => x.model + ' ' + x.claim).join(' ')})));
+  host.replaceChildren(...bits);
 }
 
 /* ----------------------------------------------------------------------------- Findings */
@@ -2614,6 +2668,7 @@ function monitoringTab(host) {
 
 /* ---------------------------------------------------------------------------------- tabs */
 const VIEWS = {models: modelsTab, chain: chainTab, claims: claimsTab, findings: findingsTab,
+               areas: areasTab,
                suggest: suggestTab, monitoring: monitoringTab,
                answers: answersTab, spend: spendTab, questions: questionsTab, config: configTab,
                understood: understoodTab};

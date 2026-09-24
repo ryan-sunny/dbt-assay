@@ -374,6 +374,11 @@ def _subject(ctx, inputs):
     s = subs.get(inputs["key"])
     if s is None:
         return None
+    from .subject_kinds import CLUSTER_KINDS
+    if inputs["kind"] in CLUSTER_KINDS:
+        # A cluster spans models, and a vocabulary scoped to its first member is not true of the
+        # rest. Its state is what the builder made and nothing else.
+        return dict(s.state)
     v = ctx.vocab_for(s.uid)
     return {**s.state, **({"vocabulary": v} if v else {})}
 

@@ -105,6 +105,16 @@ SHAPES: dict[str, tuple[str, str]] = {
         "delete the seed, or wire it up",
         (        "Nothing reads it. Either it is dead and should go, or something was meant to `ref` it "
         "and does not.")),
+    "one_rule_or_a_coincidence": (
+        "write the rule once",
+        ("The same filter is written in several models and was read as one rule. Put it in one "
+         "macro every model calls, or in the model upstream they share -- `assay clusters` shows "
+         "where the fix was read to belong, and the counts that read rests on.")),
+    "the_odd_one_out": (
+        "bring it back in line, or say why it differs",
+        ("Most of its family writes the filter one way and this model writes it another, with "
+         "nothing saying why. Either it drifted and should match, or it is deliberate and a "
+         "comment on the filter should say so.")),
     "exposure_undeclared": (
         "declare the exposure, or retire the model",
         ("Nothing in the project reads it. If a dashboard, app or report does, add an `exposures:` "

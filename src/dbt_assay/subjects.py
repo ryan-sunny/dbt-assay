@@ -22,7 +22,9 @@ from dataclasses import dataclass, field
 
 KINDS = ("model", "edge", "column", "predicate", "expression", "window", "ruling_pair",
          "finding", "default", "column_risk", "enumerated_filter", "same_name_measure",
-         "time_join", "ranking_window", "sentinel")
+         "time_join", "ranking_window", "sentinel",
+         # clusters: call sites no single model has (25.24b)
+         "predicate_cluster", "predicate_cluster_route", "cluster_member", "claim_pair")
 
 # *** A QUESTION CAN ONLY ASK WHAT ITS SUBJECT'S STATE CAN ANSWER, AND NOTHING SAID SO. ***
 # Reported from the field, and it cost an hour: two custom questions lint-passed and never fired,
@@ -125,6 +127,12 @@ def build(kind: str, src: SubjectSource, limit: int = 0,
         out = _ruling_pairs(src.store)
         return out[:limit] if limit else out
     from .subject_kinds import BUILDERS as _MORE
+    from .subject_kinds import CLUSTER_KINDS, cluster_subjects
+    if kind in CLUSTER_KINDS:
+        # *** A CLUSTER IS NO ONE MODEL, SO NO ROW DESCRIPTION AND NO BLAST-RADIUS ORDER. ***
+        # Both would be the first member's, stamped on a subject about all of them.
+        out = cluster_subjects(kind, src)
+        return out[:limit] if limit else out
     if kind == "finding":
         out = _findings(project, digests, schema, src.findings, src.store)
     elif kind in _MORE:

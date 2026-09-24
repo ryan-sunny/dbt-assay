@@ -422,6 +422,15 @@ CALLERS: dict[str, tuple[str, str, str]] = {
     # assay's own disagreements, asking whether two of them are one bug.
     "same_defect":                      ("cli",        "assay disagreements --judge",
                                          "two rejected findings' reasons"),
+    # Clusters: call sites no single model has, built by `clusters` for free (25.24b).
+    "one_rule_or_a_coincidence":        ("cli",        "assay clusters --judge",
+                                         "one filter shape and every model writing it"),
+    "where_the_fix_belongs":            ("cli",        "assay clusters --judge",
+                                         "one filter shape + layers, sources, a macro"),
+    "the_odd_one_out":                  ("cli",        "assay clusters --judge",
+                                         "the shared filter + the one that differs"),
+    "claims_are_the_same_assertion":    ("cli",        "assay clusters --judge",
+                                         "two claims about two models"),
     # Counted tier: Elementary counted the movement, assay brought the claim and the blast radius.
     "volume_contradicts_a_claim":       ("cli",        "assay volume --judge",
                                          "one counted movement + one claim"),

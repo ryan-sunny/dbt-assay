@@ -6081,6 +6081,134 @@ def version_stamps(
         raise typer.Exit(1)
 
 
+# The four cluster families, the subject kind each is asked of, and whether it is a noul.
+_CLUSTER_FAMILIES = (
+    ("one_rule_or_a_coincidence", "predicate_cluster", False),
+    ("where_the_fix_belongs", "predicate_cluster_route", False),
+    ("the_odd_one_out", "cluster_member", False),
+    ("claims_are_the_same_assertion", "claim_pair", True),
+)
+
+
+@app.command()
+def clusters(
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    judge: bool = typer.Option(False, "--judge",
+                               help="ask the four cluster questions of what code could not "
+                                    "settle. Without it, everything shown is free and exact."),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="with --judge: the calls net of the store, their price and "
+                                      "their time, and nothing sent"),
+    limit: int = typer.Option(0, "--limit", "-n", help="ask at most N subjects per family"),
+    as_json: bool = typer.Option(False, "--json"),
+    dialect: str = typer.Option(None, "--dialect"),
+) -> None:
+    """Areas rather than findings: one filter written in several models, the one that differs, and
+    one claim made about several models.
+
+    *** A CLUSTER IS A CALL SITE THAT DID NOT EXIST. *** (25.23, 25.24)
+    "These five models each defend against an empty string: one rule, or five decisions?" cannot be
+    put to one model. Code builds the clusters for free, by the shape of what was written; `--judge`
+    asks only what code cannot settle. Nothing here is ruled on as a unit: a cluster read as one
+    rule becomes a finding on EACH member, and a claim pair is one edge of a graph.
+    """
+    import json as _j
+
+    from . import clusters as cl_mod
+    from .contracts import QUESTIONS
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
+    cfg = Config.load(config_path)
+    store = Store(store_path) if Path(store_path).exists() else None
+    pcs = cl_mod.predicate_clusters(project, digests)
+    odds = cl_mod.odd_ones_out(project, digests)
+    pairs, settled = cl_mod.claim_pairs(store, project=project)
+
+    if judge:
+        work_store = store or (Store(":memory:") if dry_run else Store(store_path))
+        ctx = _state_ctx(project, digests, schema, work_store, cfg)
+        client = None if dry_run else Client(provider=cfg.provider, model=cfg.model,
+                                             max_spend_usd=cfg.max_spend_usd)
+        if client is not None and not client.available:
+            console.print("[yellow]no API key.[/] [dim]`--dry-run` prices it and needs none.[/]")
+            raise typer.Exit(1)
+        for fam, kind, is_noul in _CLUSTER_FAMILIES:
+            q = QUESTIONS[fam]
+            qs = {q["id_prefix"]: (noul_q(fam) if is_noul else choice_q(fam))}
+            subs = list(ctx.subjects_of(kind).values())
+            if limit:
+                subs = subs[:limit]
+            recs = [r for r in (states.make("subject", ctx, key=s.key,
+                                            inputs={"kind": kind, "key": s.key})
+                                for s in subs) if r is not None]
+            console.print(f"\n[bold]{fam}[/]  [dim]{len(recs)} {kind.replace('_', ' ')}(s)[/]")
+            plan_ = _plan_line(work_store, [(r, qs, q["prompt_version"]) for r in recs],
+                               "assay.clusters")
+            if dry_run or not recs:
+                continue
+            if plan_.usd > cfg.max_spend_usd:
+                console.print(f"  [red]refused before spending anything:[/] ~${plan_.usd:.2f} "
+                              f"exceeds the ${cfg.max_spend_usd:.2f} cap in audit.yml.")
+                continue
+            with _judging(fam, len(recs), plan_):
+                for r in recs:
+                    try:
+                        work_store.use_project(project)
+                        decide(work_store, client, r, qs, prompt_version=q["prompt_version"],
+                               caller="assay.clusters")
+                    except BudgetExceeded as e:
+                        console.print(f"  [yellow]stopped at the cap: {e}[/]")
+                        break
+        if client is not None:
+            console.print(f"\n[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
+                          f"${client.spent_usd:.4f}[/]")
+            _report_vocab_drops()
+        if dry_run:
+            work_store.close()
+            return
+        store = work_store
+
+    doc = cl_mod.report(project, digests, store, pcs, odds, pairs, settled)
+    if store is not None:
+        store.close()
+    if as_json:
+        print(_j.dumps(doc, indent=2, default=str))
+        return
+
+    console.print(f"\n[bold]{len(pcs)}[/] filter(s) written the same way in {cl_mod.MIN_MODELS} "
+                  f"or more models [dim](exact, free)[/]")
+    for c in doc["predicate_clusters"][:25]:
+        read = ""
+        if "one_rule" in c:
+            read = f"  [cyan]{c['one_rule']['answer']}[/] [dim]@{c['one_rule']['confidence']}[/]"
+        if "fix_belongs" in c:
+            read += (f"  [dim]fix:[/] {c['fix_belongs']['answer']} "
+                     f"[dim]@{c['fix_belongs']['confidence']}[/]")
+        macro = f"  [dim]{c['macro_at']}[/]" if c["macro_at"] else ""
+        console.print(f"  {c['size']:>3}  [bold]{c['shape'][:80]}[/]{macro}{read}")
+        console.print(f"       [dim]{', '.join(c['models'][:6])}"
+                      f"{' ...' if c['size'] > 6 else ''}[/]")
+    console.print(f"\n[bold]{len(odds)}[/] filter(s) that differ from what most of their family "
+                  f"writes [dim](exact, free)[/]")
+    for o in doc["odd_ones_out"][:15]:
+        read = (f"  [cyan]{o['read_as']['answer']}[/] [dim]@{o['read_as']['confidence']}[/]"
+                if "read_as" in o else "")
+        console.print(f"  [bold]{o['model']}[/] {o['difference'][:100]}{read}")
+        console.print(f"       [dim]{len(o['shared_by'])} models write {o['shared'][:80]}[/]")
+    console.print(f"\n[bold]{len(doc['same_claim'])}[/] claim(s) made about more than one model "
+                  f"[dim]({len(settled)} word for word, free; "
+                  f"{len(pairs)} near pair(s) for --judge)[/]")
+    for g in doc["same_claim"][:10]:
+        console.print(f"  [dim]{len(g)} models:[/] {g[0]['claim'][:110]}")
+        console.print(f"       [dim]{', '.join(x['model'] for x in g[:6])}[/]")
+    if not judge and (pcs or odds or pairs):
+        console.print("\n[dim]`--judge --dry-run` prices the questions only a judgment can "
+                      "answer: one rule or a coincidence, where a fix belongs, whether the one "
+                      "that differs meant to, and whether two claims assert one thing.[/]")
+
+
 @app.command()
 def semantics(
     target: str = typer.Option(None, "--target", "-t"),

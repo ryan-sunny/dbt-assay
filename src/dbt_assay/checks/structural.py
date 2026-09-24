@@ -56,8 +56,10 @@ BBOX_FUNCS = {"ST_MAKEENVELOPE", "ST_EXPAND", "ST_ENVELOPE"}
 # `partition_as_written` is a READING AID too: the window's partition as the SQL spells it, beside
 # the resolved column that identifies the finding. Kept out of the id so the rulings already filed
 # on these findings stay where they are (25.9).
+# `models` and `sharing` list a cluster's other members: a model joining the cluster later must not
+# move the finding every member's ruling is filed under.
 _MEASURED = frozenset({"downstream", "marts", "probability", "confidence", "one_of_each",
-                       "store", "partition_as_written"})
+                       "store", "partition_as_written", "models", "sharing"})
 
 
 def _identity(evidence: dict) -> str:

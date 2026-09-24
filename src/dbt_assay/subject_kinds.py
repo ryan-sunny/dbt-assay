@@ -419,3 +419,84 @@ STATE_FIELDS = {
     "sentinel": {"model", "where", "sql", "sentinel_literals", "column_description",
                  "what_one_row_of_this_model_is"},
 }
+
+
+# ------------------------------------------------------------------------------ clusters
+#
+# *** FOUR KINDS THAT HAVE NO SINGLE-MODEL FORM. *** (25.24b) Each is a call site `clusters` builds
+# for free; each state carries only what its one question needs. `where_the_fix_belongs` gets its
+# own kind rather than a field on `predicate_cluster`, because its discriminator counts are extra
+# sentences to the question beside it -- and `guide questions` measured one extra CORRECT sentence
+# moving an answer from 0.96 to 0.47.
+
+CLUSTER_KINDS = ("predicate_cluster", "predicate_cluster_route", "cluster_member", "claim_pair")
+
+
+def cluster_subjects(kind: str, src) -> list:
+    from . import clusters
+    from .subjects import Subject
+    project, digests = src.project, src.digests
+    out = []
+    if kind in ("predicate_cluster", "predicate_cluster_route"):
+        for c in clusters.predicate_clusters(project, digests):
+            if c.macro:
+                # *** A RULE A MACRO ALREADY WRITES ONCE IS SETTLED BY CODE. *** Ten permit models
+                # compile the same regex because one macro writes it; asking whether it is one
+                # rule, or where its fix belongs, pays to be told what the manifest already says.
+                continue
+            first = c.members[0]
+            if kind == "predicate_cluster":
+                state = {"filter_shape": c.shape, "how_many_models": len(c.models),
+                         "as_each_model_writes_it": [
+                             _prune_none({"model": m.model, "filter": m.predicate,
+                                          "column_description":
+                                              _desc(project.models[m.uid], m.column)[:160]})
+                             for m in sorted(c.members, key=lambda x: x.model)
+                         ][:clusters.MAX_LISTED]}
+                key = f"cluster::pred::{c.key}"
+            else:
+                state = {"filter_shape": c.shape, **clusters.route_facts(project, c)}
+                key = f"cluster::route::{c.key}"
+            out.append(Subject(kind, key, first.uid, f"{c.shape[:60]} in {len(c.models)} models",
+                               file=project.models[first.uid].path,
+                               state=_prune_none(state)))
+    elif kind == "cluster_member":
+        for o in clusters.odd_ones_out(project, digests):
+            m = o.member
+            out.append(Subject(kind, f"cluster::odd::{o.key}", m.uid, f"{m.model}: {m.fine[:60]}",
+                               file=project.models[m.uid].path,
+                               state=_prune_none({
+                                   "shared_filter": o.shared,
+                                   "how_many_models_write_it": len(o.sharing),
+                                   # the columns, which the shape masks: `> 0` on acres and
+                                   # `> 50000` on a sale price are not one rule
+                                   "as_the_others_write_it": o.written,
+                                   "this_model": m.model, "this_models_filter": m.predicate,
+                                   "the_difference": o.difference,
+                                   "what_this_model_says_about_it":
+                                       clusters.what_it_says(project, m.uid, o.added)})))
+    elif kind == "claim_pair":
+        pairs, _settled = clusters.claim_pairs(src.store, project=project)
+        for _j, a, b in pairs:
+            out.append(Subject(kind, f"cluster::claims::{a['claim_id']}::{b['claim_id']}",
+                               a["subject"], f"{a['subject_name']} ~ {b['subject_name']}",
+                               state={"first_model": a["subject_name"], "first_claim": a["text"],
+                                      "second_model": b["subject_name"],
+                                      "second_claim": b["text"]}))
+    return out
+
+
+def _prune_none(d: dict) -> dict:
+    return {k: v for k, v in d.items() if v not in (None, "", [], {})}
+
+
+STATE_FIELDS.update({
+    "predicate_cluster": {"filter_shape", "how_many_models", "as_each_model_writes_it"},
+    "predicate_cluster_route": {"filter_shape", "models", "how_many_models", "models_per_layer",
+                                "distinct_sources_behind_all_of_them",
+                                "a_shared_macro_already_writes_it"},
+    "cluster_member": {"shared_filter", "how_many_models_write_it", "as_the_others_write_it",
+                       "this_model", "this_models_filter", "the_difference",
+                       "what_this_model_says_about_it"},
+    "claim_pair": {"first_model", "first_claim", "second_model", "second_claim"},
+})

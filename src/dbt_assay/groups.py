@@ -110,26 +110,39 @@ def build(project, findings) -> list[Group]:
 
 
 def _attribute(project, g: Group) -> None:
-    """The project macro every member is built with AND whose file carries the shape.
+    """Credit the group to the project macro that writes it, when one does."""
+    name, path, lines = macro_carrying(project, [f.subject for f in g.findings], g.shape)
+    if name:
+        g.macro, g.macro_file, g.macro_lines = name, path, lines
 
-    Only the project's OWN macros, and only one every member depends on: a macro one member uses
-    says nothing about the others. Depending on it is not enough -- two models on the field
-    warehouse share `run_date` and write their CASE inline -- so the macro is credited only when
-    its file carries the shape's most distinctive literal, and every line that does is named.
+
+def macro_carrying(project, uids, text: str) -> tuple[str, str, list]:
+    """(macro name, its file, the lines carrying `text`'s literals), or ("", "", []).
+
+    The project macro every one of `uids` depends on AND whose file carries the construct's most
+    distinctive literal. Only the project's OWN macros, and only one EVERY member depends on: a
+    macro one member uses says nothing about the others. Depending on it is not enough -- two
+    models on the field warehouse share `run_date` and write their CASE inline -- so the macro is
+    credited only when its file carries the literal, and every line that does is named.
     """
     macros = (project.raw.get("macros") or {}) if project is not None else {}
     nodes = (project.raw.get("nodes") or {}) if project is not None else {}
     common = None
-    for f in g.findings:
-        deps = {m for m in ((nodes.get(f.subject) or {}).get("depends_on") or {}).get("macros", [])
+    for uid in uids:
+        deps = {m for m in ((nodes.get(uid) or {}).get("depends_on") or {}).get("macros", [])
                 if (macros.get(m) or {}).get("package_name") == project.project_name}
         common = deps if common is None else common & deps
     if not common:
-        return
-    literals = sorted(re.findall(r"'((?:[^'\\]|\\.){6,})'", g.shape), key=len, reverse=True)
+        return "", "", []
+    literals = sorted(re.findall(r"'((?:[^'\\]|\\.){6,})'", text.lower()), key=len, reverse=True)
+    # *** A SHORT LITERAL IS NOT DISTINCTIVE; THE CONSTRUCT AROUND IT IS. *** `'120'` appears
+    # anywhere, `current_date - interval '120' day` does not. The written pieces between masked
+    # columns are searched too, whitespace collapsed, when they are long enough to mean something.
+    fragments = sorted({" ".join(f.split()) for f in re.split(r"<col>", text.lower())
+                        if len(" ".join(f.split()).strip(" ()=<>!,")) >= 10}, key=len, reverse=True)
     root = getattr(project, "project_root", None)
-    if not literals or not root:
-        return
+    if not (literals or fragments) or not root:
+        return "", "", []
     for name in sorted(common):
         m = macros.get(name) or {}
         path = m.get("original_file_path", "")
@@ -137,11 +150,12 @@ def _attribute(project, g: Group) -> None:
             lines = (Path(root) / path).read_text(errors="replace").lower().splitlines()
         except OSError:
             continue
-        for lit in literals:
-            hits = [i for i, t in enumerate(lines, 1) if lit in t]
+        flat = [" ".join(t.split()) for t in lines]
+        for lit in literals + [f.strip() for f in fragments]:
+            hits = [i for i, t in enumerate(flat, 1) if lit in t]
             if hits:
-                g.macro, g.macro_file, g.macro_lines = m.get("name", name), path, hits
-                return
+                return m.get("name", name), path, hits
+    return "", "", []
 
 
 def membership(groups: list[Group]) -> dict:

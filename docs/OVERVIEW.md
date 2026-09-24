@@ -125,7 +125,7 @@ Every one of those shapes this tool: arithmetic and dates are settled by sqlglot
 never asked, states are the smallest thing that can answer the question, and there is one noul per
 rule rather than one over a list of them. The [README](../README.md) carries the measurements.
 
-Thirty-one question families ship. The one worth seeing first:
+Thirty-five question families ship. The one worth seeing first:
 
 ### Does the description still describe the code?
 
@@ -209,7 +209,7 @@ fires after the spend is not a cap.
 
 ## Every question, and what rests on it
 
-Thirty-one families ship. `assay config` shows how many verdicts each has and which can gate;
+Thirty-five families ship. `assay config` shows how many verdicts each has and which can gate;
 `rests_on` on a finding names the family it derives from, and these are those names.
 
 | family | type | finding it feeds |
@@ -232,6 +232,10 @@ Thirty-one families ship. `assay config` shows how many verdicts each has and wh
 | `options_overlap` | choice | — *lints a question, not a project: `assay banks --judge`* |
 | `same_defect` | noul | — *groups assay's own rejected findings: `assay disagreements --judge`* |
 | `finding_is_correct` | choice | — *a reading for a review card, written to a file: `assay read`* |
+| `one_rule_or_a_coincidence` | choice | itself: a filter written in several models read as one rule, one finding per member (`assay clusters --judge`) |
+| `where_the_fix_belongs` | choice | — *where a shared fix belongs, shown beside the cluster: `assay clusters --judge`* |
+| `the_odd_one_out` | choice | itself: the member of a family of filters that drifted (`assay clusters --judge`) |
+| `claims_are_the_same_assertion` | noul | — *edges of a graph; components printed by `assay clusters`* |
 | `reading_rests_on` | choice | — *which line of the SQL that reading turns on, chosen from lines code lists and copied onto the card: `assay read`* |
 | `default_is_a_measurement_or_an_absence` | choice | itself: a COALESCE default that marks "not found" (`assay ask`) |
 | `what_would_break_silently` | choice | itself: an untested column whose shape invites a silent failure (`assay ask`) |

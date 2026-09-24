@@ -152,6 +152,10 @@ def all_findings(project, digests, schema, entries=None, *,
     # A key that held last week and does not now is the failure that corrupts a warehouse, and it
     # is invisible to every other check here: they all describe the present. A column with one
     # observation produces nothing, which is correct -- an absent comparison is not a clean bill.
+    # *** A CLUSTER READ AS ONE RULE LANDS ON EACH MEMBER, NEVER ON THE CLUSTER. *** (25.24a)
+    if store is not None:
+        from . import clusters
+        fs += clusters.findings(project, digests, store)
     if store is not None:
         from . import probe as probe_mod
         try:

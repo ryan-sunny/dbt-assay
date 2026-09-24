@@ -216,6 +216,10 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         # Empty here means nobody passed `--monitoring`, never that the monitoring is healthy.
         # The tab says which, the same way `new_store` does for the store.
         "monitoring": monitoring or {},
+        # *** AREAS RATHER THAN FINDINGS. *** (25.23a) One filter written in several models, the
+        # one that differs, one claim made about several models -- the same assembly `assay
+        # clusters` prints, so the page and the command cannot describe them differently.
+        "areas": _areas(project, digests, store),
     }
 
 
@@ -698,3 +702,8 @@ def read_data(directory) -> dict:
             f"{d} has no meta.json, so it is not an assay data artifact. Rendering it would show "
             f"an empty warehouse, which is not the same as a warehouse with nothing in it.")
     return data
+
+
+def _areas(project, digests, store) -> dict:
+    from . import clusters
+    return clusters.report(project, digests, store)

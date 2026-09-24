@@ -196,6 +196,23 @@ the page say so on each finding. A group is never ruled on: every verdict stays 
 names. On the field warehouse, seven `test_cannot_fail` findings are one edit in
 `macros/permit_stg.sql`, and two Denver models write the same `CASE` inline.
 
+**Areas rather than findings.** `assay clusters` groups what code can prove is written alike --
+the same filter shape in three or more models, the member of a family of filters that differs from
+what most of it writes, the same claim made about several models -- and `--judge` asks only what
+code cannot settle, in four families:
+
+| check or family | what it answers |
+|---|---|
+| `one_rule_or_a_coincidence` | one filter shape in several models: one rule repeated, or separate decisions written alike. Read as one rule, it is a finding on EACH member, ruled one at a time |
+| `where_the_fix_belongs` | at the source, in a shared macro, upstream in one model, or correct where it is -- read from counts code computes (layers, sources behind each model, a macro that already writes it). Shown beside the cluster; never a finding |
+| `the_odd_one_out` | the one model whose filter differs from its family's: a deliberate exception, or drift. The state carries the others' filters as written and any line of this model's own file or description that mentions the differing value |
+| `claims_are_the_same_assertion` | two differently worded claims about two models: one assertion or two. Pairs are edges; the connected components are printed |
+
+A cluster a project macro already writes once is settled by code and never asked. Nothing is ruled
+on as a group, and a cluster answer below 0.5 is not a finding. On the field warehouse: 16 filter
+shapes written alike (one of them already a macro), 6 odd ones out, 39 claims made about more than
+one model, for $0.0027.
+
 **The line that keeps this in scope:** assay can say a column is 99% its default. It cannot say
 whether that is bad. The first is a fact about code and rows; the second is intent, and the ruling
 loop already exists for it. No funnels, no conversion rates, no anomaly on a trend.
@@ -349,6 +366,8 @@ assay trace <column>      # where one column's value actually came from
 assay tests               # tests that cannot fail, and what nothing asserts at all
 assay tests --count-defaults   # ...and how often each COALESCE default actually wins
 assay practices           # standard-practice violations, with judged exceptions
+assay clusters            # one filter written in several models, the one that differs, one claim made twice
+assay clusters --judge    # ...one rule or a coincidence, where the fix belongs, and the odd one out
 assay patch tests/assay   # WRITE the uniqueness tests it can prove will pass
 
 # The judged tier. Needs a key.
