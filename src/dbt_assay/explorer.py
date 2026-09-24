@@ -125,6 +125,15 @@ main{padding:20px 26px 22px;max-width:1560px;width:100%;flex:1 1 auto;min-height
 mix-blend-mode:multiply}
 .plate{margin:0;text-align:center}
 .plate img{max-width:100%;height:auto}
+.mtop{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:4px 36px;
+margin:0 0 12px;align-items:start}
+.mtop > .mchart{margin:0}
+.mtop > div:last-child:not(.mfacts){grid-column:1 / -1}
+.mfacts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 18px}
+.mfv{font-size:22px;font-family:Fell,Georgia,serif;line-height:1.1}
+.mfv.bad{color:var(--rust)}
+.mfl{font-size:13px;color:var(--ash)}
+@media (max-width:820px){.mtop{grid-template-columns:1fr}.mfacts{grid-template-columns:1fr 1fr}}
 .mchart{margin:2px 0 12px}
 .mrow{display:grid;grid-template-columns:minmax(0,210px) minmax(60px,1fr) auto;gap:10px;
 align-items:center;padding:3px 0}
@@ -2469,7 +2478,7 @@ function configTab(host) {
            {key: 'no', label: 'unreadable', n: 1, val: r => r.unreadable,
             cell: r => el('span', {class: r.unreadable ? 'bad' : 'tot', text: num(r.unreadable)})}],
     sort: 'when', dir: -1,
-    detail: r => pane({kind: 'run', title: [wbr(String(r.started_at || r.run_id))],
+    detail: r => pane({kind: 'run', title: String(r.started_at || r.run_id),
       reading: [section('what it ran on', kv([['run', r.run_id], ['assay', r.assay_version],
         ['dbt', r.dbt_version], ['models', num(r.models)], ['readable', num(r.readable)],
         ['unreadable', num(r.unreadable)]]))]})});
@@ -3224,12 +3233,6 @@ function monitoringTab(host) {
   }
 
   const groups = [
-    {key: 'glance', label: 'at a glance', rows: glance,
-     cols: [{key: 'what', label: 'what', val: r => r.what},
-            {key: 'value', label: 'measured', val: r => r.value,
-             cell: r => el('span', {class: r.bad ? 'bad' : '', text: r.value})}],
-     detail: r => [el('h2', {text: r.what}), el('p', {class: 'big', text: r.value}),
-                   el('p', {class: 'prose', text: r.why}), ...(r.bar ? [r.bar()] : [])]},
     {key: 'monitors', label: 'the monitors themselves', rows: readings,
      cols: [
        {key: 'relation', label: 'relation', mono: 1, val: r => r.relation},
@@ -3289,6 +3292,22 @@ function monitoringTab(host) {
   ].filter(g => g.rows.length);
   const kindOf = r => groups.find(g => g.rows.includes(r));
 
+  /* *** AT A GLANCE IS ALWAYS ON TOP. *** The facts about the whole warehouse's monitoring --
+     the monitors against their thresholds, how often it builds, what the tests are doing -- are
+     one strip above the navigator, and the navigator holds only the lists. */
+  function glanceTop() {
+    const box = el('div', {class: 'mtop'});
+    const chart = monitorsChart();
+    const facts = el('div', {class: 'mfacts'}, glance.map(r => el('div', {class: 'mfact'}, [
+      el('div', {class: 'mfv' + (r.bad ? ' bad' : ''), text: r.value}),
+      el('div', {class: 'mfl'}, [el('span', {text: r.what, tip: r.why})])])));
+    if (chart) box.append(chart);
+    box.append(facts);
+    const cov = glance.find(r => r.bar);
+    if (cov) box.append(cov.bar());
+    return box;
+  }
+
   /* *** THE TAB OPENED ON TEXT AND A TABLE. *** (P11) The picture that answers "is anything
      watching" first: each monitor's days since its last write against the threshold that makes
      it late, so a stopped monitor is a long bar past its mark. */
@@ -3319,10 +3338,11 @@ function monitoringTab(host) {
     return box;
   }
 
-  host.replaceChildren(drill({
+  host.classList.add('cfgpanel');
+  host.replaceChildren(glanceTop(), drill({
     noun: 'rows', groups: groups, all: false, keepOrder: 1,
     chip: g => g.label, groupFilter: 'find a section...',
-    groupHead: g => g.key === 'glance' || g.key === 'monitors' ? monitorsChart() : null,
+    all: false,
     groupSub: g => g.key === 'monitors'
       ? (() => { const off = g.rows.filter(r => r.state !== 'live').length;
                  return off ? num(off) + ' stopped' : 'all live'; })()

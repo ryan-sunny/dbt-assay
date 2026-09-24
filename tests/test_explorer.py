@@ -1248,7 +1248,9 @@ def test_monitoring_is_a_navigator_and_no_list_is_capped():
     mb = v[v.index("function monitoringTab"):]
     mb = mb[:mb.index("\n}\n")]
     assert "drill({" in mb, "Monitoring is a stacked scroll again"
-    for key in ("'glance'", "'monitors'", "'stale'", "'findings'", "'unwatched'"):
+    # at a glance sits above the navigator, always; the navigator holds only the lists
+    assert "key: 'glance'" not in mb and "glanceTop(), drill({" in mb
+    for key in ("'monitors'", "'stale'", "'findings'", "'unwatched'"):
         assert "key: " + key in mb, f"the {key} group is gone"
     assert "cap: 400" not in mb, "the unwatched models are capped again"
     assert "class: 'note'" not in mb, "a grey note is back"
@@ -1353,7 +1355,7 @@ def test_feedback_p11_monitoring_leads_with_a_picture():
     v = explorer._VIEWS
     mb = v[v.index("function monitoringTab"):v.index("function monitoringTab") + 20000]
     assert "function monitorsChart()" in mb
-    assert "groupHead: g => g.key === 'glance'" in mb
+    assert "const chart = monitorsChart();" in mb
 
 
 def test_skipped_tests_and_skipped_results_are_not_one_unit():
@@ -1387,3 +1389,11 @@ def test_config_is_a_navigator_and_policy_is_data_not_a_repr():
                                                                        action="queue")})
     got = explore._config(cfg)["questions"]["arbitrary_pick"]
     assert got["action"] == "queue" and "QuestionConfig" not in str(got), got
+
+
+def test_a_run_says_when_it_started():
+    """The runs list had a "started" column that was empty on every row: never exported."""
+    import inspect
+    from dbt_assay import explore
+    src = inspect.getsource(explore._runs)
+    assert '"started_at")' in src and "strftime(started_at" in src

@@ -677,11 +677,13 @@ def _runs(store) -> list:
     try:
         rows = store.con.execute(
             "select run_id, project, dbt_version, assay_version, models, sources, tests, edges, "
-            "readable, unreadable from runs order by started_at").fetchall()
+            "readable, unreadable, strftime(started_at, '%Y-%m-%d %H:%M') from runs "
+            "order by started_at").fetchall()
     except Exception:                                            # noqa: BLE001
         return []
+    # The start time was never exported, so the page's "started" column was empty on every run.
     cols = ("run_id", "project", "dbt_version", "assay_version", "models", "sources", "tests",
-            "edges", "readable", "unreadable")
+            "edges", "readable", "unreadable", "started_at")
     return [dict(zip(cols, r, strict=True)) for r in rows]
 
 
