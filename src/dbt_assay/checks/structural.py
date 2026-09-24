@@ -427,6 +427,8 @@ def arbitrary_pick(project, digests: dict[str, Digest]) -> list[Finding]:
             keys = [o.split()[0].split(".")[-1].strip("()").lower() for o in w.order_sql]
             if any(k in unique_cols for k in keys):
                 continue                       # the last resort is a declared-unique column
+            if getattr(w, "picks_only_keys", False):
+                continue                       # a remaining tie is identical in all it keeps
             found.append(Finding(
                 check="arbitrary_pick",
                 subject=uid, subject_name=m.name, file=m.path,

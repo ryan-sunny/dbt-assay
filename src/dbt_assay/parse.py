@@ -55,6 +55,25 @@ def _relname(t: exp.Table) -> str:
     return ".".join(p for p in (t.catalog, t.db, t.name) if p)
 
 
+def _picks_only_keys(window, keys: set) -> bool:
+    """Whether every column projected beside this window is one of its keys. A star, an
+    expression, or any column outside the keys makes it False: only a proof counts. (N5)"""
+    sel = window.find_ancestor(exp.Select)
+    if sel is None or not keys:
+        return False
+    for proj in sel.expressions:
+        if proj.find(exp.Window) is not None:
+            continue                          # the rank itself
+        if isinstance(proj, exp.Star) or proj.find(exp.Star) is not None:
+            return False
+        inner = proj.unalias() if isinstance(proj, exp.Alias) else proj
+        if isinstance(inner, (exp.Literal, exp.Null)):
+            continue
+        if not isinstance(inner, exp.Column) or inner.name.lower() not in keys:
+            return False
+    return True
+
+
 def _base_column(e: exp.Expression) -> str | None:
     """The single column an expression rests on, if there is exactly one."""
     if isinstance(e, exp.Alias):
@@ -351,6 +370,10 @@ class WindowFact:
     # how a hand-written guard failed on its second attempt: it banned the function outright and
     # caught the one model that had already done the right thing.
     order_reprojected: list[bool] = field(default_factory=list)
+    # *** A TIE THE OUTPUT CANNOT SEE IS NOT A CHOICE. *** (N5) True when every column the
+    # enclosing select projects is a partition or an ORDER BY key: two rows still tied after the
+    # sort are then identical in everything kept, so which one survives changes nothing.
+    picks_only_keys: bool = False
 
 
 @dataclass
@@ -630,6 +653,9 @@ def _extract(tree, name: str, dialect: str) -> Digest:
         order = w.args.get("order")
         parts = w.args.get("partition_by") or []
         _out = {c.lower() for c in d.output_columns}
+        _keys = {c.lower() for c in (_base_column(p) for p in parts) if c}
+        _keys |= {o.this.name.lower() for o in (order.expressions if order else [])
+                  if isinstance(getattr(o, "this", None), exp.Column)}
         d.windows.append(WindowFact(
             position=pos,
             partition_by=[p.sql(dialect=dialect) for p in parts],
@@ -638,6 +664,7 @@ def _extract(tree, name: str, dialect: str) -> Digest:
             order_roots=[root_of(o) for o in (order.expressions if order else [])],
             order_sql=[o.sql(dialect=dialect)[:90] for o in (order.expressions if order else [])],
             order_reprojected=[_reprojected(o) for o in (order.expressions if order else [])],
+            picks_only_keys=_picks_only_keys(w, _keys),
         ))
 
     d.has_qualify = bool(list(tree.find_all(exp.Qualify)))

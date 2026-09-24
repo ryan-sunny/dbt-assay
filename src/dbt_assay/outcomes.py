@@ -191,6 +191,13 @@ def confirmed_and_fixed(store, findings, unchecked=(), project=None) -> dict:
     if not agreed:
         return {"agreed": 0, "fixed": 0, "still_open": 0, "rows": []}
     here = {f.id for f in findings}
+    # *** A FINDING THAT WAS RENAMED IS NOT FIXED. *** (N5) Adding a sort key changed an
+    # arbitrary pick's summary and so its id, and the agreed finding counted as gone. An agreed id
+    # that a current finding carries on is still here.
+    if store is not None:
+        from .store import carried
+        for olds in carried(store, findings).values():
+            here |= set(olds)
     # A finding of a check this run did not evaluate is not gone: nobody looked.
     if unchecked and store is not None:
         ids = list(agreed)

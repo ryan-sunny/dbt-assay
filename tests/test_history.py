@@ -145,3 +145,43 @@ def test_feedback_c1_a_reworded_finding_is_the_same_finding(tmp_path):
     assert str(seen["new_a"][0]).startswith("2026-09-20"), "a reworded finding lost its date"
     assert str(seen["new_b"][0]).startswith("2026-09-20")
     assert str(seen["new_c"][0]).startswith("2026-09-24"), "a new finding inherited a date"
+
+
+def test_feedback_n5_a_sort_key_edit_keeps_the_finding_and_its_agreement(tmp_path):
+    """*** ADDING A SORT KEY IS WORKING ON THE FINDING, NOT FIXING IT. *** (N5)
+
+    `int_azcc_owners.sql:32` gained `title` in its ORDER BY. The summary names the sort keys, so the
+    id changed (8f4972e2f252 -> 018b6ec841bc): the agreed finding counted as gone, i.e. fixed, and
+    an unruled one appeared. Matched by check, model and partition, it is the same finding: the
+    loop keeps it open and the page keeps the ruling. Nothing is written to carry it.
+    """
+    import json
+
+    from dbt_assay.checks.structural import Finding
+    from dbt_assay.outcomes import confirmed_and_fixed
+    from dbt_assay.store import Store, carried, finding_key
+    s = Store(str(tmp_path / "s.duckdb"))
+    s.con.execute("insert into runs (run_id, started_at, project) values ('r1', now(), 'p')")
+    old_ev = {"partition_by": ["id_business"], "order_by": ["trank", "officer_name"],
+              "partition_as_written": ["id_business"]}
+    s.con.execute("insert into findings (run_id, check_name, subject, subject_name, summary, "
+                  "evidence, finding_id) values ('r1', 'arbitrary_pick', 'model.p.m', 'm', "
+                  "'dedupe ... ordered by trank, officer_name', ?, 'old')", [json.dumps(old_ev)])
+    s.con.execute("insert into adjudications (subject, question, family, verdict, source, "
+                  "decided_by, decided_at) values ('model.p.m::finding::old', 'arbitrary_pick', "
+                  "'arbitrary_pick', 'agree', 'human', 'ryan', now())")
+    new = Finding(check="arbitrary_pick", subject="model.p.m", subject_name="m", file="m.sql",
+                  summary="dedupe ... ordered by trank, officer_name, title", detail="",
+                  evidence={**old_ev, "order_by": ["trank", "officer_name", "title"]})
+    assert new.id != "old"
+    assert finding_key("arbitrary_pick", "model.p.m", old_ev) == \
+        finding_key("arbitrary_pick", "model.p.m", new.evidence)
+    assert carried(s, [new]) == {new.id: ["old"]}
+    loop = confirmed_and_fixed(s, [new])
+    assert loop["fixed"] == 0 and loop["still_open"] == 1, loop
+    # and a different partition is a different finding
+    other = Finding(check="arbitrary_pick", subject="model.p.m", subject_name="m", file="m.sql",
+                    summary="dedupe on scraped_at", detail="",
+                    evidence={"partition_by": ["matched_name"], "order_by": ["scraped_at"],
+                              "partition_as_written": ["matched_name"]})
+    assert carried(s, [other]) == {}

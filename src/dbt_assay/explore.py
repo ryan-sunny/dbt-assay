@@ -414,6 +414,13 @@ def _findings(findings, store, acted: dict | None = None, member: dict | None = 
     acted = acted or {}
     member = member or {}
     ruled = store.ruled_subjects() if store is not None else set()
+    # A finding whose id moved keeps the ruling made on its earlier id. (N5)
+    if store is not None:
+        from .store import carried
+        for new, olds in carried(store, findings).items():
+            f0 = next((x for x in findings if x.id == new), None)
+            if f0 is not None and any(f"{f0.subject}::finding::{o}" in ruled for o in olds):
+                ruled = ruled | {f"{f0.subject}::finding::{new}"}
     out = []
     for f in findings:
         fid = f.id

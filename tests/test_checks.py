@@ -163,3 +163,24 @@ def test_arbitrary_pick_evidence_carries_the_partition_as_written_without_moving
                     file="", summary="s", detail="",
                     evidence={**ev, "partition_as_written": w.partition_by})
     assert before.id == after.id, "the rulings on these findings must not move"
+
+
+def test_feedback_n5_a_tie_the_output_cannot_see_is_not_an_arbitrary_pick():
+    """When every column kept is a partition or ORDER BY key, a remaining tie is identical in all
+    it keeps, so which row survives changes nothing. A star or any other column is not a proof."""
+    from dbt_assay import parse
+    base = ("with o as (select id_business, officer_name, trank, title from p), "
+            "b as (select id_business, officer_name, title as officer_title from o "
+            "qualify row_number() over (partition by id_business order by {}) = 1) "
+            "select * from b")
+    assert [w.picks_only_keys for w in parse.digest(base.format("trank, officer_name")).windows] \
+        == [False]
+    assert [w.picks_only_keys for w in parse.digest(
+        base.format("trank, officer_name, title")).windows] == [True]
+    star = ("select * from (select *, row_number() over (partition by k order by t) rn from x) "
+            "where rn = 1")
+    assert [w.picks_only_keys for w in parse.digest(star).windows] == [False]
+    import inspect
+
+    from dbt_assay.checks import structural
+    assert 'getattr(w, "picks_only_keys", False)' in inspect.getsource(structural.arbitrary_pick)

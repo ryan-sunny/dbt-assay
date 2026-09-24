@@ -1393,16 +1393,45 @@ class Store:
                 "reworded": len(reworded)}
 
 
+# Evidence that DESCRIBES a finding rather than saying which one it is. (N5) Adding a sort key to
+# an arbitrary pick is working on the finding, not replacing it with another.
+DESCRIBES = {"arbitrary_pick": ("order_by",)}
+
+
 def finding_key(check: str, subject: str, evidence) -> str:
     """What a finding IS, apart from how it is worded: its check, its subject, and the parts of
-    its evidence that say what it points at (the measured numbers left out, the same rule the id
-    uses). Two runs' findings with one key are one finding. (C1)"""
+    its evidence that say what it points at (the measured numbers, and what only describes it,
+    left out). Two runs' findings with one key are one finding. (C1, N5)"""
     from .checks.structural import _identity
     try:
         ev = json.loads(evidence) if isinstance(evidence, str) else (evidence or {})
     except (TypeError, ValueError):
         ev = {}
-    return f"{check}|{subject}|{_identity(ev if isinstance(ev, dict) else {})}"
+    ev = {k: v for k, v in (ev if isinstance(ev, dict) else {}).items()
+          if k not in DESCRIBES.get(check, ())}
+    return f"{check}|{subject}|{_identity(ev)}"
+
+
+def carried(store, findings) -> dict:
+    """{current finding id: earlier finding id} for a finding whose id changed while it stayed the
+    same finding, so a ruling on the earlier id still reads as a ruling on it. (N5)
+
+    Read-time only: nothing is written, and no verdict is ever copied onto a new id."""
+    try:
+        rows = store.con.execute(
+            "select distinct finding_id, check_name, subject, evidence from findings "
+            "where finding_id is not null").fetchall()
+    except Exception:                                            # noqa: BLE001
+        return {}
+    by_key: dict = {}
+    for fid, chk, subj, ev in rows:
+        by_key.setdefault(finding_key(chk, subj, ev), set()).add(fid)
+    out = {}
+    for f in findings:
+        for old in sorted(by_key.get(finding_key(f.check, f.subject, f.evidence), ())):
+            if old != f.id:
+                out.setdefault(f.id, []).append(old)
+    return out
 
 
 # --------------------------------------------------------------------------------- retention
