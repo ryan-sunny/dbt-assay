@@ -142,6 +142,17 @@ def all_findings(project, digests, schema, entries=None, *,
     # wrong one. Without the schema a model's columns are only the DECLARED ones, so the 79
     # models whose undocumented columns are derived from SQL fell out of `check`, MCP and every
     # surface reading this stream, while `onboard` -- which passed it -- saw them.
+    # *** EVERY PREMISE A CHECK LEANS ON IS RECORDED AS IT LEANS. *** The checks below read the
+    # ledger through `ledger.active()`; `ledger.last()` holds it afterwards for `check` to write
+    # and the page to show.
+    from . import ledger as ledger_mod
+    led = ledger_mod.build(project, schema, entries, store)
+    ledger_mod.register_grains(led, entries)
+    with ledger_mod.collecting(led):
+        return _all_findings(project, digests, schema, entries, threshold, store)
+
+
+def _all_findings(project, digests, schema, entries, threshold, store) -> list:
     fs = structural_checks(project, digests, schema)
     fs += relate.run_all(project, digests, schema)[1]
     if entries:
@@ -253,6 +264,10 @@ def contract_of(state: LiveState, model: str) -> dict | None:
         "grain": e.grain.value if e.grain else None,
         "grain_source": e.grain.source if e.grain else "unsettled",
         "grain_confidence": e.grain.confidence if e.grain else None,
+        # *** DECLARED IS NOT THE SAME AS TRUE. *** (G-A) Whether the key's own test ran and
+        # passed, was never run, or broke: {"status", "label", "why"} from the premise ledger.
+        "grain_firm": e.grain.firm if e.grain else False,
+        "grain_premise": (e.grain.premise or None) if e.grain else None,
         "reads": e.reads,
         "descendants": e.descendants,
         "marts_downstream": e.marts,

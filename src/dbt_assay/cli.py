@@ -473,6 +473,9 @@ def check(
     _entries = None
     if Path(store_path or "").exists():
         _s = Store(store_path)
+        # A build's test results, when target/ holds one (never a compile's: see ledger).
+        from . import ledger as ledger_mod
+        ledger_mod.record_test_status(_s, ledger_mod.run_results_status(tdir), "run_results")
         _obs = probe_mod.read(_s)
         _entries = inv_mod.build(project, digests, schema, _s, _obs, facts=facts)
         if verify:
@@ -509,6 +512,8 @@ def check(
     _st_pre = Store(store_path) if Path(store_path).exists() else None
     findings = live.all_findings(project, digests, schema, _entries,
                                  threshold=_cfg_pre.row_loss_threshold, store=_st_pre)
+    from . import ledger as ledger_mod
+    _ledger = ledger_mod.last()
     if _st_pre is not None:
         _st_pre.close()
     # *** IS THE PROJECT BEING WATCHED, AND IS THE WATCHER ALIVE? ***
@@ -750,6 +755,8 @@ def check(
         s.write_findings(run_id, findings,
                          {u: m.checksum for u, m in project.models.items() if m.checksum})
         s.write_edge_facts(run_id, facts)
+        if not run_scope and _ledger is not None:
+            ledger_mod.write(s, run_id, _ledger)
         s.write_unreadable(run_id, [(uid, m.name, m.path, "no compiled SQL")
                                     for uid, m in project.models.items() if not m.readable]
                            + [(uid, n, p, e) for uid, n, p, e in failures])
@@ -771,6 +778,12 @@ def check(
                 console.print(f"  [red]+[/] {n}: {sm}")
             for c, n, sm in d["gone"][:5]:
                 console.print(f"  [green]-[/] {n}: {sm}")
+            # *** WHAT THE FINDINGS REST ON, WHEN IT MOVED. *** Nothing printed when nothing did.
+            _moved = ledger_mod.changes(s, run_id)
+            if _moved:
+                console.print(f"\n[bold]premises that changed:[/] {len(_moved)}")
+                for line in ledger_mod.change_lines(_moved):
+                    console.print(f"  {line}")
         # *** AND WHETHER THE ONES SOMEBODY AGREED WITH ARE THE ONES THAT WENT. ***
         # "4 resolved" cannot tell you that, and the difference is the whole question: four
         # unrelated findings moving while the four you read sat there looks identical from here,
@@ -3366,6 +3379,12 @@ def volume(
             cad = elem.build_cadence(runner, schema_name)
             rep = elem.read(runner, schema_name, stale_after_days=stale_days, fallback=cad)
             cov = elem.test_coverage(runner, schema_name) if rep.reachable else {}
+            # Each test's last result, kept: the premise ledger reads a declared key's test from
+            # here, and this is how a server with no build output in target/ gets them.
+            if rep.reachable and store is not None:
+                from . import ledger as ledger_mod
+                cov["results_recorded"] = ledger_mod.record_test_status(
+                    store, elem.latest_test_results(runner, schema_name), "elementary")
         except probe_mod.WarehouseUnreachable as e:
             # `volume` has always said this in its own report rather than stopping, because a
             # report saying "nothing here was measured" is the useful thing to print.

@@ -63,10 +63,16 @@ class Fact:
     # A fact built on an unresolved premise must say so rather than inherit a confidence it did
     # not earn. Confidences are never multiplied; provenance is carried instead.
     resting_on: list = field(default_factory=list)
+    # *** A DECLARED FACT IS ONLY AS GOOD AS THE TEST BEHIND IT. *** (G-A) The ledger's reading of
+    # the premise under it: {"id", "status", "why", "test"}. Kept apart
+    # from `resting_on`, which is a judgment's unresolved columns and raises `grain_unresolved`:
+    # a unique test that never ran is not a question for a person, it is a test to run.
+    premise: dict | None = None
 
     @property
     def firm(self) -> bool:
-        return self.source in ("declared", "observed") and not self.resting_on
+        return (self.source in ("declared", "observed") and not self.resting_on
+                and (not self.premise or self.premise.get("status") == "holding"))
 
     def render(self) -> str:
         """No square brackets: rich reads them as style tags and silently eats the provenance,
@@ -74,6 +80,8 @@ class Fact:
         v = ", ".join(self.value) if isinstance(self.value, list) else str(self.value)
         c = f" @{self.confidence:.2f}" if self.confidence is not None else ""
         flag = " · rests on an unresolved premise" if self.resting_on else ""
+        if self.premise and self.premise.get("status") != "holding":
+            flag += f" · {self.premise.get('status')}: {self.premise.get('why')}"
         return f"{v} · {self.source}{c}{flag}"
 
 
@@ -384,6 +392,14 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
                 ce.provenance.note += f"; probe: {seen.detail}"
             entry.columns.append(ce)
         out.append(entry)
+    # *** A DECLARED GRAIN RESTS ON ITS TEST, AND THE TEST MAY NEVER HAVE RUN. *** (G-A)
+    # The grain above is "declared" the moment a `unique` test exists in the manifest. Whether
+    # that test ran, passed or was skipped is read here, from the ledger, and a grain whose key is
+    # not holding keeps its value and stops being firm, saying why.
+    from . import ledger as ledger_mod
+    led = ledger_mod.build(project, schema, out, store, observed=observed)
+    ledger_mod.register_grains(led, out)
+    ledger_mod.apply_to_grains(led, out)
     return out
 
 

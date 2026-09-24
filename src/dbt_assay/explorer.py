@@ -283,6 +283,12 @@ td .pill{white-space:normal}
 .pill.derived,.pill.observed{color:var(--ash)}
 .pill.judged{color:var(--ember);border-color:var(--ember)}
 .pill.bad{color:var(--rust);border-color:var(--rust)}
+/* A premise's status: rust when it broke, ink when it holds, ember when only a judgment carries
+   it, faint when nothing has checked it. Never a colour without its word. */
+.pill.broken{color:var(--rust);border-color:var(--rust)}
+.pill.holding,.pill.proven{color:var(--ink);border-color:var(--ink)}
+.pill.assumed{color:var(--ember);border-color:var(--ember)}
+.pill.unchecked,.pill.unknown{color:var(--faint);border-color:var(--rule)}
 /* A note is a FACT in a pane now, never a caption: every explanation moved to a tip, so what is
    left is something true of this warehouse, and it is set in ink where it will be read. */
 .note{color:var(--ink);font-size:13.5px;margin:8px 0 0;max-width:none}
@@ -646,12 +652,21 @@ function badge(label, cls, conf) {
     tip: 'How sure the reading was, from 0 to 1.'})]);
 }
 
+/* A premise's status as one badge: the few words (`never ran`, `passing`, `counted duplicates`)
+   in the status's colour, and the evidence behind it as the tip. */
+function premBadge(status, label, why) {
+  const b = badge(label || status, status || 'unknown');
+  if (why) b.setAttribute('data-tip', why.replace(/`/g, ''));
+  return b;
+}
+
 function fact(f) {
   if (!f) return el('span', {class: 'tot', text: 'not settled'});
   const v = Array.isArray(f.value) ? f.value.join(', ') : String(f.value);
   const s = el('span', {});
   s.append(el('span', {text: v}));
   s.append(badge(f.source, f.source || '', f.confidence));
+  if (f.premise) s.append(premBadge(f.premise.status, f.premise.label, f.premise.why));
   if (f.resting_on) s.append(badge('rests on a premise', 'bad'));
   return s;
 }

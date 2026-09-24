@@ -1,6 +1,6 @@
 # The store
 
-One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Fourteen
+One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Seventeen
 tables. The whole design turns on one split, so it is worth stating before the diagram:
 
 **Some of these cost nothing and some of them cost money or somebody's afternoon.** A table
@@ -9,9 +9,10 @@ without one holds something that was paid for — a model call, or a person read
 prune` deletes only the first kind, and the split is declared in code rather than inferred:
 
 ```python
-PRUNABLE     = ("findings", "edge_facts", "unreadable")
+PRUNABLE     = ("findings", "edge_facts", "unreadable", "premises", "premise_uses")
 NEVER_PRUNED = ("model_calls", "model_decisions", "claims", "adjudications", "observed_keys",
-                "runs", "calibrations", "compiled_sql", "commits", "states", "warehouse_calls")
+                "runs", "calibrations", "compiled_sql", "commits", "states", "warehouse_calls",
+                "test_status")
 ```
 
 A new table belongs to one list or the other and a test fails until it does, so nothing becomes
@@ -31,6 +32,10 @@ erDiagram
     RUNS ||--o{ FINDINGS : "one run produces"
     RUNS ||--o{ EDGE_FACTS : "one run measures"
     RUNS ||--o{ UNREADABLE : "one run could not read"
+    RUNS ||--o{ PREMISES : "one run's ledger"
+    PREMISES ||--o{ PREMISE_USES : "what rests on it"
+    TEST_STATUS |o--o{ PREMISES : "a declared test's last result is evidence"
+    OBSERVED_KEYS |o--o{ PREMISES : "a count is evidence"
 
     STATES ||--o{ MODEL_DECISIONS : "one state, many answers"
     MODEL_CALLS ||--o{ MODEL_DECISIONS : "one call, many answers"
@@ -155,6 +160,33 @@ erDiagram
         boolean sampled "a sampled count is not a settled one"
         double sample_pct "0 when it was counted exactly"
     }
+    PREMISES {
+        varchar run_id PK, FK "rebuilt by every check"
+        varchar premise_id PK "sha1(property/relation/sorted columns/param), stable across runs"
+        varchar relation "unique_id of the model or source"
+        varchar name
+        varchar columns "json list"
+        varchar property "unique / not_null / unique_per_batch / max_lateness"
+        varchar param
+        varchar status "broken / holding / unchecked / assumed / unknown"
+        timestamp since "first run of the current status streak"
+        varchar evidence "json list of kind, detail, status, at"
+    }
+    PREMISE_USES {
+        varchar run_id FK
+        varchar premise_id FK
+        varchar dependent_kind "grain / held_back / proof"
+        varchar dependent_id "a model uid, or check:model:construct"
+        varchar model "the model it is about"
+        varchar detail
+    }
+    TEST_STATUS {
+        varchar test_id PK "the dbt test's unique_id"
+        timestamp ran_at PK
+        varchar status "pass / fail / warn / error / skipped"
+        timestamp observed_at "when assay read it"
+        varchar via "elementary / run_results"
+    }
     WAREHOUSE_CALLS {
         varchar call_id "sha1 of the STATEMENT, so a rerun is identifiable"
         varchar run_id "empty when the command minted no run"
@@ -269,6 +301,9 @@ rulings were structural, so a calibration report has to exclude them by construc
 | `warehouse_calls` | what each statement cost the warehouse | **the money itself** |
 | `calibrations` | what `assay calibrate` measured, so a comment quoting it can be checked | free from the cache, **a model call** without it |
 | `compiled_sql` | what a past version of a model compiled to, by dbt's checksum, so `backtest` replays it exactly | **a compile**, or a build that is gone |
+| `premises` | what each fact, suppression and proof rests on, its evidence and status | free |
+| `premise_uses` | which grain, held-back finding or proof rests on which premise | free |
+| `test_status` | each dbt test's last actual result, from Elementary or a build's `run_results.json` | **a build that is gone** |
 | `commits` | every commit touching the project, and the models it touched; with `runs.git_sha`, when a finding was first seen | free from git |
 
 ---

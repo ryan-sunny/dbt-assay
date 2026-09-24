@@ -831,6 +831,33 @@ def test_coverage(runner, schema: str, limit: int = 40000) -> dict:
                                                   ("skipped_now", skipped_now)) if res.failed]}
 
 
+def latest_test_results(runner, schema: str, limit: int = 40000) -> dict:
+    """{dbt test unique_id: (status, detected_at)}, each test's LAST result.
+
+    *** THE LEDGER NEEDS WHICH TEST, NOT HOW MANY. ***
+    `test_coverage` counts; a declared grain rests on one named test, and whether THAT test ran is
+    the question. Collapsed to one row per test in SQL, like every other read here, so the limit
+    is a safety net and not a sampler. Empty when the statement failed: the caller reads that as
+    "no results were read", never as "nothing ran".
+    """
+    from .probe import ask_many
+    (res,) = ask_many(runner, [(
+        f"select test_unique_id, status, detected_at from (select test_unique_id, status, "
+        f"detected_at, row_number() over (partition by test_unique_id order by detected_at desc) "
+        f"as rn from {schema}.{TEST_RESULTS} where test_type = 'dbt_test') as latest "
+        f"where rn = 1", limit)])
+    if res.failed:
+        return {}
+    out = {}
+    for r in res.rows or []:
+        uid = str(r.get("test_unique_id") or "")
+        if uid:
+            at = _as_dt(r.get("detected_at"))
+            out[uid] = (str(r.get("status") or "").lower(),
+                        at.strftime("%Y-%m-%d %H:%M:%S") if at else "")
+    return out
+
+
 def monitoring_findings(rep: Report, project, cad: Cadence | None = None,
                         coverage: dict | None = None, min_marts: int = 1) -> list:
     """What is wrong with the MONITORING, which is assay's to say.

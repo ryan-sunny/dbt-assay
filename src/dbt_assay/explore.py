@@ -28,6 +28,7 @@ def _fact(f) -> dict | None:
     return {"value": f.value, "source": f.source,
             "confidence": round(f.confidence, 4) if f.confidence is not None else None,
             "resting_on": getattr(f, "resting_on", None) or None,
+            "premise": getattr(f, "premise", None) or None,
             "note": getattr(f, "note", "") or "",
             # Which relation a passed-through value was read from. Empty for anything computed
             # here, which is correct: there is no upstream to name.
