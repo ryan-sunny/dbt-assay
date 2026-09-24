@@ -31,7 +31,8 @@ and the ledger is where measurement and proof meet.
 - Per-run findings keep `finding_id` and `file_checksum`; agreed rulings are per finding;
   `store.finding_key` and `store.carried` match a finding across renames (N5).
 - Nothing reads an incremental model's logic; only `config.unique_key` is read, as a key.
-- Lean is not installed on this machine; users must not need it for anything but `assay prove`.
+- Lean is not installed on this machine, and it is not a Python package: assay manages its own
+  (see "Lean is part of assay" below).
 
 ## 1. The premise ledger
 
@@ -215,10 +216,27 @@ theorem may list only Lean's standard axioms. A Python test holds `RULES_PROVEN`
 **Fixed means:** CI proves all six with no `sorry`; changing one rule's Python without its theorem
 fails the mapping test.
 
+### Lean is part of assay (all four phases are in scope)
+
+Decided 2026-09-24: L1 to L4 are all built, as a core part of dbt-assay, not an optional extra.
+Lean is not a Python package and its toolchain is far over PyPI's wheel size limit, so assay
+manages its own:
+
+- `pip install dbt-assay`, then `assay prove` works with no other install step.
+- On first use assay downloads the Lean toolchain version it is pinned to from Lean's official
+  releases, verifies the checksum, and keeps it in `~/.cache/assay/lean/` (never on PATH, never
+  touching an existing elan install).
+- The layer-1 and layer-2 sources ship inside the package and are compiled into that cache once
+  per assay version.
+- `assay prove --setup` does the download and compile ahead of time, for a Docker image or CI, so
+  a scheduled run never downloads. `--offline` refuses to download and says what is missing.
+- Each assay release pins exactly one Lean version, so the same model proves the same way on every
+  machine. A Lean upgrade is an assay release, with the conformance suite rerun.
+
 ### Phase L2: `assay prove`, per-model certificates
 
-Optional: needs `lake` on PATH (`assay prove` prints the one-line elan install if not). Runs in the
-Dagster container once elan is in its image.
+Uses the toolchain assay manages. In the Dagster container, `assay prove --setup` runs in the image
+build.
 
 1. From each model's digest, emit a small intermediate representation (relations, joins with kind
    and keys, filters as opaque predicates, projections, windows, group by) as a Lean term.
