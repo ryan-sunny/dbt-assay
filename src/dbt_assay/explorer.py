@@ -1880,6 +1880,14 @@ function claimsTab(host) {
 function areasTab(host) {
   const A = DATA.areas || {};
   const pcs = A.predicate_clusters || [], odds = A.odd_ones_out || [], same = A.same_claim || [];
+  /* In the list a reading is its short name; the pane has it in full. A badge never wraps, so a
+     long one in a narrow column pushed the table past its pane at 1100px. */
+  const SHORT = {one_rule_repeated: 'one rule', independent_decisions: 'independent',
+                 deliberate_exception: 'deliberate', undeclared_divergence: 'undeclared',
+                 in_a_shared_macro: 'shared macro', at_the_source: 'at the source',
+                 upstream_in_one_model: 'upstream'};
+  const readShort = r => r ? badge(SHORT[r.answer] || r.answer.replace(/_/g, ' '), 'judged')
+                           : el('span', {class: 'tot', text: 'not asked'});
   const read = r => r ? badge(r.answer.replace(/_/g, ' '), 'judged', r.confidence)
                       : el('span', {class: 'tot', text: 'not asked'});
   const models = ms => el('span', {}, ms.map(m => link(m)).flatMap((x, i) =>
@@ -1899,8 +1907,7 @@ function areasTab(host) {
         tip: 'Whether the models apply one rule, repeated, or each made its own decision. Read '
           + 'by `assay clusters --judge`; the grouping itself is exact and cost nothing. '
           + '"written once" means a macro already holds it.',
-        cell: c => c.macro_at ? el('span', {class: 'pill declared', text: 'written once'})
-                              : read(c.one_rule)}],
+        cell: c => c.macro_at ? badge('one macro', 'declared') : readShort(c.one_rule)}],
      sort: 'size', dir: -1},
     {key: 'odd', label: 'the one that differs', rows: odds,
      cols: [
@@ -1909,7 +1916,7 @@ function areasTab(host) {
        {key: 'read', label: 'read as', val: o => o.read_as ? o.read_as.answer : '',
         tip: 'Whether the difference is a deliberate exception or a divergence nobody declared. '
           + 'Read by `assay clusters --judge`.',
-        cell: o => read(o.read_as)}],
+        cell: o => readShort(o.read_as)}],
      sort: 'model', dir: 1},
     {key: 'same', label: 'one claim, several models', rows: same,
      cols: [
@@ -2607,9 +2614,6 @@ function suggestTab(host) {
        where it ranks within its own rule. */
     rowCols: [
       {key: 'k', label: 'candidate', mono: 1, val: r => r.key || r.headline},
-      {key: 'sec', label: 'edit', val: r => LABEL[r.section] || r.section,
-       tip: 'Which part of audit.yml (or schema.yml) the draft goes in.',
-       cell: r => el('span', {class: 'pill', text: LABEL[r.section] || r.section})},
       /* *** "RANK 190,032" WAS A SCALE AND A COUNT FOLDED INTO ONE NUMBER. ***
          What the position rests on, in the rule's own words. It still sorts by the number. */
       {key: 'rank', label: 'ordered by', val: r => r.rank,
