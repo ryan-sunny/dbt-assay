@@ -87,6 +87,8 @@ again once it finishes. Never conclude the tools are broken from a lock.
    whose guarantee is `holding` is a fact for every input its premises allow: rely on it. One
    that is `lost` names the premise that broke; `not_proven` names what is missing -- usually a
    key the join does not cover. An edit that removes a proven property is a regression.
+   Each certificate also says whether the model's parse is proven (`parse proven`) or only
+   measured, and whether the engine was measured to do what the rule's constructs mean.
    To prove one assay could not, take `proof_goal(model, prop)`, write the proof body, and send
    it to `check_proof`: Lean's error comes back until it holds. Never `sorry`, never an axiom.
    `premises(model)` — **what assay's reading of this model rests on.** A declared grain rests on

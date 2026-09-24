@@ -79,6 +79,8 @@ again once it finishes. Never conclude the tools are broken from a lock.
    whose guarantee is `holding` is a fact for every input its premises allow: rely on it. One
    that is `lost` names the premise that broke; `not_proven` names what is missing -- usually a
    key the join does not cover. An edit that removes a proven property is a regression.
+   Each certificate also says whether the model's parse is proven (`parse proven`) or only
+   measured, and whether the engine was measured to do what the rule's constructs mean.
    To prove one assay could not, take `proof_goal(model, prop)`, write the proof body, and send
    it to `check_proof`: Lean's error comes back until it holds. Never `sorry`, never an axiom.
    `premises(model)` — **what assay's reading of this model rests on.** A declared grain rests on
@@ -544,7 +546,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay premises` | `assay_premises` | What the findings rest on: every key a declared grain or a held-back finding assumes is unique, with its evidence, its status, and what rests on it. | `--model/-m` `--status` `--target/-t` `--store` `--dialect` `--json` |
 | `assay probe` | `assay_probe` | Count what the SQL cannot settle. | `--target/-t` `--project-dir` `--profiles-dir` `--dialect` `--dbt/--dbt-bin` `--dry-run` `--emit` `--load` `--limit/-n` `--store` `--config` `--sample` `--lateness` `--json` |
 | `assay proof-goal <model> <prop>` | `assay_proof_goal` | The goal an agent can prove for one property of a model, as Lean, with its premises as named hypotheses and every lemma assay's library proves. | `--target/-t` `--store` `--dialect` |
-| `assay prove` | `assay_prove` | Prove what each model cannot do, with Lean: certificates whose premises are the ledger's. | `--target/-t` `--store` `--dialect` `--select/-s` `--setup` `--offline` `--force` `--parse-on` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--json` |
+| `assay prove` | `assay_prove` | Prove what each model cannot do, with Lean: certificates whose premises are the ledger's. | `--target/-t` `--store` `--dialect` `--select/-s` `--setup` `--offline` `--force` `--parse-on` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--conformance` `--engine` `--random` `--json` |
 | `assay prune` | `assay_prune` | Drop old runs from the tables a parser can regenerate. | `--keep/-k` `--store` `--dry-run` |
 | `assay read` | `assay_read` | Read every unruled review card once, by the judged tier, into a file a person checks. | `--out/-o` `--target/-t` `--store` `--config` `--select/-s` `--check` `--limit/-n` `--dry-run` `--dialect` |
 | `assay regress` | `assay_regress` | Re-ask every question a person already agreed with, and report what moved. | `--target/-t` `--store` `--config` `--family/-f` |

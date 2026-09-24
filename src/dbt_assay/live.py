@@ -351,7 +351,7 @@ def proofs_report(project, digests, schema, entries, store, model: str = "") -> 
     from . import prove as prove_mod
     all_findings(project, digests, schema, entries, store=store)
     led = ledger_mod.last()
-    rows = prove_mod.with_guarantees(prove_mod.stored(store), led, project) \
+    rows = prove_mod.with_guarantees(prove_mod.stored(store), led, project, store) \
         if store is not None else []
     if model:
         rows = [r for r in rows if r["model_name"] == model]

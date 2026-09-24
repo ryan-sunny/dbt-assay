@@ -1,6 +1,13 @@
 name = "assay"
 version = "0.1.0"
-defaultTargets = ["Assay"]
+defaultTargets = ["Assay", "Sql", "assay_sql"]
 
 [[lean_lib]]
 name = "Assay"
+
+[[lean_lib]]
+name = "Sql"
+
+[[lean_exe]]
+name = "assay_sql"
+root = "Main"

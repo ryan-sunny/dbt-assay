@@ -267,7 +267,7 @@ def _proofs(led, store, project) -> list:
         return []
     from . import ledger as ledger_mod
     from . import prove as prove_mod
-    rows = prove_mod.with_guarantees(prove_mod.stored(store), led, project)
+    rows = prove_mod.with_guarantees(prove_mod.stored(store), led, project, store)
     for r in rows:
         pf = ledger_mod.parse_faithful(led, r["model"], store)
         r["parse"] = {"status": pf.status, "label": ledger_mod.label(pf), "why": ledger_mod.why(pf)}

@@ -1,6 +1,6 @@
 # The store
 
-One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Twenty
+One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Twenty-one
 tables. The whole design turns on one split, so it is worth stating before the diagram:
 
 **Some of these cost nothing and some of them cost money or somebody's afternoon.** A table
@@ -12,7 +12,8 @@ prune` deletes only the first kind, and the split is declared in code rather tha
 PRUNABLE     = ("findings", "edge_facts", "unreadable", "premises", "premise_uses")
 NEVER_PRUNED = ("model_calls", "model_decisions", "claims", "adjudications", "observed_keys",
                 "runs", "calibrations", "compiled_sql", "commits", "states", "warehouse_calls",
-                "test_status", "observed_lateness", "proofs", "parse_checks")
+                "test_status", "observed_lateness", "proofs", "parse_checks",
+                "conformance")
 ```
 
 A new table belongs to one list or the other and a test fails until it does, so nothing becomes
@@ -39,6 +40,7 @@ erDiagram
     OBSERVED_LATENESS |o--o{ PREMISES : "how late rows arrive is evidence"
     PREMISES ||--o{ PROOFS : "a certificate assumes them"
     PARSE_CHECKS |o--o{ PREMISES : "parse_faithful"
+    CONFORMANCE |o--o{ PROOFS : "what the engine does to a rule's constructs"
 
     STATES ||--o{ MODEL_DECISIONS : "one state, many answers"
     MODEL_CALLS ||--o{ MODEL_DECISIONS : "one call, many answers"
@@ -218,6 +220,14 @@ erDiagram
         bigint rows_compared
         timestamp checked_at
     }
+    CONFORMANCE {
+        varchar construct PK "left_join_null_key, row_number_ties, ..."
+        varchar engine PK "duckdb / snowflake / ..."
+        varchar engine_version PK
+        varchar status "holding / broken / unchecked"
+        varchar detail "the rows that differ"
+        timestamp checked_at
+    }
     TEST_STATUS {
         varchar test_id PK "the dbt test's unique_id"
         timestamp ran_at PK
@@ -344,6 +354,7 @@ rulings were structural, so a calibration report has to exclude them by construc
 | `observed_lateness` | how late rows arrive after their event time, for an incremental model's lookback | **a warehouse query** |
 | `proofs` | what Lean proved about each model, from which premises, and what it could not | **Lean time**, and an agent's proof cannot be written again for free |
 | `parse_checks` | whether a model's parse is what its SQL says, by round trip | free in DuckDB, **a warehouse query** otherwise |
+| `conformance` | whether an engine does what assay's meaning of SQL says, per construct | free in DuckDB, **a warehouse query** otherwise |
 | `test_status` | each dbt test's last actual result, from Elementary or a build's `run_results.json` | **a build that is gone** |
 | `commits` | every commit touching the project, and the models it touched; with `runs.git_sha`, when a finding was first seen | free from git |
 

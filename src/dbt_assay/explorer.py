@@ -3664,6 +3664,12 @@ function proofBlock(r) {
     ['the rule', el('span', {}, [el('span', {class: 'mono', text: r.rule || ''}),
       el('span', {class: 'tot', text: '  proven once in assay’s Lean library'})])],
     ['the parse', r.parse ? premBadge(r.parse.status, r.parse.label, r.parse.why) : null],
+    /* L4: whether this project's engine does what the rule's constructs mean. */
+    ['the engine', (r.engine || []).length ? el('div', {class: 'ulist'}, r.engine.map(x =>
+        el('div', {class: 'urow'}, [el('span', {class: 'mono', text: x.construct}),
+          premBadge(x.status, x.status === 'holding' ? 'conforms' : x.status === 'broken'
+            ? 'differs' : 'not measured', x.detail)])))
+      : null],
     ['checked', el('span', {class: 'tot', text: (r.lean_version ? 'Lean ' + r.lean_version + ', ' : '')
       + (r.proved_at || '').slice(0, 10) + (r.written_by === 'agent' ? ', written by an agent' : '')})],
   ];

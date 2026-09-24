@@ -460,7 +460,11 @@ def stored(store) -> list[dict]:
     return out
 
 
-def with_guarantees(rows: list[dict], led: L.Ledger, project) -> list[dict]:
+def engine_of(project) -> str:
+    return (getattr(project, "adapter_type", "") or "duckdb").lower()
+
+
+def with_guarantees(rows: list[dict], led: L.Ledger, project, store=None) -> list[dict]:
     """Each certificate with its premises' statuses NOW and what that makes the guarantee.
 
     `stale` when the model's file changed since it was proved; `lost` when a premise broke;
@@ -490,6 +494,18 @@ def with_guarantees(rows: list[dict], led: L.Ledger, project) -> list[dict]:
             r["guarantee"] = "conditional"
         broke = next((p for p in prem if p["status"] == L.BROKEN), None)
         r["lost_because"] = (f"{broke['statement']} broke: {broke['why']}" if broke else "")
+        # L4: does this project's engine do what the rule's constructs mean?
+        from .conformance import RULE_CONSTRUCTS, status_of
+        eng = engine_of(project)
+        r["engine"] = [{"construct": c, "engine": eng,
+                        **dict(zip(("status", "detail"), status_of(store, c, eng)))}
+                       for c in RULE_CONSTRUCTS.get(r.get("rule") or "", [])] \
+            if store is not None else []
+        bad = [e for e in r["engine"] if e["status"] == L.BROKEN]
+        r["engine_note"] = (f"{eng} differs from assay's meaning of {bad[0]['construct']}: "
+                            f"{bad[0]['detail']}" if bad else
+                            f"not yet measured on {eng}" if any(e["status"] != L.HOLDING
+                                                                for e in r["engine"]) else "")
     return rows
 
 
@@ -556,6 +572,6 @@ def run(project, digests, schema, entries, store, target_dir, *, force: bool = F
                 o.detail = f"{o.missing}\n\nLean: {o.detail}"
     if store is not None:
         write(store, todo, LEAN_VERSION)
-    rows = with_guarantees(stored(store), led, project) if store is not None else []
+    rows = with_guarantees(stored(store), led, project, store) if store is not None else []
     return {"certificates": len(obls), "checked_now": len(fresh), "reused": skipped,
             "rows": rows, "written_to": str(workdir(target_dir))}

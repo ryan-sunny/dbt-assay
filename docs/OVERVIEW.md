@@ -1340,6 +1340,32 @@ Guarantees tab and model pane read the same rows. On a 358-model warehouse: 585 
 proven, 137 refuted by Lean with the missing premise named, 44 with no rule that applies, in 16
 seconds.
 
+### The parse, proven, and the engine, measured
+
+`assay prove` also proves each model's parse where it can. Lean defines the SQL fragment assay
+reads (WITH, SELECT, joins with ON/USING, WHERE, GROUP BY, HAVING, QUALIFY, UNION [ALL], CASE,
+CAST/TRY_CAST, IN, BETWEEN, FILTER, function and window calls): its grammar, as a total parser
+over the text's code points, and its meaning, as an evaluator with SQL's NULLs and three-valued
+logic. Per model, assay writes `parseCodes <the model's text> = some <sqlglot's tree>` and Lean's
+kernel checks it by running the parser on the text. Then `parse_faithful(model)` is proven, and it
+outranks the round trip. A model outside the fragment, or whose tree sqlglot rewrote (a default
+argument it adds, a function it renames), is "parse unproven" with the place the trees part, and
+keeps the round trip. On a 358-model warehouse: 113 parses proven.
+
+The one link no proof can close is whether the engine does what that meaning says:
+
+```bash
+assay prove --conformance                  # each construct through Lean and DuckDB, + 200 random cases
+assay prove --conformance --engine warehouse --project-dir . --dbt "uv run dbt"
+```
+
+Each construct a rule leans on (a NULL join key, a fan-out, `row_number` ties, `count(*)` against
+`count(x)`, NULL in `IN`, ...) runs through Lean's evaluator and the engine on the same tables, and
+the bags must match; random differential cases do the same over generated tables and queries. A
+certificate lists its rule's constructs with their status on the project's engine. DuckDB differs
+on two, and says so: `/` on integers returns a double, and NULLs sort last under DESC. A Snowflake
+premise reads unchecked until it has run on a real Snowflake connection.
+
 ### An agent writes the proof, Lean checks it
 
 assay never calls a model to write proofs. `proof_goal(model, property)` (or `assay proof-goal`)

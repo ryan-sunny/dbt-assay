@@ -27,6 +27,7 @@ from .checks.incremental import DDL_LATENESS
 from .ledger import DDL as LEDGER_DDL
 from .ledger import DDL_PARSE
 from .prove import DDL as DDL_PROOFS
+from .conformance import DDL as DDL_CONFORMANCE
 
 # `accept`: the finding is CORRECT and the person chose to leave it. Not `agree`, which leaves it
 # outstanding forever, and not `disagree`, which is a lie that tells a working check it was wrong.
@@ -53,7 +54,7 @@ def _shipping_versions() -> set:
         return set()
 
 
-DDL = JEV_DDL + LEDGER_DDL + DDL_LATENESS + DDL_PARSE + DDL_PROOFS + """
+DDL = JEV_DDL + LEDGER_DDL + DDL_LATENESS + DDL_PARSE + DDL_PROOFS + DDL_CONFORMANCE + """
 create table if not exists runs (
     run_id       varchar primary key,
     started_at   timestamp,
@@ -1468,7 +1469,9 @@ NEVER_PRUNED = ("model_calls", "model_decisions", "claims", "adjudications", "ob
                 "observed_lateness",
                 # A certificate costs Lean time, and one an agent wrote (L3) cannot be written
                 # again for free. A parse check may have cost a warehouse statement.
-                "proofs", "parse_checks")
+                "proofs", "parse_checks",
+                # What an engine was measured to do, per construct and engine version.
+                "conformance")
 
 
 def prune(store, keep: int = 10) -> dict:

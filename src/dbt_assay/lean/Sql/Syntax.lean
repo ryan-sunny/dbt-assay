@@ -1,0 +1,110 @@
+-- GENERATED from templates/Syntax.lean.in by scripts/gen_lean_sql.py. Edit the template.
+/-!
+# The SQL fragment assay reads, as data
+
+The part of SQL the per-model parse proof (L4) covers: `WITH` named selects, one `SELECT` each,
+`FROM` a relation, `JOIN`s with `ON` or `USING`, `WHERE`, `GROUP BY`, `HAVING`, `QUALIFY`,
+`ORDER BY` and `LIMIT`, and expressions built from columns, literals, operators, `CASE`, `CAST`,
+`IN`, `BETWEEN`, `IS [NOT] NULL`, function calls and window calls. A model outside it is "parse
+unproven" and keeps the L2 round trip as its evidence.
+
+*** TEXT IS A LIST OF CODE POINTS. *** Lean's `String` is UTF-8 bytes, and the kernel evaluating a
+proof would encode and decode them for every comparison: lexing 900 characters did not finish in
+ten minutes. Names, tokens and the input are `Str`, lists of `Nat`, which the kernel compares with
+its native arithmetic.
+
+Identifiers are compared the way the engines compare unquoted ones: case-insensitively, so an
+unquoted identifier is stored lowercased; a quoted one is stored exactly.
+-/
+namespace Sql
+
+abbrev Str := List Nat
+
+mutual
+  /-- An expression. Its lists are their own types (not `List Expr`), so equality of trees is
+  decidable and the kernel can check a parse by evaluating both sides. -/
+  inductive Expr where
+    | col (qual : List Str) (name : Str)
+    | star (qual : List Str)
+    | num (s : Str)
+    | str (s : Str)
+    | null
+    | bool (b : Bool)
+    | bin (op : Str) (a b : Expr)
+    | un (op : Str) (a : Expr)
+    | isNull (a : Expr) (neg : Bool)
+    | inList (a : Expr) (xs : ExprList) (neg : Bool)
+    | between (a lo hi : Expr) (neg : Bool)
+    | case (operand : OptExpr) (whens : WhenList) (els : OptExpr)
+    | cast (a : Expr) (ty : Str)
+    | tryCast (a : Expr) (ty : Str)
+    | filtered (f : Expr) (cond : Expr)
+    | fn (name : Str) (distinct : Bool) (args : ExprList)
+    | window (f : Expr) (part : ExprList) (order : OrderList)
+  inductive ExprList where
+    | nil
+    | cons (x : Expr) (xs : ExprList)
+  inductive WhenList where
+    | nil
+    | cons (c v : Expr) (rest : WhenList)
+  inductive OrderList where
+    | nil
+    | cons (e : Expr) (desc : Bool) (rest : OrderList)
+  inductive OptExpr where
+    | none
+    | some (e : Expr)
+end
+
+deriving instance DecidableEq for Expr
+deriving instance Repr for Expr
+instance : Inhabited Expr := ⟨Expr.null⟩
+
+def ExprList.ofList : List Expr → ExprList
+  | [] => .nil
+  | x :: xs => .cons x (ofList xs)
+
+def WhenList.ofList : List (Expr × Expr) → WhenList
+  | [] => .nil
+  | (c, v) :: xs => .cons c v (ofList xs)
+
+def OrderList.ofList : List (Expr × Bool) → OrderList
+  | [] => .nil
+  | (e, d) :: xs => .cons e d (ofList xs)
+
+def OptExpr.ofOption : Option Expr → OptExpr
+  | Option.none => OptExpr.none
+  | Option.some e => OptExpr.some e
+
+structure Join where
+  kind : Str                       -- INNER | LEFT | RIGHT | FULL | CROSS
+  table : List Str                 -- a relation's parts, or one CTE name
+  alias : Option Str
+  on : Option Expr
+  usingCols : List Str
+  deriving Repr, Inhabited, DecidableEq
+
+structure Select where
+  distinct : Bool
+  items : List (Expr × Option Str)
+  source : Option (List Str × Option Str)
+  joins : List Join
+  where_ : Option Expr
+  groupBy : List Expr
+  having : Option Expr
+  qualify : Option Expr
+  orderBy : List (Expr × Bool)
+  limit : Option Str
+  deriving Repr, Inhabited, DecidableEq
+
+/-- A select, or selects joined by `UNION [ALL]`, left to right. -/
+structure Compound where
+  first : Select
+  rest : List (Str × Select)       -- (UNION | UNION ALL, the next select)
+  deriving Repr, Inhabited, DecidableEq
+
+structure Query where
+  ctes : List (Str × Compound)
+  body : Compound
+  deriving Repr, Inhabited, DecidableEq
+
+end Sql

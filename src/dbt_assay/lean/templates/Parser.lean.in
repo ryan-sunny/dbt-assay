@@ -1,0 +1,471 @@
+import Sql.Lexer
+/-!
+# The grammar of the fragment
+
+A recursive-descent parser over tokens, with the usual precedence: `OR` < `AND` < `NOT` <
+comparison (`= <> < <= > >= LIKE ILIKE`, `IS [NOT] NULL`, `[NOT] IN`, `[NOT] BETWEEN`) <
+`+ - ||` < `* / %` < unary minus < `::` cast < primary. Parentheses group and leave no trace in
+the tree. Every function recurses structurally on a fuel argument, so the kernel runs it.
+
+This IS the definition of what a text in the fragment means as a tree: a per-model proof shows
+that sqlglot's tree for the model is exactly what this parser reads from the model's text.
+-/
+namespace Sql
+
+abbrev P (α : Type) := List Tok → Option (α × List Tok)
+
+def expectKw (k : Str) : P Unit
+  | Tok.kw k' :: ts => if k == k' then some ((), ts) else none
+  | _ => none
+
+def expectSym (s : Str) : P Unit
+  | Tok.sym s' :: ts => if s == s' then some ((), ts) else none
+  | _ => none
+
+def isKw (k : Str) : List Tok → Bool
+  | Tok.kw k' :: _ => k == k'
+  | _ => false
+
+def isSym (s : Str) : List Tok → Bool
+  | Tok.sym s' :: _ => s == s'
+  | _ => false
+
+def ident : P Str
+  | Tok.ident s :: ts => some (s, ts)
+  | _ => none
+
+/-- `a.b.c` -/
+def identChain : Nat → P (List Str)
+  | 0, _ => none
+  | n + 1, ts => do
+    let (a, ts) ← ident ts
+    if isSym ⟪.⟫ ts && (match ts.drop 1 with | Tok.ident _ :: _ => true | _ => false) then
+      let (rest, ts) ← identChain n (ts.drop 1)
+      some (a :: rest, ts)
+    else some ([a], ts)
+
+/-- One name for each type the engines spell several ways: they are the same type. -/
+def normType (t : Str) : Str :=
+  match t with
+  | ⟪integer⟫ | ⟪int4⟫ | ⟪signed⟫ => ⟪int⟫
+  | ⟪int8⟫ | ⟪long⟫ => ⟪bigint⟫
+  | ⟪int2⟫ => ⟪smallint⟫
+  | ⟪float8⟫ | ⟪double_precision⟫ => ⟪double⟫
+  | ⟪float4⟫ | ⟪real⟫ => ⟪float⟫
+  | ⟪numeric⟫ | ⟪number⟫ => ⟪decimal⟫
+  | ⟪bool⟫ | ⟪logical⟫ => ⟪boolean⟫
+  | ⟪string⟫ | ⟪text⟫ | ⟪char_varying⟫ => ⟪varchar⟫
+  | ⟪datetime⟫ => ⟪timestamp⟫
+  | _ => t
+
+/-- One name for each function the engines spell several ways. -/
+def normFn (f : Str) : Str :=
+  match f with
+  | ⟪substr⟫ => ⟪substring⟫
+  | ⟪ifnull⟫ | ⟪nvl⟫ => ⟪coalesce⟫
+  | ⟪len⟫ | ⟪char_length⟫ | ⟪character_length⟫ => ⟪length⟫
+  | ⟪lcase⟫ => ⟪lower⟫
+  | ⟪ucase⟫ => ⟪upper⟫
+  | ⟪pow⟫ => ⟪power⟫
+  | ⟪ceiling⟫ => ⟪ceil⟫
+  | ⟪day_of_week⟫ => ⟪dayofweek⟫
+  | ⟪stddev_samp⟫ => ⟪stddev⟫
+  | ⟪var_samp⟫ => ⟪variance⟫
+  | ⟪array_agg⟫ => ⟪list⟫
+  | ⟪string_agg⟫ | ⟪listagg⟫ => ⟪group_concat⟫
+  | _ => f
+
+/-- A type name: `decimal(18, 2)`, `varchar`, `timestamp`. -/
+def typeName : P Str
+  | Tok.ident t :: Tok.sym ⟪(⟫ :: Tok.num a :: Tok.sym ⟪,⟫ :: Tok.num b :: Tok.sym ⟪)⟫ :: ts =>
+    some (normType t ++ ⟪(⟫ ++ a ++ ⟪,⟫ ++ b ++ ⟪)⟫, ts)
+  | Tok.ident t :: Tok.sym ⟪(⟫ :: Tok.num a :: Tok.sym ⟪)⟫ :: ts =>
+    some (normType t ++ ⟪(⟫ ++ a ++ ⟪)⟫, ts)
+  | Tok.ident t :: ts => some (normType t, ts)
+  | _ => none
+
+def cmpOp : List Tok → Option Str
+  | Tok.sym s :: _ => if memS s [⟪=⟫, ⟪<>⟫, ⟪<⟫, ⟪<=⟫, ⟪>⟫, ⟪>=⟫] then some s else none
+  | Tok.kw ⟪LIKE⟫ :: _ => some ⟪LIKE⟫
+  | Tok.kw ⟪ILIKE⟫ :: _ => some ⟪ILIKE⟫
+  | _ => none
+
+mutual
+  def pExpr : Nat → P Expr
+    | 0, _ => none
+    | n + 1, ts => pOr n ts
+
+  def pOr : Nat → P Expr
+    | 0, _ => none
+    | n + 1, ts => do
+      let (a, ts) ← pAnd n ts
+      pOrRest n a ts
+
+  def pOrRest : Nat → Expr → P Expr
+    | 0, _, _ => none
+    | n + 1, a, ts =>
+      if isKw ⟪OR⟫ ts then do
+        let (b, ts) ← pAnd n (ts.drop 1)
+        pOrRest n (Expr.bin ⟪OR⟫ a b) ts
+      else some (a, ts)
+
+  def pAnd : Nat → P Expr
+    | 0, _ => none
+    | n + 1, ts => do
+      let (a, ts) ← pNot n ts
+      pAndRest n a ts
+
+  def pAndRest : Nat → Expr → P Expr
+    | 0, _, _ => none
+    | n + 1, a, ts =>
+      if isKw ⟪AND⟫ ts then do
+        let (b, ts) ← pNot n (ts.drop 1)
+        pAndRest n (Expr.bin ⟪AND⟫ a b) ts
+      else some (a, ts)
+
+  def pNot : Nat → P Expr
+    | 0, _ => none
+    | n + 1, ts =>
+      if isKw ⟪NOT⟫ ts then do
+        let (a, ts) ← pNot n (ts.drop 1)
+        some (Expr.un ⟪NOT⟫ a, ts)
+      else pCmp n ts
+
+  def pCmp : Nat → P Expr
+    | 0, _ => none
+    | n + 1, ts => do
+      let (a, ts) ← pAdd n ts
+      match cmpOp ts with
+      | some op => do
+        let (b, ts) ← pAdd n (ts.drop 1)
+        some (Expr.bin op a b, ts)
+      | none =>
+        if isKw ⟪IS⟫ ts then
+          let ts := ts.drop 1
+          if isKw ⟪NOT⟫ ts then do
+            let ((), ts) ← expectKw ⟪NULL⟫ (ts.drop 1)
+            some (Expr.isNull a true, ts)
+          else do
+            let ((), ts) ← expectKw ⟪NULL⟫ ts
+            some (Expr.isNull a false, ts)
+        else
+          let neg := isKw ⟪NOT⟫ ts
+          let ts' := if neg then ts.drop 1 else ts
+          if isKw ⟪IN⟫ ts' then do
+            let ((), ts) ← expectSym ⟪(⟫ (ts'.drop 1)
+            let (xs, ts) ← pList n ts
+            let ((), ts) ← expectSym ⟪)⟫ ts
+            some (Expr.inList a (ExprList.ofList xs) neg, ts)
+          else if isKw ⟪BETWEEN⟫ ts' then do
+            let (lo, ts) ← pAdd n (ts'.drop 1)
+            let ((), ts) ← expectKw ⟪AND⟫ ts
+            let (hi, ts) ← pAdd n ts
+            some (Expr.between a lo hi neg, ts)
+          else if neg then none
+          else some (a, ts)
+
+  def pAdd : Nat → P Expr
+    | 0, _ => none
+    | n + 1, ts => do
+      let (a, ts) ← pMul n ts
+      pAddRest n a ts
+
+  def pAddRest : Nat → Expr → P Expr
+    | 0, _, _ => none
+    | n + 1, a, ts =>
+      match ts with
+      | Tok.sym s :: rest =>
+        if s == ⟪+⟫ || s == ⟪-⟫ || s == ⟪||⟫ then do
+          let (b, ts) ← pMul n rest
+          pAddRest n (Expr.bin s a b) ts
+        else some (a, ts)
+      | _ => some (a, ts)
+
+  def pMul : Nat → P Expr
+    | 0, _ => none
+    | n + 1, ts => do
+      let (a, ts) ← pUnary n ts
+      pMulRest n a ts
+
+  def pMulRest : Nat → Expr → P Expr
+    | 0, _, _ => none
+    | n + 1, a, ts =>
+      match ts with
+      | Tok.sym s :: rest =>
+        if s == ⟪*⟫ || s == ⟪/⟫ || s == ⟪%⟫ then do
+          let (b, ts) ← pUnary n rest
+          pMulRest n (Expr.bin s a b) ts
+        else some (a, ts)
+      | _ => some (a, ts)
+
+  def pUnary : Nat → P Expr
+    | 0, _ => none
+    | n + 1, ts =>
+      if isSym ⟪-⟫ ts then do
+        let (a, ts) ← pUnary n (ts.drop 1)
+        some (Expr.un ⟪-⟫ a, ts)
+      else do
+        let (a, ts) ← pPrimary n ts
+        pCasts n a ts
+
+  def pCasts : Nat → Expr → P Expr
+    | 0, _, _ => none
+    | n + 1, a, ts =>
+      if isSym ⟪::⟫ ts then do
+        let (t, ts) ← typeName (ts.drop 1)
+        pCasts n (Expr.cast a t) ts
+      else some (a, ts)
+
+  def pList : Nat → P (List Expr)
+    | 0, _ => none
+    | n + 1, ts => do
+      let (a, ts) ← pExpr n ts
+      if isSym ⟪,⟫ ts then do
+        let (rest, ts) ← pList n (ts.drop 1)
+        some (a :: rest, ts)
+      else some ([a], ts)
+
+  def pOrderList : Nat → P (List (Expr × Bool))
+    | 0, _ => none
+    | n + 1, ts => do
+      let (a, ts) ← pExpr n ts
+      let (desc, ts) := if isKw ⟪DESC⟫ ts then (true, ts.drop 1)
+                        else if isKw ⟪ASC⟫ ts then (false, ts.drop 1) else (false, ts)
+      if isSym ⟪,⟫ ts then do
+        let (rest, ts) ← pOrderList n (ts.drop 1)
+        some ((a, desc) :: rest, ts)
+      else some ([(a, desc)], ts)
+
+  def pWhens : Nat → P (List (Expr × Expr))
+    | 0, _ => none
+    | n + 1, ts =>
+      if isKw ⟪WHEN⟫ ts then do
+        let (c, ts) ← pExpr n (ts.drop 1)
+        let ((), ts) ← expectKw ⟪THEN⟫ ts
+        let (v, ts) ← pExpr n ts
+        let (rest, ts) ← pWhens n ts
+        some ((c, v) :: rest, ts)
+      else some ([], ts)
+
+  def pOver : Nat → Expr → P Expr
+    | 0, _, _ => none
+    | n + 1, f, ts =>
+      if isKw ⟪FILTER⟫ ts then do
+        let ((), ts) ← expectSym ⟪(⟫ (ts.drop 1)
+        let ((), ts) ← expectKw ⟪WHERE⟫ ts
+        let (c, ts) ← pExpr n ts
+        let ((), ts) ← expectSym ⟪)⟫ ts
+        pOver n (Expr.filtered f c) ts
+      else if isKw ⟪OVER⟫ ts then do
+        let ((), ts) ← expectSym ⟪(⟫ (ts.drop 1)
+        let (part, ts) ← if isKw ⟪PARTITION⟫ ts then do
+            let ((), ts) ← expectKw ⟪BY⟫ (ts.drop 1)
+            pList n ts
+          else some ([], ts)
+        let (ord, ts) ← if isKw ⟪ORDER⟫ ts then do
+            let ((), ts) ← expectKw ⟪BY⟫ (ts.drop 1)
+            pOrderList n ts
+          else some ([], ts)
+        let ((), ts) ← expectSym ⟪)⟫ ts
+        some (Expr.window f (ExprList.ofList part) (OrderList.ofList ord), ts)
+      else some (f, ts)
+
+  def pPrimary : Nat → P Expr
+    | 0, _ => none
+    | n + 1, ts =>
+      match ts with
+      | Tok.num s :: ts => some (Expr.num s, ts)
+      | Tok.str s :: ts => some (Expr.str s, ts)
+      | Tok.kw ⟪NULL⟫ :: ts => some (Expr.null, ts)
+      | Tok.kw ⟪TRUE⟫ :: ts => some (Expr.bool true, ts)
+      | Tok.kw ⟪FALSE⟫ :: ts => some (Expr.bool false, ts)
+      | Tok.sym ⟪*⟫ :: ts => some (Expr.star [], ts)
+      | Tok.sym ⟪(⟫ :: ts => do
+        let (a, ts) ← pExpr n ts
+        let ((), ts) ← expectSym ⟪)⟫ ts
+        some (a, ts)
+      | Tok.kw ⟪CAST⟫ :: ts => do
+        let ((), ts) ← expectSym ⟪(⟫ ts
+        let (a, ts) ← pExpr n ts
+        let ((), ts) ← expectKw ⟪AS⟫ ts
+        let (t, ts) ← typeName ts
+        let ((), ts) ← expectSym ⟪)⟫ ts
+        some (Expr.cast a t, ts)
+      | Tok.kw ⟪CASE⟫ :: ts => do
+        let (operand, ts) ← if isKw ⟪WHEN⟫ ts then some (none, ts) else do
+            let (o, ts) ← pExpr n ts
+            some (some o, ts)
+        let (whens, ts) ← pWhens n ts
+        let (els, ts) ← if isKw ⟪ELSE⟫ ts then do
+            let (e, ts) ← pExpr n (ts.drop 1)
+            some (some e, ts)
+          else some (none, ts)
+        let ((), ts) ← expectKw ⟪END⟫ ts
+        some (Expr.case (OptExpr.ofOption operand) (WhenList.ofList whens) (OptExpr.ofOption els), ts)
+      | Tok.ident ⟪try_cast⟫ :: Tok.sym ⟪(⟫ :: ts => do
+        let (a, ts) ← pExpr n ts
+        let ((), ts) ← expectKw ⟪AS⟫ ts
+        let (t, ts) ← typeName ts
+        let ((), ts) ← expectSym ⟪)⟫ ts
+        some (Expr.tryCast a t, ts)
+      | Tok.ident _ :: _ => do
+        let (parts, ts) ← identChain n ts
+        if isSym ⟪.⟫ ts && isSym ⟪*⟫ (ts.drop 1) then some (Expr.star parts, ts.drop 2)
+        else if isSym ⟪(⟫ ts then
+          match parts with
+          | [name] => do
+            let ts := ts.drop 1
+            let (distinct, ts) := if isKw ⟪DISTINCT⟫ ts then (true, ts.drop 1) else (false, ts)
+            let (args, ts) ← if isSym ⟪)⟫ ts then some ([], ts) else pList n ts
+            let ((), ts) ← expectSym ⟪)⟫ ts
+            pOver n (Expr.fn (normFn name) distinct (ExprList.ofList args)) ts
+          | _ => none
+        else match parts.reverse with
+          | name :: qual => some (Expr.col qual.reverse name, ts)
+          | [] => none
+      | _ => none
+end
+
+/-- `select_item [AS alias]`. -/
+def pItem (n : Nat) : P (Expr × Option Str) := fun ts => do
+  let (e, ts) ← pExpr n ts
+  if isKw ⟪AS⟫ ts then do
+    let (a, ts) ← ident (ts.drop 1)
+    some ((e, some a), ts)
+  else match ts with
+    | Tok.ident a :: ts => some ((e, some a), ts)
+    | _ => some ((e, none), ts)
+
+def pItems : Nat → P (List (Expr × Option Str))
+  | 0, _ => none
+  | n + 1, ts => do
+    let (a, ts) ← pItem n ts
+    if isSym ⟪,⟫ ts then do
+      let (rest, ts) ← pItems n (ts.drop 1)
+      some (a :: rest, ts)
+    else some ([a], ts)
+
+def pAlias : P (Option Str)
+  | Tok.kw ⟪AS⟫ :: Tok.ident a :: ts => some (some a, ts)
+  | Tok.ident a :: ts => some (some a, ts)
+  | ts => some (none, ts)
+
+def pIdents : Nat → P (List Str)
+  | 0, _ => none
+  | n + 1, ts => do
+    let (a, ts) ← ident ts
+    if isSym ⟪,⟫ ts then do
+      let (rest, ts) ← pIdents n (ts.drop 1)
+      some (a :: rest, ts)
+    else some ([a], ts)
+
+def joinKind : List Tok → Option (Str × List Tok)
+  | Tok.kw ⟪JOIN⟫ :: ts => some (⟪INNER⟫, ts)
+  | Tok.kw ⟪INNER⟫ :: Tok.kw ⟪JOIN⟫ :: ts => some (⟪INNER⟫, ts)
+  | Tok.kw ⟪LEFT⟫ :: Tok.kw ⟪OUTER⟫ :: Tok.kw ⟪JOIN⟫ :: ts => some (⟪LEFT⟫, ts)
+  | Tok.kw ⟪LEFT⟫ :: Tok.kw ⟪JOIN⟫ :: ts => some (⟪LEFT⟫, ts)
+  | Tok.kw ⟪RIGHT⟫ :: Tok.kw ⟪OUTER⟫ :: Tok.kw ⟪JOIN⟫ :: ts => some (⟪RIGHT⟫, ts)
+  | Tok.kw ⟪RIGHT⟫ :: Tok.kw ⟪JOIN⟫ :: ts => some (⟪RIGHT⟫, ts)
+  | Tok.kw ⟪FULL⟫ :: Tok.kw ⟪OUTER⟫ :: Tok.kw ⟪JOIN⟫ :: ts => some (⟪FULL⟫, ts)
+  | Tok.kw ⟪FULL⟫ :: Tok.kw ⟪JOIN⟫ :: ts => some (⟪FULL⟫, ts)
+  | Tok.kw ⟪CROSS⟫ :: Tok.kw ⟪JOIN⟫ :: ts => some (⟪CROSS⟫, ts)
+  | _ => none
+
+def pJoins : Nat → P (List Join)
+  | 0, _ => none
+  | n + 1, ts =>
+    match joinKind ts with
+    | none => some ([], ts)
+    | some (kind, ts) => do
+      let (t, ts) ← identChain n ts
+      let (alias, ts) ← pAlias ts
+      let (on, usingCols, ts) ← if isKw ⟪ON⟫ ts then do
+          let (e, ts) ← pExpr n (ts.drop 1)
+          some (some e, [], ts)
+        else if isKw ⟪USING⟫ ts then do
+          let ((), ts) ← expectSym ⟪(⟫ (ts.drop 1)
+          let (cs, ts) ← pIdents n ts
+          let ((), ts) ← expectSym ⟪)⟫ ts
+          some (none, cs, ts)
+        else some (none, [], ts)
+      let (rest, ts) ← pJoins n ts
+      some ({ kind, table := t, alias, on, usingCols } :: rest, ts)
+
+def optClause {α} (k : Str) (p : P α) : P (Option α) := fun ts =>
+  if isKw k ts then (p (ts.drop 1)).map (fun (a, ts) => (some a, ts)) else some (none, ts)
+
+def pSelect (n : Nat) : P Select := fun ts => do
+  let ((), ts) ← expectKw ⟪SELECT⟫ ts
+  let (distinct, ts) := if isKw ⟪DISTINCT⟫ ts then (true, ts.drop 1) else (false, ts)
+  let (items, ts) ← pItems n ts
+  let (source, ts) ← if isKw ⟪FROM⟫ ts then do
+      let (t, ts) ← identChain n (ts.drop 1)
+      let (a, ts) ← pAlias ts
+      some (some (t, a), ts)
+    else some (none, ts)
+  let (joins, ts) ← pJoins n ts
+  let (where_, ts) ← optClause ⟪WHERE⟫ (pExpr n) ts
+  let (groupBy, ts) ← if isKw ⟪GROUP⟫ ts then do
+      let ((), ts) ← expectKw ⟪BY⟫ (ts.drop 1)
+      pList n ts
+    else some ([], ts)
+  let (having, ts) ← optClause ⟪HAVING⟫ (pExpr n) ts
+  let (qualify, ts) ← optClause ⟪QUALIFY⟫ (pExpr n) ts
+  let (orderBy, ts) ← if isKw ⟪ORDER⟫ ts then do
+      let ((), ts) ← expectKw ⟪BY⟫ (ts.drop 1)
+      pOrderList n ts
+    else some ([], ts)
+  let (limit, ts) ← if isKw ⟪LIMIT⟫ ts then
+      match ts.drop 1 with
+      | Tok.num s :: ts => some (some s, ts)
+      | _ => none
+    else some (none, ts)
+  some ({ distinct, items, source, joins, where_, groupBy, having, qualify, orderBy, limit }, ts)
+
+/-- `UNION [ALL] select`, repeated. -/
+def pUnions : Nat → P (List (Str × Select))
+  | 0, _ => none
+  | n + 1, ts =>
+    if isKw ⟪UNION⟫ ts then do
+      let (op, ts) := if isKw ⟪ALL⟫ (ts.drop 1) then (⟪UNION ALL⟫, ts.drop 2)
+                      else (⟪UNION⟫, ts.drop 1)
+      let (s, ts) ← pSelect n ts
+      let (rest, ts) ← pUnions n ts
+      some ((op, s) :: rest, ts)
+    else some ([], ts)
+
+def pCompound (n : Nat) : P Compound := fun ts => do
+  let (first, ts) ← pSelect n ts
+  let (rest, ts) ← pUnions n ts
+  some ({ first, rest }, ts)
+
+def pCtes : Nat → P (List (Str × Compound))
+  | 0, _ => none
+  | n + 1, ts => do
+    let (name, ts) ← ident ts
+    let ((), ts) ← expectKw ⟪AS⟫ ts
+    let ((), ts) ← expectSym ⟪(⟫ ts
+    let (s, ts) ← pCompound n ts
+    let ((), ts) ← expectSym ⟪)⟫ ts
+    if isSym ⟪,⟫ ts then do
+      let (rest, ts) ← pCtes n (ts.drop 1)
+      some ((name, s) :: rest, ts)
+    else some ([(name, s)], ts)
+
+/-- A whole model: optional `WITH`, one select, an optional `;`, nothing else. -/
+def parseTokens (n : Nat) (ts : List Tok) : Option Query := do
+  let (ctes, ts) ← if isKw ⟪WITH⟫ ts then pCtes n (ts.drop 1) else some ([], ts)
+  let (body, ts) ← pCompound n ts
+  let ts := if isSym ⟪;⟫ ts then ts.drop 1 else ts
+  if ts.isEmpty then some { ctes, body } else none
+
+/-- What a SQL text in the fragment is, as a tree; `none` outside the fragment. The text is
+given as code points: this is what a per-model proof evaluates. -/
+def parseCodes (cs : Str) : Option Query := do
+  let ts ← lexCodes cs
+  parseTokens (4 * ts.length + 8) ts
+
+/-- The same, from a `String`, for the executable. -/
+def parseSql (s : String) : Option Query := parseCodes (s.toList.map Char.toNat)
+
+end Sql

@@ -5522,6 +5522,15 @@ def prove(
     project_dir: str = typer.Option(".", "--project-dir"),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
     dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
+    conformance: bool = typer.Option(False, "--conformance",
+                                     help="instead: run the engine conformance suite, each "
+                                          "construct through Lean's meaning of SQL and through "
+                                          "the engine"),
+    engine: str = typer.Option("duckdb", "--engine",
+                               help="with --conformance: duckdb (in memory) or warehouse (your "
+                                    "dbt connection, priced)"),
+    n_random: int = typer.Option(200, "--random",
+                                 help="with --conformance: random differential cases"),
     json_out: bool = typer.Option(False, "--json"),
 ):
     """Prove what each model cannot do, with Lean: certificates whose premises are the ledger's.
@@ -5557,6 +5566,10 @@ def prove(
         else:
             console.print(f"[red]{e}[/]")
         raise typer.Exit(1) from None
+    if conformance:
+        _prove_conformance(target, store_path, engine, n_random, project_dir, profiles_dir,
+                           dbt_bin, json_out, say)
+        return
     tdir = _find_target(target)
     project, digests, _f, schema, _s = _load(tdir, dialect)
     from .selector import resolve
@@ -5572,9 +5585,13 @@ def prove(
             parsed = parsecheck.run(project, digests, schema, store, via=parse_on,
                                     select=scope, project_dir=project_dir,
                                     profiles_dir=profiles_dir, dbt_bin=dbt_bin, say=say)
+        # L4: each model's parse, proven by the kernel where it is in the fragment.
+        from . import parseproof
+        proved = parseproof.run(project, store, tdir, select=scope, force=force, say=say)
         rep = prove_mod.run(project, digests, schema, entries, store, tdir, force=force,
                             select=scope, say=say)
         rep["parse"] = parsed
+        rep["parse_proof"] = proved
     except RuntimeError as e:
         store.close()
         console.print(f"[red]{e}[/]")
@@ -5591,8 +5608,11 @@ def prove(
     for name, rs in sorted(by.items()):
         proven = [r for r in rs if r["status"] == "proven"]
         line = f"[bold]{name}[/]  {len(proven)} of {len(rs)} proven"
+        pp = (rep.get("parse_proof") or {}).get("by_model", {}).get(name)
         pf = (parsed or {}).get("by_model", {}).get(name)
-        if pf:
+        if pp == "proven":
+            line += "  [green]parse proven[/]"
+        elif pf:
             line += f"  [dim]parse {pf}[/]"
         console.print(line)
         for r in rs:
@@ -5605,6 +5625,11 @@ def prove(
                               f"[dim]{(r['missing'] or r['detail'] or '')[:160]}[/]")
     n = len(rows)
     np_ = sum(1 for r in rows if r["status"] == "proven")
+    pp = rep.get("parse_proof") or {}
+    if pp.get("checked"):
+        console.print(f"\nparse proven by Lean's kernel for {pp['proven']} model(s) whose file "
+                      f"changed; {pp['unproven']} outside the fragment or not matching, "
+                      f"which keep the round trip.")
     console.print(f"\n{np_} of {n} properties proven across {len(by)} model(s); "
                   f"{rep['checked_now']} checked by Lean now, {rep['reused']} unchanged since. "
                   f"[dim]Files in {rep['written_to']}. Proven from the parsed structure.[/]")
@@ -5617,6 +5642,45 @@ def _proof_state(target, store_path, dialect):
     facts, _ = relate.run_all(project, digests, schema)
     entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store), facts=facts)
     return project, digests, schema, entries, store
+
+
+def _prove_conformance(target, store_path, engine, n_random, project_dir, profiles_dir,
+                       dbt_bin, json_out, say) -> None:
+    """`prove --conformance`: does the engine do what assay's meaning of SQL says? (L4)"""
+    from . import conformance as conf_mod
+    from . import toolchain
+    if engine not in ("duckdb", "warehouse"):
+        console.print("[red]--engine is duckdb or warehouse[/]")
+        raise typer.Exit(2)
+    toolchain.build_library(say=lambda *_a: None)
+    store = Store(store_path)
+    runner = None
+    name = "duckdb"
+    if engine == "warehouse":
+        tdir = _find_target(target)
+        project, *_rest = _load(tdir)
+        name = (project.adapter_type or "warehouse").lower()
+
+        def runner(sql):
+            return probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=1000,
+                                     caller="assay.conformance", kind="conformance")
+    try:
+        rep = conf_mod.run(store, engine=name if engine == "warehouse" else "duckdb",
+                           runner=runner, n_random=n_random, say=say)
+    finally:
+        store.close()
+    if json_out:
+        print(_json.dumps(rep, indent=2, default=str))
+        return
+    colour = {"holding": "green", "broken": "red"}
+    for c, v in rep["constructs"].items():
+        console.print(f"[{colour.get(v['status'], 'yellow')}]{v['status']:<9}[/] {c}  "
+                      f"[dim]{v['detail']}[/]")
+    if rep.get("random"):
+        console.print(f"\nrandom differential: {rep['random']['cases']} case(s), "
+                      f"{rep['random']['differ']} differ")
+    console.print(f"[dim]{rep['engine']} {rep['version']}. A construct that differs marks every "
+                  f"certificate whose rule uses it.[/]")
 
 
 @app.command("proof-goal")

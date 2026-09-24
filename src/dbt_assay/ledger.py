@@ -451,10 +451,19 @@ def parse_faithful(led: Ledger, model_uid: str, store=None) -> Premise:
             rows = []
     now = getattr(m, "checksum", "") if m is not None else ""
     cur = [r for r in rows if r[0] == now]
+    # A proof (L4) outranks a measurement (L2); a proof that could not be made hides nothing.
+    proof = next((r for r in cur if r[3] == "lean" and r[1] == HOLDING), None)
+    measured = next((r for r in cur if r[3] != "lean"), None)
+    unproven = next((r for r in cur if r[3] == "lean" and r[1] != HOLDING), None)
+    if proof is not None:
+        ev.append(Evidence("proven", proof[2], HOLDING, str(proof[4] or "")[:19]))
+    if measured is not None:
+        ev.append(Evidence("observed", f"{measured[2]} ({measured[3]})", measured[1],
+                           str(measured[4] or "")[:19]))
+    if proof is None and measured is None and unproven is not None:
+        ev.append(Evidence("proven", unproven[2], UNCHECKED, str(unproven[4] or "")[:19]))
     if cur:
-        _cs, st, detail, via, at = cur[0]
-        kind = "proven" if via == "lean" else "observed"
-        ev.append(Evidence(kind, f"{detail} ({via})", st, str(at or "")[:19]))
+        pass
     elif rows:
         ev.append(Evidence("observed", "checked on an earlier version of the file; this one "
                            "has not been", UNCHECKED, str(rows[0][4] or "")[:19]))
@@ -552,6 +561,9 @@ def label(p: Premise) -> str:
     """The few words a badge carries about a declared key: what its strongest evidence says."""
     kinds = {e.kind: e for e in p.evidence}
     if p.prop == "parse_faithful":
+        if p.status == HOLDING and any(e.kind == "proven" and e.status == HOLDING
+                                       for e in p.evidence):
+            return "parse proven"
         return {BROKEN: "parse differs", HOLDING: "round trip agrees", UNCHECKED: "not checked",
                 UNKNOWN: "not checked"}.get(p.status, p.status)
     if p.prop == "not_null":
