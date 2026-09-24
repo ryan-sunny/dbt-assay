@@ -121,8 +121,24 @@ class Finding:
         worth more than the whole marts-and-descendants lift (which tops out at 4), so an exposed
         finding ranks above an unexposed one of the same severity everywhere weight orders a list.
         """
-        return self.base * (1 + min(self.descendants, 50) / 25 + min(self.marts, 10) / 5
-                            + 5 * min(len(self.exposures or ()), 2))
+        p = self.weight_parts()
+        return self.base * p["lift"]
+
+    def weight_parts(self) -> dict:
+        """The weight, taken apart, so a surface can show where the number came from.
+
+        *** "weight 7.6" WITH NO FORMULA ANYWHERE. *** Reported from the page. The weight is
+        computed HERE and only here, from these parts, so a surface that shows the parts cannot
+        disagree with the number it ranks by.
+        """
+        n_exp = len(self.exposures or ())
+        d, m, x = min(self.descendants, 50), min(self.marts, 10), min(n_exp, 2)
+        parts = {"descendants": d / 25, "marts": m / 5, "exposures": 5 * x}
+        return {"base": self.base, "lift": 1 + sum(parts.values()), "parts": parts,
+                "counts": {"descendants": self.descendants, "marts": self.marts,
+                           "exposures": n_exp},
+                "caps": {"descendants": 50, "marts": 10, "exposures": 2},
+                "divisors": {"descendants": 25, "marts": 5}, "per_exposure": 5}
 
 
 # --------------------------------------------------------------------------- tests that can't fail

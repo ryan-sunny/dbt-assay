@@ -212,6 +212,9 @@ SFMono-Regular,Menlo,monospace}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 18px;font-size:13.5px}
 .kv dt{color:var(--faint);font-family:Fell,Georgia,serif}
 .kv dd{margin:0}
+.wterms{display:grid;grid-template-columns:auto 1fr;gap:1px 12px;margin:4px 0 2px;font-size:13px}
+.wterms .n{font-variant-numeric:tabular-nums}
+.wbox .note{margin:4px 0 0;font-size:12.5px}
 
 /* ---- a pill is a lettered tag, the way a part is lettered on a plate. */
 .pill{display:inline-block;font-family:Fell,Georgia,serif;font-size:11.5px;padding:0 6px;
@@ -1763,6 +1766,47 @@ function areasTab(host) {
 }
 
 /* ----------------------------------------------------------------------------- Findings */
+/* *** "weight 7.6" WITH NO FORMULA. ***
+   The parts come from `Finding.weight_parts()`, the same function the weight itself is computed
+   from, so what this shows cannot disagree with the order the list is in. */
+const nf = x => (Math.round(x * 100) / 100).toString();
+function weightTerms(f) {
+  const w = f.weight_parts;
+  if (!w) return null;
+  const c = w.counts, cap = w.caps, dv = w.divisors;
+  const capped = k => c[k] > cap[k] ? ', counted as ' + cap[k] : '';
+  return [
+    [nf(w.parts.descendants), num(c.descendants) + ' descendant(s)' + capped('descendants')
+      + ' \u00f7 ' + dv.descendants],
+    [nf(w.parts.marts), num(c.marts) + ' mart(s)' + capped('marts') + ' \u00f7 ' + dv.marts],
+    [nf(w.parts.exposures), num(c.exposures) + ' exposure(s)' + capped('exposures')
+      + ' \u00d7 ' + w.per_exposure],
+  ];
+}
+function weightLine(f) {
+  const w = f.weight_parts, t = weightTerms(f);
+  if (!t) return 'weight ' + f.weight;
+  return 'base ' + nf(w.base) + ' \u00d7 (1 + ' + t.map(x => x[0]).join(' + ') + ') = '
+    + nf(w.base) + ' \u00d7 ' + nf(w.lift) + ' = ' + nf(f.weight) + '\n'
+    + t.map(x => x[0] + ' from ' + x[1]).join('\n');
+}
+function weightBox(f) {
+  const w = f.weight_parts, t = weightTerms(f);
+  if (!t) return el('span', {text: String(f.weight)});
+  const box = el('div', {class: 'wbox'});
+  box.append(el('div', {}, [el('span', {text: nf(f.weight)}), el('span', {class: 'tot',
+    text: '  =  base ' + nf(w.base) + ' \u00d7 lift ' + nf(w.lift)})]));
+  const tbl = el('div', {class: 'wterms'});
+  tbl.append(el('span', {class: 'n', text: '1'}), el('span', {class: 'tot', text: 'every finding'}));
+  for (const [v, why] of t)
+    tbl.append(el('span', {class: 'n', text: '+ ' + v}), el('span', {text: why}));
+  box.append(tbl);
+  box.append(el('p', {class: 'note', text: 'The base is the check\u2019s own severity. An '
+    + 'exposure outweighs the whole marts-and-descendants lift, which tops out at 4, so what '
+    + 'reaches a product ranks above what reaches a layer.'}));
+  return box;
+}
+
 function findingsTab(host) {
   const detail = el('div', {class: 'detail'});
   let only = null;
@@ -1790,7 +1834,7 @@ function findingsTab(host) {
     {key: 'check', label: 'check', mono: 1, val: f => f.check},
     {key: 'model', label: 'model', mono: 1, val: f => f.model, cell: f => link(f.model)},
     {key: 'w', label: 'weight', n: 1, val: f => f.weight,
-     cell: f => el('span', {text: f.weight.toFixed(1)})},
+     cell: f => el('span', {text: f.weight.toFixed(1), title: weightLine(f)})},
     {key: 'feeds', label: 'feeds', n: 1, val: f => (f.exposures || []).length,
      cell: f => el('span', {class: (f.exposures || []).length ? '' : 'tot',
                             title: (f.exposures || []).join(', '),
@@ -1809,7 +1853,7 @@ function findingsTab(host) {
       el('p', {class: 'prose', text: f.summary}),
       section('what it means', md(f.detail || '')),
       section('severity', kv([
-        ['weight', String(f.weight)],
+        ['weight', weightBox(f)],
         ['reaches', (f.exposures || []).length ? f.exposures.join(', ')
           : el('span', {class: 'tot', text: 'no exposure'})],
         /* First SEEN by a full check, at the commit HEAD was on. Not "introduced": the commit that
@@ -1839,7 +1883,9 @@ function findingsTab(host) {
   host.replaceChildren(
     el('p', {class: 'note', text: 'Ranked by weight, which is the base severity lifted by reach: '
              + 'the same defect on a leaf and on a model nine marts read are not the same '
-             + 'finding.'}),
+             + 'finding. weight = base \u00d7 (1 + descendants \u00f7 25 + marts \u00f7 5 + 5 per '
+             + 'exposure), counting at most 50 descendants, 10 marts and 2 exposures. Hover a '
+             + 'weight for its parts; the finding shows them worked out.'}),
     el('div', {class: 'wrap2 wide'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a finding.'}));
   const first = $('tbody tr', list); if (first) first.click();

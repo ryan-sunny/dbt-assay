@@ -414,7 +414,7 @@ def _findings(findings, store, acted: dict | None = None, member: dict | None = 
         out.append({
             "id": fid, "check": f.check, "subject": f.subject, "model": f.subject_name,
             "file": f.file, "summary": f.summary, "detail": f.detail,
-            "base": f.base, "weight": round(f.weight, 3),
+            "base": f.base, "weight": round(f.weight, 3), "weight_parts": f.weight_parts(),
             "descendants": f.descendants, "marts": f.marts,
             "exposures": list(f.exposures or []),
             # One construct written in several models: shown on the finding, never ruled as one.

@@ -1139,3 +1139,30 @@ def test_the_areas_tab_counts_all_three_lists_and_shows_one_at_a_time():
     assert "drill({" in ab, "Areas is a stacked scroll again"
     assert "all: false" in ab, "an 'all' group would mix three lists with different columns"
     assert "colsFor: g => g.cols" in ab
+
+
+def test_weight_is_shown_with_the_parts_it_is_computed_from():
+    """*** "weight 7.6" WITH NO FORMULA ANYWHERE ON THE PAGE. ***
+
+    The parts are computed by the same method the weight is, so the page cannot show a sum that
+    disagrees with the order it ranks by, and they are shown in the finding, on the cell's hover
+    and in the tab's opening line.
+    """
+    from dbt_assay.checks.structural import Finding
+    f = Finding(check="c", subject="s", subject_name="m", file="f", summary="x", detail="y",
+                base=3, descendants=18, marts=12, exposures=["a product"])
+    p = f.weight_parts()
+    assert p["counts"] == {"descendants": 18, "marts": 12, "exposures": 1}
+    assert p["parts"] == {"descendants": 18 / 25, "marts": 10 / 5, "exposures": 5}, \
+        "marts are counted up to 10"
+    assert abs(f.weight - 3 * (1 + 0.72 + 2 + 5)) < 1e-9
+    assert abs(f.weight - p["base"] * p["lift"]) < 1e-9
+
+    import inspect
+    from dbt_assay import explore
+    assert '"weight_parts": f.weight_parts()' in inspect.getsource(explore._findings), \
+        "the page is not handed the parts"
+    v = explorer._VIEWS
+    fb = v[v.index("function findingsTab"):v.index("function answersTab")]
+    assert "['weight', weightBox(f)]" in fb, "the finding shows a bare weight again"
+    assert "title: weightLine(f)" in fb, "the weight cell has no parts on hover"
