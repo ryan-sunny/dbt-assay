@@ -156,3 +156,38 @@ def test_all_findings_leaves_its_ledger_for_the_caller(project_dir):
     led = ledger.last()
     assert led is not None and ledger.active() is None
     assert any(u.kind == "grain" for u in led.uses)
+
+
+def test_the_command_mcp_and_the_page_read_the_same_premises(project_dir, tmp_path):
+    """`assay premises --json`, MCP `premises()` and the page's rows are one list."""
+    from typer.testing import CliRunner
+
+    from dbt_assay import explore
+    from dbt_assay.cli import app
+    from dbt_assay.mcp_server import Backend
+    store = str(tmp_path / "s.duckdb")
+    CliRunner().invoke(app, ["check", "--target", str(project_dir), "--store", store])
+    r = CliRunner().invoke(app, ["premises", "--target", str(project_dir), "--store", store,
+                                 "--json"])
+    assert r.exit_code == 0, r.output
+    cli = json.loads(r.output)
+    assert cli["premises"] and not cli["tests_read"] and "no test results" in cli["note"]
+    be = Backend(str(project_dir), store, str(tmp_path))
+    mcp = be.premises()
+    assert [p["id"] for p in mcp["premises"]] == [p["id"] for p in cli["premises"]]
+    one = be.premises(model="int_bad_unique")
+    assert one["premises"] and all(
+        p["relation"] == "model.p.int_bad_unique"
+        or any(u["model"] == "model.p.int_bad_unique" for u in p["uses"])
+        for p in one["premises"])
+    assert be.premises(model="nope").get("error")
+    p, d, sch = _load(project_dir)
+    entries = inventory.build(p, d, sch, store=None)
+    live.all_findings(p, d, sch, entries)
+    page = explore._premises(ledger.last(), None, [])["premises"]
+    assert [x["id"] for x in page] == [x["id"] for x in cli["premises"]]
+    r = CliRunner().invoke(app, ["premises", "--target", str(project_dir), "--store", store,
+                                 "--status", "unchecked"])
+    assert r.exit_code == 0 and ("never ran" in r.output or "no results read" in r.output), r.output
+    r = CliRunner().invoke(app, ["premises", "--target", str(project_dir), "--status", "nah"])
+    assert r.exit_code == 2

@@ -72,7 +72,8 @@ def _json(s, empty):
 
 
 def assemble(project, digests, schema, entries, findings, store, cfg,
-             generated_at: str, version: str, monitoring: dict | None = None) -> dict:
+             generated_at: str, version: str, monitoring: dict | None = None,
+             ledger=None) -> dict:
     """One object holding every fact assay has about this project.
 
     *** THE MONITORING NUMBERS REACHED THE FORM AND NOT THE REPORT. ***
@@ -236,7 +237,37 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         # one that differs, one claim made about several models -- the same assembly `assay
         # clusters` prints, so the page and the command cannot describe them differently.
         "areas": _areas(project, digests, store),
+        # *** WHAT THE FINDINGS REST ON. *** The ledger of the same computation that produced the
+        # findings above, so a held-back finding and its premise cannot disagree; `moves` are the
+        # statuses that changed at the latest `check`.
+        **_premises(ledger, store, find_rows),
     }
+
+
+def _premises(led, store, find_rows: list) -> dict:
+    from . import ledger as ledger_mod
+    rows = ledger_mod.to_rows(led, store)
+    if not rows:
+        return {"premises": [], "premise_moves": []}
+    # The findings each premise raised (broken, held back no longer) or is read by.
+    raised: dict = {}
+    for f in find_rows:
+        back = (f.get("evidence") or {}).get("why_it_is_back") or {}
+        if back.get("premise_id"):
+            raised.setdefault(back["premise_id"], []).append(f["id"])
+    by_check_subject: dict = {}
+    for f in find_rows:
+        by_check_subject.setdefault((f["check"], f["subject"]), []).append(f)
+    for r in rows:
+        for u in r["uses"]:
+            if u["kind"] == "raised_on":
+                check, _m, construct = (u["dependent"].split(":", 2) + ["", ""])[:3]
+                hit = next((f["id"] for f in by_check_subject.get((check, u["model"]), [])
+                            if (f.get("evidence") or {}).get("parent") == construct), None)
+                if hit:
+                    u["finding"] = hit
+        r["raised"] = sorted(raised.get(r["id"], []))
+    return {"premises": rows, "premise_moves": ledger_mod.moves(store)}
 
 
 def _cost(store) -> dict:
@@ -736,7 +767,8 @@ def _unreadable(store, project) -> list:
 # The page still EMBEDS this rather than fetching it, because browsers block `fetch` on `file://`.
 # Reading the artifact is a build step, not a runtime load.
 _LINES = ("models", "edges", "claims", "findings", "waived", "decisions", "questions",
-          "adjudications", "unreadable", "runs", "effectiveness", "suggestions")
+          "adjudications", "unreadable", "runs", "effectiveness", "suggestions", "premises",
+          "premise_moves")
 # *** AND ITS EMPTY VALUE, BECAUSE A LIST DEFAULTING TO `{}` IS THE SAME BUG AS `[]` -> `{}`. ***
 # Caught by the round-trip guard: an artifact with no `unconfigured.json` handed back a dict where
 # a list belongs, and `.length` on a dict is `undefined` rather than an error -- so the page would

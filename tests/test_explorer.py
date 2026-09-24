@@ -303,6 +303,15 @@ def _tiny():
             "findings": [{"id": "f1", "check": "c"}], "decisions": [], "questions": [],
             "adjudications": [], "config": {"provider": "auto"}, "runs": [],
             "unreadable": [], "unconfigured": [], "effectiveness": [], "moved": {},
+            # A real premise, so the Guarantees rows round-trip rather than two empty lists.
+            "premises": [{"id": "p1", "relation": "m", "name": "a", "columns": ["k"],
+                          "property": "unique", "param": "", "statement": "`k` unique in `a`",
+                          "status": "unchecked", "since": "", "label": "never ran", "why": "w",
+                          "evidence": [{"kind": "declared", "detail": "`t` never ran",
+                                        "status": "unchecked", "at": ""}],
+                          "uses": [{"kind": "grain", "dependent": "m", "model": "m",
+                                    "model_name": "a", "detail": "the grain"}], "raised": []}],
+            "premise_moves": [{"id": "p1", "before": "holding", "after": "unchecked"}],
             # A real ledger shape, so the round trip exercises the section rather than comparing
             # two empty dicts and passing for the wrong reason.
             "cost": {"usd": 0.0132, "input_tokens": 314265, "calls": 102, "output_tokens": 0,

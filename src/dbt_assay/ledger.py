@@ -429,15 +429,17 @@ def rests_on(check: str, model: str, construct: str, premise_fn, detail: str = "
         led.use(p, "raised_on", f"{check}:{model}:{construct}", model, detail)
 
 
-def register_grains(led: Ledger, entries) -> None:
-    """A declared grain rests on its key being unique. (G-A)"""
-    name_to_uid = {m.name: u for u, m in led.project.models.items()}
-    for e in entries or []:
-        g = getattr(e, "grain", None)
-        if g is None or g.source != "declared" or not g.value:
-            continue
-        uid = name_to_uid.get(e.name, e.uid)
-        led.use(unique(led, uid, g.value), "grain", uid, uid, "the grain")
+def register_grains(led: Ledger, entries=None) -> None:
+    """A declared grain rests on its key being unique. (G-A)
+
+    From the project's declared keys, the same ones the inventory makes a declared grain from,
+    so a `check` against a fresh store (no inventory built yet) records them too."""
+    from .relate import declared_keys
+    if not hasattr(led, "_declared"):
+        led._declared = declared_keys(led.project)
+    for uid, cols in sorted(led._declared.items()):
+        if uid in led.project.models and cols:
+            led.use(unique(led, uid, cols), "grain", uid, uid, "the grain")
 
 
 def apply_to_grains(led: Ledger, entries) -> None:
@@ -561,4 +563,69 @@ def change_lines(rows: list, each: int = 8) -> list:
     for (before, after), n in sorted(rest.items(), key=lambda kv: -kv[1]):
         colour = "green" if after == HOLDING else "yellow"
         out.append(f"[{colour}]{n} now {after}[/] [dim](were {before})[/]")
+    return out
+
+
+def latest_run(store) -> str | None:
+    """The newest run that wrote premises (a full `check`), or None."""
+    if store is None:
+        return None
+    try:
+        store.con.execute(DDL)
+        got = store.con.execute("""
+            select p.run_id from (select distinct run_id from premises) p join runs r using (run_id)
+            order by r.started_at desc, p.run_id desc limit 1""").fetchone()
+    except Exception:                                            # noqa: BLE001
+        return None
+    return got[0] if got else None
+
+
+def stored(store, run_id: str | None = None) -> dict:
+    """{premise_id: (status, since)} from a run's rows (the latest by default)."""
+    run_id = run_id or latest_run(store)
+    if not run_id:
+        return {}
+    return {pid: (st, str(since or "")[:10]) for pid, st, since in store.con.execute(
+        "select premise_id, status, since from premises where run_id = ?", [run_id]).fetchall()}
+
+
+def moves(store, run_id: str | None = None) -> list:
+    """[{id, before, after}] for the premises whose status moved at that run (the latest)."""
+    run_id = run_id or latest_run(store)
+    if not run_id:
+        return []
+    try:
+        return [{"id": pid, "before": b, "after": a} for pid, b, a in store.con.execute("""
+            with cur as (select * from premises where run_id = ?),
+                 prv as (select * from premises where run_id = (
+                    select run_id from premises p join runs r using (run_id)
+                    where run_id <> ? and r.started_at <= (select started_at from runs
+                                                           where run_id = ?)
+                    order by r.started_at desc limit 1))
+            select cur.premise_id, prv.status, cur.status from cur join prv using (premise_id)
+            where cur.status <> prv.status order by 1""", [run_id, run_id, run_id]).fetchall()]
+    except Exception:                                            # noqa: BLE001
+        return []
+
+
+def to_rows(led: Ledger, store=None) -> list:
+    """Every premise as the page and MCP read it: the statement, status, since, evidence, and
+    each thing resting on it. `since` comes from the latest `check` that wrote premises, when the
+    status then was the status now; otherwise it is blank rather than a wall-clock guess."""
+    if led is None:
+        return []
+    before = stored(store) if store is not None else {}
+    names = {u: m.name for u, m in led.project.models.items()}
+    out = []
+    for p in sorted(led.premises.values(), key=lambda x: (STATUSES.index(x.status), x.name,
+                                                           x.columns)):
+        d = p.as_dict()
+        st = before.get(p.id)
+        d["since"] = st[1] if st and st[0] == p.status else ""
+        d["label"] = label(p)
+        d["why"] = why(p)
+        d["uses"] = [{"kind": u.kind, "dependent": u.dependent, "model": u.model,
+                      "model_name": names.get(u.model, u.model), "detail": u.detail}
+                     for u in led.uses_of(p.id)]
+        out.append(d)
     return out

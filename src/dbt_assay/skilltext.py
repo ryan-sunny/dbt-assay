@@ -83,16 +83,24 @@ again once it finishes. Never conclude the tools are broken from a lock.
 5. `lineage(model, column)` when you are about to change a column — it tells you the hop that
    actually produces the value, which is often several models upstream.
 
+6. `premises(model)` — **what assay's reading of this model rests on.** A declared grain rests on
+   its key's test; a hop assay did not flag rests on the parent's key being unique. Each premise
+   carries its evidence (the test's last result, a count, a judgment) and a status: `broken`
+   (a count found duplicates or the test failed), `unchecked` (declared, never checked),
+   `assumed`, `unknown`, `holding`. A `broken` one raises the finding it held back, with a
+   `why_it_is_back` block; an `unchecked` one means the grain is declared, not known. Do not
+   write a join that relies on a key whose premise is not `holding` without saying so.
+
 ## After you edit, before you hand anything back
 
-6. `changed_contracts()` — **this is the step that matters.** It says whether your edit changed
+7. `changed_contracts()` — **this is the step that matters.** It says whether your edit changed
    what anything MEANS, as opposed to how it reads. A reformat, a renamed CTE, a join rewritten as
    a subquery come back empty, and that silence is correct.
 
 If it reports a grain change, stop. Either the change was unintended and you should undo it, or it
 was intended and it needs a version bump. Do not hand back work where the grain moved silently.
 
-7. `findings(model)` — the contradictions assay sees in what you just wrote, including any claim
+8. `findings(model)` — the contradictions assay sees in what you just wrote, including any claim
    your edit has just made false.
 
    **Read `must_stay_true` before you change anything.** It lists the claims this project makes
@@ -173,7 +181,7 @@ question does. Those are different files, and without the state you are guessing
 
 ## Before you hand it back
 
-8. `violations()` — **what would actually fail a build**, under this project's own `audit.yml`.
+9. `violations()` — **what would actually fail a build**, under this project's own `audit.yml`.
    `findings` lists everything wrong; most of it is configured to annotate and only some of it
    stops CI. Deciding which is which by reading the list is exactly the judgment you should not
    be making. This applies the same policy the pipeline applies, so `"this would pass"` means a
@@ -185,7 +193,7 @@ question does. Those are different files, and without the state you are guessing
 
 ## When you have read a finding, rule on it
 
-9. `rule(finding, verdict, why)` — **record what you concluded, including when you
+10. `rule(finding, verdict, why)` — **record what you concluded, including when you
    conclude the finding is wrong.** That is the most useful answer you can give, because a false
    positive nobody reports stays in the list forever.
 
@@ -210,16 +218,16 @@ question does. Those are different files, and without the state you are guessing
    still filed as an agent ruling: a person's ruling is their own keypress in `assay review -i`,
    which is one keystroke once your reason is on screen.
 
-10. `review_queue()` — **what is still waiting for a person**, agent-read items first. Call it
+11. `review_queue()` — **what is still waiting for a person**, agent-read items first. Call it
     before ruling, to see whether a subject has already been read, and after, to see the queue you
     are building. Your ruling never clears an item from it.
 
-11. **Drain the queue BEFORE you hand anybody a form.** `assay review --emit` renders every
+12. **Drain the queue BEFORE you hand anybody a form.** `assay review --emit` renders every
     finding, read or not, and a person opening a form where a quarter of the cards say "nothing
     on this question" is being asked to do the reading you were there to do. Rule on everything
     in `review_queue()` first, then emit.
 
-12. `load_handback()` — **the moment they say they have filled the form in.** The form
+13. `load_handback()` — **the moment they say they have filled the form in.** The form
     downloads `handback.json` and nothing happens until it is loaded; a form that is downloaded
     and never loaded is the most valuable work in this system sitting in a folder. With no path
     it loads the newest `handback*.json` in `~/Downloads`, and says which file it read; if they
@@ -319,6 +327,7 @@ and nothing is lost:
 | `traversal(model)` | `assay traverse --model <model>` |
 | `practices(model)` | `assay practices --keys-only --no-verify --model <model>` |
 | `lineage(model, column)` | `assay trace <model>.<column>` |
+| `premises(model, status)` | `assay premises --model <model> --json` (`--status broken`) |
 | `findings(model)` | `assay check --json` — one object with a `findings` list |
 | `changed_contracts()` | `assay diff --baseline <main target>` |
 | `violations()` | `assay check --json`, then read `action` |

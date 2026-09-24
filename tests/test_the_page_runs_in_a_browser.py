@@ -614,7 +614,7 @@ def test_the_tab_strip_is_one_row_and_a_menu_on_a_phone(page_file):
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         try:
-            for w in (1920, 1440, 1280, 1100, 960):
+            for w in (1920, 1440, 1366, 1280, 1180, 1100, 1024, 960):
                 page = browser.new_page(viewport={"width": w, "height": 800})
                 page.goto(page_file.as_uri())
                 page.wait_for_timeout(100)
@@ -656,5 +656,79 @@ def test_the_form_header_is_one_line_and_says_nothing_is_in_force(tmp_path, proj
                 h = page.evaluate("() => document.querySelector('.hmeta').getBoundingClientRect().height")
                 assert h < 30, f"the form header wraps at {w}px ({h}px tall)"
                 page.close()
+        finally:
+            browser.close()
+
+
+@pytest.fixture
+def broken_page(tmp_path, project_dir):
+    """The fixture project with one declared key counted as duplicated: a broken premise."""
+    import duckdb
+
+    from dbt_assay.infer import Schema
+    from dbt_assay.manifest import Project
+    store = tmp_path / "s.duckdb"
+    r = CliRunner().invoke(app, ["check", "--target", str(project_dir), "--store", str(store)])
+    assert r.exit_code in (0, 1), r.output
+    p = Project.load(project_dir)
+    rel = (Schema.load(p, project_dir).relation.get("model.p.int_bad_unique") or "")
+    con = duckdb.connect(str(store))
+    con.execute("""insert into observed_keys (relation, column_name, row_count, non_null,
+                   distinct_ct, status, detail, observed_at, via, minimality, sampled, sample_pct)
+                   values (?, 'section_id', 100, 100, 82, 'has_duplicates', '', now(), 'test',
+                           '', false, 0)""", [rel.replace('"', '').lower()])
+    con.close()
+    r = CliRunner().invoke(app, ["check", "--target", str(project_dir), "--store", str(store)])
+    assert "broke" in r.output, r.output
+    out = tmp_path / "assay.html"
+    r = CliRunner().invoke(app, ["page", str(out), "--target", str(project_dir),
+                                 "--store", str(store)])
+    assert r.exit_code == 0, r.output
+    return out
+
+
+def test_guarantees_shows_a_broken_premise_with_its_evidence_and_dependents(broken_page):
+    """Spec 4: open Guarantees, pick the broken premise, find its evidence and what rests on it."""
+    from playwright.sync_api import sync_playwright
+    errors: list = []
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            for w in (1500, 1100, 420):
+                page = browser.new_page(viewport={"width": w, "height": 900})
+                page.on("pageerror", lambda e: errors.append(str(e)))
+                page.goto(broken_page.as_uri() + "#guarantees")
+                page.wait_for_timeout(300)
+                if w < 940:
+                    assert page.locator("#navcur").inner_text() == "Guarantees"
+                tab = page.locator('nav button[data-tab="guarantees"]').inner_text()
+                assert "Guarantees" in tab
+                page.locator(".gitem", has_text="broken").first.click()
+                page.locator("tbody tr", has_text="section_id").first.click()
+                pane = page.locator(".detail").first.inner_text()
+                assert "premise" in pane.lower() and "section_id unique in int_bad_unique" in pane
+                assert "18 duplicate value(s) in 100 rows" in pane, pane
+                assert "what rests on it" in pane.lower() and "the grain of" in pane
+                assert "what to do" in pane.lower()
+                right = page.evaluate("() => document.documentElement.scrollWidth")
+                assert right <= w, f"the page scrolls sideways at {w}px"
+                page.close()
+        finally:
+            browser.close()
+    assert not errors, errors
+
+
+def test_the_model_pane_says_what_it_is_correct_as_long_as(broken_page):
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(viewport={"width": 1500, "height": 900})
+            page.goto(broken_page.as_uri() + "#models")
+            page.wait_for_timeout(300)
+            page.evaluate("() => GO.models('int_bad_unique')")
+            pane = page.locator(".detail").first.inner_text()
+            assert "correct as long as" in pane.lower()
+            assert "counted duplicates" in pane
         finally:
             browser.close()

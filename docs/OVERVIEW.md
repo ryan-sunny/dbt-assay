@@ -281,7 +281,22 @@ assay completeness        # do we have all of it? sources nothing reads, feeds b
                           #   own declared freshness, hops that lose most of the parent
 assay completeness --verify   # ...and count empty models and row loss through your own dbt
 assay patch tests/assay   # WRITE the uniqueness tests it can prove will pass
+assay premises            # what the findings REST ON: each key a grain or a held-back
+                          #   finding assumes unique, its evidence and its status
 ```
+
+**What the findings rest on.** A grain "declared by a test" rests on that test, and a hop assay
+does not flag rests on the parent's key being unique. Each of those is a *premise*, and `assay
+check` records every one with its evidence: the test's last actual result (from Elementary via
+`assay volume`, or from a build's `run_results.json` in `target/`; a compile's `success` is not a
+result), the latest count from `assay probe` or `check --verify`, and a judgment. Its status is
+`broken` when a count found duplicates or the test failed, `holding` when the test passed or an
+exact count found none, `unchecked` when it is declared and nothing has checked it, `assumed` when
+only a judgment carries it, `unknown` with no evidence. A declared grain on an `unchecked` key is
+shown as declared and not firm. A finding held back on a premise that **breaks** is raised again
+with a `why_it_is_back` block naming the premise, the day it broke and the measurement, and
+`check` prints every premise whose status moved. The page's Guarantees tab and MCP `premises()`
+read the same rows.
 
 **The judged tier** — needs a key
 
@@ -1186,10 +1201,10 @@ a column is, what the grain is, and what would break before it writes a line. Th
 it the **obligation** — without it an agent checks when it remembers, and with it, checking is the
 procedure.
 
-Twenty-four tools, and beside them every command as a tool of its own: `assay_<command>` takes the
+Twenty-five tools, and beside them every command as a tool of its own: `assay_<command>` takes the
 command's flags as one string and runs the real command, so an agent with no shell can run all of
 assay. A run longer than its wait comes back as a job, which `job_status`, `job_stop` and `jobs`
-follow. Of the twenty-four, most report; nine do something else:
+follow. Of the twenty-five, most report; nine do something else:
 
 | tool | what it is for |
 |---|---|

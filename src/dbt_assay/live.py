@@ -283,6 +283,39 @@ def contract_of(state: LiveState, model: str) -> dict | None:
     }
 
 
+def premises_report(project, digests, schema, entries, store, model: str = "",
+                    status: str = "") -> dict:
+    """What the findings rest on, for one model or all of them: the same rows the page's
+    Guarantees tab shows, so `assay premises`, MCP `premises()` and the page cannot disagree."""
+    from . import ledger as ledger_mod
+    fs = all_findings(project, digests, schema, entries, store=store)
+    led = ledger_mod.last()
+    rows = ledger_mod.to_rows(led, store)
+    raised: dict = {}
+    for f in fs:
+        back = (f.evidence or {}).get("why_it_is_back") or {}
+        if back.get("premise_id"):
+            raised.setdefault(back["premise_id"], []).append(
+                {"finding": f.id, "check": f.check, "model": f.subject_name})
+    for r in rows:
+        r["raised"] = raised.get(r["id"], [])
+    counts = {s: sum(1 for r in rows if r["status"] == s) for s in ledger_mod.STATUSES}
+    if model:
+        uid = next((u for u, m in project.models.items() if m.name == model), None)
+        if uid is None:
+            return {"error": f"no model named {model}"}
+        rows = [r for r in rows if r["relation"] == uid
+                or any(u["model"] == uid for u in r["uses"])]
+    if status:
+        rows = [r for r in rows if r["status"] == status]
+    return {"premises": rows, "counts_in_project": counts,
+            "tests_read": bool(led and led.tests_read),
+            "note": ("" if led and led.tests_read else
+                     "no test results were read, so every declared key is unchecked. `assay "
+                     "volume` reads each test's last result from Elementary; a `dbt build` "
+                     "leaves them in target/.")}
+
+
 def sql_files(target: str | Path, project_root: str | Path | None = None) -> dict:
     """{path: mtime} for the model SQL a watcher should react to."""
     root = Path(project_root or Path(target).parent)

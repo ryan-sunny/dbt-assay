@@ -262,6 +262,18 @@ class Backend:
                         f"{len(in_force)} waived, accepted or dismissed"),
         }
 
+    def premises(self, model: str = "", status: str = "") -> dict:
+        """What the findings rest on: each premise, its evidence and status, and what rests on
+        it -- the Guarantees tab's rows."""
+        st = self.state()
+        store = self._open_store()
+        try:
+            return live.premises_report(st.project, st.digests, st.schema, st.entries, store,
+                                        model=model, status=status)
+        finally:
+            if store is not None:
+                store.close()
+
     def lineage(self, model: str, column: str) -> dict:
         from . import provenance
         st = self.state()
@@ -1148,6 +1160,11 @@ TOOLS = [
     ("contract", ("What a model IS: grain, columns, roles, where each value comes from -- and "
                   "its HEALTH: open findings with who ruled on them, what is waived or "
                   "accepted, and whether the grain was ever counted. Call it before an edit.")),
+    ("premises", ("What the findings rest on: every key a declared grain or a held-back "
+                  "finding assumes is unique, its evidence (the test's last result, a count, a "
+                  "judgment), its status (broken / unchecked / assumed / unknown / holding) and "
+                  "what rests on it. Pass `model` for one model, `status` to narrow. A broken "
+                  "premise raises the finding it held back; `raised` lists them.")),
     ("lineage", "Follow a column back through the DAG to the hop that produced its value."),
     ("blast_radius", ("Who consumes this model, how many marts are downstream, and which of the "
                       "project's exposures -- dashboards, apps, reports -- it reaches.")),
@@ -1367,6 +1384,10 @@ def build_app(target: str, store_path: str | None = None, handbacks: str | None 
         # a JSON string only makes it harder to read for no gain.
         from .guide import guide as _guide
         return _guide(topic)
+
+    @tool()
+    def premises(model: str = "", status: str = "") -> str:
+        return _out(be.premises(model, status))
 
     @tool()
     def lineage(model: str, column: str) -> str:

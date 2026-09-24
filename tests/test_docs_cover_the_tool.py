@@ -422,10 +422,11 @@ def test_the_mcp_tool_count_in_the_docs_is_the_real_one():
         pytest.skip("no docs in a wheel install")
     words = {14: "Fourteen", 15: "Fifteen", 16: "Sixteen", 17: "Seventeen", 18: "Eighteen",
              19: "Nineteen", 20: "Twenty", 21: "Twenty-one", 22: "Twenty-two",
-             23: "Twenty-three", 24: "Twenty-four", 25: "Twenty-five"}
-    said = re.search(r"\b(Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty|"
-                     r"Twenty-one|Twenty-two|Twenty-three|Twenty-four|Twenty-five) tools\b",
-                     docs)
+             23: "Twenty-three", 24: "Twenty-four", 25: "Twenty-five", 26: "Twenty-six",
+             27: "Twenty-seven", 28: "Twenty-eight", 29: "Twenty-nine", 30: "Thirty",
+             31: "Thirty-one", 32: "Thirty-two"}
+    said = re.search(r"\b(" + "|".join(sorted(words.values(), key=len, reverse=True))
+                     + r") tools\b", docs)
     assert said, "the tool count sentence is gone; keep it or drop this test deliberately"
     assert said.group(1) == words.get(len(TOOLS)), \
         f"docs say {said.group(1)} tools, the code ships {len(TOOLS)}"

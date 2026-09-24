@@ -82,12 +82,17 @@ nav{flex-wrap:nowrap !important}
 nav .navbtns button{padding:4px 9px 6px;font-size:16px;letter-spacing:0;text-transform:none}
 nav .navbtns button b{font-size:12.5px;margin-left:5px}
 .navmenu{display:none}
-@media (max-width:1360px){
+@media (max-width:1440px){
   nav .navbtns button{font-size:14.5px;padding:4px 7px 6px}
   .navlab{padding:0 7px;font-size:10.5px}
   .navgroup{padding-right:5px;margin-right:5px}
 }
-@media (max-width:1180px){ nav .navbtns button b{display:none} }
+@media (max-width:1280px){ nav .navbtns button b{display:none} }
+@media (max-width:1040px){
+  nav .navbtns button{font-size:14px;padding:4px 5px 6px}
+  .navlab{padding:0 5px}
+  .navgroup{padding-right:3px;margin-right:3px}
+}
 @media (max-width:940px){
   .navmenu{display:inline-flex;align-items:center;gap:6px;margin:8px 0 10px;appearance:none;
   background:#f1ede4;border:1px solid var(--rule);padding:7px 12px;font:inherit;font-size:16px;
@@ -290,6 +295,11 @@ td .pill{white-space:normal}
 .pill.assumed{color:var(--ember);border-color:var(--ember)}
 .pill.unchecked,.pill.unknown{color:var(--faint);border-color:var(--rule)}
 .plink{margin-left:10px;font-size:13px;white-space:nowrap}
+.ulist .urow{padding:4px 0;border-bottom:1px solid var(--rule)}
+.ulist .urow:last-child{border-bottom:0}
+.usub{font-size:13px;color:var(--ash);margin-top:2px}
+.nowrap{white-space:nowrap}
+.fact.bad{color:var(--rust)}
 /* A note is a FACT in a pane now, never a caption: every explanation moved to a tip, so what is
    left is something true of this warehouse, and it is set in ink where it will be read. */
 .note{color:var(--ink);font-size:13.5px;margin:8px 0 0;max-width:none}
@@ -920,6 +930,8 @@ def explorer_html(data: dict, record_html: str) -> str:
         # all three lists, not the first one: the tab said 16 while it held 16 + 39 + the odd ones
         "areas": sum(len((data.get("areas") or {}).get(k) or [])
                      for k in ("predicate_clusters", "odd_ones_out", "same_claim")) or None,
+        "guarantees": (sum(1 for p in data.get("premises") or [] if p.get("status") != "holding")
+                       if data.get("premises") else None),
     }
     # *** THE OVERVIEW IS THE WAY IN, NOT THE LAST TAB. ***
     # It is the only surface here with an argument to make rather than a table to show, and a
@@ -937,6 +949,9 @@ def explorer_html(data: dict, record_html: str) -> str:
         # passed `--monitoring` is a tab nobody learns exists, and its absence reads as a tool
         # that does not do this rather than as a measurement not yet made.
         ("monitoring", "Monitoring", counts["monitoring"]),
+        # *** WHAT THE FINDINGS REST ON. *** The number is the premises NOT holding: broken,
+        # unchecked, assumed or unknown. None when no ledger was built, so no count is a zero.
+        ("guarantees", "Guarantees", counts["guarantees"]),
         ("models", "Models", counts["models"]),
         ("chain", "The chain", counts["edges"]),
         ("claims", "Claims", counts["claims"]),
@@ -968,6 +983,8 @@ def explorer_html(data: dict, record_html: str) -> str:
         "areas": "Filters written the same way in several models, the one that differs from its "
                  "family, and one claim made about several models.",
         "monitoring": "Whether anything is watching this warehouse, and whether the tests run.",
+        "guarantees": "What the findings rest on: every key a grain or a held-back finding "
+                      "assumes is unique, what measured it, and since when.",
         "suggest": "What audit.yml should say, from what assay measured. It never writes a meaning.",
         "answers": "The latest answer to every question asked about this project.",
         "spend": "What the model calls and the warehouse statements cost.",
@@ -979,12 +996,14 @@ def explorer_html(data: dict, record_html: str) -> str:
     counted = {"models": "models", "chain": "hops between models", "claims": "sentences",
                "findings": "findings", "areas": "rows across its three lists",
                "monitoring": "findings about the monitoring", "suggest": "candidates",
+               "guarantees": "premises not holding (broken, unchecked, assumed or with no "
+                             "evidence)",
                "answers": "live answers", "questions": "questions"}
     for t, _label, n in tabs:
         if n is not None and t in counted:
             tips[t] = f"{tips.get(t, '')}\nThe number is {n:,} {counted[t]}."
     nav_groups = [("start here", ["understood"]),
-                  ("what is wrong", ["findings", "areas", "monitoring"]),
+                  ("what is wrong", ["findings", "areas", "monitoring", "guarantees"]),
                   ("your project", ["models", "chain", "claims"]),
                   ("what assay asked", ["answers", "questions"]),
                   ("setup", ["suggest", "config", "spend"])]
@@ -1685,6 +1704,20 @@ function modelsTab(host) {
         : el('span', {class: 'tot', text: 'no exposure declares it'})],
     ])));
 
+    /* *** CORRECT AS LONG AS. *** Every premise something about this model rests on, one line
+       each with its status, linked to Guarantees. Omitted when there are none. */
+    const prem = PREM_BY_MODEL[m.uid] || [];
+    if (prem.length) d.append(section('correct as long as', el('div', {class: 'ulist'},
+      prem.map(p => {
+        const a = el('a', {class: 'lk', href: '#guarantees'}, [wbr(p.statement)]);
+        a.onclick = ev => { ev.preventDefault(); open('guarantees'); GO.guarantees(p.id); };
+        const why = (p.uses || []).filter(u => u.model === m.uid)
+          .map(u => u.kind === 'grain' ? 'its grain' : u.dependent.split(':')[0].replace(/_/g, ' '));
+        return el('div', {class: 'urow'}, [a, premBadge(p.status, p.label, p.why),
+          el('div', {class: 'usub', text: 'for ' + [...new Set(why)].join(', ')})]);
+      })), 'The statements about the data that what assay says about this model leans on. If '
+        + 'one stops being true, the finding it held back is raised again.'));
+
     const colCols = [
       {key: 'name', label: 'column', mono: 1, val: c => c.name,
        cell: c => { const s = el('span', {}); s.append(el('span', {text: c.name + ' '}));
@@ -2161,7 +2194,7 @@ function backBlock(b) {
   if (!b) return null;
   const prem = el('span', {}, [wbr(b.premise || ''), premBadge(b.status, b.status, b.why)]);
   if (GO.guarantees && b.premise_id)
-    prem.append(el('a', {class: 'plink', text: 'in Guarantees', href: '#guarantees',
+    prem.append(el('a', {class: 'lk plink', text: 'in Guarantees', href: '#guarantees',
       onclick: ev => { ev.preventDefault(); GO.guarantees(b.premise_id); }}));
   return section('why it is back', kv([
     ['premise', prem],
@@ -2193,6 +2226,8 @@ function findingPane(f) {
           : el('span', {class: 'tot', text: 'no exposure'})],
         ['marts downstream', num(f.marts)],
         ['descendants', num(f.descendants)],
+        ...(backsLine((f.evidence || {}).context) ? [['the test backs',
+            backsLine((f.evidence || {}).context)]] : []),
         ...(f.group ? [['same construct', el('span', {text: f.group.size + ' models (' +
             f.group.models.slice(0, 5).join(', ') + (f.group.size > 5 ? ', ...' : '') + '), ' +
             (f.group.macro_at ? 'one edit in ' + f.group.macro_at : 'written inline in each')})]]
@@ -2873,6 +2908,26 @@ function understoodTab(host) {
       tile(num(DATA.questions.length), 'questions', num(meta.sources) + ' sources read'),
     ])));
 
+  // ---- what the findings rest on, and whether it still holds
+  const PR = DATA.premises || [];
+  if (PR.length) {
+    const notH = PR.filter(p => p.status !== 'holding');
+    const brk = PR.filter(p => p.status === 'broken');
+    const held = notH.reduce((n, p) => n + (p.uses || []).filter(u => u.kind === 'held_back').length, 0);
+    const go = el('button', {class: 'back', text: 'see them in Guarantees →'});
+    go.onclick = () => open('guarantees');
+    bits.push(block('What the findings rest on',
+      'Keys a declared grain or a held-back finding assumes are unique. Broken means a count or '
+      + 'a failed test says otherwise; unchecked means nothing has checked it.',
+      el('div', {}, [el('div', {class: 'tiles'}, [
+        tile(num(notH.length), 'premises not holding', 'of ' + num(PR.length) + ' in all',
+             notH.length ? 'bad' : ''),
+        tile(num(brk.length), 'broken', brk.length ? 'a finding held back on one is raised again'
+             : 'none measured false', brk.length ? 'bad' : ''),
+        tile(num(held), 'findings held back', 'on a premise that is not holding'),
+      ]), go])));
+  }
+
   // ---- grain: a composition of a known whole, ordered by evidence, so one hue dark->light
   const g = {declared: 0, derived: 0, judged: 0, none: 0};
   for (const m of M_) g[((m.grain || {}).source) || 'none'] = (g[((m.grain || {}).source) || 'none'] || 0) + 1;
@@ -3294,6 +3349,14 @@ function monitoringTab(host) {
                      + '`assay volume --json` again to count the tests that are skipped now.'});
   }
 
+  /* A declared test that has not run, backing a premise: the key it declares is unchecked. */
+  const unrunBacking = (DATA.premises || []).filter(p => p.status === 'unchecked'
+    && (p.evidence || []).some(e => e.kind === 'declared'));
+  if (unrunBacking.length)
+    glance.push({what: 'unrun tests that a grain or a held-back finding rests on',
+                 value: num(unrunBacking.length), bad: true,
+                 why: 'Each declares a key unique, and something here leans on that key. Until '
+                   + 'the test runs the key is unchecked: the Guarantees tab lists them.'});
   const groups = [
     {key: 'monitors', label: 'the monitors themselves', rows: readings,
      cols: [
@@ -3417,6 +3480,196 @@ function monitoringTab(host) {
   }));
 }
 
+/* ---------------------------------------------------------------------------- Guarantees */
+/* *** WHAT THE FINDINGS REST ON, AND WHETHER IT IS STILL TRUE. ***
+   A grain "declared by a test", a hop held back because its parent's key is unique, a pick
+   excused by a unique tie-break: each is a statement about the data that something here leans
+   on. This tab is every one of them, what measured it and when, and what rests on it. */
+const PSTATUS = ['broken', 'unchecked', 'assumed', 'unknown', 'holding'];
+const PCOLOR = {broken: '#a8491a', unchecked: '#cec5b6', assumed: '#d2833a', unknown: '#e4ddd0',
+                holding: '#1a1714'};
+const PWORD = {broken: 'broken', unchecked: 'unchecked', assumed: 'assumed only',
+               unknown: 'no evidence', holding: 'holding'};
+const PTIP = {
+  broken: 'A count found duplicates, or its test failed on its last run. One is enough.',
+  unchecked: 'Declared, and nothing has checked it: the test never ran, was skipped, or no test '
+    + 'results were read.',
+  assumed: 'Only a judgment carries it: nothing declares it and nothing has counted it.',
+  unknown: 'Nothing declares, counts or judges it.',
+  holding: 'Its test ran and passed, or an exact count found no duplicates.'};
+const USEWORD = {grain: 'the grain of', held_back: 'a finding held back on',
+                 raised_on: 'a finding reading it on', proof: 'a proof about'};
+
+function premiseWhatToDo(p) {
+  const test = (p.evidence || []).find(e => e.kind === 'declared');
+  const obs = (p.evidence || []).find(e => e.kind === 'observed');
+  const name = p.name, cols = (p.columns || []).join(', ');
+  if (p.status === 'broken' && obs && obs.status === 'broken')
+    return 'The key is broken: ' + obs.detail + '. Either remove the duplicates upstream of `'
+      + name + '`, or change what reads it to use a key that is unique.';
+  if (p.status === 'broken' && test)
+    return test.detail.split(' last result')[0] + ' failed on its last run. Fix the data or '
+      + 'the key, then run it again: `dbt test --select ' + name + '`.';
+  if (p.status === 'unchecked' && test && /no test results were read/.test(test.detail))
+    return 'No test results were read. `assay volume` reads each test’s last result from '
+      + 'Elementary; a `dbt build` leaves them in target/ for `assay check`.';
+  if (p.status === 'unchecked' && test)
+    return 'Run it in the next build: `dbt test --select ' + name + '`.';
+  if (p.status === 'unchecked')
+    return 'Nothing tests it. Declare a `unique` test on ' + cols + ' in `' + name
+      + '`, or count it: `assay probe --select ' + name + '`.';
+  if (p.status === 'assumed' || p.status === 'unknown')
+    return 'Count it: `assay probe --select ' + name + '`, or declare a `unique` test on '
+      + cols + '.';
+  return null;
+}
+
+function guaranteesTab(host) {
+  const rows = DATA.premises || [];
+  if (!rows.length) {
+    host.replaceChildren(block('Nothing rests on a premise yet',
+      'A premise is recorded when a grain is declared by a test or a check holds a finding back '
+      + 'because a key is unique. `assay check` records them.', null,
+      'This page was built without a premise ledger.'));
+    return;
+  }
+  const by = {};
+  for (const p of rows) (by[p.status] = by[p.status] || []).push(p);
+  const moves = DATA.premise_moves || [];
+  const broke = moves.filter(m => m.after === 'broken').length;
+  const heldOn = ps => ps.reduce((n, p) => n + (p.uses || []).filter(u => u.kind === 'held_back').length, 0);
+  const grainsOn = ps => ps.reduce((n, p) => n + (p.uses || []).filter(u => u.kind === 'grain').length, 0);
+
+  function top() {
+    const box = el('div', {class: 'mtop'});
+    const parts = PSTATUS.filter(s => by[s]).map(s => ({label: PWORD[s], n: by[s].length,
+                                                        color: PCOLOR[s]}));
+    const bar = el('div', {}, [
+      el('div', {class: 'tlab'}, [el('span', {text: 'premises by status',
+        tip: 'Every statement about the data that a grain, a held-back finding or a proof leans '
+          + 'on, by the strongest evidence for it. A count that found duplicates, or a test that '
+          + 'failed, beats everything.'})]),
+      stackedBar(parts, rows.length),
+      el('div', {class: 'legend'}, parts.map(x => el('span', {class: 'lgi'}, [
+        el('span', {class: 'sw', style: 'background:' + x.color}),
+        el('span', {text: x.label + ' ' + num(x.n), tip: PTIP[PSTATUS.find(s => PWORD[s] === x.label)]})])))]);
+    const notHolding = rows.filter(p => p.status !== 'holding');
+    const facts = [
+      {v: num(rows.length), l: 'premises', tip: 'Distinct statements: one key in one relation.'},
+      {v: num(notHolding.length), l: 'not holding', bad: notHolding.length > 0,
+       tip: 'Broken, unchecked, assumed or with no evidence at all.'},
+      {v: num((by.broken || []).length), l: 'broken', bad: (by.broken || []).length > 0,
+       tip: PTIP.broken},
+      {v: num(heldOn(notHolding)), l: 'findings held back on these',
+       tip: 'Findings a check did not raise because a key was unique, where that key is not '
+         + 'holding. A broken one raises its finding again.'},
+      {v: num(grainsOn(notHolding)), l: 'grains resting on these',
+       tip: 'Declared grains whose key is not holding. The value stands; it is not firm.'},
+    ];
+    box.append(bar, el('div', {class: 'mfacts'}, facts.map(f => el('div', {class: 'mfact'}, [
+      el('div', {class: 'mfv' + (f.bad ? ' bad' : ''), text: f.v}),
+      el('div', {class: 'mfl'}, [el('span', {text: f.l, tip: f.tip})])]))));
+    if (broke) box.append(el('p', {class: 'fact bad', text: num(broke) + ' premise(s) broke at '
+      + 'the latest check.'}));
+    return box;
+  }
+
+  const groups = PSTATUS.filter(s => by[s]).map(s => ({key: s, label: PWORD[s], rows: by[s]}));
+  const cols = [
+    {key: 'statement', label: 'premise', val: p => p.statement,
+     cell: p => el('span', {}, [wbr(p.statement)])},
+    {key: 'status', label: 'status', val: p => p.status,
+     tip: 'What the strongest evidence says. Hover a badge for the evidence.',
+     cell: p => premBadge(p.status, p.label, p.why)},
+    {key: 'rests', label: 'uses', n: 1, val: p => (p.uses || []).length,
+     tip: 'How many grains, held-back findings and proofs rest on it. Since when it has had '
+       + 'its status is in the pane.'},
+  ];
+
+  function evidenceList(p) {
+    const ev = p.evidence || [];
+    if (!ev.length) return el('span', {class: 'tot', text: 'none: nothing declares, counts or '
+      + 'judges it'});
+    const d = el('dl', {class: 'kv'});
+    const KIND = {declared: 'a dbt test', config: 'dbt config', observed: 'a count',
+                  judged: 'a judgment'};
+    for (const e of ev) {
+      d.append(el('dt', {text: KIND[e.kind] || e.kind}));
+      d.append(el('dd', {}, [wbr(e.detail), premBadge(e.status, e.status),
+        ...(e.at ? [el('span', {class: 'tot', text: '  ' + String(e.at).slice(0, 10)})] : [])]));
+    }
+    return d;
+  }
+
+  function usesList(p) {
+    const us = p.uses || [];
+    if (!us.length) return el('span', {class: 'tot', text: 'nothing'});
+    const raised = new Set(p.raised || []);
+    const d = el('div', {class: 'ulist'});
+    for (const u of us) {
+      const line = el('div', {class: 'urow'});
+      const check = u.kind === 'grain' ? '' : u.dependent.split(':')[0];
+      line.append(el('span', {text: (USEWORD[u.kind] || u.kind) + ' '}), link(u.model_name));
+      if (check) line.append(el('span', {class: 'mono tot', text: '  ' + check}));
+      if (u.detail && u.kind !== 'grain') line.append(el('div', {class: 'usub'}, [wbr(u.detail)]));
+      const fid = u.finding || (u.kind === 'held_back' ? (p.raised || []).find(id =>
+        (DATA.findings || []).some(f => f.id === id && f.subject === u.model)) : null);
+      if (fid) {
+        const a = el('a', {class: 'lk plink', href: '#findings',
+          text: raised.has(fid) ? 'raised again: the finding' : 'the finding'});
+        a.onclick = ev => { ev.preventDefault(); open('findings'); GO.findings(fid); };
+        line.append(a);
+      }
+      d.append(line);
+    }
+    return d;
+  }
+
+  function detailOf(p) {
+    const todo = premiseWhatToDo(p);
+    return pane({
+      kind: 'premise · ' + String(p.property).replace(/_/g, ' '),
+      title: el('span', {}, [wbr(String(p.statement).replace(/`/g, ''))]),
+      where: link(p.name),
+      what: el('span', {}, [premBadge(p.status, p.label, p.why), el('span', {text: ' '}),
+                            wbr(p.why || '')]),
+      reading: [
+        section('evidence', evidenceList(p), 'Every piece of evidence assay has for it, each '
+          + 'with what it alone says. A count or a failed test that says false is enough.'),
+        section('what rests on it', usesList(p), 'What assay would say differently if this '
+          + 'stopped being true.'),
+        p.since ? kv([['this status since', p.since]]) : null,
+      ],
+      act: todo ? el('p', {class: 'prose'}, [wbr(todo)]) : null,
+    });
+  }
+
+  host.classList.add('cfgpanel');
+  const d = drill({
+    noun: 'premises', groups: groups, all: false, keepOrder: 1,
+    chip: g => g.label, groupFilter: 'find a status...',
+    groupSub: g => {
+      const h = heldOn(g.rows), gr = grainsOn(g.rows);
+      return [h ? num(h) + ' finding(s) held back' : '', gr ? num(gr) + ' grain(s)' : '']
+        .filter(Boolean).join(' · ') || null;
+    },
+    rowsOf: g => g.rows, rowCols: cols,
+    rowSort: 'rests', rowDir: -1,
+    rowFilter: 'filter by model or column...',
+    rowText: p => p.statement + ' ' + p.name + ' ' + (p.uses || []).map(u => u.model_name).join(' '),
+    detailOf: detailOf,
+  });
+  host.replaceChildren(top(), d);
+  GO.guarantees = id => {
+    const p = rows.find(x => x.id === id); if (!p) return;
+    d.showRows(groups.find(g => g.key === p.status));
+    for (const tr of host.querySelectorAll('tbody tr')) {
+      const r = Array.isArray(tr._row) ? tr._row[0] : tr._row;
+      if (r && r.id === id) { tr.click(); if (tr.scrollIntoView) tr.scrollIntoView({block: 'nearest'}); return; }
+    }
+  };
+}
+
 /* *** A BACKTICK IS MARKUP EVERYWHERE ON THIS PAGE, NOT ONLY IN A DESCRIPTION. ***
    `md()` rendered model descriptions, and every other sentence -- a monitor's reading, a
    suggestion's headline, the question a family asked, this page's own notes -- printed its
@@ -3475,9 +3728,37 @@ document.addEventListener('scroll', () => { TIPBOX.hidden = true; }, true);
 document.addEventListener('mousedown', () => { TIPBOX.hidden = true; }, true);
 
 /* ---------------------------------------------------------------------------------- tabs */
+/* Premises by the dbt test that is their declared evidence, so a finding or a monitoring row
+   about a test can say what rests on it. */
+const PREM_BY_TEST = {};
+for (const p of DATA.premises || []) for (const e of p.evidence || []) {
+  const m = e.kind === 'declared' && /^`([^`]+)`/.exec(e.detail || '');
+  if (m) (PREM_BY_TEST[m[1]] = PREM_BY_TEST[m[1]] || []).push(p);
+}
+/* "backs the grain of 3 models" -- linked to Guarantees -- or null when nothing rests on it. */
+function backsLine(test) {
+  const ps = PREM_BY_TEST[test] || [];
+  if (!ps.length) return null;
+  const grains = new Set(), held = new Set();
+  for (const p of ps) for (const u of p.uses || [])
+    (u.kind === 'grain' ? grains : held).add(u.model);
+  const bits = [grains.size ? 'the grain of ' + num(grains.size) + ' model(s)' : '',
+                held.size ? 'findings held back on ' + num(held.size) + ' model(s)' : '']
+    .filter(Boolean);
+  if (!bits.length) return null;
+  const a = el('a', {class: 'lk', href: '#guarantees', text: bits.join(' and ')});
+  a.onclick = ev => { ev.preventDefault(); open('guarantees'); GO.guarantees(ps[0].id); };
+  return a;
+}
+/* Premises by the model something about which rests on them, for the Models pane. */
+const PREM_BY_MODEL = {};
+for (const p of DATA.premises || []) for (const u of p.uses || []) {
+  const l = PREM_BY_MODEL[u.model] = PREM_BY_MODEL[u.model] || [];
+  if (!l.includes(p)) l.push(p);
+}
 const VIEWS = {models: modelsTab, chain: chainTab, claims: claimsTab, findings: findingsTab,
                areas: areasTab,
-               suggest: suggestTab, monitoring: monitoringTab,
+               suggest: suggestTab, monitoring: monitoringTab, guarantees: guaranteesTab,
                answers: answersTab, spend: spendTab, questions: questionsTab, config: configTab,
                understood: understoodTab};
 const built = {};

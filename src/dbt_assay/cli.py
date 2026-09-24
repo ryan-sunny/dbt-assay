@@ -2402,6 +2402,8 @@ def page(
                             probe_mod.read(store) if store else {}, facts=facts)
     fs = live.all_findings(project, digests, schema, entries,
                             threshold=cfg.row_loss_threshold, store=store)
+    from . import ledger as ledger_mod
+    _ledger = ledger_mod.last()
     # The config's own findings, as `check` adds them, so the page counts what `check` counts.
     if store is not None:
         from . import selfaudit
@@ -2519,7 +2521,7 @@ def page(
                               f"ones.[/]")
         data = explore.assemble(project, digests, schema, entries, fs, store, cfg,
                                 (project.raw.get("metadata") or {}).get("generated_at", "unknown"),
-                                __version__, monitoring=vol)
+                                __version__, monitoring=vol, ledger=_ledger)
         # *** THE ARTIFACT IS THE THING WORTH COMMITTING, SO IT IS WRITTEN EVERY TIME. ***
         # Not behind a flag: a page and an artifact that can disagree is the two-spellings defect
         # this codebase keeps finding, and the only way they cannot is if one run writes both.
@@ -5451,6 +5453,70 @@ def trace(
     if last == "from_source":
         console.print("\n[dim]The trail ends at a source. What produced this value happened "
                       "outside this project, and assay will not guess at it.[/]")
+
+
+@app.command()
+def premises(
+    model: str = typer.Option("", "--model", "-m", help="only what this model rests on"),
+    status: str = typer.Option("", "--status",
+                               help="broken, unchecked, assumed, unknown or holding"),
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    dialect: str = typer.Option(None, "--dialect"),
+    json_out: bool = typer.Option(False, "--json"),
+):
+    """What the findings rest on: every key a declared grain or a held-back finding assumes is
+    unique, with its evidence, its status, and what rests on it.
+
+    A premise is broken when a count found duplicates or its test failed on its last run, and a
+    finding held back on a broken premise is raised again. Unchecked means declared and never
+    checked: the test never ran, was skipped, or no test results were read. No warehouse, no
+    spend: evidence comes from the store (`assay volume`, `assay probe`) and target/.
+    """
+    from . import ledger as ledger_mod
+    if status and status not in ledger_mod.STATUSES:
+        console.print(f"[red]--status is one of {', '.join(ledger_mod.STATUSES)}[/]")
+        raise typer.Exit(2)
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
+    store = Store(store_path) if Path(store_path).exists() else None
+    try:
+        facts, _ = relate.run_all(project, digests, schema)
+        entries = inv_mod.build(project, digests, schema, store,
+                                probe_mod.read(store) if store else {}, facts=facts)
+        rep = live.premises_report(project, digests, schema, entries, store, model=model,
+                                   status=status)
+    finally:
+        if store is not None:
+            store.close()
+    if json_out:
+        print(_json.dumps(rep, indent=2, default=str))
+        raise typer.Exit(1 if rep.get("error") else 0)
+    if rep.get("error"):
+        console.print(f"[red]{rep['error']}[/]")
+        raise typer.Exit(1)
+    c = rep["counts_in_project"]
+    console.print("  ".join(f"{k} {c.get(k, 0):,}" for k in ledger_mod.STATUSES))
+    if rep.get("note"):
+        console.print(f"[yellow]{rep['note']}[/]")
+    colour = {"broken": "red", "holding": "green", "assumed": "yellow"}
+    # One block per premise, not a table: a statement, a status and a list of dependents do not
+    # fit four columns of an 80-column terminal.
+    for r in rep["premises"][:200]:
+        uses = sorted({("the grain of " if u["kind"] == "grain" else
+                        u["dependent"].split(":")[0] + " on ") + u["model_name"]
+                       for u in r["uses"]})
+        console.print(f"[{colour.get(r['status'], 'dim')}]{r['label']}[/]  {r['statement']}"
+                      + (f"  [dim]since {r['since']}[/]" if r.get("since") else ""))
+        if r["status"] != "holding":
+            console.print(f"    [dim]{r['why']}[/]")
+        if uses:
+            console.print(f"    [dim]rests on it: {'; '.join(uses)}[/]")
+        for f in r.get("raised") or []:
+            console.print(f"    [red]raised again:[/] {f['check']} on {f['model']} "
+                          f"[dim]({f['finding']})[/]")
+    if len(rep["premises"]) > 200:
+        console.print(f"[dim]{len(rep['premises']) - 200:,} more; --json has them all.[/]")
 
 
 @app.command("diff")
