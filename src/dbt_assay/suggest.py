@@ -11,10 +11,11 @@ It is derivable, and it has already been done by hand on this warehouse: the fir
 ruling and typed it into the config. This automates a path that has already produced good config
 here; it does not invent a new one.
 
-*** IT PROPOSES THE CANDIDATE AND THE MEASUREMENT. IT NEVER PROPOSES THE MEANING. ***
+*** IT PROPOSES THE CANDIDATE AND THE MEASUREMENT. IT NEVER WRITES THE MEANING. ***
 It may say `section_id` is joined in 65 hops across 24 models and is absent from a 15-term vocab.
-It may not say what `section_id` means. `means:` and `implies:` arrive EMPTY with the evidence
-underneath them, and that is not a style preference. A plausible vocab block written from model
+It may not say what `section_id` means. `means:` arrives EMPTY, or quoting -- verbatim, with the
+file cited -- a sentence this project itself already wrote about that column, which is theirs and
+not assay's; `implies:` always arrives empty. That is not a style preference. A plausible vocab block written from model
 names looks like knowledge, is not, and then rides along with every judged question from that point
 on -- the tool's worst failure shipped as a feature, and the most confident-sounding output it
 produces. The rule is already in the skill for agents. The command holds itself to it too.
@@ -95,6 +96,22 @@ class Suggestion:
 
 # --------------------------------------------------------------------------- vocab
 
+_FILLER = frozenset({"the", "a", "an", "of", "for", "this", "row", "rows", "is", "its", "id"})
+
+
+def says_more_than_the_name(col: str, text: str) -> bool:
+    """False for a description that only restates its column's name -- `owner_name`: "owner name."
+
+    *** A SENTENCE THAT SAYS NOTHING IS NOT A DEFINITION WORTH QUOTING. *** Reported from the field:
+    quoted into `means:`, it rides along with every judged question and adds nothing to any of
+    them. A description that says no more than the name it describes is left out.
+    """
+    import re
+    name = set(str(col).lower().split("_"))
+    words = {w.rstrip("s") for w in re.findall(r"[a-z0-9]+", str(text).lower())} - _FILLER
+    return bool(words - {w.rstrip("s") for w in name})
+
+
 def _majority_sentence(project, col: str) -> tuple[str, str, list]:
     """(sentence, where, others) when MORE THAN HALF of the models describing `col` use one
     sentence, else ("", "", variants). A majority is selected and says so with its count; a
@@ -105,7 +122,7 @@ def _majority_sentence(project, col: str) -> tuple[str, str, list]:
     said: dict = {}
     for m in project.models.values():
         t = described(m).get(col)
-        if t:
+        if t and says_more_than_the_name(col, t):
             said.setdefault(" ".join(str(t).split()), []).append(m.name)
     total = sum(len(v) for v in said.values())
     if not total:
@@ -251,6 +268,8 @@ def _vocab_from_descriptions(cfg, project) -> list[Suggestion]:
         uses = next(iter(variants.values()))
         if len(uses) < 2:
             continue                   # described once, in one model, is a comment, not a term
+        if not says_more_than_the_name(col, uses[0][2]):
+            continue                   # "owner name." for owner_name defines nothing
         # The earliest by name, so two runs over one project propose the same sentence.
         _uid, m, text = min(uses, key=lambda r: r[1].name)
         out.append(Suggestion(

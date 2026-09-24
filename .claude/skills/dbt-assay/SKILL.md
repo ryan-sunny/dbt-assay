@@ -150,11 +150,13 @@ evidence instead of an opinion:
   there is none. **Do not propose an action from the shipped default alone** -- it reads as
   measured and is not.
 
-**Every `means:` and `implies:` comes back empty, and you must hand it over empty.** This is the
-one instruction in this file most worth following exactly. A definition you write from a model
-name is plausible, is not knowledge, and looks identical in `audit.yml` to one they decided on --
-and from then on it is sent with every judged question about that warehouse. There is no later
-step that catches it.
+**Never write a `means:` or an `implies:` yourself.** This is the one instruction in this file most
+worth following exactly. A `means:` comes back either empty -- hand it over empty -- or quoting,
+verbatim and with its file cited, a sentence this project already wrote about the column: hand
+that over exactly as it came. `implies:` is always empty. A definition you write from a model name
+is plausible, is not knowledge, and looks identical in `audit.yml` to one they decided on -- and
+from then on it is sent with every judged question about that warehouse. There is no later step
+that catches it.
 
 `evidence(decision_key=..., question=..., subject=...)` returns the exact state a judged answer
 was computed from. Call it before you disagree with an answer: if the answer is wrong **and** the

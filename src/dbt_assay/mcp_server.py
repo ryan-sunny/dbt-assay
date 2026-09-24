@@ -1031,9 +1031,10 @@ class Backend:
         joined the two. This is that join, and it is the tool an agent should reach for when
         somebody asks "so what do I put in audit.yml".
 
-        The `means:` and `implies:` fields come back EMPTY on purpose. An agent filling them from
-        model names is the exact failure the skill already warns about, one step more convincing
-        because it now arrives inside a tool result.
+        A `means:` comes back EMPTY, or quoting verbatim -- with the file cited -- a sentence this
+        project already wrote about the column. Never one assay or an agent composed: filling it
+        from model names is the exact failure the skill warns about, one step more convincing
+        because it arrives inside a tool result.
         """
         from . import suggest as sug
         from .config import Config
@@ -1060,11 +1061,15 @@ class Backend:
             "showing": min(limit, len(items)),
             "sections": sorted({i.section for i in items}),
             "suggestions": [i.as_dict() for i in items[:limit]],
-            "rule": ("Propose the candidate and the measurement. NEVER propose the meaning. "
-                     "Every `means:` and `implies:` above is empty and must stay empty until a "
-                     "PERSON says what the term means here. A definition you write from a model "
-                     "name looks exactly like one they decided on, and it is then sent with "
-                     "every judged question from that point on."),
+            # *** ONE RULE, SAID THE WAY THE DRAFTS ACT. *** Reported from the field: this said
+            # every `means:` was empty while the drafts above it quoted the project's own
+            # sentences -- one of the two had to be wrong, and it was this sentence.
+            "rule": ("Propose the candidate and the measurement. NEVER write the meaning. A "
+                     "`means:` above is either empty -- leave it empty until a PERSON says what "
+                     "the term means here -- or quotes, verbatim and cited, a sentence this "
+                     "project already wrote; hand that over as it is, unedited. `implies:` is "
+                     "always empty. A definition you write from a model name looks exactly like "
+                     "one they decided on, and is sent with every judged question from then on."),
         }
         # *** AN EMPTY LIST BECAUSE THERE IS NO STORE IS NOT AN EMPTY LIST BECAUSE THE CONFIG IS
         # COMPLETE. *** Most of these signals are measurements taken during `check` and `probe`.

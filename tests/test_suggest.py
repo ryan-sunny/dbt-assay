@@ -436,3 +436,22 @@ def test_one_dismissal_written_on_the_model_and_the_finding_is_one_subject(tmp_p
         assert suggest._clusters(s, Config()) == {}
     finally:
         s.close()
+
+
+def test_a_description_that_only_restates_the_name_is_not_quoted_as_a_meaning():
+    """Reported from the field: `owner_name` drafted as `means: "owner name."`."""
+    from dbt_assay.suggest import says_more_than_the_name
+    assert not says_more_than_the_name("owner_name", "owner name.")
+    assert not says_more_than_the_name("permit_id", "The permit ID")
+    assert says_more_than_the_name("street_address", "Street address of the licensed premises")
+
+
+def test_the_rule_says_what_the_drafts_do():
+    """The rule said every `means:` was empty while a draft beside it quoted the project."""
+    from pathlib import Path
+
+    from dbt_assay import mcp_server, skilltext
+    src = Path(mcp_server.__file__).read_text()
+    assert "is empty and must stay empty" not in src
+    assert "comes back empty, and you must hand it over empty" not in skilltext.SKILL_MD
+    assert "verbatim" in skilltext.SKILL_MD
