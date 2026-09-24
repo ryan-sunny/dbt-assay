@@ -494,7 +494,7 @@ def test_the_things_you_configure_by_hand_are_not_dumped_as_json():
         assert "JSON.stringify" not in body or "null, 2" not in body, \
             f"{tab} still dumps raw JSON"
     assert "function kvAny(" in v, "there is no structured renderer"
-    assert "vocabulary (" in v, "the vocabulary has no section of its own"
+    assert "label: 'vocabulary'" in v, "the vocabulary has no section of its own"
 
 
 def test_every_table_can_reach_the_model_it_is_about():
@@ -1365,3 +1365,23 @@ def test_skipped_tests_and_skipped_results_are_not_one_unit():
     assert '"skipped_now": one(skipped_now)' in src
     v = explorer._VIEWS
     assert "'tests skipped as of their last run'" in v and "'skipped results, across every run'" in v
+
+
+def test_config_is_a_navigator_and_policy_is_data_not_a_repr():
+    """*** "INSTEAD OF IT SHOWING VOCAB THEN REQUIRING YOU TO SCROLL DOWN". ***
+
+    Config was one long report. Its sections are the groups of the navigator the other tabs
+    use. And per-check policy reached the page as `QuestionConfig(name=...)`, a Python repr."""
+    v = explorer._VIEWS
+    cb = v[v.index("function configTab"):v.index("function configTab") + 9000]
+    assert "drill({" in cb, "Config is a long scroll again"
+    for k in ("'resolved'", "'vocab'", "'policy'", "'waivers'", "'runs'", "'unreadable'"):
+        assert "key: " + k in cb, k
+    from types import SimpleNamespace
+
+    from dbt_assay import explore
+    from dbt_assay.config import QuestionConfig
+    cfg = SimpleNamespace(questions={"arbitrary_pick": QuestionConfig(name="arbitrary_pick",
+                                                                       action="queue")})
+    got = explore._config(cfg)["questions"]["arbitrary_pick"]
+    assert got["action"] == "queue" and "QuestionConfig" not in str(got), got

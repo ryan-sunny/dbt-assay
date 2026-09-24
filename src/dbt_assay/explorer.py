@@ -2397,88 +2397,96 @@ function questionsTab(host) {
 
 /* ------------------------------------------------------------------------------- Config */
 function configTab(host) {
-  const c = DATA.config || {}, bits = [];
-  /* The one tab besides the Overview that carries a plate: it has a short opening line and a
-     long table under it, so a cut set into that line costs nothing and fills paper that was
-     otherwise empty. */
-  /* *** A FLOAT INSIDE A flow-root PARAGRAPH IS NOT A FLOAT, IT IS A BLOCK. ***
-     Containing it in the opening line meant one short sentence wrapped around a 172px plate and
-     everything after it started below the whole thing -- a column of bare paper down the left
-     and the settings pushed half a screen down. It sits in the TAB, on the right, and the note
-     and the resolved settings run up the left of it. */
-  const cut = (DATA.cuts || {}).tower;
-  if (cut) bits.push(el('img', {class: 'cut tabcut', src: cut, alt: ''}));
-  const scalars = Object.entries(c).filter(([, v]) => typeof v !== 'object' || v === null);
-  if (scalars.length) bits.push(section('resolved', kv(scalars.map(([k, v]) => [k, String(v)])),
-    'The values assay is using once its defaults are filled in, which can differ from audit.yml. '
-    + 'Everything below this you wrote by hand.'));
-
-  /* *** THE VOCABULARY IS THE POINT OF THE WHOLE CONFIG AND IT WAS A JSON BLOB. ***
-     Fifteen terms written once made `traverse` flag wdid joins without anyone writing a water
-     question. Knowledge written once reaching questions nobody wrote is the promise, so it gets
-     a table you can read rather than a pre block you skim past. */
-  if (c.vocab && Object.keys(c.vocab).length) {
-    const rows = Object.keys(c.vocab).sort().map(k => ({term: k, def: c.vocab[k]}));
-    bits.push(section('vocabulary (' + rows.length + ' term(s))',
-      grid(rows, [
-        {key: 'term', label: 'term', mono: 1, val: r => r.term},
-        {key: 'def', label: 'what it means here', val: r => JSON.stringify(r.def),
-         cell: r => kvAny(r.def)},
-      ], {placeholder: 'filter terms...', cap: 400}),
-      'Every term here is sent with every judged question whose subject it applies to.'));
-  }
-
-  if (c.questions && Object.keys(c.questions).length) {
-    const rows = Object.keys(c.questions).sort().map(k => ({q: k, v: c.questions[k]}));
-    bits.push(section('per-check policy (' + rows.length + ')', grid(rows, [
-      {key: 'q', label: 'check', mono: 1, val: r => r.q},
-      {key: 'v', label: 'configured', val: r => JSON.stringify(r.v), cell: r => kvAny(r.v)},
-    ], {placeholder: 'filter...', cap: 400})));
-  }
-
+  /* *** A REPORT YOU SCROLLED THROUGH TO FIND THE PART YOU WANTED. ***
+     "instead of it showing vocab then requiring you to scroll down to per check policy then
+     waivers ... make it like [Areas]". The sections are the groups on the left, a section's
+     entries are the middle list, and the one picked is on the right. */
+  const c = DATA.config || {};
+  const brief = v => {
+    if (v == null) return '';
+    if (typeof v !== 'object') return String(v);
+    if (Array.isArray(v)) return v.map(brief).join(', ');
+    for (const k of ['means', 'action', 'reason', 'what', 'question', 'applies_to'])
+      if (v[k] != null && typeof v[k] !== 'object') return String(v[k]);
+    const first = Object.values(v).find(x => x != null && typeof x !== 'object');
+    return first == null ? Object.keys(v).join(', ') : String(first);
+  };
+  const entries = obj => Object.keys(obj || {}).sort().map(k => ({name: k, value: obj[k]}));
+  const settingCols = (label) => [
+    {key: 'name', label: label, mono: 1, val: r => r.name},
+    {key: 'v', label: 'value', clip: 1, val: r => brief(r.value)}];
+  const groups = [];
+  const scalars = Object.entries(c).filter(([, v]) => typeof v !== 'object' || v === null)
+    .map(([k, v]) => ({name: k, value: v}));
+  if (scalars.length) groups.push({key: 'resolved', label: 'settings', rows: scalars,
+    cols: settingCols('setting'),
+    tip: 'The values assay is using once its defaults are filled in, which can differ from '
+      + 'audit.yml.',
+    detail: r => pane({kind: 'setting', title: [wbr(r.name)], mono: 1,
+      what: el('span', {class: 'big', text: String(r.value)})})});
+  if (c.vocab && Object.keys(c.vocab).length) groups.push({key: 'vocab', label: 'vocabulary',
+    rows: entries(c.vocab), cols: settingCols('term').map(x => x.key === 'v'
+      ? {...x, label: 'what it means here'} : x),
+    detail: r => pane({kind: 'vocabulary term', title: [wbr(r.name)], mono: 1,
+      what: (r.value || {}).means || null,
+      reading: [section('as written in audit.yml', kvAny(r.value),
+        'Sent with every judged question whose subject it applies to.')]})});
+  if (c.questions && Object.keys(c.questions).length) groups.push({key: 'policy',
+    label: 'per-check policy', rows: entries(c.questions),
+    cols: settingCols('check').map(x => x.key === 'v' ? {...x, label: 'action'} : x),
+    detail: r => pane({kind: 'per-check policy', title: [wbr(r.name)], mono: 1,
+      reading: [section('as written in audit.yml', kvAny(r.value))]})});
   if (c.waivers && Object.keys(c.waivers).length) {
     const rows = [];
     for (const m of Object.keys(c.waivers).sort())
-      for (const w of [].concat(c.waivers[m])) rows.push({model: m, w: w});
-    bits.push(section('waivers (' + rows.length + ')', grid(rows, [
-      {key: 'model', label: 'model, or a named waiver', mono: 1, val: r => r.model,
-       cell: r => link(r.model)},
-      {key: 'w', label: 'waived, and why', val: r => JSON.stringify(r.w), cell: r => kvAny(r.w)},
-    ], {placeholder: 'filter waivers...', cap: 400}),
-      'A waived finding never reaches the Findings tab, so nothing else on this page counts it. '
-      + 'The reason is required and shown, because a waiver that says "looks fine" is how a real '
-      + 'finding gets silenced.'));
+      for (const w of [].concat(c.waivers[m])) rows.push({name: m, value: w});
+    groups.push({key: 'waivers', label: 'waivers', rows: rows,
+      cols: [{key: 'name', label: 'model, or a named waiver', mono: 1, val: r => r.name,
+              cell: r => link(r.name)},
+             {key: 'v', label: 'why', clip: 1, val: r => brief(r.value)}],
+      detail: r => pane({kind: 'waiver', title: link(r.name),
+        what: (r.value || {}).reason || null,
+        reading: [section('as written in audit.yml', kvAny(r.value),
+          'A waived finding never reaches the Findings tab. The reason is required, because a '
+          + 'waiver that says "looks fine" is how a real finding gets silenced.')]})});
   }
-
-  for (const k of ['practices', 'explanations']) {
-    if (c[k] && Object.keys(c[k]).length) bits.push(section(k, kvAny(c[k])));
+  for (const k of ['practices', 'explanations'])
+    if (c[k] && Object.keys(c[k]).length) groups.push({key: k, label: k, rows: entries(c[k]),
+      cols: settingCols(k === 'practices' ? 'practice' : 'mart'),
+      detail: r => pane({kind: k === 'practices' ? 'practice' : 'row explanations',
+        title: [wbr(r.name)], mono: 1, reading: [section('as written in audit.yml', kvAny(r.value))]})});
+  if (DATA.runs.length) groups.push({key: 'runs', label: 'runs recorded', rows: DATA.runs,
+    cols: [{key: 'when', label: 'started', mono: 1, val: r => r.started_at || ''},
+           {key: 'av', label: 'assay', mono: 1, val: r => r.assay_version},
+           {key: 'no', label: 'unreadable', n: 1, val: r => r.unreadable,
+            cell: r => el('span', {class: r.unreadable ? 'bad' : 'tot', text: num(r.unreadable)})}],
+    sort: 'when', dir: -1,
+    detail: r => pane({kind: 'run', title: [wbr(String(r.started_at || r.run_id))],
+      reading: [section('what it ran on', kv([['run', r.run_id], ['assay', r.assay_version],
+        ['dbt', r.dbt_version], ['models', num(r.models)], ['readable', num(r.readable)],
+        ['unreadable', num(r.unreadable)]]))]})});
+  if (DATA.unreadable.length) groups.push({key: 'unreadable', label: 'models assay could not read',
+    rows: DATA.unreadable,
+    cols: [{key: 'name', label: 'model', mono: 1, val: u => u.name},
+           {key: 'why', label: 'why', clip: 1, val: u => u.why}],
+    detail: u => pane({kind: 'could not read', title: [wbr(u.name)], mono: 1,
+      where: el('span', {class: 'mono', text: u.path || ''}), what: u.why,
+      reading: [el('p', {class: 'prose', text: 'Its SQL would not parse, so it is missing from '
+        + 'every other tab and nothing was checked on it.'})]})});
+  if (!groups.length) {
+    host.replaceChildren(el('p', {class: 'empty', text: 'No audit.yml was read.'}));
+    return;
   }
-
-  /* A full-width table beside a float is a squeezed table, so the float ends before one. */
-  bits.push(el('div', {class: 'clearcut'}));
-  if (DATA.runs.length) bits.push(section('runs recorded (' + DATA.runs.length + ')',
-    grid(DATA.runs, [
-      {key: 'run', label: 'run', mono: 1, val: r => r.run_id},
-      {key: 'when', label: 'started', mono: 1, val: r => r.started_at || ''},
-      {key: 'av', label: 'assay', mono: 1, val: r => r.assay_version},
-      {key: 'dv', label: 'dbt', mono: 1, val: r => r.dbt_version},
-      {key: 'm', label: 'models', n: 1, val: r => r.models},
-      {key: 'ok', label: 'readable', n: 1, val: r => r.readable},
-      {key: 'no', label: 'unreadable', n: 1, val: r => r.unreadable,
-       cell: r => el('span', {class: r.unreadable ? 'bad' : 'tot', text: num(r.unreadable)})},
-    ], {placeholder: 'filter runs...', sort: 'when', dir: -1})));
-
-  if (DATA.unreadable.length) {
-    bits.push(section('what assay could NOT read (' + DATA.unreadable.length + ')',
-      grid(DATA.unreadable, [
-        {key: 'name', label: 'model', mono: 1, val: u => u.name},
-        {key: 'path', label: 'path', mono: 1, val: u => u.path},
-        {key: 'why', label: 'why', val: u => u.why},
-      ], {placeholder: 'filter...', cap: 500}),
-      'These models are missing from every other tab because their SQL would not parse. Nothing '
-      + 'was checked on them.'));
-  }
-  host.replaceChildren(...bits);
+  const kindOf = r => groups.find(g => g.rows.includes(r));
+  host.replaceChildren(drill({
+    noun: 'settings', groups: groups, all: false, keepOrder: 1,
+    chip: g => g.label, groupFilter: 'find a section...',
+    rowsOf: g => g.rows, rowCols: groups[0].cols,
+    colsFor: g => g.cols, sortFor: g => g.sort || 'name', dirFor: g => g.dir || 1,
+    rowFilter: 'filter...',
+    rowText: r => JSON.stringify(r),
+    detailOf: r => (kindOf(r) || groups[0]).detail(r),
+  }));
 }
 
 /* ------------------------------------------------------------------------------ Overview

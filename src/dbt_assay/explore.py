@@ -579,6 +579,15 @@ def _questions() -> list:
     return out
 
 
+def _plain(o):
+    """A config value as data: a dataclass as its set fields, anything else as text."""
+    import dataclasses
+    if dataclasses.is_dataclass(o) and not isinstance(o, type):
+        return {f.name: getattr(o, f.name) for f in dataclasses.fields(o)
+                if f.name != "name" and getattr(o, f.name) not in (None, {}, [], "")}
+    return str(o)
+
+
 def _config(cfg) -> dict:
     """What was actually resolved, which is not always what the file says."""
     out: dict[str, Any] = {}
@@ -591,7 +600,9 @@ def _config(cfg) -> dict:
         v = getattr(cfg, k, None)
         if v:
             try:
-                out[k] = json.loads(json.dumps(v, default=str, sort_keys=True))
+                # A config object (per-check policy is a dataclass) is written as its fields.
+                # `default=str` alone printed it as `QuestionConfig(name=...)` on the page.
+                out[k] = json.loads(json.dumps(v, default=_plain, sort_keys=True))
             except (TypeError, ValueError):
                 out[k] = str(v)
     return out
