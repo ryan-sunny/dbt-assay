@@ -501,3 +501,37 @@ def test_no_table_scrolls_sideways_and_every_group_is_a_click(page_file):
             assert clicked, "no tab had two groups to click, so this checked nothing"
         finally:
             browser.close()
+
+
+def test_a_backtick_anywhere_in_a_panel_renders_as_code(page_file):
+    """*** "MARKDOWN IS ATTEMPTED BUT NOT RENDERED IN THE MONITORING TAB". ***
+
+    A monitor's reading printed "`elementary_test_results``'s own write history" with the ticks
+    in it, and so did suggestion headlines and question text. One observer on the panels turns a
+    backticked span into code wherever text lands, including text a click adds later. It must
+    leave a `pre` alone: a YAML draft with a backtick in it is the draft, not markup.
+    """
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.goto(page_file.as_uri())
+            page.wait_for_timeout(100)
+            got = page.evaluate("""async () => {
+                const host = document.querySelector('#p-understood');
+                const p = document.createElement('p');
+                p.textContent = '`elementary_test_results` holds 38,609 rows';
+                const pre = document.createElement('pre');
+                pre.textContent = 'means: "`x`"';
+                host.append(p, pre);
+                await new Promise(r => setTimeout(r, 30));
+                return [p.querySelector('code') && p.querySelector('code').textContent,
+                        p.textContent, pre.querySelector('code') === null];
+            }""")
+            assert got[0] == "elementary_test_results", "a backticked span stayed as text"
+            assert got[1] == "elementary_test_results holds 38,609 rows", got[1]
+            assert got[2], "a backtick inside a pre was turned into markup"
+        finally:
+            browser.close()

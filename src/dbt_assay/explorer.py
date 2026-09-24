@@ -364,7 +364,8 @@ border-left:2px solid var(--rule);padding:8px 12px;margin:6px 0 0;overflow-x:aut
 .mdlist li{margin:2px 0}
 .mdpre{white-space:pre-wrap;font-size:12px;background:#f4f1e9;border:0;
 border-left:2px solid var(--rule);padding:8px 12px;margin:8px 0;overflow-x:auto}
-.md code{font-size:12px;background:#f4f1e9;padding:0 3px}
+.md code,code.tick{font-size:12px;background:#f4f1e9;padding:0 3px;
+font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-style:normal}
 
 /* ---- the empty-store notice: a printed errata slip */
 .newstore{border-top:1px solid var(--ink);border-bottom:1px solid var(--ink);
@@ -2877,6 +2878,34 @@ function monitoringTab(host) {
 
   host.replaceChildren(...bits);
 }
+
+/* *** A BACKTICK IS MARKUP EVERYWHERE ON THIS PAGE, NOT ONLY IN A DESCRIPTION. ***
+   `md()` rendered model descriptions, and every other sentence -- a monitor's reading, a
+   suggestion's headline, the question a family asked, this page's own notes -- printed its
+   backticks: "`elementary_test_results`\`'s own write history". Reported with a screenshot:
+   "markdown is attempted but not rendered in the monitoring tab". Rather than find each of them
+   one at a time and miss the next, one observer turns a backticked span into code wherever text
+   lands in a panel. Backticks only: an asterisk in a claim ("*** THE YEAR IS THE FACT") is not
+   emphasis, and treating it as such would change what the claim says. It builds nodes, never
+   HTML, and leaves code, pre and inputs alone. */
+const TICK = /`([^`\n]+)`/;
+function renderTicks(root) {
+  const skip = n => n.closest && n.closest('pre, code, textarea, input, svg, .mono, .quote.raw');
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {acceptNode: t =>
+    TICK.test(t.nodeValue) && t.parentElement && !skip(t.parentElement)
+      ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT});
+  const hits = [];
+  while (walk.nextNode()) hits.push(walk.currentNode);
+  for (const t of hits) {
+    const parts = t.nodeValue.split(/(`[^`\n]+`)/);
+    t.replaceWith(...parts.filter(x => x !== '').map(x => /^`[^`\n]+`$/.test(x)
+      ? el('code', {class: 'tick', text: x.slice(1, -1)}) : document.createTextNode(x)));
+  }
+}
+new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) {
+  if (n.nodeType === 1) renderTicks(n);
+  else if (n.nodeType === 3 && n.parentElement) renderTicks(n.parentElement);
+} }).observe(document.querySelector('main'), {childList: true, subtree: true});
 
 /* ---------------------------------------------------------------------------------- tabs */
 const VIEWS = {models: modelsTab, chain: chainTab, claims: claimsTab, findings: findingsTab,
