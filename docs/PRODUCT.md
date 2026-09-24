@@ -187,6 +187,15 @@ passes to first coverage and about 70 before anything can fire.
 measurement keeps one; this was the only one that overwrote, so assay could say a key holds today
 and could never say a key that held last week has stopped. Probe twice and the comparison exists.
 
+**One defect written in several places is one edit.** Findings of one check whose construct is
+the same -- the same `CASE`, the same window, the same join condition, with the finding's own
+column masked -- are grouped, and when a project macro every one of them is built with carries the
+construct, the group names the macro and the line. `check` says how many findings are how many
+constructs, `plan` collapses the agreed ones into one row with its call sites, and the form and
+the page say so on each finding. A group is never ruled on: every verdict stays on the finding it
+names. On the field warehouse, seven `test_cannot_fail` findings are one edit in
+`macros/permit_stg.sql`, and two Denver models write the same `CASE` inline.
+
 **The line that keeps this in scope:** assay can say a column is 99% its default. It cannot say
 whether that is bad. The first is a fact about code and rows; the second is intent, and the ruling
 loop already exists for it. No funnels, no conversion rates, no anomaly on a trend.

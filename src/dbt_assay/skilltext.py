@@ -225,6 +225,11 @@ question does. Those are different files, and without the state you are guessing
 assay plan -t target/       # writes assay_plan.jsonl
 ```
 
+**A row with several `call_sites` is ONE edit.** Findings that carry the same construct in several
+models arrive collapsed, and when a project macro writes it, `fix_shape` names the macro and its
+line: fix it there once rather than nine times in nine models. Each ruling still names its own
+finding, so after the edit every one of them should be gone.
+
 **If the plan is empty, nobody has reviewed anything yet — that is not a clean warehouse.** A plan
 is built only from findings a person agreed with. Getting those is the `assay-review` skill:
 The form is not only findings. It carries three more sections, and they are the parts of

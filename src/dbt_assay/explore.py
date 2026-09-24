@@ -110,7 +110,9 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
     for c in claims:
         claim_by_subject.setdefault(c["subject"], []).append(c["id"])
 
-    find_rows = _findings(findings, store, acted)
+    from . import groups as groups_mod
+    find_rows = _findings(findings, store, acted,
+                          groups_mod.membership(groups_mod.build(project, findings)))
     find_by_subject: dict = {}
     for f in find_rows:
         find_by_subject.setdefault(f["subject"], []).append(f["id"])
@@ -389,8 +391,9 @@ def _claims(store, entries) -> list:
     return sorted(out, key=lambda c: (c["subject_name"], c["id"]))
 
 
-def _findings(findings, store, acted: dict | None = None) -> list:
+def _findings(findings, store, acted: dict | None = None, member: dict | None = None) -> list:
     acted = acted or {}
+    member = member or {}
     ruled = store.ruled_subjects() if store is not None else set()
     out = []
     for f in findings:
@@ -401,6 +404,9 @@ def _findings(findings, store, acted: dict | None = None) -> list:
             "base": f.base, "weight": round(f.weight, 3),
             "descendants": f.descendants, "marts": f.marts,
             "exposures": list(f.exposures or []),
+            # One construct written in several models: shown on the finding, never ruled as one.
+            **({"group": {k: v for k, v in member[fid].as_dict().items()
+                          if k in ("size", "models", "macro_at")}} if fid in member else {}),
             "rests_on": f.rests_on or "",
             "evidence": f.evidence or {},
             # *** RULED ON THIS FINDING, OR ON ITS MODEL, AND THEY ARE NOT THE SAME CLAIM. ***

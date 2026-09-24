@@ -60,7 +60,8 @@ def _excerpt(name: str, text: str) -> str:
     return text
 
 
-def cards(findings, store, project_root, reads: dict | None = None) -> tuple[list, dict]:
+def cards(findings, store, project_root, reads: dict | None = None,
+          groups: list | None = None) -> tuple[list, dict]:
     """`([card], {path: sql})`, ordered so the ones where a wrong verdict costs most come first.
 
     *** THE SQL IS STORED ONCE PER FILE, NOT ONCE PER CARD. ***
@@ -98,6 +99,8 @@ def cards(findings, store, project_root, reads: dict | None = None) -> tuple[lis
             human = set()
 
     root = Path(project_root)
+    from .groups import membership
+    _member = membership(groups or [])
     by_pair: dict = {}
     for f in findings:
         if (str(f.subject), str(f.check)) in human:
@@ -108,6 +111,11 @@ def cards(findings, store, project_root, reads: dict | None = None) -> tuple[lis
             "question": str(f.check), "file": f.file or "", "marts": 0, "descendants": 0,
             "exposures": [], "findings": [], "agent": None, "read": None})
         c["marts"] = max(c["marts"], int(f.marts or 0))
+        # The same construct in other models: the card says so, and still asks about THIS one.
+        g = _member.get(f.id)
+        if g is not None and "group" not in c:
+            d = g.as_dict()
+            c["group"] = {"size": d["size"], "models": d["models"], "macro_at": d["macro_at"]}
         c["exposures"] = sorted(set(c["exposures"]) | set(getattr(f, "exposures", None) or []))
         c["descendants"] = max(c["descendants"], int(f.descendants or 0))
         ev = f.evidence or {}
@@ -851,6 +859,12 @@ function card(c) {
   ]));
 
   box.append(el('div', {class: 'lbl', text: 'what assay found'}));
+  /* *** ONE CONSTRUCT, SEVERAL MODELS, ONE EDIT. *** A verdict here is still about this card;
+     the line only says the fix is shared, and where it lives. */
+  if (c.group) box.append(el('div', {class: 'q dim', text:
+    'the same construct in ' + c.group.size + ' models (' + c.group.models.slice(0, 5).join(', ') +
+    (c.group.size > 5 ? ', ...' : '') + ') — ' +
+    (c.group.macro_at ? 'one edit in ' + c.group.macro_at : 'written inline in each')}));
   /* *** EVERY FINDING ON A CARD IS THE SAME CHECK, SO ITS EXPLANATION IS THE SAME TEXT. ***
      `int_azcc_owners` carries three `arbitrary_pick` findings and drew the identical paragraph
      about `row_number() ... = 1` three times. Once it stopped being hidden behind a click, that

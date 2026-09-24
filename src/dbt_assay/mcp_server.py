@@ -290,6 +290,9 @@ class Backend:
         if check:
             every = [f for f in every if f.check == check]
         fs = every[:limit]
+        from . import groups as groups_mod
+        member = groups_mod.membership(groups_mod.build(
+            st.project, live.findings_for(st, None) if model else every))
         out = {"findings": [{"finding": f.id,
                              "check": f.check, "model": f.subject_name,
                              "file": f.file,
@@ -297,6 +300,9 @@ class Backend:
                              "evidence": f.evidence or {},
                              "downstream": f.descendants, "marts": f.marts,
                              "exposures": f.exposures,
+                             # The same construct in other models: fix it once, not N times.
+                             **({"same_construct_in": member[f.id].as_dict()}
+                                if f.id in member else {}),
                              "weight": round(f.weight, 2)} for f in fs]}
         # *** A SURFACE THAT SHOWS A SUBSET AND DOES NOT SAY SO IS THE SAME BUG AS A SCANNER
         # THAT MATCHES NOTHING AND REPORTS A PASS. ***
@@ -823,7 +829,9 @@ class Backend:
         """
         from . import plan as plan_mod
         store, why = self._store_or_why()
-        rows = plan_mod.build(live.findings_for(self.state(), None), store)
+        from . import groups as groups_mod
+        _fs = live.findings_for(self.state(), None)
+        rows = plan_mod.build(_fs, store, groups_mod.build(self.state().project, _fs))
         out = {
             "to_fix": rows[:limit], "total": len(rows),
             "rule": ("`fix_shape` is what KIND of change this is, and it is exact. It does not "

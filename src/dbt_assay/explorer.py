@@ -1553,6 +1553,10 @@ function findingsTab(host) {
         ['weight', String(f.weight)],
         ['reaches', (f.exposures || []).length ? f.exposures.join(', ')
           : el('span', {class: 'tot', text: 'no exposure'})],
+        ...(f.group ? [['same construct', el('span', {text: f.group.size + ' models (' +
+            f.group.models.slice(0, 5).join(', ') + (f.group.size > 5 ? ', ...' : '') + ') — ' +
+            (f.group.macro_at ? 'one edit in ' + f.group.macro_at : 'written inline in each')})]]
+          : []),
         ['marts downstream', String(f.marts)],
         ['descendants', String(f.descendants)],
         ['rests on', f.rests_on

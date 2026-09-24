@@ -595,6 +595,8 @@ def check(
         _keep = {id(f) for f in findings}
         policed = [p for p in policed if id(p[0]) in _keep]
 
+    from . import groups as groups_mod
+    _groups = groups_mod.build(project, findings)
     if json_out:
         from . import compilecheck
         _blind, _looked = compilecheck.for_project(project, digests)
@@ -612,6 +614,8 @@ def check(
             # *** `--json` AND THE MCP TOOL ARE ONE DOCUMENT WITH TWO SPELLINGS OTHERWISE. ***
             # MCP returns `finding`; this did not, so anything reading the CLI's JSON could see a
             # finding and had no handle to rule on it.
+            # One construct written in several models, so a reader sees nine rows as one edit.
+            "groups": [g.as_dict() for g in _groups],
             "findings": [{"finding": f.id,
                           "check": f.check, "model": f.subject_name, "file": f.file,
                           "summary": f.summary, "detail": f.detail, "weight": round(f.weight, 2),
@@ -683,6 +687,18 @@ def check(
         if len(findings) > limit:
             console.print(f"[dim]... {len(findings) - limit} more. --limit to see them, "
                           f"--json for all.[/]")
+        if _groups:
+            # *** N FINDINGS ARE USUALLY FAR FEWER THAN N EDITS. *** (25.21)
+            n_in = sum(len(g.findings) for g in _groups)
+            console.print(f"\n[bold]{n_in}[/] of these are [bold]{len(_groups)}[/] construct(s) "
+                          f"written in more than one model:")
+            for g in _groups[:6]:
+                d = g.as_dict()
+                where = (f"one edit in {d['macro_at']}" if d["macro_at"]
+                         else "written inline in each")
+                console.print(f"  {d['size']} models  [dim]{d['check']}[/]  {where}  "
+                              f"[dim]{', '.join(d['models'][:4])}"
+                              f"{' ...' if d['size'] > 4 else ''}[/]")
 
     if waived:
         console.print(f"[dim]{len(waived)} finding(s) suppressed by audit.yml: "
@@ -4185,7 +4201,8 @@ def plan(
     entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store) if store else {})
     findings = live_mod.all_findings(project, digests, schema, entries, store=store,
                                      threshold=cfg.row_loss_threshold)
-    rows = plan_mod.build(findings, store)
+    from . import groups as groups_mod
+    rows = plan_mod.build(findings, store, groups_mod.build(project, findings))
 
     if json_out:
         console.print_json(data={"plan": rows, "n": len(rows)})
@@ -4207,6 +4224,9 @@ def plan(
         feeds = f" - reaches {', '.join(r['exposures'][:2])}" if r.get("exposures") else ""
         console.print(f"  [bold]{r['model']}[/] [dim]{r['check']} - {r['marts']} marts{feeds}[/]")
         console.print(f"    [cyan]{r['fix_shape']}[/] - {r['summary'][:90]}")
+        if len(r.get("call_sites") or []) > 1:
+            console.print(f"    [dim]the same construct in {len(r['call_sites'])} agreed "
+                          f"finding(s): {', '.join(c['model'] for c in r['call_sites'][:6])}[/]")
         if r["their_reason"]:
             console.print(f"    [dim]they said: {r['their_reason'][:110]}[/]")
     if len(rows) > 12:
@@ -4899,7 +4919,9 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
     if reads_path:
         reads = _json.loads(Path(reads_path).read_text())
 
-    cards, sql = reviewform.cards(findings, store, Path(tdir).parent, reads)
+    from . import groups as groups_mod
+    cards, sql = reviewform.cards(findings, store, Path(tdir).parent, reads,
+                                  groups=groups_mod.build(project, findings))
     if not cards:
         console.print("[green]nothing to rule on.[/] [dim]Either there are no findings, or every "
                       "(model, check) pair already has a human verdict. Those are different "

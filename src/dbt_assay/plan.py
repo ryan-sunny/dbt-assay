@@ -204,11 +204,16 @@ SHAPES: dict[str, tuple[str, str]] = {
 }
 
 
-def build(findings, store) -> list[dict]:
-    """One row per finding a PERSON agreed with and which is still here.
+def build(findings, store, groups: list | None = None) -> list[dict]:
+    """One row per THING TO DO: a finding a person agreed with that is still here, or several of
+    them that are one construct written in several models.
 
     Only the agreed ones, because a plan built from everything is the findings list again. Only
     the ones still present, because a fix nobody needs is worse than no plan.
+
+    *** NINE ROWS, NINE FIX SHAPES, ONE EDIT. *** (25.21) Agreed findings in one `groups.Group`
+    become one row carrying every call site, and when a project macro carries the construct the
+    fix is that macro at its line. The rulings stay on the findings; only the plan is collapsed.
     """
     agreed = store.ruled_findings("agree") if store is not None else {}
     if agreed and store is not None:
@@ -239,9 +244,46 @@ def build(findings, store) -> list[dict]:
             row["how"] = (f"`{f.check}` has no fix shape in assay's table, so this one needs "
                           f"reading. That is a gap in the tool, not a judgment about the model.")
         out.append(row)
+    out = _collapse(out, groups or [])
     # What reaches a product first, then the widest blast radius, ties on the id so two runs agree.
     return sorted(out, key=lambda r: (-len(r["exposures"]), -r["marts"], -r["descendants"],
                                       r["finding"]))
+
+
+def _collapse(rows: list[dict], groups: list) -> list[dict]:
+    """Agreed rows that share a group become one row with its call sites."""
+    from .groups import membership
+    member = membership(groups)
+    out, merged = [], {}
+    for r in rows:
+        g = member.get(r["finding"])
+        if g is None:
+            out.append(r)
+            continue
+        info = g.as_dict()
+        r["group"] = {"group": info["group"], "size": info["size"], "models": info["models"],
+                      "macro": info["macro"], "macro_at": info["macro_at"]}
+        if g.key not in merged:
+            merged[g.key] = r
+            r["call_sites"] = [{"model": r["model"], "file": r["file"], "finding": r["finding"]}]
+            if info["macro_at"]:
+                r["fix_shape"] = f"one edit in {info['macro_at']}"
+                r["how"] = (f"The same construct is written in {info['size']} models by the "
+                            f"`{info['macro']}` macro. Fix it there, once, and every call site "
+                            f"follows. " + r["how"])
+            else:
+                r["how"] = (f"The same construct is written inline in {info['size']} models "
+                            f"({', '.join(info['models'][:6])}). Fix it in each, or move it into "
+                            f"one macro so it cannot drift. " + r["how"])
+            out.append(r)
+            continue
+        head = merged[g.key]
+        head["call_sites"].append({"model": r["model"], "file": r["file"],
+                                   "finding": r["finding"]})
+        head["marts"] = max(head["marts"], r["marts"])
+        head["descendants"] = max(head["descendants"], r["descendants"])
+        head["exposures"] = sorted(set(head["exposures"]) | set(r["exposures"]))
+    return out
 
 
 def write(rows: list[dict], path: str | Path) -> Path:
