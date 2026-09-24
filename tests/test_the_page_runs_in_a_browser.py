@@ -565,3 +565,37 @@ def test_the_spend_window_is_calendar_days_ending_on_the_last_day_recorded(page_
             assert got[2][0] == "2026-01-01" and got[2][-1] == "2026-01-05" and got[3] == 3
         finally:
             browser.close()
+
+
+def test_a_tip_shows_at_once_and_no_tab_starts_with_a_note(page_file):
+    """The explanations are tips now, so the tip has to work: hovering a tipped element shows it
+    immediately, inside the window, and a click puts it away. And no tab's first element is a grey
+    note, which is what every tab used to open on."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(viewport={"width": 1200, "height": 800})
+            page.goto(page_file.as_uri())
+            page.wait_for_timeout(100)
+            page.hover('nav button[data-tab="models"]')
+            box = page.query_selector(".tipbox")
+            assert box and box.is_visible(), "hovering a tab showed no tip"
+            assert "model" in box.inner_text()
+            b = box.bounding_box()
+            assert b["x"] >= 0 and b["x"] + b["width"] <= 1200, "the tip is outside the window"
+            page.mouse.down()
+            page.mouse.up()
+            assert not box.is_visible(), "a click did not put the tip away"
+            for tab in TABS:
+                page.click(f'nav button[data-tab="{tab}"]')
+                page.wait_for_timeout(50)
+                first = page.evaluate(f"""() => {{
+                    const p = document.querySelector('#p-{tab}');
+                    let n = p.firstElementChild;
+                    while (n && n.children.length === 1 && !n.className) n = n.firstElementChild;
+                    return n ? n.className : ''; }}""")
+                assert "note" not in first.split(), f"`{tab}` opens on a grey note again"
+        finally:
+            browser.close()

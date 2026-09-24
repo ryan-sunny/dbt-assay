@@ -1027,9 +1027,14 @@ def test_a_caption_says_what_a_number_means_and_then_stops():
     import re
     caps = [c.strip("'") for c in
             re.findall(r"class: 'note', text: ('(?:[^']|\\')*')", explorer._VIEWS)]
-    assert len(caps) > 5, "the caption reader found almost nothing; it is broken"
+    assert len(caps) >= 3, "the caption reader found almost nothing; it is broken"
     long = [c for c in caps if len(c) > 140]
     assert not long, f"captions that have started explaining themselves again: {long}"
+    # The explanations moved into tips, and a tip is a few sentences, not an essay either.
+    tips = re.findall(r"tip: '((?:[^'\\]|\\.)*)'", explorer._VIEWS)
+    assert len(tips) > 10, "the tip reader found almost nothing; it is broken"
+    essays = [t for t in tips if len(t) > 420]
+    assert not essays, f"tips that have become essays: {essays}"
 
 
 def test_the_lineage_can_be_moved_around():
@@ -1197,3 +1202,29 @@ def test_a_page_rendered_from_its_artifact_is_the_same_page(project_dir, tmp_pat
     assert (tmp_path / "art" / "areas.json").exists(), "the artifact has no areas"
     assert first.read_text() == again.read_text(), \
         "the page rendered from its own artifact differs from the page that wrote it"
+
+
+def test_no_tab_opens_on_a_grey_sentence():
+    """*** "THEYRE ALL NOT BEING READ ITS RANDOM TEXT AT THE TOP". ***
+
+    Every tab opened on a grey paragraph saying what it was, sections carried a grey subtitle and
+    every tab ended on an italic footer. None of it was read. What a tab is lives on the tab as a
+    tip, a section's explanation is its heading's tip, a column's is its header's, and the only
+    sentences left as text are facts about this warehouse.
+    """
+    v = explorer._VIEWS
+    assert "blurb" not in v, "a tab still opens on a sentence"
+    assert "note tabhead" not in v
+    assert "drilltop" not in v
+    blk = v[v.index("function block("):]
+    blk = blk[:blk.index("\n}")]
+    assert "tip: tipText" in blk and "class: 'note'" not in blk, "a section note is a caption again"
+    data = {"meta": {"project": "p", "models": 0, "sources": 0, "version": "0",
+                     "generated_at": "x", "coverage": {}},
+            "models": [], "edges": [], "claims": [], "findings": [], "decisions": [],
+            "questions": [], "adjudications": [], "config": {}, "runs": [], "unreadable": []}
+    doc = explorer.explorer_html(data, "<html></html>")
+    assert "<footer" not in doc, "the footer is back"
+    import re
+    tabs = re.findall(r'<button role="tab" data-tab="([a-z]+)"[^>]*data-tip="([^"]+)"', doc)
+    assert len(tabs) >= 10, f"tabs without a tip saying what they are: {tabs}"

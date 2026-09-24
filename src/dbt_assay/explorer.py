@@ -132,7 +132,7 @@ td.clip{overflow-wrap:break-word;min-width:10em}
 td{overflow-wrap:break-word}
 /* Code has runs with no break in them (`home|deck|fence|pool|...`), and `break-word` does not
    lower a table column's minimum width, so a code cell may break anywhere as a last resort. */
-td.mono{overflow-wrap:anywhere}
+td.mono.clip{overflow-wrap:anywhere}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
 
 /* ---- the two-pane shell. Panes are separated by a rule, not by two boxes. */
@@ -225,7 +225,18 @@ td .pill{white-space:normal}
 .pill.derived,.pill.observed{color:var(--ash)}
 .pill.judged{color:var(--ember);border-color:var(--ember)}
 .pill.bad{color:var(--rust);border-color:var(--rust)}
-.note{color:var(--ash);font-size:13.5px;margin:8px 0 0;max-width:none}
+/* A note is a FACT in a pane now, never a caption: every explanation moved to a tip, so what is
+   left is something true of this warehouse, and it is set in ink where it will be read. */
+.note{color:var(--ink);font-size:13.5px;margin:8px 0 0;max-width:none}
+.fact{color:var(--ink);font-size:14px;margin:0 0 10px}
+/* ---- the tip. One element for the page, shown at once, positioned inside the window. */
+.hint{text-decoration:underline dotted var(--faint);text-underline-offset:3px;cursor:help}
+th.hint{text-decoration-color:var(--faint)}
+.tipbox{position:fixed;z-index:70;max-width:360px;background:var(--ink);color:var(--paper);
+font:13px/1.45 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;padding:7px 10px;
+pointer-events:none;white-space:pre-line;box-shadow:2px 2px 0 rgba(26,23,20,.14);
+text-transform:none;letter-spacing:normal}
+.tipbox[hidden]{display:none}
 .empty{color:var(--faint);padding:12px 4px;font-size:13.5px;font-style:italic;
 font-family:Fell,Georgia,serif}
 .prose{white-space:pre-wrap;font-size:14px;color:var(--ink);margin:0}
@@ -432,9 +443,16 @@ footer b{font-style:normal;font-weight:400;color:var(--ash)}
 
 JS = r"""
 const $ = (s, r) => (r || document).querySelector(s);
+/* *** A `title` IS A TIP THAT ARRIVES A SECOND LATE, UNSTYLED, AND NOT AT ALL ON TOUCH. ***
+   Every `title` on this page is written as `data-tip`, which the one tip below shows at once.
+   `tip:` does the same and also marks the element with a dotted underline, for the places where a
+   reader should know there is more to read: a column header, a section heading, a label. */
 const el = (t, a, kids) => { const n = document.createElement(t);
   for (const k in (a || {})) { if (k === 'text') n.textContent = a[k];
-    else if (k === 'html') n.innerHTML = a[k]; else if (a[k] != null) n.setAttribute(k, a[k]); }
+    else if (k === 'html') n.innerHTML = a[k];
+    else if (k === 'title') { if (a[k] != null && a[k] !== '') n.setAttribute('data-tip', a[k]); }
+    else if (k === 'tip') { if (a[k]) { n.setAttribute('data-tip', a[k]); n.classList.add('hint'); } }
+    else if (a[k] != null) n.setAttribute(k, a[k]); }
   for (const c of (kids || [])) n.append(c); return n; };
 const num = n => (n == null ? '' : Number(n).toLocaleString('en-US'));
 /* Bytes a person reads. `null` is "not estimated" and never a zero: a zero would read as "this
@@ -499,7 +517,7 @@ function grid(rows, cols, opts) {
   const bar = el('div', {class: 'bar'}, opts.page ? [search, count, pager] : [search, count]);
   for (const extra of (opts.controls || [])) bar.append(extra);
   const head = el('tr', {}, cols.map(c => {
-    const th = el('th', {text: c.label, class: c.n ? 'n' : ''});
+    const th = el('th', {text: c.label, class: c.n ? 'n' : '', tip: c.tip});
     th.onclick = () => { if (sort === c.key) dir = -dir; else { sort = c.key; dir = 1; } pg = 0; draw(); };
     return th;
   }));
@@ -650,8 +668,8 @@ function md(text) {
    The cuts are apparatus: a rank of stills, a chain of vessels, a furnace in draught. Each tab
    takes the one whose picture is what the tab does, floated beside its opening line, so the page
    reads as a plate book rather than as a table with a picture on the front. */
-function section(title, node) {
-  const h = el('h3', {text: title});
+function section(title, node, tipText) {
+  const h = el('h3', {}, [el('span', {text: title, tip: tipText})]);
   return el('div', {}, node ? [h, node] : [h]);
 }
 
@@ -762,8 +780,38 @@ def explorer_html(data: dict, record_html: str) -> str:
     form = str(data.get("meta", {}).get("form") or "")
     form_link = (f' &middot; <a class="lk" href="{e(form)}">open the review form</a>'
                  if form else "")
+    # *** WHAT A TAB IS, ON THE TAB. ***
+    # Each tab opened on a grey sentence saying what it was, and nobody read them ("its random
+    # text at the top ... your eyes dont even notice it"). The sentence is the tab's tip now, where
+    # somebody deciding whether to click it is already looking.
+    tips = {
+        "understood": "What assay read, judged and found, and how much of it a person has read.",
+        "models": "Every model this project builds, and what one row of each one is.",
+        "chain": "Every hop between models, drawn one neighbourhood at a time.",
+        "claims": "Every sentence this project writes about itself, from descriptions and SQL "
+                  "comments, and whether the code contradicts it.",
+        "findings": "What assay found wrong, ranked by weight.",
+        "areas": "Filters written the same way in several models, the one that differs from its "
+                 "family, and one claim made about several models.",
+        "monitoring": "Whether anything is watching this warehouse, and whether the tests run.",
+        "suggest": "What audit.yml should say, from what assay measured. It never writes a meaning.",
+        "answers": "The latest answer to every question asked about this project.",
+        "spend": "What the model calls and the warehouse statements cost.",
+        "questions": "Every question assay asks, in full, and how often a person has ruled on it.",
+        "config": "The settings in force, and everything you wrote by hand.",
+    }
+    # and what the number beside it counts, because "Monitoring 5" beside "Models 358" invites
+    # reading both as sizes, and one of them is a count of findings.
+    counted = {"models": "models", "chain": "hops between models", "claims": "sentences",
+               "findings": "findings", "areas": "rows across its three lists",
+               "monitoring": "findings about the monitoring", "suggest": "candidates",
+               "answers": "live answers", "questions": "question families"}
+    for t, _label, n in tabs:
+        if n is not None and t in counted:
+            tips[t] = f"{tips.get(t, '')}\nThe number is {n:,} {counted[t]}."
     nav = "".join(
-        f'<button role="tab" data-tab="{t}" aria-selected="{"true" if i == 0 else "false"}">'
+        f'<button role="tab" data-tab="{t}" '
+        f'aria-selected="{"true" if i == 0 else "false"}" data-tip="{e(tips.get(t, ""))}">'
         f'{e(label)}{f"<b>{n:,}</b>" if n is not None else ""}</button>'
         for i, (t, label, n) in enumerate(tabs))
     panels = "".join(f'<div class="panel" id="p-{t}"{"" if i == 0 else " hidden"}></div>'
@@ -778,16 +826,10 @@ def explorer_html(data: dict, record_html: str) -> str:
 <h1>{MARK_SVG}<span class="hname">{e(meta['project'])}</span><span>everything assay knows</span></h1>
 <div class="sub">{meta['models']} models &middot; {meta['sources']} sources &middot;
 manifest generated {e(str(meta['generated_at']))} &middot;
-<span title="A hash of the code that rendered this page. The version is what the package says it is; this is what the rendering code actually IS, so two pages claiming one version and differing here came from two different installs.">assay {e(meta['version'])} &middot; build {e(build_fingerprint())}</span>{form_link}</div>
+<span class="hint" data-tip="The build is a hash of the code that rendered this page: two pages claiming one version and differing here came from two different installs.&#10;&#10;The page is deterministic. It carries the manifest's own generated_at and never a wall clock, and every list arrives sorted, so a rerun against an unchanged store writes an identical file.">assay {e(meta['version'])} &middot; build {e(build_fingerprint())}</span>{form_link}</div>
 <nav role="tablist">{nav}</nav>
 </header>
 <main>{panels}</main>
-<footer>
-Self-contained and deterministic: it carries the manifest's own <b>generated_at</b> and never a
-wall clock, so a rerun against an unchanged store writes an identical file. Every array is sorted
-in the assembly layer, not in the browser, so the sort is a fact about the file rather than about
-the machine that opened it.
-</footer>
 
 <!-- THE ONE SWAPPABLE LINE. Embedded here; a server would make this a fetch and nothing
      below would change. -->
@@ -890,7 +932,6 @@ function drill(opts) {
      and count, a filter of their own, and a scroll. The chip labels were also cut at 29
      characters and set small in the display face, and both were called hard to read. */
   const host = el('div', {class: 'drillhost'});
-  const top = el('div', {class: 'drilltop'});
   const cols = el('div', {class: 'wrap3'});
   const gnav = el('div', {class: 'gnav'});
   const left = el('div', {class: 'pane'});
@@ -935,8 +976,7 @@ function drill(opts) {
   gq.oninput = () => paintGroups();
 
   function gitem(label, n, g, sub) {
-    const b = el('button', {class: 'gitem' + (g === pickedGroup ? ' on' : '') + (n ? '' : ' zero'),
-                            title: label},
+    const b = el('button', {class: 'gitem' + (g === pickedGroup ? ' on' : '') + (n ? '' : ' zero')},
                  [el('span', {class: 'gname'}, [wbr(label)]), el('span', {class: 'gn', text: num(n)})]);
     if (sub) b.append(el('span', {class: 'gsub', text: sub}));
     b.onclick = () => { pickedGroup = g; facet = null; paintGroups(); draw(); };
@@ -982,11 +1022,12 @@ function drill(opts) {
     if (vals.length < 2 && facet == null) return null;
     const max = Math.max(...vals.map(v => v[1]), 1);
     const box = el('div', {class: 'facets'});
-    box.append(el('div', {class: 'tlab', text: opts.facet.label + ' · ' + vals.length
-      + ' value(s)' + (facet != null ? '' : ' · click one to narrow the list')}));
+    box.append(el('div', {class: 'tlab'}, [el('span', {text: opts.facet.label + ' \u00b7 '
+      + vals.length + ' value(s)', tip: 'How this group\u2019s rows split. Click a value to '
+      + 'narrow the list to it, and again to clear it.'})]));
     const grid_ = el('div', {class: 'fgrid'});
     for (const [v, n] of vals) {
-      const b = el('button', {class: 'frow' + (facet === v ? ' on' : ''), title: v + ': ' + num(n)});
+      const b = el('button', {class: 'frow' + (facet === v ? ' on' : '')});
       b.append(el('span', {class: 'flab'}, [wbr(v)]),
                el('span', {class: 'rtrack'}, [el('span', {class: 'rfill',
                  style: 'width:' + Math.max(1.5, n / max * 100) + '%;background:' + BAR})]),
@@ -1052,8 +1093,9 @@ function drill(opts) {
 
   left.append(head, body);
   cols.append(gnav, left, detail);
-  top.replaceChildren(el('p', {class: 'note', text: opts.blurb}));
-  host.append(top, cols);
+  /* No sentence above the columns: what the tab is, is the tab's own tip, and what a column
+     means is that column's. */
+  host.append(cols);
   paintGroups();
   draw();
   /* Kept for the callers that flip a view from outside. */
@@ -1064,7 +1106,8 @@ function drill(opts) {
 
 function conf(x) {
   if (x == null) return el('span', {class: 'tot', text: ''});
-  /* Under the 0.6 gate an answer reports nothing as a finding, so the number is the point. */
+  /* Under the 0.6 gate an answer reports nothing as a finding, so the number is the point, and
+     the cell says what it means rather than a sentence at the top of the tab saying it once. */
   return el('span', {class: x < 0.6 ? 'low' : '', text: x.toFixed(2)});
 }
 
@@ -1501,9 +1544,7 @@ function modelsTab(host) {
       : el('p', {class: 'empty', text: 'nothing has been asked about this model'})));
   }
 
-  host.replaceChildren(
-    el('p', {class: 'note', text: 'Every model this project builds, and what one row of each one is.'}),
-    el('div', {class: 'wrap2'}, [list, detail]));
+  host.replaceChildren(el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a model. Everything assay knows about it is here: what one row is and who settled that, every column with its role and where its value came from, every hop in and out, what the project claims about it, and every answer ever given.'}));
   GO.models = name => { const m = BY_NAME[name]; if (!m) return;
     show(m);
@@ -1557,9 +1598,15 @@ function chainTab(host) {
 
   const list = grid(withEdges, [
     {key: 'name', label: 'model', mono: 1, val: m => m.name},
-    {key: 'in', label: 'reads', n: 1, val: m => (EDGES_IN[m.uid] || []).length},
-    {key: 'out', label: 'read by', n: 1, val: m => (EDGES_OUT[m.uid] || []).length},
+    {key: 'in', label: 'reads', n: 1, val: m => (EDGES_IN[m.uid] || []).length,
+     tip: 'Models and sources this one reads from.'},
+    {key: 'out', label: 'read by', n: 1, val: m => (EDGES_OUT[m.uid] || []).length,
+     tip: 'Models that read this one.'},
     {key: 'note', label: 'notable', n: 1, val: m => nOf(m),
+     tip: 'Hops into this model worth a look: a join carrying no key assay could resolve, more '
+       + 'than 60 columns dropped, or under half the parent\u2019s rows kept. Each is named under '
+       + 'the drawing. ' + DATA.edges.filter(e => why(e)).length + ' of ' + num(DATA.edges.length)
+       + ' hops in this project.',
      cell: m => el('span', {class: nOf(m) ? 'low' : 'tot', text: nOf(m) ? num(nOf(m)) : ''})},
   ], {placeholder: 'filter models...', scroll: 1, pick: m => show(m), sort: 'name',
       where: m => mine(m) && (!onlyNotable || nOf(m)),
@@ -1599,13 +1646,7 @@ function chainTab(host) {
     ], {placeholder: 'filter hops...', cap: 200, emptyText: 'no edges'})));
   }
 
-  const n = DATA.edges.filter(e => why(e)).length;
-  host.replaceChildren(
-    el('p', {class: 'note', text: 'Every hop in the DAG, drawn one neighborhood at a time. '
-             + n + ' of ' + DATA.edges.length + ' hops carry something worth a look: a join with '
-             + 'no key assay could resolve, an unusually large column drop, or most of the parent '
-             + 'lost. Those are counted in the notable column and named under each drawing.'}),
-    el('div', {class: 'wrap2'}, [list, detail]));
+  host.replaceChildren(el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a model to see its lineage drawn: what feeds it, what it feeds, and what each edge carries and drops. A drawing is always one neighborhood, never the whole DAG.'}));
   /* *** THE DETAIL IS AUTHORITATIVE; THE LIST IS AN INDEX. ***
      Going to a model used to work by TYPING ITS NAME INTO THE FILTER, which left the list showing
@@ -1639,6 +1680,8 @@ function claimsTab(host) {
        verdict -- the thing somebody scans this list FOR. The kind and the file have room in the
        pane on the right, one click away. */
     {key: 'v', label: 'code', n: 1, val: c => c.contradicted == null ? -1 : c.contradicted,
+     tip: 'Whether the SQL contradicts the sentence, and how sure that reading is. A dash means '
+       + 'never asked, which is not the same as supported.',
      cell: c => c.contradicted == null ? el('span', {class: 'tot', text: '\u2014'})
        : el('span', {class: 'pill bad', text: c.contradicted.toFixed(2)})},
   ];
@@ -1657,9 +1700,6 @@ function claimsTab(host) {
                title: 'only claims a judgment read against the SQL and found contradicted',
                where: c => c.contradicted != null}],
     rowFilter: 'filter claims...',
-    blurb: 'Every sentence this project says about itself, extracted from descriptions and SQL '
-      + 'comments, grouped by the model it is about. A claim with no verdict was never asked, '
-      + 'which is not the same as supported.',
     rowsOf: g => g.rows, rowCols: rowCols, rowSort: 'v', rowDir: -1,
     rowText: c => [c.text, c.source_ref, c.kind].join(' '),
     /* The claim itself is a SENTENCE, and a sentence in a table cell is a sentence you skim.
@@ -1701,9 +1741,13 @@ function areasTab(host) {
   const groups = [
     {key: 'filters', label: 'filters written the same way', rows: pcs,
      cols: [
-       {key: 'size', label: 'models', n: 1, val: c => c.size},
+       {key: 'size', label: 'models', n: 1, val: c => c.size,
+        tip: 'How many models write this filter, with the column names taken out.'},
        {key: 'shape', label: 'filter', mono: 1, clip: 1, val: c => c.shape},
        {key: 'one', label: 'one rule?', val: c => c.one_rule ? c.one_rule.answer : '',
+        tip: 'Whether the models apply one rule, repeated, or each made its own decision. Read '
+          + 'by `assay clusters --judge`; the grouping itself is exact and cost nothing. '
+          + '"written once" means a macro already holds it.',
         cell: c => c.macro_at ? el('span', {class: 'pill declared', text: 'written once'})
                               : read(c.one_rule)}],
      sort: 'size', dir: -1},
@@ -1712,11 +1756,14 @@ function areasTab(host) {
        {key: 'model', label: 'model', mono: 1, val: o => o.model, cell: o => link(o.model)},
        {key: 'diff', label: 'what differs', clip: 1, val: o => o.difference},
        {key: 'read', label: 'read as', val: o => o.read_as ? o.read_as.answer : '',
+        tip: 'Whether the difference is a deliberate exception or a divergence nobody declared. '
+          + 'Read by `assay clusters --judge`.',
         cell: o => read(o.read_as)}],
      sort: 'model', dir: 1},
     {key: 'same', label: 'one claim, several models', rows: same,
      cols: [
-       {key: 'n', label: 'models', n: 1, val: g => g.length},
+       {key: 'n', label: 'models', n: 1, val: g => g.length,
+        tip: 'How many models the project makes this one claim about.'},
        {key: 'claim', label: 'claim', clip: 1, val: g => g[0].claim}],
      sort: 'n', dir: -1},
   ];
@@ -1731,9 +1778,6 @@ function areasTab(host) {
     rowText: r => kind(r) === 'same' ? r.map(x => x.model + ' ' + x.claim).join(' ')
       : kind(r) === 'filters' ? [r.shape, r.models.join(' ')].join(' ')
       : [r.model, r.difference, r.shared, r.this].join(' '),
-    blurb: 'Filters written the same way in several models, the one that differs from what most '
-      + 'of its family writes, and one claim made about several models. Grouping is exact and '
-      + 'free; the readings come from `assay clusters --judge`.',
     detailOf: r => {
       const k = kind(r);
       if (k === 'filters') return [
@@ -1798,15 +1842,16 @@ function weightBox(f) {
   if (!t) return el('span', {text: String(f.weight)});
   const box = el('div', {class: 'wbox'});
   box.append(el('div', {}, [el('span', {text: nf(f.weight)}), el('span', {class: 'tot',
-    text: '  =  base ' + nf(w.base) + ' \u00d7 lift ' + nf(w.lift)})]));
+    text: '  =  '}), el('span', {class: 'tot', text: 'base ' + nf(w.base),
+    tip: 'The check\u2019s own severity, before reach.'}), el('span', {class: 'tot',
+    text: ' \u00d7 '}), el('span', {class: 'tot', text: 'lift ' + nf(w.lift),
+    tip: 'Reach. An exposure outweighs the whole marts-and-descendants lift, which tops out at '
+      + '4, so what reaches a product ranks above what reaches a layer.'})]));
   const tbl = el('div', {class: 'wterms'});
   tbl.append(el('span', {class: 'n', text: '1'}), el('span', {class: 'tot', text: 'every finding'}));
   for (const [v, why] of t)
     tbl.append(el('span', {class: 'n', text: '+ ' + v}), el('span', {text: why}));
   box.append(tbl);
-  box.append(el('p', {class: 'note', text: 'The base is the check\u2019s own severity. An '
-    + 'exposure outweighs the whole marts-and-descendants lift, which tops out at 4, so what '
-    + 'reaches a product ranks above what reaches a layer.'}));
   return box;
 }
 
@@ -1837,6 +1882,10 @@ function findingsTab(host) {
     {key: 'check', label: 'check', mono: 1, val: f => f.check},
     {key: 'model', label: 'model', mono: 1, val: f => f.model, cell: f => link(f.model)},
     {key: 'w', label: 'weight', n: 1, val: f => f.weight,
+     tip: 'The list is ranked by this: the check\u2019s base severity lifted by reach, so the same '
+       + 'defect on a leaf and on a model nine marts read are not the same finding.\n'
+       + 'weight = base \u00d7 (1 + descendants \u00f7 25 + marts \u00f7 5 + 5 per exposure), '
+       + 'counting at most 50 descendants, 10 marts and 2 exposures. Hover a weight for its parts.',
      cell: f => el('span', {text: f.weight.toFixed(1), title: weightLine(f)})},
     {key: 'feeds', label: 'feeds', n: 1, val: f => (f.exposures || []).length,
      cell: f => el('span', {class: (f.exposures || []).length ? '' : 'tot',
@@ -1883,13 +1932,7 @@ function findingsTab(host) {
         text: "assay review -i\nrule(finding='" + f.id + "', verdict=..., why=...)"})));
   }
 
-  host.replaceChildren(
-    el('p', {class: 'note', text: 'Ranked by weight, which is the base severity lifted by reach: '
-             + 'the same defect on a leaf and on a model nine marts read are not the same '
-             + 'finding. weight = base \u00d7 (1 + descendants \u00f7 25 + marts \u00f7 5 + 5 per '
-             + 'exposure), counting at most 50 descendants, 10 marts and 2 exposures. Hover a '
-             + 'weight for its parts; the finding shows them worked out.'}),
-    el('div', {class: 'wrap2 wide'}, [list, detail]));
+  host.replaceChildren(el('div', {class: 'wrap2 wide'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a finding.'}));
   const first = $('tbody tr', list); if (first) first.click();
 }
@@ -1940,10 +1983,6 @@ function answersTab(host) {
         el('p', {class: 'quote', text: words || 'This question\u2019s wording is not in the '
           + 'bank any more; its answers are kept and served dated.'})]);
     },
-    blurb: 'The live answer to every question asked about this project: one row per subject and '
-      + 'question, the latest. Grouped by the question that asked it, because thousands of '
-      + 'answers sorted by id is a filing cabinet. Below 0.60 nothing is reported as a finding, so the '
-      + 'low column is where the model is telling you it cannot tell.',
     rowsOf: g => g.rows,
     /* *** SEVEN COLUMNS, AND ONE OF THEM HELD TWO DIFFERENT KINDS OF THING. ***
        `subject` fell back to the decision's CONTEXT when it could not resolve a model name, and
@@ -1962,9 +2001,13 @@ function answersTab(host) {
        So three columns: what it is about, what it answered, how sure. The subject, the scope and
        the question id are all in the pane, one click away, with room to be read. */
     rowCols: [
-      {key: 'about', label: 'about', clip: 1, val: a => a.context || subjectOf(a).name},
+      {key: 'about', label: 'about', clip: 1, val: a => a.context || subjectOf(a).name,
+       tip: 'What was asked about: a model, a column, a sentence. One row per subject and question, '
+         + 'the latest answer.'},
       {key: 'a', label: 'answered', clip: 1, val: a => a.answer},
-      {key: 'c', label: 'sure', n: 1, val: a => a.confidence, cell: a => conf(a.confidence)},
+      {key: 'c', label: 'sure', n: 1, val: a => a.confidence, cell: a => conf(a.confidence),
+       tip: 'How confident the answer was. Under 0.60 nothing becomes a finding: it is the model '
+         + 'saying it cannot tell, usually because what it was given does not carry the answer.'},
     ],
     rowSort: 'c', rowDir: 1,
     rowText: a => [a.question, a.key, a.context, a.answer, a.prompt_version].join(' '),
@@ -1990,15 +2033,16 @@ function answersTab(host) {
                           el('p', {class: 'quote', text: q.instructions.question})));
       bits.push(section('about', el('p', {class: 'prose', text: a.context || a.key})));
       bits.push(section('how sure', kv([
-        ['confidence', conf(a.confidence)],
+        ['confidence', a.confidence != null && a.confidence < 0.6
+          ? el('span', {}, [conf(a.confidence), el('span', {class: 'low', text: '  not reported',
+              tip: 'Under 0.60 nothing becomes a finding. It is the model saying it cannot tell, '
+                + 'which usually means the state it was given does not carry what the question '
+                + 'asks for.'})])
+          : conf(a.confidence)],
         ['next best', a.runner_up ? a.runner_up[0] + ' at ' + a.runner_up[1].toFixed(2)
                                   : 'nothing else scored'],
         ['ruled under', a.prompt_version || 'no recorded version'],
       ])));
-      if (a.confidence != null && a.confidence < 0.6)
-        bits.push(el('p', {class: 'note', text: 'Under 0.60, so nothing is reported as a finding '
-          + 'from this. It is the model saying it cannot tell, which usually means the state it '
-          + 'was given does not carry what the question asks for.'}));
       return bits;
     },
   }));
@@ -2046,8 +2090,11 @@ function questionsTab(host) {
   const list = grid(DATA.questions, [
     {key: 'name', label: 'family', mono: 1, val: q => q.name},
     {key: 'v', label: 'version', mono: 1, val: q => q.prompt_version},
-    {key: 'asked', label: 'asked', n: 1, val: q => asked[q.id_prefix] || 0},
+    {key: 'asked', label: 'asked', n: 1, val: q => asked[q.id_prefix] || 0,
+     tip: 'Subjects in this project with a live answer from this family.'},
     {key: 'human', label: 'human', n: 1, val: q => (byFam[q.name] || {}).human || 0,
+     tip: 'Verdicts a person recorded on this family\u2019s findings. Only a human verdict can '
+       + 'let a check gate a build; an agent\u2019s ruling triages and counts toward nothing.',
      cell: q => { const n = (byFam[q.name] || {}).human || 0;
        return el('span', {class: n ? 'ok' : 'tot', text: num(n)}); }},
   ], {placeholder: 'filter questions...', scroll: 1, sort: 'name', pick: q => show(q),
@@ -2113,10 +2160,7 @@ function questionsTab(host) {
     d.append(section('the ' + Object.keys(crit).length + ' answers it may give', opts));
   }
 
-  host.replaceChildren(
-    el('p', {class: 'note', text: 'Every question assay will ask, in full, beside how often it has been ruled on. '
-             + 'Only a human verdict can gate a build.'}),
-    el('div', {class: 'wrap2'}, [list, detail]));
+  host.replaceChildren(el('div', {class: 'wrap2'}, [list, detail]));
   detail.append(el('p', {class: 'empty', text: 'Pick a question to read its instructions and every option, exactly as they are sent.'}));
   const first = $('tbody tr', list); if (first) first.click();
 }
@@ -2134,12 +2178,10 @@ function configTab(host) {
      and the resolved settings run up the left of it. */
   const cut = (DATA.cuts || {}).tower;
   if (cut) bits.push(el('img', {class: 'cut tabcut', src: cut, alt: ''}));
-  bits.push(el('p', {class: 'note tabhead', text:
-    'What was actually resolved, which is not always what the file says. Everything under here '
-    + 'you wrote by hand.'}));
-
   const scalars = Object.entries(c).filter(([, v]) => typeof v !== 'object' || v === null);
-  if (scalars.length) bits.push(section('resolved', kv(scalars.map(([k, v]) => [k, String(v)]))));
+  if (scalars.length) bits.push(section('resolved', kv(scalars.map(([k, v]) => [k, String(v)])),
+    'The values in force after defaults are applied, which is not always what audit.yml says. '
+    + 'Everything below this you wrote by hand.'));
 
   /* *** THE VOCABULARY IS THE POINT OF THE WHOLE CONFIG AND IT WAS A JSON BLOB. ***
      Fifteen terms written once made `traverse` flag wdid joins without anyone writing a water
@@ -2147,12 +2189,13 @@ function configTab(host) {
      a table you can read rather than a pre block you skim past. */
   if (c.vocab && Object.keys(c.vocab).length) {
     const rows = Object.keys(c.vocab).sort().map(k => ({term: k, def: c.vocab[k]}));
-    bits.push(section('vocabulary (' + rows.length + ' term(s), sent with every question)',
+    bits.push(section('vocabulary (' + rows.length + ' term(s))',
       grid(rows, [
         {key: 'term', label: 'term', mono: 1, val: r => r.term},
         {key: 'def', label: 'what it means here', val: r => JSON.stringify(r.def),
          cell: r => kvAny(r.def)},
-      ], {placeholder: 'filter terms...', cap: 400})));
+      ], {placeholder: 'filter terms...', cap: 400}),
+      'Every term here is sent with every judged question whose subject it applies to.'));
   }
 
   if (c.questions && Object.keys(c.questions).length) {
@@ -2171,10 +2214,10 @@ function configTab(host) {
       {key: 'model', label: 'model, or a named waiver', mono: 1, val: r => r.model,
        cell: r => link(r.model)},
       {key: 'w', label: 'waived, and why', val: r => JSON.stringify(r.w), cell: r => kvAny(r.w)},
-    ], {placeholder: 'filter waivers...', cap: 400})));
-    bits.push(el('p', {class: 'note', text: 'A waived finding never reaches the findings table, '
-      + 'so nothing above counts it. A waiver whose justification is "looks fine" is how a real '
-      + 'finding gets silenced, which is why the reason is required and is shown here.'}));
+    ], {placeholder: 'filter waivers...', cap: 400}),
+      'A waived finding never reaches the Findings tab, so nothing else on this page counts it. '
+      + 'The reason is required and shown, because a waiver that says "looks fine" is how a real '
+      + 'finding gets silenced.'));
   }
 
   for (const k of ['practices', 'explanations']) {
@@ -2201,10 +2244,10 @@ function configTab(host) {
         {key: 'name', label: 'model', mono: 1, val: u => u.name},
         {key: 'path', label: 'path', mono: 1, val: u => u.path},
         {key: 'why', label: 'why', val: u => u.why},
-      ], {placeholder: 'filter...', cap: 500})));
-    bits.push(el('p', {class: 'note', text: 'A model absent from every table in this file because '
-      + 'its SQL would not parse looks identical, from outside, to a model with nothing wrong '
-      + 'with it. That is why it is named here. An absent audit is never a pass.'}));
+      ], {placeholder: 'filter...', cap: 500}),
+      'A model whose SQL would not parse is missing from every other tab, which looks exactly '
+      + 'like a model with nothing wrong with it. So it is named here. An absent audit is never a '
+      + 'pass.'));
   }
   host.replaceChildren(...bits);
 }
@@ -2297,10 +2340,15 @@ function tile(big, label, note, cls) {
   ]);
 }
 
-function block(title, note, node) {
+/* *** A GREY SENTENCE UNDER EVERY HEADING IS A SENTENCE NOBODY READS. ***
+   "all those are pointless, some contain useful info but theyre all not being read its random
+   text at the top ... your eyes dont even notice it". So a section's explanation is its heading's
+   tip, and only a FACT -- something that is true of this warehouse, like "2 of 3 monitors have
+   stopped" -- is set as text, and it is set as a line of the content, in ink, not as a caption. */
+function block(title, tipText, node, fact) {
   const b = el('div', {class: 'ovblock'});
-  b.append(el('h3', {text: title}));
-  if (note) b.append(el('p', {class: 'note', text: note}));
+  b.append(el('h3', {}, [el('span', {text: title, tip: tipText})]));
+  if (fact) b.append(el('p', {class: 'fact', text: fact}));
   if (node) b.append(node);
   return b;
 }
@@ -2358,10 +2406,6 @@ function suggestTab(host) {
     noun: 'candidates', groups: groups, rowFilter: 'filter candidates...',
     chip: g => g.basis, keepOrder: 1, groupFilter: 'find a reason...',
     sectionOf: g => LABEL[g.section] || g.section,
-    blurb: 'assay measured these and writes no meaning. A means: in a draft is either blank or '
-      + 'QUOTED from a sentence this project already uses, with where it came from; a column '
-      + 'description draft says per line whether it is quoted or built from recorded facts. '
-      + 'Grouped by the reason each one fired, because forty rows of one reason are one decision.',
     rowsOf: g => g.rows.slice().sort((a, b) => (b.rank || 0) - (a.rank || 0)),
     /* *** THE HEADLINE IS THE GROUP'S OWN REASON, REPEATED ONCE PER ROW. ***
        123 rows reading "`X` is described identically in N models and the vocab does not carry
@@ -2375,11 +2419,12 @@ function suggestTab(host) {
     rowCols: [
       {key: 'k', label: 'candidate', mono: 1, val: r => r.key || r.headline},
       {key: 'sec', label: 'edit', val: r => LABEL[r.section] || r.section,
+       tip: 'Which part of audit.yml (or schema.yml) the draft goes in.',
        cell: r => el('span', {class: 'pill', text: LABEL[r.section] || r.section})},
       /* *** "RANK 190,032" WAS A SCALE AND A COUNT FOLDED INTO ONE NUMBER. ***
          What the position rests on, in the rule's own words. It still sorts by the number. */
       {key: 'rank', label: 'ordered by', val: r => r.rank,
-       cell: r => el('span', {class: 'tot', text: r.ordered_by || ''})},
+       cell: r => el('span', {class: 'tot'}, [wbr(r.ordered_by || '')])},
     ],
     rowSort: 'rank', rowDir: -1,
     rowText: r => [r.headline, r.key, (r.measured || []).join(' ')].join(' '),
@@ -2399,7 +2444,14 @@ function suggestTab(host) {
           el('div', {class: 'sug-d', text: (g && g.decide) || r.decide})));
       if (r.draft) bits.push(section(r.section === 'descriptions'
         ? 'a draft for schema.yml -- edit it first' : 'paste this into audit.yml',
-        el('pre', {class: 'sug-y', text: r.draft})));
+        el('pre', {class: 'sug-y', text: r.draft}),
+        /* The rule that was the tab's opening sentence, on the draft it governs. */
+        r.section === 'descriptions'
+          ? 'Each line says whether it is QUOTED from a sentence this project already uses, or '
+            + 'built from facts assay recorded. assay writes no meaning of its own.'
+          : 'Every means: and implies: is blank, or QUOTED from a sentence this project already '
+            + 'uses, with where it came from. assay never writes a meaning: a plausible guess '
+            + 'would ride along with every judged question after it.'));
       else bits.push(el('p', {class: 'note', text: 'No draft: there is nothing to paste until '
         + 'the question above is answered.'}));
       return bits;
@@ -2440,9 +2492,9 @@ function understoodTab(host) {
   const classified = DATA.claims.filter(c => c.kind).length;
   const spent = (DATA.cost || {}).usd;
 
-  function column(label, n, unit, sub) {
+  function column(label, n, unit, sub, tipText) {
     const c = el('div', {class: 'tcol'});
-    c.append(el('div', {class: 'tlab', text: label}));
+    c.append(el('div', {class: 'tlab'}, [el('span', {text: label, tip: tipText})]));
     c.append(el('div', {}, [el('span', {class: 'tnum', text: n}),
                             el('span', {class: 'tunit', text: unit})]));
     c.append(el('div', {class: 'tsub', text: sub}));
@@ -2474,15 +2526,16 @@ function understoodTab(host) {
            + ' classified by what job it does; ' + num(meta.models)
            + ' models and ' + num(DATA.edges.length) + ' hops parsed.'),
     column('judged', num(answered), 'answers',
+           'from ' + num(DATA.questions.length) + ' question families',
            'Questions no parser can settle -- what a filter is for, what a NULL means -- each '
            + 'answer stored with what it was asked from.'),
-    column('found', num(F.length), 'defects',
-           'Across ' + num(checks) + ' assays: grain, meaning, provenance and drift, which no '
-           + 'unique or not_null can say.'),
+    column('found', num(F.length), 'defects', 'across ' + num(checks) + ' checks',
+           'Grain, meaning, provenance and drift: defects no unique or not_null test can '
+           + 'express.'),
     column('at cost', spent == null ? '\u2014' : '$' + spent.toFixed(2), '',
-           spent == null
-             ? 'This store predates the ledger, so what it cost is unknown rather than nothing.'
-             : 'Every call recorded, one row each. The Spend tab has the ledger.'),
+           spent == null ? 'unknown: this store predates the ledger'
+             : num((DATA.cost || {}).calls || 0) + ' model call(s)',
+           'Every call recorded, one row each. The Spend tab has the ledger.'),
   ]);
   /* The plate earns its place by being the thing the page is named after: a charge going into a
      furnace and something being drawn off it. */
@@ -2636,9 +2689,9 @@ function understoodTab(host) {
         tile(num(mv.same || 0), 'unchanged', 'still true, and still unread unless ruled'),
       ])));
   } else {
-    bits.push(block('What moved since the previous run',
+    bits.push(block('What moved since the previous run', null, null,
       'Only one run is recorded, so nothing can have moved yet -- which is different from '
-      + 'nothing having moved. Run `assay check` again after your next change.', null));
+      + 'nothing having moved. Run `assay check` again after your next change.'));
   }
 
   host.replaceChildren(...bits);
@@ -2703,7 +2756,7 @@ function spendTab(host) {
   if (!c.calls && !((c.warehouse || {}).calls)) {
     /* An absent ledger is not a free project. This store predates `model_calls`, or nothing has
        been asked here -- two different facts, and neither of them is a zero. */
-    bits.push(block('No ledger in this store',
+    bits.push(block('No ledger in this store', null, null,
       DATA.decisions && DATA.decisions.length
         ? 'This store holds ' + num(DATA.decisions.length) + ' answers and no record of the calls '
           + 'that produced them: they were decided before assay recorded one. What they cost is '
@@ -2714,9 +2767,9 @@ function spendTab(host) {
   }
   const money = n => '$' + (n == null ? '--' : n < 1 ? n.toFixed(4) : n.toFixed(2));
   const wh = c.warehouse || {};
-  bits.push(el('p', {class: 'note', text: 'What the thinking cost and what the warehouse cost, kept apart because '
-                     + 'they are priced by different people in different units.'}));
-  bits.push(block('What this project has cost', null, el('div', {class: 'tiles'}, [
+  bits.push(block('What this project has cost', 'What the thinking cost and what the warehouse '
+    + 'cost, kept apart because they are priced by different people in different units.',
+    el('div', {class: 'tiles'}, [
     tile(money(c.usd || 0), 'thinking', num(c.calls || 0) + ' model call(s)'),
     tile(wh.calls ? money(wh.usd) : '--', 'the warehouse',
          wh.calls ? num(wh.calls) + ' statement(s), ' + bytes(wh.bytes_estimated)
@@ -3015,6 +3068,35 @@ new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) {
   if (n.nodeType === 1) renderTicks(n);
   else if (n.nodeType === 3 && n.parentElement) renderTicks(n.parentElement);
 } }).observe(document.querySelector('main'), {childList: true, subtree: true});
+
+/* The tip: one element, shown on hover at once, below the thing it explains and kept inside
+   the window. Touch has no hover, so a tap on a tipped element shows it too. */
+const TIPBOX = el('div', {class: 'tipbox', hidden: ''});
+document.body.append(TIPBOX);
+function showTip(t) {
+  const txt = t.getAttribute('data-tip');
+  if (!txt) return;
+  TIPBOX.textContent = txt;
+  TIPBOX.hidden = false;
+  const r = t.getBoundingClientRect(), w = TIPBOX.offsetWidth, h = TIPBOX.offsetHeight;
+  let left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+  let top = r.bottom + 6;
+  if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+  TIPBOX.style.left = left + 'px';
+  TIPBOX.style.top = top + 'px';
+}
+document.addEventListener('mouseover', ev => {
+  const t = ev.target.closest && ev.target.closest('[data-tip]');
+  if (t) showTip(t); else TIPBOX.hidden = true;
+});
+document.addEventListener('touchstart', ev => {
+  const t = ev.target.closest && ev.target.closest('[data-tip]');
+  if (t) showTip(t); else TIPBOX.hidden = true;
+}, {passive: true});
+document.addEventListener('scroll', () => { TIPBOX.hidden = true; }, true);
+/* A click is an answer to the tip, so it goes: otherwise the tab's tip sat over the pane it
+   had just opened. */
+document.addEventListener('mousedown', () => { TIPBOX.hidden = true; }, true);
 
 /* ---------------------------------------------------------------------------------- tabs */
 const VIEWS = {models: modelsTab, chain: chainTab, claims: claimsTab, findings: findingsTab,
