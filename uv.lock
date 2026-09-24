@@ -245,7 +245,7 @@ wheels = [
 
 [[package]]
 name = "dbt-assay"
-version = "0.51.3"
+version = "0.51.4"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
