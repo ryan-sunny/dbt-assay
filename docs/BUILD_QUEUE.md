@@ -76,7 +76,21 @@ Deferred and not proposed: snapshot checks (this project has 0 snapshots), seed 
   same commit, with a Playwright screenshot read before the item is called done.
 
 
-## Next: UI problems Ryan found on 0.51.2 (NOT built yet)
+## Next: UI problems Ryan found on 0.51.2 (BUILT on field-25, unreleased)
+
+Built 2026-09-23, one commit each, screenshotted on the field store at 1500 and 1100 px:
+the four below, plus the rest of the same report -- every group in a column of its own with
+paged rows (Claims, Answers, What to configure, Areas), cells that wrap instead of cutting or
+scrolling sideways, Areas' tab number counting all three lists, backticks rendered as code in
+every panel, a 7/30/90/all window on Spend, and three `volume` CLI fixes (`--json` silent when
+unreachable, dbt's error replaced by uv's stderr warning, a relative `--profiles-dir` resolved
+from inside the project). Commits 1e2a270..11f6804.
+
+**Found while building, not fixed (needs a decision):** the data artifact written by
+`assay page --data` has no `areas` file, so a page rendered with `--from` loses the Areas tab.
+`export.py` never writes it.
+
+Original list:
 
 Screenshots were from the page (`assay page`). Each needs a look at the rendered page before and
 after, per the repo rule.
