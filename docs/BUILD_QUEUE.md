@@ -86,9 +86,10 @@ every panel, a 7/30/90/all window on Spend, and three `volume` CLI fixes (`--jso
 unreachable, dbt's error replaced by uv's stderr warning, a relative `--profiles-dir` resolved
 from inside the project). Commits 1e2a270..11f6804.
 
-**Found while building, not fixed (needs a decision):** the data artifact written by
-`assay page --data` has no `areas` file, so a page rendered with `--from` loses the Areas tab.
-`export.py` never writes it.
+**Found while building, then fixed:** the data artifact written by `assay page --data` had no
+`areas` file, so a page rendered with `--from` lost the Areas tab. The round-trip guard compared
+against a hand-written fixture that lacked it too; it now also renders the real page both ways
+and requires identical files.
 
 Original list:
 

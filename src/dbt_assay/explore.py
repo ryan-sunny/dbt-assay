@@ -644,8 +644,10 @@ _LINES = ("models", "edges", "claims", "findings", "decisions", "questions",
 # Caught by the round-trip guard: an artifact with no `unconfigured.json` handed back a dict where
 # a list belongs, and `.length` on a dict is `undefined` rather than an error -- so the page would
 # have shown nothing and looked fine. Second time this class has appeared in this file.
+# `areas` was missing, so `--from` rendered a page with no Areas tab and nothing said why: the
+# round-trip guard below compared the artifact against a fixture that lacked it too.
 _WHOLE = (("meta", dict), ("config", dict), ("unconfigured", list),
-          ("moved", dict), ("cost", dict), ("monitoring", dict))
+          ("moved", dict), ("cost", dict), ("monitoring", dict), ("areas", dict))
 
 
 def write_data(data: dict, directory, record: str = "") -> list:

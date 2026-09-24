@@ -327,7 +327,11 @@ def _tiny():
                                          "says": ""}],
                            "test_coverage": {"declared": 12, "ever_ran": 10,
                                              "skipped_results": 3},
-                           "stale_failures": [], "unwatched": [], "monitoring": []}}
+                           "stale_failures": [], "unwatched": [], "monitoring": []},
+            "areas": {"predicate_clusters": [{"size": 3, "shape": "<col> <> ''",
+                                              "models": ["a", "b", "c"]}],
+                      "odd_ones_out": [], "same_claim": [],
+                      "claim_pairs_code_could_not_settle": 0}}
 
 
 def test_the_artifact_is_one_line_per_entity(tmp_path):
@@ -1166,3 +1170,29 @@ def test_weight_is_shown_with_the_parts_it_is_computed_from():
     fb = v[v.index("function findingsTab"):v.index("function answersTab")]
     assert "['weight', weightBox(f)]" in fb, "the finding shows a bare weight again"
     assert "title: weightLine(f)" in fb, "the weight cell has no parts on hover"
+
+
+def test_a_page_rendered_from_its_artifact_is_the_same_page(project_dir, tmp_path):
+    """*** THE ROUND-TRIP GUARD COULD NOT SEE A MISSING SECTION. ***
+
+    It compared the artifact with a hand-written fixture, and the fixture had no `areas` either,
+    so `--from` shipped a page with no Areas tab while the guard passed. This one runs the real
+    commands: the page from a store, then the page from the artifact that run wrote, and the two
+    files must be identical. Any section `assemble` adds and the artifact drops fails here.
+    """
+    from typer.testing import CliRunner
+
+    from dbt_assay.cli import app
+    run = CliRunner()
+    store = tmp_path / "s.duckdb"
+    r = run.invoke(app, ["check", "--target", str(project_dir), "--store", str(store)])
+    assert r.exit_code in (0, 1), r.output
+    first, again = tmp_path / "a.html", tmp_path / "b.html"
+    r = run.invoke(app, ["page", str(first), "--target", str(project_dir), "--store", str(store),
+                         "--data", str(tmp_path / "art")])
+    assert r.exit_code == 0, r.output
+    r = run.invoke(app, ["page", str(again), "--from", str(tmp_path / "art")])
+    assert r.exit_code == 0, r.output
+    assert (tmp_path / "art" / "areas.json").exists(), "the artifact has no areas"
+    assert first.read_text() == again.read_text(), \
+        "the page rendered from its own artifact differs from the page that wrote it"
