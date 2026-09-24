@@ -36,7 +36,6 @@ Elementary's own, and every threshold has a default and a config key.
 from __future__ import annotations
 
 import re
-
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 

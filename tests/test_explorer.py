@@ -1163,6 +1163,7 @@ def test_weight_is_shown_with_the_parts_it_is_computed_from():
     assert abs(f.weight - p["base"] * p["lift"]) < 1e-9
 
     import inspect
+
     from dbt_assay import explore
     assert '"weight_parts": f.weight_parts()' in inspect.getsource(explore._findings), \
         "the page is not handed the parts"
