@@ -286,9 +286,10 @@ def build(project, schema=None, entries=None, store=None, tests: dict | None = N
     """Every premise the checks use, with its evidence and status. Uses are registered by the
     checks themselves (`Ledger.use`) and by `register_grains` here."""
     led = Ledger()
-    led.tests = tests if tests is not None else test_status(store)
-    if not led.tests:
-        led.tests = run_results_status(getattr(project, "target_dir", ".") or ".")
+    if tests is None:
+        tests = test_status(store) or run_results_status(
+            getattr(project, "target_dir", None) or ".")
+    led.tests = tests
     led.tests_read = bool(led.tests)
     if observed is None and store is not None:
         try:
@@ -343,19 +344,26 @@ def unique(led: Ledger, relation: str, columns) -> Premise:
         if uk_cols == cols:
             ev.append(Evidence("config", "declared as this incremental model's `unique_key`, "
                                "with no test behind it", UNCHECKED))
-    # observed: probe's count on this relation, single columns only
-    if len(cols) == 1 and led.schema is not None:
+    # observed: probe's latest count on this relation, of exactly these columns. A composite
+    # key is stored under its columns joined by ", " (how `--verify` and `probe` write one).
+    o = None
+    if led.schema is not None:
         rel = (led.schema.relation.get(relation) or "").replace('"', "").lower()
-        o = (led.observed.get(rel) or {}).get(cols[0])
-        if o is not None and o.row_count:
-            dup = (o.non_null or 0) - (o.distinct_ct or 0)
-            at = str(o.observed_at or "")[:19]
-            if dup > 0:
-                ev.append(Evidence("observed", f"{dup:,} duplicate value(s) in "
-                                   f"{o.row_count:,} rows", BROKEN, at))
-            elif o.status in ("unique", "has_nulls") and not getattr(o, "sampled", False):
-                ev.append(Evidence("observed", f"every one of {o.non_null:,} non-null "
-                                   f"value(s) distinct", HOLDING, at))
+        for k, cand in (led.observed.get(rel) or {}).items():
+            if tuple(sorted(x.strip().lower() for x in str(k).split(","))) == cols:
+                o = cand
+                break
+    if o is not None and o.row_count:
+        # Duplicates found in a sample are duplicates in the table; uniqueness in a sample is not
+        # uniqueness in the table, so only an exact count can hold a premise.
+        dup = (o.non_null or 0) - (o.distinct_ct or 0)
+        at = str(o.observed_at or "")[:19]
+        if dup > 0:
+            ev.append(Evidence("observed", f"{dup:,} duplicate value(s) in {o.row_count:,} rows",
+                               BROKEN, at))
+        elif o.status in ("unique", "has_nulls") and not getattr(o, "sampled", False):
+            ev.append(Evidence("observed", f"every one of {o.non_null:,} non-null value(s) "
+                               f"distinct", HOLDING, at))
     # judged: the grain a judgment settled on
     g = led.judged_grain.get(relation)
     if g is not None and tuple(sorted(c.lower() for c in g.value)) == cols:
@@ -363,6 +371,62 @@ def unique(led: Ledger, relation: str, columns) -> Premise:
     p.evidence = ev
     p.status = _verdict(ev)
     return p
+
+
+def uid_of(project, name: str) -> str:
+    """A model's or source's unique_id from the name a check holds."""
+    for uid, m in project.models.items():
+        if m.name == name:
+            return uid
+    for uid, sm in project.sources.items():
+        if sm.name == name:
+            return uid
+    return name
+
+
+def parent_key(led: Ledger, entry, parent_name: str) -> Premise:
+    """The premise a join onto `parent_name` cannot fan out on: the parent's declared key when the
+    join covers it, else the columns the join is on (what `--verify` counts)."""
+    from .relate import declared_keys
+    if not hasattr(led, "_declared"):
+        led._declared = declared_keys(led.project)
+    uid = uid_of(led.project, parent_name)
+    pk = led._declared.get(uid) or []
+    on = [c.lower() for c in (getattr(entry, "join_keys", {}) or {}).get(parent_name) or []]
+    key = pk if pk and on and {c.lower() for c in pk} <= set(on) else (on or pk)
+    return unique(led, uid, key)
+
+
+def hold(check: str, model: str, construct: str, premise_fn, detail: str = "") -> dict | None:
+    """A check is about to hold a finding back because a premise is true. Records that it did,
+    and returns the finding's `why_it_is_back` evidence when the premise is BROKEN, which means
+    the finding is raised after all. None means it stays held back, which is also what happens
+    with no ledger in force: every caller outside `all_findings` behaves as it always did.
+
+    `premise_fn(led)` builds the premise, so nothing is looked up when there is no ledger."""
+    led = active()
+    if led is None:
+        return None
+    p = premise_fn(led)
+    if p is None or not p.columns:
+        return None
+    p = led.use(p, "held_back", f"{check}:{model}:{construct}", model, detail)
+    if p.status != BROKEN:
+        return None
+    broke = next((e for e in p.evidence if e.status == BROKEN), None)
+    return {"premise": p.statement(), "premise_id": p.id, "status": p.status,
+            "why": why(p), "broke_on": (broke.at if broke else "")[:10], "held_back": detail}
+
+
+def rests_on(check: str, model: str, construct: str, premise_fn, detail: str = "") -> None:
+    """A finding RAISED on a premise (e.g. `join_fans_out` reading a declared key): recorded so
+    the ledger shows what reads it, and never changes the finding."""
+    led = active()
+    if led is None:
+        return
+    p = premise_fn(led)
+    if p is not None and p.columns:
+        led.use(p, "raised_on", f"{check}:{model}:{construct}", model, detail)
 
 
 def register_grains(led: Ledger, entries) -> None:

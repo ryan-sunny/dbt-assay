@@ -168,6 +168,10 @@ def joins_parent_on_partial_key(project, digests: dict[str, Digest], schema) -> 
                 if sig in seen:
                     continue
                 seen.add(sig)
+                from . import ledger
+                ledger.rests_on("join_fans_out", uid, project.name_of(parent),
+                                lambda led, parent=parent, key=key: ledger.unique(led, parent, key),
+                                f"reads `{project.name_of(parent)}`'s declared key")
                 absorbed = d.absorbs_fanout
                 found.append(Finding(
                     check="join_fans_out",

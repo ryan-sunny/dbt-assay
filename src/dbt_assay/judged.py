@@ -313,9 +313,27 @@ def hop_multiplies_rows(project, entries) -> list[Finding]:
             # nothing in the project says so. Declared uniqueness is free and counted uniqueness
             # comes from `--verify`; both land here, and both settle exactly what the judgment
             # was allowed to be wrong about.
-            if e.unique_key_parents and any(
-                    f" {p_name} " in f" {ctx} " for p_name in e.unique_key_parents):
-                continue
+            # *** AND IT IS HELD BACK ON A PREMISE, WHICH THE LEDGER KEEPS. *** A key that was
+            # unique and has since broken raises the finding again, saying why it is back.
+            back = None
+            hit = next((p_name for p_name in sorted(e.unique_key_parents or ())
+                        if f" {p_name} " in f" {ctx} "), None)
+            if hit:
+                from . import ledger
+                back = ledger.hold("hop_multiplies_rows", e.uid, hit,
+                                   lambda led, e=e, hit=hit: ledger.parent_key(led, e, hit),
+                                   f"a join onto `{hit}` cannot multiply rows while its key is "
+                                   f"unique")
+                if back is None:
+                    continue
+            ev = {"hop": ctx, "probability": round(p_, 3),
+                  "downstream": e.descendants, "marts": e.marts,
+                  # Which hop the collapse sits on is the thing a ruling stalls for, and
+                  # the parser already knows. Saying "no collapse found on this path" is
+                  # as useful as naming one.
+                  "collapse_on_this_path": _collapse_note(e, ctx)}
+            if back:
+                ev["why_it_is_back"] = back
             out.append(Finding(
                 check="hop_multiplies_rows",
                 rests_on="edge_preserves_the_grain",
@@ -327,12 +345,7 @@ def hop_multiplies_rows(project, entries) -> list[Finding]:
                         "each individual row is valid. Check the join key against the parent's "
                         "own declared key."),
                 base=3,
-                evidence={"hop": ctx, "probability": round(p_, 3),
-                          "downstream": e.descendants, "marts": e.marts,
-                          # Which hop the collapse sits on is the thing a ruling stalls for, and
-                          # the parser already knows. Saying "no collapse found on this path" is
-                          # as useful as naming one.
-                          "collapse_on_this_path": _collapse_note(e, ctx)},
+                evidence=ev,
             ))
     return out
 

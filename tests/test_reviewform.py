@@ -522,3 +522,11 @@ def test_feedback_p8_the_form_counts_what_check_counts():
     from dbt_assay import cli
     assert "live_mod.open_findings(project, digests, schema, entries, store," in \
         inspect.getsource(cli)
+
+
+def test_a_finding_raised_by_a_broken_premise_carries_why_it_is_back(store, tmp_path):
+    f = _f("model.p.a", "hop_multiplies_rows", "f1")
+    f.evidence = {"hop": "x", "why_it_is_back": {"premise": "`k` unique in `p`", "status": "broken",
+                                                 "why": "3 duplicate value(s)", "broke_on": "2026-09-14"}}
+    (card,), _sql = reviewform.cards([f], store, tmp_path)
+    assert card["findings"][0]["back"]["broke_on"] == "2026-09-14"

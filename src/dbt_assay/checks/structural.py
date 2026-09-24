@@ -59,7 +59,10 @@ BBOX_FUNCS = {"ST_MAKEENVELOPE", "ST_EXPAND", "ST_ENVELOPE"}
 # `models` and `sharing` list a cluster's other members: a model joining the cluster later must not
 # move the finding every member's ruling is filed under.
 _MEASURED = frozenset({"downstream", "marts", "probability", "confidence", "one_of_each",
-                       "store", "partition_as_written", "models", "sharing"})
+                       "store", "partition_as_written", "models", "sharing",
+                       # A finding raised because the premise that held it back broke is the SAME
+                       # finding it was before the premise held: a ruling on it still applies.
+                       "why_it_is_back", "proven_rule"})
 
 
 def _identity(evidence: dict) -> str:
@@ -400,23 +403,36 @@ def arbitrary_pick(project, digests: dict[str, Digest]) -> list[Finding]:
     data. A crosswalk here made three such picks; a capped query ordered by a column with 150,625
     duplicates drew a different subset every run.
 
-    A tie-break is total when its last key is a column the project declares unique. That is
-    checkable against the project's own tests, with no data.
+    A tie-break is total when one of its keys is a column declared unique IN THE RELATION IT IS
+    READ FROM: this model, or a parent it selects from. That is checkable against the project's
+    own tests, with no data.
+
+    *** ANY TABLE'S UNIQUE TEST USED TO EXCUSE ANY PICK WITH A COLUMN OF THE SAME NAME. ***
+    Found by the premise ledger, which asks which relation an exemption leans on: on a 358-model
+    project 10 of the 12 picks excused this way leaned on a test in an unrelated table --
+    `stg_adwr_wells` ordered by `objectid` was excused by `stg_blm_co_mineral_estate`'s test on its
+    own `objectid`. A name is not a column.
     """
+    from .. import ledger
     from ..relate import declared_keys
-    unique_cols = set()
-    for cols in declared_keys(project).values():
+    # Which relations declare each column unique on its own.
+    declared_in: dict = {}
+    for uid_, cols in declared_keys(project).items():
         if len(cols) == 1:
-            unique_cols.add(cols[0])
+            declared_in.setdefault(cols[0], set()).add(uid_)
     for t in project.tests:
-        if t.kind == "unique" and t.column:
-            unique_cols.add(t.column.lower())
+        if t.kind == "unique" and t.column and t.tests_model:
+            declared_in.setdefault(t.column.lower(), set()).add(t.tests_model)
+
+    def _pick_premise(led, rel, k):
+        return ledger.unique(led, rel, [k])
 
     found = []
     for uid, d in digests.items():
         if not d.ok:
             continue
         m = project.models[uid]
+        near = {uid, *(m.parents or [])}
         for w in d.windows:
             # only a dedupe: a ranking nobody filters on is a reported position, not a choice
             if not w.partition_columns or not w.order_sql:
@@ -425,10 +441,25 @@ def arbitrary_pick(project, digests: dict[str, Digest]) -> list[Finding]:
                                          for p_ in d.predicates)):
                 continue
             keys = [o.split()[0].split(".")[-1].strip("()").lower() for o in w.order_sql]
-            if any(k in unique_cols for k in keys):
-                continue                       # the last resort is a declared-unique column
-            if getattr(w, "picks_only_keys", False):
+            back = None
+            hit = next(((k, sorted(declared_in.get(k, set()) & near,
+                                   key=lambda r: (r == uid, r))[0])
+                        for k in keys if declared_in.get(k, set()) & near), None)
+            if hit is not None:
+                k, rel = hit
+                # the last resort is a declared-unique column, and that is a premise
+                back = ledger.hold("arbitrary_pick", uid, f"{','.join(w.partition_columns)}|{k}",
+                                   lambda led, rel=rel, k=k: _pick_premise(led, rel, k),
+                                   f"ties are broken by `{k}` while it is unique in "
+                                   f"`{project.name_of(rel)}`")
+                if back is None:
+                    continue
+            if back is None and getattr(w, "picks_only_keys", False):
                 continue                       # a remaining tie is identical in all it keeps
+            ev = {"partition_by": w.partition_columns, "order_by": w.order_sql[:3],
+                  "partition_as_written": w.partition_by}
+            if back:
+                ev["why_it_is_back"] = back
             found.append(Finding(
                 check="arbitrary_pick",
                 subject=uid, subject_name=m.name, file=m.path,
@@ -442,7 +473,8 @@ def arbitrary_pick(project, digests: dict[str, Digest]) -> list[Finding]:
                 summary=(f"dedupe on {w.partition_columns} whose tie-break may not be total"
                          + (f", ordered by {', '.join(w.order_sql)}" if w.order_sql else "")),
                 detail=("`row_number() ... = 1` keeps one row per partition. None of the ORDER BY "
-                        "keys is a column this project declares unique, so ties are broken by "
+                        "keys is declared unique in this model or a parent it reads, so ties are "
+                        "broken by "
                         "whatever the engine returned, and the winner can change between builds "
                         "on identical data. Add a unique column as the last sort key."),
                 base=2,
@@ -451,8 +483,7 @@ def arbitrary_pick(project, digests: dict[str, Digest]) -> list[Finding]:
                 # which is right for lineage and wrong for a reader: two of three windows in one
                 # file read as `owner_key`, and one of them pointed at the wrong window. The
                 # construct as written rides beside the resolved key.
-                evidence={"partition_by": w.partition_columns, "order_by": w.order_sql[:3],
-                          "partition_as_written": w.partition_by},
+                evidence=ev,
             ))
     return found
 

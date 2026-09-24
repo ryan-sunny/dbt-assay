@@ -267,7 +267,7 @@ def fanout(n: int, d: int) -> str:
 
 
 def verify_join_keys(entries, project, probe_mod, project_dir: str, profiles_dir: str | None,
-                     dbt_bin: str, schema=None, batch: int = 40) -> int:
+                     dbt_bin: str, schema=None, batch: int = 40, store=None) -> int:
     """Count whether each flagged hop's join key is unique IN THE DATA, and refuse the finding.
 
     *** dbt KNOWS WHICH KEYS ARE DECLARED UNIQUE. IT DOES NOT KNOW WHICH KEYS ARE. ***
@@ -302,6 +302,8 @@ def verify_join_keys(entries, project, probe_mod, project_dir: str, profiles_dir
         return 0
     items = sorted(todo.items())
     unique: set = set()
+    counted: dict = {}                    # (pname, cols) -> (rows, distinct)
+    idx = {pname: (pname, cols) for (pname, cols) in todo}
 
     def ask(chunk) -> bool:
         parts = []
@@ -321,6 +323,8 @@ def verify_join_keys(entries, project, probe_mod, project_dir: str, profiles_dir
                     int(row.get("d", vals[2]))
             except (TypeError, ValueError, IndexError):
                 continue
+            if m in idx:
+                counted[idx[m]] = (n, d)
             if n and d >= n:
                 unique.add(m)
         return True
@@ -337,6 +341,18 @@ def verify_join_keys(entries, project, probe_mod, project_dir: str, profiles_dir
     for i in range(0, len(items), batch):
         walk(items[i:i + batch])
 
+    # *** KEPT, SO THE LEDGER CAN READ IT AND A LATER COUNT CAN CONTRADICT IT. *** A key counted
+    # unique here holds back `hop_multiplies_rows`; the premise is that count, dated.
+    if store is not None and counted:
+        obs = [probe_mod.Observation(
+                   relation=todo[k].lower(), column=", ".join(k[1]), row_count=n, non_null=n,
+                   distinct_ct=d, status="unique" if n and d >= n else "has_duplicates",
+                   detail=f"{n:,} rows, {d:,} distinct, counted by check --verify")
+               for k, (n, d) in sorted(counted.items())]
+        try:
+            probe_mod.write(store, obs, via="verify-join-keys")
+        except Exception:                                        # noqa: BLE001, S110
+            pass                          # a store that cannot take it loses the record, not the run
     marked = 0
     for e in entries:
         for pname in list(e.join_keys or {}):

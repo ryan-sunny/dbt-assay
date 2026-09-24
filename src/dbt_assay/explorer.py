@@ -289,6 +289,7 @@ td .pill{white-space:normal}
 .pill.holding,.pill.proven{color:var(--ink);border-color:var(--ink)}
 .pill.assumed{color:var(--ember);border-color:var(--ember)}
 .pill.unchecked,.pill.unknown{color:var(--faint);border-color:var(--rule)}
+.plink{margin-left:10px;font-size:13px;white-space:nowrap}
 /* A note is a FACT in a pane now, never a caption: every explanation moved to a tip, so what is
    left is something true of this warehouse, and it is set in ink where it will be read. */
 .note{color:var(--ink);font-size:13.5px;margin:8px 0 0;max-width:none}
@@ -738,6 +739,7 @@ function grid(rows, cols, opts) {
             : el('span', {}, [wbr(cellText(c.val(r)))])])));
       if (opts.pick) tr.onclick = () => { body.querySelectorAll('tr.on').forEach(x => x.classList.remove('on'));
         tr.classList.add('on'); opts.pick(r); };
+      tr._row = r;                          // what a link finds a row by, never its text
       return tr;
     }));
     if (!shown.length) body.replaceChildren(el('tr', {}, [el('td', {class: 'empty',
@@ -2141,22 +2143,44 @@ function findingsTab(host) {
   GO.findings = id => {
     const f = FIND[id]; if (!f) return;
     d.showRows(byCheck[f.check]);
+    /* By the row itself: two findings on one model with one weight (two hops into
+       `water_rights`) are two rows the text cannot tell apart. */
     for (const tr of host.querySelectorAll('tbody tr')) {
-      const td = tr.querySelector('td');
-      if (td && td.textContent.trim() === f.model && tr.innerText.includes(f.weight.toFixed(1))) {
+      const r = Array.isArray(tr._row) ? tr._row[0] : tr._row;   // drill rows are [row, group]
+      if (r && r.id === f.id) {
         tr.click(); if (tr.scrollIntoView) tr.scrollIntoView({block: 'nearest'}); return;
       }
     }
   };
 }
 
+/* *** A FINDING HELD BACK ON A PREMISE, AND RAISED WHEN IT BROKE. *** The premise, its badge,
+   the day it broke and what measured it, above everything else in the pane, because it is the
+   reason the finding is on the list at all. */
+function backBlock(b) {
+  if (!b) return null;
+  const prem = el('span', {}, [wbr(b.premise || ''), premBadge(b.status, b.status, b.why)]);
+  if (GO.guarantees && b.premise_id)
+    prem.append(el('a', {class: 'plink', text: 'in Guarantees', href: '#guarantees',
+      onclick: ev => { ev.preventDefault(); GO.guarantees(b.premise_id); }}));
+  return section('why it is back', kv([
+    ['premise', prem],
+    ['broke', b.broke_on || null],
+    ['measured', b.why ? wbr(b.why) : null],
+    ['held back while', b.held_back ? wbr(b.held_back) : null]]));
+}
+
 function findingPane(f) {
+  const back = (f.evidence || {}).why_it_is_back;
+  const ev = Object.assign({}, f.evidence || {});
+  delete ev.why_it_is_back;
   return pane({
     kind: 'finding · ' + f.check.replace(/_/g, ' '),
     title: link(f.model), mono: 0,
     where: el('span', {class: 'mono', text: f.file || ''}),
     what: f.summary,
     reading: [
+      backBlock(back),
       ...((f.evidence || {}).asked ? [section('the reading', kv([
         ['asked', String(f.evidence.asked).replace(/_/g, ' ')
           + (f.evidence.context && f.evidence.context !== f.model ? ', about ' + f.evidence.context : '')],
@@ -2186,7 +2210,7 @@ function findingPane(f) {
           : f.ruled_model ? el('span', {text: 'the model was ruled on, this finding was not'})
           : el('span', {class: 'tot', text: 'nobody yet'})],
       ])),
-      section('evidence', kvAny(f.evidence)),
+      section('evidence', kvAny(ev)),
     ],
     act: el('div', {}, [
       el('p', {class: 'prose', text: 'Rule on it in the review form, or from an agent:'}),

@@ -489,7 +489,7 @@ def check(
             # rule already refused. A number that reads like a result has to be one.
             _before = len(judged_mod.hop_multiplies_rows(project, _entries))
             prac_mod.verify_join_keys(_entries, project, probe_mod, project_dir,
-                                      profiles_dir, dbt_bin, schema=schema)
+                                      profiles_dir, dbt_bin, schema=schema, store=_s)
             n_retired = _before - len(judged_mod.hop_multiplies_rows(project, _entries))
             n_counted = prac_mod.verify_row_loss(_entries, project, probe_mod, project_dir,
                                                  profiles_dir, dbt_bin, schema=schema)

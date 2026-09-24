@@ -129,6 +129,9 @@ def cards(findings, store, project_root, reads: dict | None = None,
                           "sure": ev.get("probability")}} if ev.get("asked") else {}),
             # The quoted sentence, where the check is about one. Every claim family carries it.
             "claim": str(ev.get("claim") or ""),
+            # Held back on a premise that has since broken: the reason it is on the list.
+            **({"back": ev["why_it_is_back"]} if isinstance(ev.get("why_it_is_back"), dict)
+               else {}),
         })
         a = agent.get(f.id) or agent.get((str(f.subject).split("::")[0], str(f.check)))
         if a and not c["agent"]:
@@ -1049,6 +1052,16 @@ function card(c) {
     box.append(el('p', {class: 'clead', text: f.summary}));
     if (f.claim) box.append(el('div', {class: 'q claim', text: '"' + f.claim + '"'}));
     if (f.detail) seenDetail.add(f.detail);
+  }
+  for (const f of c.findings) {
+    const b = f.back;
+    if (!b) continue;
+    box.append(el('div', {class: 'lbl', text: 'why it is back'}));
+    box.append(el('dl', {class: 'reading'}, [
+      el('dt', {text: 'premise'}), el('dd', {text: (b.premise || '') + ' · ' + (b.status || '')}),
+      ...(b.broke_on ? [el('dt', {text: 'broke'}), el('dd', {text: b.broke_on})] : []),
+      ...(b.why ? [el('dt', {text: 'measured'}), el('dd', {text: b.why})] : []),
+      ...(b.held_back ? [el('dt', {text: 'held back while'}), el('dd', {text: b.held_back})] : [])]));
   }
   if (c.group) box.append(el('div', {class: 'q dim', text:
     'The same construct is in ' + c.group.size + ' models (' + c.group.models.slice(0, 5).join(', ')

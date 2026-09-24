@@ -216,8 +216,10 @@ def candidates(uid: str, project, digests: dict[str, Digest], schema,
         # probe exists: a judgment cannot pick an option that was never on the list.
         rel = (schema.relation.get(drv) or "").lower()
         seen = observed.get(rel) or {}
+        # A composite count (`--verify` stores one as "a, b") is not a one-column key.
         uniques = sorted(col for col, o in seen.items()
-                         if o.status == "unique" and col.lower() not in LOADER_ROW_IDS)
+                         if o.status == "unique" and col.lower() not in LOADER_ROW_IDS
+                         and "," not in col)
         if len(uniques) == 1:
             return GrainCandidate(uniques, "from_probe",
                                   f"observed unique in {project.name_of(drv)} "
