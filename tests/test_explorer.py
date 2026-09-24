@@ -1113,3 +1113,29 @@ def test_a_long_cell_wraps_and_is_never_cut():
     lk = v[v.index("function link("):]
     lk = lk[:lk.index("\n}")]
     assert "wbr(name)" in lk, "a model name in a table cannot wrap"
+
+
+def test_the_areas_tab_counts_all_three_lists_and_shows_one_at_a_time():
+    """*** THE TAB SAID 16 AND THE PAGE HELD 16, 6 AND 39. ***
+
+    The number beside Areas was the first list's, while the same scroll also held "one claim,
+    several models (39)" under a heading written the same way. Reported as "kinda confusing? def
+    gets lost". The three lists are the groups of the one navigator every high-volume tab uses,
+    and the tab's number is all of them.
+    """
+    import re
+    data = {"meta": {"project": "p", "models": 0, "sources": 0, "version": "0",
+                     "generated_at": "x", "coverage": {}},
+            "models": [], "edges": [], "claims": [], "findings": [], "decisions": [],
+            "questions": [], "adjudications": [], "config": {}, "runs": [], "unreadable": [],
+            "areas": {"predicate_clusters": [{}] * 16, "odd_ones_out": [{}] * 6,
+                      "same_claim": [[{}]] * 39}}
+    doc = explorer.explorer_html(data, "<html></html>")
+    n = re.search(r'data-tab="areas"[^>]*>Areas<b>([\d,]+)</b>', doc)
+    assert n and n.group(1) == "61", f"Areas says {n and n.group(1)}, not 16 + 6 + 39"
+
+    v = explorer._VIEWS
+    ab = v[v.index("function areasTab"):v.index("function findingsTab")]
+    assert "drill({" in ab, "Areas is a stacked scroll again"
+    assert "all: false" in ab, "an 'all' group would mix three lists with different columns"
+    assert "colsFor: g => g.cols" in ab

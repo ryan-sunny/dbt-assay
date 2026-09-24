@@ -130,6 +130,9 @@ tr.on td{background:#efe9dc;box-shadow:inset 3px 0 0 var(--ink)}
    claim that said what it was about. It wraps now, and the row is as tall as what it holds. */
 td.clip{overflow-wrap:break-word;min-width:10em}
 td{overflow-wrap:break-word}
+/* Code has runs with no break in them (`home|deck|fence|pool|...`), and `break-word` does not
+   lower a table column's minimum width, so a code cell may break anywhere as a last resort. */
+td.mono{overflow-wrap:anywhere}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
 
 /* ---- the two-pane shell. Panes are separated by a rule, not by two boxes. */
@@ -200,6 +203,10 @@ letter-spacing:.01em}
 .detail h3{margin:20px 0 6px;font-family:Fell,Georgia,serif;font-size:12px;text-transform:uppercase;
 letter-spacing:.08em;color:var(--faint);font-weight:400;border-bottom:1px solid var(--rule2);
 padding-bottom:3px}
+/* A filter or a column name as a heading keeps its own face: set in the display serif, `''`
+   became a curly quote and read as a different filter. */
+.detail h2.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:17px;
+overflow-wrap:break-word}
 .detail .path{color:var(--ash);font-size:12px;margin-bottom:12px;font-family:ui-monospace,
 SFMono-Regular,Menlo,monospace}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 18px;font-size:13.5px}
@@ -209,6 +216,8 @@ SFMono-Regular,Menlo,monospace}
 /* ---- a pill is a lettered tag, the way a part is lettered on a plate. */
 .pill{display:inline-block;font-family:Fell,Georgia,serif;font-size:11.5px;padding:0 6px;
 border:1px solid var(--rule);color:var(--ash);white-space:nowrap;letter-spacing:.03em}
+/* In a table cell a pill wraps like the text beside it, or it pushes its column off the pane. */
+td .pill{white-space:normal}
 .pill.declared,.pill.on{color:var(--iron);border-color:var(--iron)}
 .pill.derived,.pill.observed{color:var(--ash)}
 .pill.judged{color:var(--ember);border-color:var(--ember)}
@@ -447,7 +456,7 @@ const cellText = v => (v == null ? ''
    copying the name or comparing `textContent` still gets the name. */
 function wbr(s) {
   const f = document.createDocumentFragment();
-  String(s == null ? '' : s).split(/(?<=[_./,])/).forEach((p, i) => {
+  String(s == null ? '' : s).split(/(?<=[_./,|])/).forEach((p, i) => {
     if (i) f.append(document.createElement('wbr'));
     f.append(document.createTextNode(p));
   });
@@ -711,7 +720,9 @@ def explorer_html(data: dict, record_html: str) -> str:
         # None when nothing was measured, so the tab shows no count rather than a zero.
         "monitoring": (len((data.get("monitoring") or {}).get("monitoring") or [])
                        if (data.get("monitoring") or {}) else None) or None,
-        "areas": len((data.get("areas") or {}).get("predicate_clusters") or []) or None,
+        # all three lists, not the first one: the tab said 16 while it held 16 + 39 + the odd ones
+        "areas": sum(len((data.get("areas") or {}).get(k) or [])
+                     for k in ("predicate_clusters", "odd_ones_out", "same_claim")) or None,
     }
     # *** THE OVERVIEW IS THE WAY IN, NOT THE LAST TAB. ***
     # It is the only surface here with an argument to make rather than a table to show, and a
@@ -1672,46 +1683,81 @@ function areasTab(host) {
   const read = r => r ? el('span', {class: 'pill judged',
                                     text: r.answer.replace(/_/g, ' ') + ' @' + r.confidence})
                       : el('span', {class: 'tot', text: 'not asked'});
-  const bits = [el('p', {class: 'note', text: 'Filters written the same way in several models, '
-    + 'the one that differs from what most of its family writes, and one claim made about several '
-    + 'models. Grouping is exact and free; the readings come from `assay clusters --judge`.'})];
-  bits.push(section('filters written the same way (' + pcs.length + ')', grid(pcs, [
-    {key: 'size', label: 'models', n: 1, val: c => c.size},
-    {key: 'shape', label: 'filter', mono: 1, clip: 1, val: c => c.shape},
-    {key: 'one', label: 'one rule?', val: c => c.one_rule ? c.one_rule.answer : '',
-     cell: c => c.macro_at ? el('span', {class: 'pill declared', text: 'written once, in '
-                                         + c.macro_at}) : read(c.one_rule)},
-    {key: 'fix', label: 'fix belongs', val: c => c.fix_belongs ? c.fix_belongs.answer : '',
-     cell: c => c.macro_at ? el('span', {class: 'tot', text: '\u2014'}) : read(c.fix_belongs)},
-  ], {placeholder: 'filter by shape or model...', cap: 200, sort: 'size', dir: -1,
-      text: c => [c.shape, c.models.join(' ')].join(' '),
-      pick: c => showCluster(c)})));
-  /* Inline, and empty until a row is picked: the `.detail` pane of the other tabs reserves a
-     column's height, which here left a screen of blank page between two sections. */
-  const detail = el('div', {});
-  function showCluster(c) {
-    detail.replaceChildren(el('h2', {class: 'mono', text: c.shape}),
-      kv([['models', el('span', {}, c.models.map(m => link(m)).flatMap((x, i) =>
-            i ? [el('span', {text: ', '}), x] : [x]))],
-          ['written once?', c.macro_at || 'no: each model writes it'],
-          ['one rule?', read(c.one_rule)], ['fix belongs', read(c.fix_belongs)]]));
-  }
-  bits.push(detail);
-  bits.push(section('the one that differs (' + odds.length + ')', grid(odds, [
-    {key: 'model', label: 'model', mono: 1, val: o => o.model, cell: o => link(o.model)},
-    {key: 'diff', label: 'what differs', clip: 1, val: o => o.difference},
-    {key: 'n', label: 'others', n: 1, val: o => o.shared_by.length},
-    {key: 'read', label: 'read as', val: o => o.read_as ? o.read_as.answer : '',
-     cell: o => read(o.read_as)},
-  ], {placeholder: 'filter...', cap: 200, sort: 'model', dir: 1,
-      text: o => [o.model, o.difference, o.shared].join(' ')})));
-  bits.push(section('one claim, several models (' + same.length + ')', grid(same, [
-    {key: 'n', label: 'models', n: 1, val: g => g.length},
-    {key: 'claim', label: 'claim', clip: 1, val: g => g[0].claim},
-    {key: 'who', label: 'about', clip: 1, val: g => g.map(x => x.model).join(', ')},
-  ], {placeholder: 'filter claims...', cap: 200, sort: 'n', dir: -1,
-      text: g => g.map(x => x.model + ' ' + x.claim).join(' ')})));
-  host.replaceChildren(...bits);
+  const models = ms => el('span', {}, ms.map(m => link(m)).flatMap((x, i) =>
+    i ? [el('span', {text: ', '}), x] : [x]));
+  /* *** THREE LISTS UNDER ONE NUMBER, AND THE NUMBER WAS THE FIRST LIST'S. ***
+     The tab said 16, which was the filters; the same page also held "one claim, several models
+     (39)" and the odd ones out, stacked below, each with its own count. Reported as "kinda
+     confusing? def gets lost". They are three groups now, in the group column every other
+     high-volume tab uses, the tab's number is all three, and one list shows at a time. */
+  const groups = [
+    {key: 'filters', label: 'filters written the same way', rows: pcs,
+     cols: [
+       {key: 'size', label: 'models', n: 1, val: c => c.size},
+       {key: 'shape', label: 'filter', mono: 1, clip: 1, val: c => c.shape},
+       {key: 'one', label: 'one rule?', val: c => c.one_rule ? c.one_rule.answer : '',
+        cell: c => c.macro_at ? el('span', {class: 'pill declared', text: 'written once'})
+                              : read(c.one_rule)}],
+     sort: 'size', dir: -1},
+    {key: 'odd', label: 'the one that differs', rows: odds,
+     cols: [
+       {key: 'model', label: 'model', mono: 1, val: o => o.model, cell: o => link(o.model)},
+       {key: 'diff', label: 'what differs', clip: 1, val: o => o.difference},
+       {key: 'read', label: 'read as', val: o => o.read_as ? o.read_as.answer : '',
+        cell: o => read(o.read_as)}],
+     sort: 'model', dir: 1},
+    {key: 'same', label: 'one claim, several models', rows: same,
+     cols: [
+       {key: 'n', label: 'models', n: 1, val: g => g.length},
+       {key: 'claim', label: 'claim', clip: 1, val: g => g[0].claim}],
+     sort: 'n', dir: -1},
+  ];
+  const kind = r => Array.isArray(r) ? 'same' : (r.shape != null ? 'filters' : 'odd');
+
+  host.replaceChildren(drill({
+    noun: 'areas', groups: groups, all: false, keepOrder: 1,
+    chip: g => g.label, groupFilter: 'find a list...',
+    rowsOf: g => g.rows, rowCols: groups[0].cols,
+    colsFor: g => g.cols, sortFor: g => g.sort, dirFor: g => g.dir,
+    rowFilter: 'filter by filter text, claim or model...',
+    rowText: r => kind(r) === 'same' ? r.map(x => x.model + ' ' + x.claim).join(' ')
+      : kind(r) === 'filters' ? [r.shape, r.models.join(' ')].join(' ')
+      : [r.model, r.difference, r.shared, r.this].join(' '),
+    blurb: 'Filters written the same way in several models, the one that differs from what most '
+      + 'of its family writes, and one claim made about several models. Grouping is exact and '
+      + 'free; the readings come from `assay clusters --judge`.',
+    detailOf: r => {
+      const k = kind(r);
+      if (k === 'filters') return [
+        el('h2', {class: 'mono', text: r.shape}),
+        section('where', kv([
+          ['models', models(r.models)],
+          ['written once?', r.macro_at || 'no: each model writes it'],
+          ['one rule?', r.macro_at ? el('span', {class: 'tot', text: 'settled: it is one macro'})
+                                   : read(r.one_rule)],
+          ['fix belongs', r.macro_at ? el('span', {class: 'tot', text: '—'})
+                                     : read(r.fix_belongs)]]))];
+      if (k === 'odd') return [
+        el('h2', {}, [link(r.model)]),
+        el('p', {class: 'prose', text: r.difference}),
+        section('what it writes', el('pre', {text: r.this || ''})),
+        section('what the others write', el('pre', {text: r.shared || ''})),
+        section('the others', models(r.shared_by || [])),
+        section('read as', read(r.read_as))];
+      /* The members' own words: the claim is "the same" by a judgment, not by string equality,
+         so each wording is shown as it was written -- once, with every model that wrote it,
+         because ten models writing one sentence is one wording and not ten. */
+      const byText = {};
+      for (const x of r) (byText[x.claim] = byText[x.claim] || []).push(x.model);
+      const words = Object.entries(byText);
+      return [
+        el('h2', {text: 'one claim, ' + r.length + ' models'}),
+        section(words.length === 1 ? 'what every one of them says'
+                                   : words.length + ' wordings of it', el('div', {}, words.map(
+          ([t, ms]) => el('div', {class: 'opt'}, [el('p', {class: 'quote', text: t}),
+                                                  models(ms)]))))];
+    },
+  }));
 }
 
 /* ----------------------------------------------------------------------------- Findings */
