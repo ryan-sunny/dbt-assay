@@ -140,3 +140,36 @@ def test_an_unexpected_failure_names_the_exception_not_just_the_tool(project_dir
     body = json.loads(_content_text(asyncio.run(
         server.call_tool("blast_radius", {"model": "x"}))))
     assert "KeyError" in body["error"] and "boom" in body["error"] and body["raised_at"]
+
+
+def test_no_tool_leaves_the_store_open(project_dir, tmp_path):
+    """*** THE SERVER LOCKED ITSELF OUT OF ITS OWN STORE. ***
+
+    Reported from the field: after `plan`, `suggestions` or `evidence`, the server held the write
+    lock for as long as it ran, and every CLI-backed tool -- and the person's terminal -- was
+    locked out by it.
+    """
+    pytest.importorskip("mcp")
+    import subprocess
+    import sys
+
+    from dbt_assay.mcp_server import build_app
+    store = tmp_path / "s.duckdb"
+    CliRunner().invoke(cli_app, ["check", "-t", str(project_dir), "--store", str(store),
+                                 "--config", str(tmp_path)])
+    server = build_app(str(project_dir), str(store))
+    for name, args in (("plan", {}), ("suggestions", {}), ("evidence", {}),
+                       ("findings", {}), ("violations", {}), ("review_queue", {})):
+        asyncio.run(server.call_tool(name, args))
+        got = subprocess.run([sys.executable, "-c",
+                              "import duckdb,sys; duckdb.connect(sys.argv[1]).close(); print('ok')",
+                              str(store)], capture_output=True, text=True, check=False)
+        assert got.stdout.strip() == "ok", f"`{name}` left the store locked: {got.stderr[-200:]}"
+
+
+def test_a_lock_held_by_this_process_says_it_is_a_bug_not_a_wait():
+    import os
+
+    from dbt_assay.store import lock_message
+    msg = lock_message("s.duckdb", f"Conflicting lock is held in python (PID {os.getpid()})")
+    assert "bug in assay" in msg and "Wait for it" not in msg

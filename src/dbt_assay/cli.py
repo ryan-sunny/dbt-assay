@@ -6101,6 +6101,7 @@ def version_stamps(
 def history(
     target: str = typer.Option(None, "--target", "-t"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
     since: str = typer.Option(None, "--since", help="only commits after this, e.g. 2026-06-01"),
     limit: int = typer.Option(15, "--limit", "-n", help="how many findings and models to show"),
     as_json: bool = typer.Option(False, "--json"),
@@ -6124,7 +6125,10 @@ def history(
     n_commits = store.con.execute("select count(*) from commits").fetchone()[0]
     n_versions = store.con.execute("select count(*) from compiled_sql").fetchone()[0]
     seen = h.first_seen(store)
-    open_now = live_mod.all_findings(project, digests, schema, store=store)
+    # The same open findings `check` reports -- judged half included, dismissals applied.
+    entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store))
+    open_now, _w, _a = live_mod.open_findings(project, digests, schema, entries, store,
+                                              Config.load(config_path), config_path)
     aged = []
     for f in open_now:
         if f.id not in seen:

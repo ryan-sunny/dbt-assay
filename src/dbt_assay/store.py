@@ -279,6 +279,16 @@ def lock_message(path: str, err: str) -> str:
                 f"The store is fine and nothing was lost.")
     since = f", holding it since {who['since']}" if who.get("since") else ""
     what = f"\n  {who['command']}" if who.get("command") else ""
+    # *** "WAIT FOR IT, OR STOP IT" CANNOT WORK WHEN THE HOLDER IS THE ONE ASKING. ***
+    # Reported from the field: the MCP server held the store after `plan`, and every CLI-backed
+    # tool it then ran was locked out by its own parent. Said as what it is: a connection assay
+    # opened and did not close, which is a bug in assay.
+    import os
+    if who["pid"] in (os.getpid(), os.getppid()):
+        whose = "this process" if who["pid"] == os.getpid() else "the process that started it"
+        return (f"the store at {path} is LOCKED by {whose} (PID {who['pid']}){since}.{what}\n"
+                f"That is assay holding a connection it did not close -- a bug in assay, not "
+                f"something to wait out. Restarting the MCP server releases it. Nothing was lost.")
     return (f"the store at {path} is LOCKED by PID {who['pid']}{since}.{what}\n"
             f"DuckDB allows one writer. Wait for it, or stop it. Nothing was lost, and nothing "
             f"was written by this run.")

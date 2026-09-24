@@ -48,6 +48,12 @@ class LiveState:
 
 def read(target: str | Path, store=None, observed=None) -> LiveState:
     project, digests, failures, schema = _load(target)
+    # *** THE COUNTED KEYS, OR MCP AND `check` COMPUTE DIFFERENT GRAINS. ***
+    # Reported from the field: `check` built its entries with what `probe` observed and MCP never
+    # passed it, so `contract` and `check` disagreed about what one row of a model is.
+    if observed is None and store is not None:
+        from . import probe as probe_mod
+        observed = probe_mod.read(store)
     entries = inventory.build(project, digests, schema, store, observed or {})
     return LiveState(project, digests, schema, entries,
                      unparsed=[name for _uid, name, _p, _e in failures])
@@ -206,6 +212,26 @@ def _distinct(fs: list) -> list:
         seen.add(f.id)
         out.append(f)
     return sorted(out, key=lambda f: (-f.weight, f.id))
+
+
+def open_findings(project, digests, schema, entries, store, cfg, config_path=None) -> tuple:
+    """(open findings, waived, {finding id: (action, why)}): what `check` reports, from ONE place.
+
+    *** FOUR SURFACES, FOUR COUNTS. ***
+    Reported from the field: `check` 978, MCP `findings` 931, `history` 468. `history` passed no
+    entries, so every judged finding was absent; MCP `findings` had no store, so the cluster and
+    config findings were absent, and applied no policy, so findings a person had DISMISSED were
+    still listed. The same stream, the same self-audit, the same policy -- or two surfaces answer
+    "what is open" differently and both are believed.
+    """
+    from . import judged
+    fs = all_findings(project, digests, schema, entries, store=store,
+                      threshold=getattr(cfg, "row_loss_threshold", 0.8))
+    if store is not None and config_path is not None:
+        from . import selfaudit
+        fs += selfaudit.config_findings(config_path, store, cfg)
+    kept, waived = judged.apply_policy(fs, cfg, store, project)
+    return ([f for f, _a, _w in kept], waived, {f.id: (a, w) for f, a, w in kept})
 
 
 def findings_for(state: LiveState, model: str | None = None, store=None) -> list:

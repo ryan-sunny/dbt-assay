@@ -37,6 +37,8 @@ class Backend:
         # call the full wait. And the lock message for THIS call, stamped on its result.
         self._lock_seen = 0.0
         self._store_locked = ""
+        # Every store opened during one tool call, closed when the call ends (see `build_app`).
+        self._opened: list = []
         self._state: live.LiveState | None = None
         self._stamp: float = 0.0
         self.baseline: live.Snapshot | None = None
@@ -103,10 +105,21 @@ class Backend:
         if time.monotonic() - self._lock_seen < 30:
             wait = 0.0
         try:
-            return Store(self.store_path, timeout=wait)
+            st = Store(self.store_path, timeout=wait)
+            self._opened.append(st)
+            return st
         except StoreLocked:
             self._lock_seen = time.monotonic()
             raise
+
+    def _close_opened(self) -> None:
+        """Close every store this call opened. Closing twice is harmless; holding one is not."""
+        while self._opened:
+            st = self._opened.pop()
+            try:
+                st.close()
+            except Exception:                                    # noqa: BLE001,S110
+                pass
 
     def _note_new_store(self, out: dict) -> dict:
         """Add `new_store` to a tool result when the store has nothing in it yet.
@@ -285,14 +298,20 @@ class Backend:
         model are still true afterwards, and by whether a person's recorded verdict still holds.
         An agent that cannot see those will satisfy the check and break the meaning.
         """
+        from .config import Config
         st = self.state()
-        every = live.findings_for(st, model)
+        store, _why = self._store_or_why()
+        cfg = Config.load(self.config_path)
+        # The SAME open findings `check` reports: its stream, its self-audit, its policy. A
+        # finding a person dismissed is not open, and is counted under `waived` instead.
+        everything, waived, _acts = live.open_findings(
+            st.project, st.digests, st.schema, st.entries, store, cfg, self.config_path)
+        every = [f for f in everything if not model or f.subject_name == model]
         if check:
             every = [f for f in every if f.check == check]
         fs = every[:limit]
         from . import groups as groups_mod
-        member = groups_mod.membership(groups_mod.build(
-            st.project, live.findings_for(st, None) if model else every))
+        member = groups_mod.membership(groups_mod.build(st.project, everything))
         out = {"findings": [{"finding": f.id,
                              "check": f.check, "model": f.subject_name,
                              "file": f.file,
@@ -314,6 +333,9 @@ class Backend:
         for f in every:
             counts[f.check] = counts.get(f.check, 0) + 1
         out["showing"] = f"{len(fs)} of {len(every)}"
+        if waived:
+            out["not_shown_because_ruled_or_waived"] = len(
+                [1 for f, _w in waived if not model or f.subject_name == model])
         out["every_check_in_this_project"] = dict(sorted(counts.items(), key=lambda kv: -kv[1]))
         if len(fs) < len(every):
             out["what_you_are_not_seeing"] = (
@@ -1297,6 +1319,13 @@ def build_app(target: str, store_path: str | None = None):
                                        "raised_at": where,
                                        "note": "a bug in assay, not in your project. The CLI "
                                                "form of this tool may still work."})
+                finally:
+                    # *** THE SERVER LOCKED ITSELF OUT OF ITS OWN STORE. ***
+                    # Reported from the field: `plan`, `suggestions` and `evidence` opened the store
+                    # and never closed it, so every CLI-backed tool after them -- and the person's
+                    # own terminal -- was locked out by the server for as long as it ran. Closed
+                    # here, once, for every tool, so a tool added later cannot leak one.
+                    be._close_opened()
             return app.tool(name=name, description=description or _desc(label))(guarded)
         return register
 
