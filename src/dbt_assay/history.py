@@ -62,10 +62,12 @@ def harvest(store, project) -> int:
         rows.append((m.checksum, m.name, m.compiled))
     if not rows:
         return 0
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)                  # the clock `runs` is on, not the session's
     before = store.con.execute("select count(*) from compiled_sql").fetchone()[0]
     store.con.executemany(
         "insert or ignore into compiled_sql (checksum, model, sql, first_seen) "
-        "values (?, ?, ?, current_timestamp)", rows)
+        "values (?, ?, ?, ?)", [(*r, now) for r in rows])
     return store.con.execute("select count(*) from compiled_sql").fetchone()[0] - before
 
 

@@ -154,7 +154,7 @@ def coverage(project, build: Build) -> dict:
 
 # --------------------------------------------------------------------------------- the loop
 
-def confirmed_and_fixed(store, findings, unchecked=()) -> dict:
+def confirmed_and_fixed(store, findings, unchecked=(), project=None) -> dict:
     """Of the findings a PERSON agreed with, how many are gone.
 
     *** EVERY OTHER NUMBER HERE MEASURES THE TOOL. THIS ONE MEASURES THE LOOP. ***
@@ -168,9 +168,15 @@ def confirmed_and_fixed(store, findings, unchecked=()) -> dict:
     real. It needs the finding, which is why `assay review --load` writes an `agree` against each
     finding id the card showed.
 
-    Gone is gone for ANY reason -- fixed, refactored away, or the model deleted. This does not
-    claim the edit caused it; it claims the thing somebody said was real is no longer reported,
-    which is what they wanted. `still_open` is the other half and it is the backlog: read, agreed
+    Gone counts when the CODE moved -- fixed, refactored away, or the model deleted. It does not
+    claim the edit caused it; it claims the thing somebody said was real is no longer reported.
+
+    *** BUT NOT WHEN ONLY ASSAY MOVED. *** Reported from the field: 0.51.1 fixed a grain
+    derivation, a finding a person had agreed with stopped firing on a model whose file had not
+    changed, and it was counted as fixed -- on the screen that says a release cannot move this
+    number. A finding that goes while its model's file is unchanged is `retired`: reported beside
+    the loop, never in it. `project` gives today's checksums; without it nothing can be told apart
+    and every gone finding counts, as before. `still_open` is the other half and it is the backlog: read, agreed
     with, and not yet dealt with.
     """
     agreed = store.ruled_findings("agree") if store is not None else {}
@@ -199,5 +205,52 @@ def confirmed_and_fixed(store, findings, unchecked=()) -> dict:
     for fid, (who, when, note) in sorted(agreed.items()):
         rows.append({"finding": fid, "by": who, "at": str(when)[:10] if when else "",
                      "note": note, "gone": fid not in here})
-    gone = sum(1 for r in rows if r["gone"])
-    return {"agreed": len(rows), "fixed": gone, "still_open": len(rows) - gone, "rows": rows}
+    retired = []
+    if project is not None and store is not None:
+        for r in rows:
+            if r["gone"] and _code_unchanged(store, project, r["finding"]):
+                r["gone"], r["retired"] = False, True
+                retired.append(r)
+    rows_in = [r for r in rows if not r.get("retired")]
+    gone = sum(1 for r in rows_in if r["gone"])
+    return {"agreed": len(rows_in), "fixed": gone, "still_open": len(rows_in) - gone,
+            "rows": rows_in, "retired": retired}
+
+
+def _code_unchanged(store, project, fid: str) -> bool:
+    """True when the model a finding was last seen on has the same file now as then.
+
+    The checksum is on the finding's own row from 0.51.2; before that, today's checksum having been
+    kept in `compiled_sql` no later than that run says the same thing. Anything that cannot be
+    told -- no model, no checksum, no record -- is NOT unchanged: it counts as gone, as it did.
+    """
+    try:
+        row = store.con.execute("""
+            select f.subject, f.file_checksum, r.started_at
+            from findings f join runs r on r.run_id = f.run_id
+            where f.finding_id = ? and r.scope is null
+            order by r.started_at desc limit 1""", [fid]).fetchone()
+    except Exception:                                            # noqa: BLE001
+        return False
+    if not row:
+        return False
+    uid, then, seen_at = row
+    m = project.models.get(uid)
+    now = getattr(m, "checksum", "") if m is not None else ""
+    if not now:
+        return False
+    if then:
+        return then == now
+    # Kept by the run that last saw the finding (a moment after it started) or earlier: bounded by
+    # the NEXT full run, since the run that saw it is also the one that harvested it.
+    try:
+        kept = store.con.execute("select first_seen from compiled_sql where checksum = ?",
+                                 [now]).fetchone()
+        nxt = store.con.execute(
+            "select min(started_at) from runs where scope is null and started_at > ?",
+            [seen_at]).fetchone()
+    except Exception:                                            # noqa: BLE001
+        return False
+    if not kept or kept[0] is None:
+        return False
+    return nxt is None or nxt[0] is None or kept[0] < nxt[0]

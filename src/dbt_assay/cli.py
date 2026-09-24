@@ -744,7 +744,8 @@ def check(
                     unchecked=unchecked)
         # Every compiled body, under dbt's checksum, so a later replay of this version is exact.
         history_mod.harvest(s, project)
-        s.write_findings(run_id, findings)
+        s.write_findings(run_id, findings,
+                         {u: m.checksum for u, m in project.models.items() if m.checksum})
         s.write_edge_facts(run_id, facts)
         s.write_unreadable(run_id, [(uid, m.name, m.path, "no compiled SQL")
                                     for uid, m in project.models.items() if not m.readable]
@@ -771,14 +772,22 @@ def check(
         # unrelated findings moving while the four you read sat there looks identical from here,
         # and is what it looks like when reviewing changes nothing.
         from .outcomes import confirmed_and_fixed
-        loop = (confirmed_and_fixed(s, findings, s.unchecked(run_id)) if not run_scope
-                else {"agreed": 0, "fixed": 0, "still_open": 0})
+        loop = (confirmed_and_fixed(s, findings, s.unchecked(run_id), project) if not run_scope
+                else {"agreed": 0, "fixed": 0, "still_open": 0, "retired": []})
         if loop["agreed"]:
             console.print(
                 f"\n[bold]of the {loop['agreed']} finding(s) a person agreed with, "
                 f"{loop['fixed']} are gone[/] and {loop['still_open']} are still here.")
             console.print("[dim]The only number on this screen that measures the LOOP rather "
                           "than the tool: a release cannot move it and neither can an agent.[/]")
+            if loop.get("retired"):
+                # Said beside the loop, never inside it: the code did not change, assay did.
+                ids = ", ".join(r["finding"] for r in loop["retired"][:4])
+                console.print(f"[yellow]{len(loop['retired'])} more finding(s) no longer fire, and their "
+                              f"model's file has not changed[/] [dim]-- assay changed, not the "
+                              f"code, so they are not counted as fixed ({ids}). If assay was "
+                              f"wrong about them, rule them `disagree`; if it is wrong now, that "
+                              f"is a regression in assay.[/]")
         s.close()
         if not run_scope:
             _review_coverage(findings, store_path)

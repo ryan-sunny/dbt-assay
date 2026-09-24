@@ -101,3 +101,29 @@ def test_it_reads_the_real_shape_dbt_writes(tmp_path):
     assert b.n == 2 and b.dbt_version == "1.11.12"
     assert b.outcomes["test.p.a"].failures == 500
     assert b.outcomes["test.p.a"].status == "fail"
+
+
+def test_a_finding_that_goes_while_its_model_is_unchanged_is_retired_not_fixed(tmp_path):
+    """*** A RELEASE MOVED THE LOOP NUMBER. *** Reported from the field: 0.51.1 fixed a grain
+    derivation, an agreed finding stopped firing on an unchanged model, and it counted as fixed."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from dbt_assay.outcomes import confirmed_and_fixed
+    from dbt_assay.store import Store
+    s = Store(str(tmp_path / "s.duckdb"))
+    try:
+        s.con.execute("insert into runs (run_id, started_at, project) values ('r1', ?, 'p')",
+                      [datetime(2026, 9, 1, tzinfo=timezone.utc)])
+        for fid, uid in (("same1", "model.p.same"), ("moved1", "model.p.moved")):
+            s.con.execute("insert into findings (run_id, check_name, subject, summary, finding_id,"
+                          " file_checksum) values ('r1', 'c', ?, ?, ?, 'v1')", [uid, fid, fid])
+            s.adjudicate(f"{uid}::finding::{fid}", "c", "c", "", "agree", "", "real", "ryan",
+                         source="human")
+        project = SimpleNamespace(models={"model.p.same": SimpleNamespace(checksum="v1"),
+                                          "model.p.moved": SimpleNamespace(checksum="v2")})
+        got = confirmed_and_fixed(s, [], (), project)
+        assert got["fixed"] == 1 and [r["finding"] for r in got["retired"]] == ["same1"]
+        assert got["agreed"] == 1, "a retired finding is beside the loop, not in it"
+    finally:
+        s.close()
