@@ -3736,3 +3736,23 @@ found that the report did not say.
 exists (two from the SQL cut above). The cluster families on 15 clusters, 6 odd ones out and 49
 claim pairs are in VERIFICATION.md; `the_odd_one_out` needed a second version, because the first
 state did not carry the comment that explained a 540-day window.
+
+## After 0.51.0: the server locked itself out, and four surfaces counted four ways
+
+- **The MCP server held the store's write lock after `plan`, `suggestions` or `evidence`.** Every
+  CLI-backed tool after them, and the person's terminal, was locked out by the server, and the
+  message said to wait for it. The 25.20 fix was checked with `contract`, which never needs the
+  store, so it could not have caught this. Every tool now closes what its call opened, in the one
+  guard they all run through, and a lock held by assay itself is called a bug in assay.
+- **`check` 978, MCP 931, `history` 468.** Each difference was one omitted input: `history` built
+  no entries, MCP had no store and applied no policy, and `live.read` never loaded the counted
+  keys. `live.open_findings` is the one definition now; on a copy of the field store all three say
+  978. Measured from the project directory: the project's own question banks load from there.
+- **The grain was wrong in four ways, not one.** `_dlt_id` (unique by construction), one union
+  arm's key, the first of several drivers, and a GROUP BY or DISTINCT ON reached through CTEs that
+  was never read. Along the way: parse.py read sqlglot's `from`/`with` where sqlglot 30 writes
+  `from_`/`with_`, and a first version of the CTE walk returned a bare list on one path, which
+  would have failed to parse every model whose final FROM is a subquery -- 358 of 358 parse. 43
+  grains moved: 24 corrected, 19 unresolved where they were a guess.
+- **A run without `--verify` called the monitoring findings resolved.** Runs now record what they
+  did not evaluate, and a diff compares only what both looked at.
