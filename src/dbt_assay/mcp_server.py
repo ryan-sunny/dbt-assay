@@ -292,6 +292,29 @@ class Backend:
             if store is not None:
                 store.close()
 
+    def _proof_state(self):
+        st = self.state()
+        return st.project, st.digests, st.schema, st.entries
+
+    def proof_goal(self, model: str, prop: str = "") -> dict:
+        from . import proofwork
+        store = self._open_store()
+        try:
+            return proofwork.goal(*self._proof_state(), store, model, prop)
+        finally:
+            if store is not None:
+                store.close()
+
+    def check_proof(self, model: str, prop: str, proof: str, helpers: str = "") -> dict:
+        from . import proofwork
+        store, why = self._store_or_why()
+        try:
+            return proofwork.check(*self._proof_state(), store, model, prop, proof, helpers,
+                                   by="agent")
+        finally:
+            if store is not None:
+                store.close()
+
     def lineage(self, model: str, column: str) -> dict:
         from . import provenance
         st = self.state()
@@ -1188,6 +1211,15 @@ TOOLS = [
                 "incremental run equals a full refresh), its premises with their status now, and "
                 "the guarantee: holding, conditional (a premise unchecked), lost (a premise "
                 "broke), stale (the file changed). `assay prove` writes them.")),
+    ("proof_goal", ("A goal YOU can prove for one property of a model, as Lean: the theorem's "
+                    "header, its premises as named hypotheses with their status, and every lemma "
+                    "assay's library proves. Omit `prop` to list a model's properties, including "
+                    "those assay's own templates could not prove.")),
+    ("check_proof", ("Check YOUR proof of a goal from proof_goal with Lean. Send the proof body "
+                     "only (a term, or `by` and tactics) and any helper lemmas; it is placed under "
+                     "the goal's own header. Returns `proven`, or Lean's error and remaining goal. "
+                     "sorry, axioms and set_option are refused; a proven one is kept as written "
+                     "by an agent, and counts like assay's own: the kernel checked it.")),
     ("lineage", "Follow a column back through the DAG to the hop that produced its value."),
     ("blast_radius", ("Who consumes this model, how many marts are downstream, and which of the "
                       "project's exposures -- dashboards, apps, reports -- it reaches.")),
@@ -1415,6 +1447,14 @@ def build_app(target: str, store_path: str | None = None, handbacks: str | None 
     @tool()
     def proofs(model: str = "") -> str:
         return _out(be.proofs(model))
+
+    @tool()
+    def proof_goal(model: str, prop: str = "") -> str:
+        return _out(be.proof_goal(model, prop))
+
+    @tool()
+    def check_proof(model: str, prop: str, proof: str, helpers: str = "") -> str:
+        return _out(be.check_proof(model, prop, proof, helpers))
 
     @tool()
     def lineage(model: str, column: str) -> str:

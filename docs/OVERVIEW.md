@@ -1239,10 +1239,10 @@ a column is, what the grain is, and what would break before it writes a line. Th
 it the **obligation** — without it an agent checks when it remembers, and with it, checking is the
 procedure.
 
-Twenty-six tools, and beside them every command as a tool of its own: `assay_<command>` takes the
+Twenty-eight tools, and beside them every command as a tool of its own: `assay_<command>` takes the
 command's flags as one string and runs the real command, so an agent with no shell can run all of
 assay. A run longer than its wait comes back as a job, which `job_status`, `job_stop` and `jobs`
-follow. Of the twenty-six, most report; nine do something else:
+follow. Of the twenty-eight, most report; nine do something else:
 
 | tool | what it is for |
 |---|---|
@@ -1339,6 +1339,18 @@ through your connection with `--parse-on warehouse`. MCP `proofs(model)` and the
 Guarantees tab and model pane read the same rows. On a 358-model warehouse: 585 properties, 404
 proven, 137 refuted by Lean with the missing premise named, 44 with no rule that applies, in 16
 seconds.
+
+### An agent writes the proof, Lean checks it
+
+assay never calls a model to write proofs. `proof_goal(model, property)` (or `assay proof-goal`)
+hands the agent running it the goal as Lean -- the theorem's header, the premises as named
+hypotheses with their status, and every lemma the library proves -- and `check_proof` (or
+`assay check-proof --proof file.lean`) checks what comes back. The agent sends only the proof;
+assay places it under the goal's own header, so a weaker statement cannot pass. `sorry`,
+`axiom`, `set_option` and `native_decide` are refused, and `#print axioms` may list only Lean's
+three. A proof that holds is kept as written by an agent and counts like assay's own, because who
+wrote it does not matter: the kernel checked it. One that does not returns Lean's own error and
+remaining goal.
 
 ## What it will not do
 

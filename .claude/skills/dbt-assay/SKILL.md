@@ -79,6 +79,8 @@ again once it finishes. Never conclude the tools are broken from a lock.
    whose guarantee is `holding` is a fact for every input its premises allow: rely on it. One
    that is `lost` names the premise that broke; `not_proven` names what is missing -- usually a
    key the join does not cover. An edit that removes a proven property is a regression.
+   To prove one assay could not, take `proof_goal(model, prop)`, write the proof body, and send
+   it to `check_proof`: Lean's error comes back until it holds. Never `sorry`, never an axiom.
    `premises(model)` — **what assay's reading of this model rests on.** A declared grain rests on
    its key's test; a hop assay did not flag rests on the parent's key being unique. Each premise
    carries its evidence (the test's last result, a count, a judgment) and a status: `broken`
@@ -335,6 +337,8 @@ and nothing is lost:
 | `lineage(model, column)` | `assay trace <model>.<column>` |
 | `premises(model, status)` | `assay premises --model <model> --json` (`--status broken`) |
 | `proofs(model)` | `assay prove --json`, then read `rows` for the model |
+| `proof_goal(model, prop)` | `assay proof-goal <model> <prop>` |
+| `check_proof(model, prop, proof, helpers)` | `assay check-proof <model> <prop> --proof <file>` |
 | `findings(model)` | `assay check --json` — one object with a `findings` list |
 | `changed_contracts()` | `assay diff --baseline <main target>` |
 | `violations()` | `assay check --json`, then read `action` |
@@ -511,6 +515,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay calibrate` | `assay_calibrate` | Measure the grain judgment against the keys this project already declares. | `--target/-t` `--limit/-n` `--store` `--config` |
 | `assay calibration` | `assay_calibration` | When this thing is confident, is it right more often than when it is not? | `--store` `--source` |
 | `assay check` | `assay_check` | Run the structural checks. | `--target/-t` `--json` `--store` `--limit/-n` `--check` `--config` `--dialect` `--verify` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--select/-s` `--new-only` |
+| `assay check-proof <model> <prop>` | `assay_check_proof` | Check a proof of a goal from `proof-goal` with Lean, and keep it when it holds. | `--proof` `--helpers` `--by` `--target/-t` `--store` `--dialect` |
 | `assay claims` | `assay_claims` | What this project ASSERTS about its models, as data you can read, edit and rule on. | `--target/-t` `--store` `--config` `--extract` `--select/-s` `--limit/-n` `--min-confidence` `--write` `--model/-m` |
 | `assay clusters` | `assay_clusters` | Areas rather than findings: one filter written in several models, the one that differs, and one claim made about several models. | `--target/-t` `--store` `--config` `--judge` `--dry-run` `--limit/-n` `--json` `--dialect` |
 | `assay columns` | `assay_columns` | Judge each column's role and what a NULL in it would mean. | `--target/-t` `--print-state` `--limit/-n` `--store` `--config` `--with-null` `--dialect` `--control` |
@@ -538,6 +543,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay practices` | `assay_practices` | Standard dbt practice: deferred to where it exists, adjudicated where it is noisy. | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--evaluator-schema` `--dialect` `--verify` `--keys-only` `--model/-m` `--store` `--config` |
 | `assay premises` | `assay_premises` | What the findings rest on: every key a declared grain or a held-back finding assumes is unique, with its evidence, its status, and what rests on it. | `--model/-m` `--status` `--target/-t` `--store` `--dialect` `--json` |
 | `assay probe` | `assay_probe` | Count what the SQL cannot settle. | `--target/-t` `--project-dir` `--profiles-dir` `--dialect` `--dbt/--dbt-bin` `--dry-run` `--emit` `--load` `--limit/-n` `--store` `--config` `--sample` `--lateness` `--json` |
+| `assay proof-goal <model> <prop>` | `assay_proof_goal` | The goal an agent can prove for one property of a model, as Lean, with its premises as named hypotheses and every lemma assay's library proves. | `--target/-t` `--store` `--dialect` |
 | `assay prove` | `assay_prove` | Prove what each model cannot do, with Lean: certificates whose premises are the ledger's. | `--target/-t` `--store` `--dialect` `--select/-s` `--setup` `--offline` `--force` `--parse-on` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--json` |
 | `assay prune` | `assay_prune` | Drop old runs from the tables a parser can regenerate. | `--keep/-k` `--store` `--dry-run` |
 | `assay read` | `assay_read` | Read every unruled review card once, by the judged tier, into a file a person checks. | `--out/-o` `--target/-t` `--store` `--config` `--select/-s` `--check` `--limit/-n` `--dry-run` `--dialect` |

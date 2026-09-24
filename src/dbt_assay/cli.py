@@ -5610,6 +5610,65 @@ def prove(
                   f"[dim]Files in {rep['written_to']}. Proven from the parsed structure.[/]")
 
 
+def _proof_state(target, store_path, dialect):
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
+    store = Store(store_path)
+    facts, _ = relate.run_all(project, digests, schema)
+    entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store), facts=facts)
+    return project, digests, schema, entries, store
+
+
+@app.command("proof-goal")
+def proof_goal(
+    model: str = typer.Argument(..., help="the model"),
+    prop: str = typer.Argument("", help="the property, e.g. grain or no_fanout:stg_x; omit to "
+                                        "list them"),
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    dialect: str = typer.Option(None, "--dialect"),
+):
+    """The goal an agent can prove for one property of a model, as Lean, with its premises as
+    named hypotheses and every lemma assay's library proves. JSON. `check-proof` checks it."""
+    from . import proofwork
+    project, digests, schema, entries, store = _proof_state(target, store_path, dialect)
+    try:
+        got = proofwork.goal(project, digests, schema, entries, store, model, prop)
+    finally:
+        store.close()
+    print(_json.dumps(got, indent=2, default=str))
+    raise typer.Exit(1 if got.get("error") else 0)
+
+
+@app.command("check-proof")
+def check_proof(
+    model: str = typer.Argument(...),
+    prop: str = typer.Argument(..., help="the property the goal is for"),
+    proof_file: str = typer.Option(..., "--proof", help="a file holding the proof body only: a "
+                                                        "term, or `by` and tactics"),
+    helpers_file: str = typer.Option(None, "--helpers", help="a file of helper lemmas"),
+    by: str = typer.Option("agent", "--by", help="who wrote it, recorded beside the proof"),
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    dialect: str = typer.Option(None, "--dialect"),
+):
+    """Check a proof of a goal from `proof-goal` with Lean, and keep it when it holds.
+
+    The statement is assay's: the proof is placed under the goal's own header. sorry, axioms and
+    set_option are refused, and the theorem may rest only on Lean's standard axioms."""
+    from . import proofwork
+    proof = Path(proof_file).read_text()
+    helpers = Path(helpers_file).read_text() if helpers_file else ""
+    project, digests, schema, entries, store = _proof_state(target, store_path, dialect)
+    try:
+        got = proofwork.check(project, digests, schema, entries, store, model, prop, proof,
+                              helpers, by=by)
+    finally:
+        store.close()
+    print(_json.dumps(got, indent=2, default=str))
+    raise typer.Exit(0 if got.get("status") == "proven" else 1)
+
+
 @app.command()
 def premises(
     model: str = typer.Option("", "--model", "-m", help="only what this model rests on"),

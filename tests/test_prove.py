@@ -162,3 +162,36 @@ def test_the_parse_premise_reads_only_the_current_file(tmp_path):
     p.models["model.p.covered"].checksum = "changed"
     led = ledger.build(p, sch, [], s, tests={}, observed={})
     assert "earlier version" in ledger.parse_faithful(led, "model.p.covered", s).evidence[0].detail
+
+
+@needs_lean
+def test_an_agent_proof_is_checked_and_kept_and_a_wrong_one_gets_leans_error(tmp_path):
+    from dbt_assay import proofwork
+    target = build(tmp_path)
+    p, d, sch = _load(target)
+    s = Store(str(tmp_path / "s.duckdb"))
+    entries = inventory.build(p, d, sch, store=s)
+    g = proofwork.goal(p, d, sch, entries, s, "covered", "no_fanout:stg_parent")
+    assert g["goal"].endswith("sorry") and g["premises"][0]["hypothesis"].startswith("p_")
+    assert any(x["name"] == "inner_join_no_fanout" for x in g["lemmas"])
+    hyp = g["premises"][0]["hypothesis"]
+    ok = proofwork.check(p, d, sch, entries, s, "covered", "no_fanout:stg_parent",
+                         f"inner_join_no_fanout (us := [\"id\"]) (by decide) {hyp}")
+    assert ok["status"] == "proven", ok
+    rows = [r for r in prove.stored(s) if r["model_name"] == "covered"]
+    assert rows[0]["written_by"] == "agent"
+    wrong = proofwork.check(p, d, sch, entries, s, "covered", "no_fanout:stg_parent", "rfl")
+    assert wrong["status"] == "not_proven" and "error" in wrong["lean"]
+
+
+def test_a_proof_with_sorry_or_an_axiom_is_refused_before_lean(tmp_path):
+    from dbt_assay import proofwork
+    target = build(tmp_path)
+    p, d, sch = _load(target)
+    entries = inventory.build(p, d, sch, store=None)
+    for bad in ("by sorry", "by native_decide", "by\n  set_option maxHeartbeats 0 in exact x"):
+        got = proofwork.check(p, d, sch, entries, None, "covered", "no_fanout:stg_parent", bad)
+        assert got["status"] == "refused", (bad, got)
+    got = proofwork.check(p, d, sch, entries, None, "covered", "no_fanout:stg_parent", "x",
+                          helpers="axiom cheat : False")
+    assert got["status"] == "refused"

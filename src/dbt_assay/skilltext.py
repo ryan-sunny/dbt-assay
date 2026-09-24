@@ -87,6 +87,8 @@ again once it finishes. Never conclude the tools are broken from a lock.
    whose guarantee is `holding` is a fact for every input its premises allow: rely on it. One
    that is `lost` names the premise that broke; `not_proven` names what is missing -- usually a
    key the join does not cover. An edit that removes a proven property is a regression.
+   To prove one assay could not, take `proof_goal(model, prop)`, write the proof body, and send
+   it to `check_proof`: Lean's error comes back until it holds. Never `sorry`, never an axiom.
    `premises(model)` — **what assay's reading of this model rests on.** A declared grain rests on
    its key's test; a hop assay did not flag rests on the parent's key being unique. Each premise
    carries its evidence (the test's last result, a count, a judgment) and a status: `broken`
@@ -343,6 +345,8 @@ and nothing is lost:
 | `lineage(model, column)` | `assay trace <model>.<column>` |
 | `premises(model, status)` | `assay premises --model <model> --json` (`--status broken`) |
 | `proofs(model)` | `assay prove --json`, then read `rows` for the model |
+| `proof_goal(model, prop)` | `assay proof-goal <model> <prop>` |
+| `check_proof(model, prop, proof, helpers)` | `assay check-proof <model> <prop> --proof <file>` |
 | `findings(model)` | `assay check --json` — one object with a `findings` list |
 | `changed_contracts()` | `assay diff --baseline <main target>` |
 | `violations()` | `assay check --json`, then read `action` |
