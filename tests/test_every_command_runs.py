@@ -210,3 +210,23 @@ def test_check_verify_runs_the_monitoring_checks(project_dir, tmp_path, monkeypa
             f"`assay check --verify` cannot run: {type(res.exception).__name__}: "
             f"{res.exception}")
     assert res.exit_code in (0, 1), res.output
+
+
+def test_version_is_an_option_as_well_as_a_command():
+    """Both spellings are natural and one of them errored (25.8)."""
+    from typer.testing import CliRunner
+
+    from dbt_assay import __version__
+    from dbt_assay.cli import app
+    for args in (["--version"], ["version"]):
+        r = CliRunner().invoke(app, args)
+        assert r.exit_code == 0 and __version__ in r.output, (args, r.output)
+
+
+def test_disagreements_accepts_the_target_flag_every_neighbour_takes(tmp_path):
+    from typer.testing import CliRunner
+
+    from dbt_assay.cli import app
+    r = CliRunner().invoke(app, ["disagreements", "-t", "target", "--store",
+                                 str(tmp_path / "s.duckdb"), "--json"])
+    assert "No such option" not in r.output, r.output

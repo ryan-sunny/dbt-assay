@@ -748,7 +748,8 @@ def _command_reference() -> str:
                 # flags leaves you guessing at.
                 args.append(f"<{p.name}>")
                 continue
-            if "--help" in got:
+            # A hidden option is accepted and not taught: it exists so a habit does not error.
+            if "--help" in got or getattr(p, "hidden", False):
                 continue
             opts.append("/".join(sorted(got, key=lambda o: (not o.startswith("--"), o))))
         rows.append((name, " ".join(args), first, opts))

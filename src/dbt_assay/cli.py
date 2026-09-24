@@ -67,8 +67,18 @@ def _default_ticker():
     return tick
 
 
+def _print_version(value: bool) -> None:
+    if value:
+        console.print(f"assay {__version__}")
+        raise typer.Exit(0)
+
+
 @app.callback()
-def _main() -> None:
+def _main(
+    version: bool = typer.Option(False, "--version", is_eager=True, callback=_print_version,
+                                 help="print the version; `assay version` does the same"),
+) -> None:
+    # *** BOTH SPELLINGS ARE NATURAL AND ONE OF THEM ERRORED. *** (25.8)
     from . import jev as _jev
     _jev.ON_DECIDE = _default_ticker()
 
@@ -1974,6 +1984,10 @@ def effectiveness(
 @app.command()
 def disagreements(
     store_path: str = typer.Option("assay.duckdb", "--store"),
+    # *** THE MUSCLE MEMORY FROM `check` FAILED ON THE NEXT COMMAND TYPED. *** (25.8) This reads
+    # only the store; the flag is accepted so `-t` does not error, and changes nothing.
+    _target: str = typer.Option(None, "--target", "-t", hidden=True,
+                                help="accepted and unused: disagreements are read from the store"),
     config_path: str = typer.Option(".", "--config"),
     source: str = typer.Option("all", "--source", help="human | agent | all"),
     judge: bool = typer.Option(False, "--judge",

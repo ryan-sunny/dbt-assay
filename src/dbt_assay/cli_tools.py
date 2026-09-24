@@ -55,7 +55,8 @@ def commands() -> list[dict]:
             if not got:
                 args.append(f"<{p.name}>")
                 continue
-            if "--help" in got:
+            # A hidden option is accepted and not taught: it exists so a habit does not error.
+            if "--help" in got or getattr(p, "hidden", False):
                 continue
             flags.append("/".join(sorted(got, key=lambda o: (not o.startswith("--"), o))))
             flags += [o for o in getattr(p, "secondary_opts", []) if o.startswith("--")]
