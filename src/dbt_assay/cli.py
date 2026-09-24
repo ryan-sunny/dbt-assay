@@ -4819,7 +4819,9 @@ def review(
     config_path: str = typer.Option(".", "--config", help="where audit.yml lives, for --emit"),
     emit: str = typer.Option(None, "--emit",
                              help="write a form to this .html and record nothing. Needs --target"),
-    load: str = typer.Option(None, "--load", help="a handback.json the form handed back"),
+    load: str = typer.Option(None, "--load",
+                             help="a handback.json the form handed back, or `latest` for the "
+                                  "newest handback*.json in ~/Downloads"),
     report: str = typer.Option(None, "--report",
                                help="path to the report page, relative to the form, so the two "
                                     "link to each other. `assay page --form` is the other half."),
@@ -4855,6 +4857,16 @@ def review(
         store.close()
         raise typer.Exit(0)
     if load:
+        if load == "latest":
+            from . import reviewform as _rf
+            found = _rf.newest_handback()
+            if found is None:
+                console.print("[red]no handback*.json in ~/Downloads.[/] [dim]Pass the path the "
+                              "browser saved it to.[/]")
+                store.close()
+                raise typer.Exit(1)
+            console.print(f"[dim]loading the newest handback: {found}[/]")
+            load = str(found)
         _load_verdicts(store, load, who)
         _load_config(load, config_path, apply_config)
         store.close()

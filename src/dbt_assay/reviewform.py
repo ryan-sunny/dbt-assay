@@ -797,6 +797,92 @@ monospace;background:#f4f1e9;border-left:2px solid var(--rule);padding:5px 12px;
 .warn{color:var(--rust)}
 .measured{color:var(--ash)}
 .hint{text-decoration:underline dotted var(--faint);text-underline-offset:3px;cursor:help}
+/* ==== the feedback round (assay-feedback.md G3, G4, G5, R1, R3, R5, R6, W1) ============= */
+/* G3. Small text in the text face, upright, at a size that reads. */
+h1 span,.ident .count,.lbl,.tasklab,.wrow label,.bar,.tabs button b,summary{
+font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-style:normal}
+h1 span{font-size:14px}
+h1{flex-wrap:nowrap}
+h1 > span:not(.hname):not(.ident){flex:1 1 auto;min-width:0}
+.wedit input[type=text],.wedit input:not([type]){width:100%}
+.ident .count{font-size:14px}
+.tabs button b{font-size:12.5px}
+/* G5. Inputs look like inputs. */
+input[type=text],textarea,.wrow textarea,.wrow input{background:#f1ede4;border:1px solid var(--rule);
+padding:7px 10px;font:inherit;font-size:14px;box-sizing:border-box}
+input[type=text]:focus,textarea:focus{border-color:var(--ink);background:#fbf9f4;outline:none}
+::placeholder{color:var(--faint);font-style:italic;opacity:1}
+.ident #by{border:1px solid var(--rule);background:#f1ede4;padding:5px 9px}
+/* R6. Nothing runs past the right edge. */
+.wrow,.wrow .measured,.q,.card{overflow-wrap:anywhere;min-width:0}
+/* The navigator panes fill the window; every other pane scrolls. */
+main.fill{overflow:hidden;display:flex;flex-direction:column;padding-bottom:12px}
+main.fill > .pane:not([hidden]){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.fnav{flex:1 1 auto;min-height:0;display:grid;
+grid-template-columns:minmax(180px,250px) minmax(260px,1fr) minmax(0,2.1fr);gap:0}
+.fgroups,.frowlist,.fdetail{overflow-y:auto;min-height:0}
+.fgroups{border-right:1px solid var(--rule);padding-right:10px}
+.frows{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--rule);
+padding:0 12px}
+.fdetail{padding:0 4px 20px 22px}
+.fbar{display:flex;gap:10px;align-items:center;margin-bottom:8px}
+.fbar input{flex:1;min-width:0}
+.fg{appearance:none;border:0;background:none;display:grid;grid-template-columns:minmax(0,1fr) auto;
+gap:1px 8px;width:100%;text-align:left;padding:6px 6px 6px 8px;font:inherit;font-size:14px;
+color:var(--ink);cursor:pointer;border-bottom:1px solid var(--rule2)}
+.fg:hover{background:#f2efe7}
+.fg.on{background:#efe9dc;box-shadow:inset 3px 0 0 var(--ink)}
+.fgname{overflow-wrap:break-word;min-width:0}
+.fgn{color:var(--ash);font-size:13px;font-variant-numeric:tabular-nums}
+.fgsub{grid-column:1 / -1;font-size:12.5px;color:var(--ash)}
+.frow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 10px;padding:7px 6px;
+border-bottom:1px solid var(--rule2);cursor:pointer;align-items:baseline}
+.frow:hover{background:#f2efe7}
+.frow.on{background:#efe9dc;box-shadow:inset 3px 0 0 var(--ink)}
+.frow.done .fmain{color:var(--ash)}
+.fmain{font-size:12.5px;overflow-wrap:break-word;min-width:0}
+.fmeta{font-size:13px;color:var(--ash);white-space:nowrap}
+.fstate{font-size:13px;color:var(--ink);white-space:nowrap}
+/* G4. One card shape: kind, name, where, what was found, the reading, the verdict. */
+.pkind{font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin:0 0 2px}
+.ctitle{margin:0 0 4px;font-size:19px;font-weight:400;overflow-wrap:anywhere}
+.cwhere{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--ash);margin:0 0 10px}
+.clead{font-size:15.5px;margin:4px 0 8px;line-height:1.5}
+.fdetail .card{border-left:0;padding:0;margin:0}
+/* R3. Four verdicts, each with what it means; the rest appears once one is picked. */
+.verdicts{display:flex;flex-direction:column;gap:2px;margin:4px 0 8px}
+.vopt{display:grid;grid-template-columns:auto 110px minmax(0,1fr);gap:0 10px;align-items:baseline;
+padding:6px 8px;cursor:pointer;border:1px solid transparent}
+.vopt:hover{border-color:var(--rule)}
+.vopt:has(input:checked){border-color:var(--ink);background:#f6f2ea}
+.vname{font-size:15px;color:var(--ink)}
+.vmean{font-size:13.5px;color:var(--ash)}
+.vopt input{accent-color:var(--ink)}
+.vmore{margin:6px 0 0}
+.vrow{margin:0 0 10px}
+.vlab{display:block;font-size:12.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ash);
+margin:0 0 4px}
+.vmore textarea{width:100%;min-height:64px;resize:vertical}
+.vmore .until{width:180px}
+/* W1. Where the file went, and the one thing to do next. */
+.saved{border-top:1px solid var(--ink);border-bottom:1px solid var(--ink);background:#f6f2ea;
+padding:10px 34px;font-size:14px}
+.saved code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
+background:#fbf9f4;padding:1px 5px}
+.saved button{margin-left:14px}
+.wedit textarea{width:100%;min-height:56px}
+.wedit label{display:block;font-size:12.5px;letter-spacing:.05em;text-transform:uppercase;
+color:var(--ash);margin:12px 0 4px}
+@media (max-width:820px){
+  main.fill{overflow:auto;display:block}
+  .fnav{display:block}
+  .fgroups{max-height:240px;border-right:0}
+  .frows{border-right:0;padding:0;max-height:50vh}
+  .frowlist{max-height:40vh}
+  .fdetail{padding:12px 0;border-top:1px solid var(--rule)}
+  .vopt{grid-template-columns:auto minmax(0,1fr)}
+  .vmean{grid-column:2}
+}
 code.tick{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
 background:#f4f1e9;padding:0 3px;font-style:normal}
 .tipbox{position:fixed;z-index:70;max-width:380px;background:var(--ink);color:var(--paper);
@@ -900,59 +986,60 @@ function numbered(sql) {
 
 /* Whole numbers grouped, the same rule the rest of the tool follows. */
 const num = n => (n == null ? '' : Number(n).toLocaleString('en-US'));
+/* A long name breaks at its own separators, never mid-word. */
+function wb(s) {
+  const f = document.createDocumentFragment();
+  String(s == null ? '' : s).split(/(?<=[_./,|])/).forEach((p, i) => {
+    if (i) f.append(document.createElement('wbr'));
+    f.append(document.createTextNode(p));
+  });
+  return f;
+}
 
+const VERDICTS = [
+  ['agree', 'agree', 'The finding is right and should be fixed.'],
+  ['disagree', 'disagree', 'The finding is wrong. Say why: it is the most useful thing here.'],
+  ['accept', 'accept', 'The finding is right, and it stays as it is on purpose. Needs a reason; '
+    + 'it can also be written as a waiver.'],
+  ['unclear', 'can’t tell', 'What is here is not enough to decide.'],
+];
+const REASON_LABEL = {agree: 'anything to add (optional)', disagree: 'why it is wrong',
+                      accept: 'why it stays', unclear: 'what is missing (optional)'};
+
+/* *** ONE CARD SHAPE, AND THE VERDICT EXPLAINED WHERE IT IS CHOSEN. *** (G4, R3)
+   The card ended in four radios, a waiver checkbox, a pre-filled reason sentence and a button on
+   one line, and nothing on it said what agree meant against accept. It is the same shape as the
+   report's detail pane now -- what kind, which model, where, what was found, the reading -- and
+   then the four verdicts, each with what it means. The reason box appears once a verdict is
+   picked, labelled for that verdict; the date and the waiver appear only for accept. */
 function card(c) {
   const a = answers[c.key] || {};
   const box = el('div', {class: 'card' + (a.verdict ? ' done' : '')});
-  box.append(el('div', {class: 'hd'}, [
-    el('b', {text: c.model}),
-    el('span', {class: 'tag', text: c.question}),
-    /* What the project says this feeds, ahead of the layer count: "reaches the Water Table
-       report" is a different sentence to rule under than "24 marts". */
-    ...((c.exposures || []).length
-        ? [el('span', {class: 'tag reach', text: 'reaches ' + c.exposures.join(', ')})] : []),
-    el('span', {class: 'tag', text: num(c.marts) + ' marts'}),
-    el('span', {class: 'tag', text: c.file}),
+  box.append(el('div', {class: 'pkind', text: 'finding · ' + c.question.replace(/_/g, ' ')}));
+  box.append(el('h2', {class: 'ctitle mono', text: c.model}));
+  box.append(el('div', {class: 'cwhere'}, [
+    el('span', {class: 'mono', text: c.file}),
+    el('span', {text: num(c.marts) + ' marts downstream'}),
+    ...((c.exposures || []).length ? [el('span', {text: 'reaches ' + c.exposures.join(', ')})] : []),
   ]));
-
-  box.append(el('div', {class: 'lbl', text: 'what assay found'}));
-  /* *** ONE CONSTRUCT, SEVERAL MODELS, ONE EDIT. *** A verdict here is still about this card;
-     the line only says the fix is shared, and where it lives. */
-  if (c.group) box.append(el('div', {class: 'q dim', text:
-    'the same construct in ' + c.group.size + ' models (' + c.group.models.slice(0, 5).join(', ') +
-    (c.group.size > 5 ? ', ...' : '') + ') — ' +
-    (c.group.macro_at ? 'one edit in ' + c.group.macro_at : 'written inline in each')}));
-  /* *** EVERY FINDING ON A CARD IS THE SAME CHECK, SO ITS EXPLANATION IS THE SAME TEXT. ***
-     `int_azcc_owners` carries three `arbitrary_pick` findings and drew the identical paragraph
-     about `row_number() ... = 1` three times. Once it stopped being hidden behind a click, that
-     turned a card into a wall -- and three copies of one sentence is what makes a reader skip
-     the sentence. It is said once, after the findings it explains. */
   const seenDetail = new Set();
   for (const f of c.findings) {
-    box.append(el('div', {class: 'q', text: f.summary}));
+    box.append(el('p', {class: 'clead', text: f.summary}));
     if (f.claim) box.append(el('div', {class: 'q claim', text: '"' + f.claim + '"'}));
-    /* *** THE SUMMARY ALONE IS NOT ENOUGH TO RULE ON, AND IT WAS BEHIND A CLICK. ***
-       "the description claims something the code does not do" is a category, not a case. The
-       detail is what says WHY, and it was first carried in the data and never drawn, then drawn
-       inside a <details>. The reason a thing is on the page is not an appendix to it: a card
-       that hides its reasoning is asking for a verdict on a headline, one click cheaper. */
     if (f.detail) seenDetail.add(f.detail);
   }
-  for (const d of seenDetail) box.append(el('div', {class: 'q dim', text: d}));
+  if (c.group) box.append(el('div', {class: 'q dim', text:
+    'The same construct is in ' + c.group.size + ' models (' + c.group.models.slice(0, 5).join(', ')
+    + (c.group.size > 5 ? ', ...' : '') + '): ' +
+    (c.group.macro_at ? 'one edit in ' + c.group.macro_at + '.' : 'written inline in each.')}));
+  if (seenDetail.size) {
+    box.append(el('div', {class: 'lbl', text: 'what it means'}));
+    for (const d of seenDetail) box.append(el('div', {class: 'q', text: d}));
+  }
 
-  /* *** ONE SECTION, AND IT SAYS WHO. ***
-     This drew two: "an agent said" from rulings in the store, and "my read" from the --reads
-     file. Both are an AGENT's reading, and a card could therefore say "nothing on this question"
-     directly above a full verdict -- contradicting itself -- while labelling the verdict MY READ
-     to a person who had not touched the card yet. The obvious reading of that is "I already
-     answered this and disagreed", which is the one thing a review form must never imply.
-     Nothing on this page is the reader's until the reader clicks a radio. */
-  box.append(el('div', {class: 'lbl', text: 'an agent read this'}));
+  box.append(el('div', {class: 'lbl', text: 'what an agent read'}));
   if (c.read) {
-    /* How sure, beside the verdict, because a suggestion at 0.22 and one at 0.92 are different
-       suggestions -- ONE number, named. A dismissal read below the floor arrives as unclear and
-       says so. A reads file written before these fields existed still shows its whole `why`. */
-    const sure = c.read.confidence == null ? '' : ' · confidence ' + c.read.confidence.toFixed(2);
+    const sure = c.read.confidence == null ? '' : ', ' + c.read.confidence.toFixed(2) + ' sure';
     if (c.read.reason) {
       box.append(el('div', {class: 'q', text: c.read.verdict + sure}));
       if (c.read.floored) box.append(el('div', {class: 'q warn',
@@ -960,11 +1047,11 @@ function card(c) {
       box.append(el('div', {class: 'q dim', text: c.read.reason +
         (c.read.runner_up ? ' (next most likely: ' + c.read.runner_up + ')' : '')}));
     } else {
-      box.append(el('div', {class: 'q', text: c.read.verdict + sure + ' — ' + c.read.why}));
+      box.append(el('div', {class: 'q', text: c.read.verdict + sure + ': ' + c.read.why}));
     }
     const ro = c.read.rests_on;
     if (ro && ro.text) {
-      const where = ro.line ? ro.file + ':' + ro.line : 'compiled SQL (no single line in ' +
+      const where = ro.line ? ro.file + ':' + ro.line : 'the compiled SQL (no single line in ' +
                     (ro.file || 'the file') + ' carries it)';
       box.append(el('div', {class: 'q dim', text: 'rests on ' + where}));
       box.append(el('code', {class: 'rests', text: ro.text}));
@@ -973,73 +1060,35 @@ function card(c) {
     }
   }
   if (c.agent) {
-    if (c.read) box.append(el('div', {class: 'lbl', text: 'and a ruling stored on this model'}));
-    box.append(el('div', {class: 'q', text: c.agent.verdict + ' — ' + c.agent.note}));
-    /* WHICH question it was answering. A model-level ruling lands on every finding that model
-       has and usually addressed a different one; passing it off is how somebody confirms a
-       reading nobody did. */
+    box.append(el('div', {class: 'q', text: c.agent.verdict + ': ' + c.agent.note}));
     box.append(el('div', {class: 'q' + (c.agent.scope.startsWith('the model') ? ' warn' : ''),
                           text: 'about: ' + c.agent.scope}));
   }
-  if (!c.read && !c.agent) {
-    box.append(el('div', {class: 'q note-none', text: D.no_read}));
-  }
+  if (!c.read && !c.agent) box.append(el('div', {class: 'q note-none', text: D.no_read}));
 
   const sql = D.sql[c.file];
-  box.append(el('details', {}, [
-    el('summary', {text: sql ? 'the code' : 'the code could not be read'}),
-    numbered(sql),
-  ]));
+  box.append(el('details', {}, [el('summary', {text: sql ? 'the code' : 'the code could not be read'}),
+                                numbered(sql)]));
 
-  const ans = el('div', {class: 'ans'});
-  /* *** `accept`: THE FINDING IS RIGHT, AND IT STAYS. ***
-     Without it a correct-but-intended finding had two answers and both were wrong: `agree` left
-     it outstanding forever, and `disagree` told a working check it was mistaken. An accept needs
-     the reason a waiver needs, and takes the date it lapses. */
-  const untilBox = el('input', {type: 'text', class: 'until',
-                                placeholder: 'accepted until YYYY-MM-DD (optional)'});
+  // ---- the verdict
+  box.append(el('div', {class: 'lbl', text: 'your verdict'}));
+  const vbox = el('div', {class: 'verdicts'});
+  const more = el('div', {class: 'vmore'});
+  const note = el('textarea', {class: 'note'});
+  note.value = a.note || '';
+  const noteLab = el('label', {class: 'vlab'});
+  const untilBox = el('input', {type: 'text', class: 'until', placeholder: 'YYYY-MM-DD'});
   untilBox.value = a.until || '';
-  untilBox.hidden = a.verdict !== 'accept';
-  untilBox.oninput = () => {
-    answers[c.key] = Object.assign({}, answers[c.key], {until: untilBox.value.trim()}); save();
-    emitWaiver();
-  };
-  for (const v of ['agree', 'disagree', 'unclear', 'accept']) {
-    const r = el('input', {type: 'radio', name: 'v-' + c.key, value: v});
-    if (a.verdict === v) r.checked = true;
-    r.onchange = () => {
-      answers[c.key] = Object.assign({}, answers[c.key], {verdict: v});
-      untilBox.hidden = v !== 'accept';
-      wlab.hidden = v !== 'accept';
-      if (v === 'accept' && answers[c.key].write_waiver !== false) writeW.checked = true;
-      /* *** AN ACCEPT NEEDS A REASON, AND HALF OF ONE IS ALREADY ON THE CARD. ***
-         The finding says what is true; only the reader knows why it stays. So an empty reason
-         box is filled with the first half, quoted from the finding, and the second half is left
-         for them -- a draft keyed to the evidence, never a reason written for them. */
-      if (v === 'accept' && !note.value.trim() && c.findings.length) {
-        note.value = c.findings[0].summary.replace(/\.$/, '') + '. It stays because ';
-        answers[c.key].note = note.value;
-        note.focus();
-      }
-      box.classList.add('done'); save(); tick(); emitWaiver();
-    };
-    ans.append(el('label', {title: v === 'accept'
-      ? 'correct, and left as it is on purpose: it leaves the open list and counts as the check '
-        + 'being right. Needs a reason.' : ''}, [r, el('span', {text: v})]));
-  }
-  ans.append(untilBox);
-  /* *** THE WAIVER, WRITTEN FROM THE CARD, WHERE THE EVIDENCE IS. ***
-     An accept records the decision in the store; a waiver puts it in audit.yml, which is in git.
-     Deciding on the card and then finding the same finding again on another tab to write it down
-     is two trips for one decision. So an accept offers the waiver right here, ticked, built from
-     the reason and date already typed above -- one complete named waiver, the same one the
-     Waivers tab would write. */
+  const untilRow = el('div', {class: 'vrow'}, [el('label', {class: 'vlab',
+    text: 'accepted until (optional)'}), untilBox]);
   const wkey = ['waivers', c.model + '__' + c.question].join('\u001f');
   const writeW = el('input', {type: 'checkbox'});
   writeW.checked = a.verdict === 'accept' ? (a.write_waiver !== false) : false;
   const wlab = el('label', {class: 'write'}, [writeW,
-    el('span', {text: ' also write this as a waiver in audit.yml'})]);
-  wlab.hidden = a.verdict !== 'accept';
+    el('span', {text: ' also write it as a waiver in audit.yml, so the decision is in git'})]);
+  const agentWhy = (c.read && (c.read.note || c.read.why)) || (c.agent && c.agent.note) || '';
+  const use = agentWhy ? el('button', {class: 'accept', type: 'button',
+                                        text: 'use the agent’s reason'}) : null;
   function emitWaiver() {
     const cur = answers[c.key] || {};
     const on = cur.verdict === 'accept' && writeW.checked && (cur.note || '').trim()
@@ -1049,37 +1098,126 @@ function card(c) {
                                      (cur.until || '').trim() ? {until: cur.until.trim()} : {})
                      : null);
   }
+  function showMore() {
+    const v = (answers[c.key] || {}).verdict;
+    more.hidden = !v;
+    noteLab.textContent = REASON_LABEL[v] || 'why';
+    untilRow.hidden = v !== 'accept';
+    wlab.hidden = v !== 'accept';
+  }
+  for (const [v, label, meaning] of VERDICTS) {
+    const r = el('input', {type: 'radio', name: 'v-' + c.key, value: v});
+    if (a.verdict === v) r.checked = true;
+    r.onchange = () => {
+      answers[c.key] = Object.assign({}, answers[c.key], {verdict: v});
+      if (v === 'accept' && answers[c.key].write_waiver !== false) writeW.checked = true;
+      box.classList.add('done'); save(); tick(); showMore(); emitWaiver(); markRow(c.key, v);
+      if (v === 'disagree' || v === 'accept') note.focus();
+    };
+    vbox.append(el('label', {class: 'vopt'}, [r, el('span', {class: 'vname', text: label}),
+                                              el('span', {class: 'vmean', text: meaning})]));
+  }
+  note.oninput = () => {
+    answers[c.key] = Object.assign({}, answers[c.key], {note: note.value}); save(); emitWaiver();
+  };
+  untilBox.oninput = () => {
+    answers[c.key] = Object.assign({}, answers[c.key], {until: untilBox.value.trim()}); save();
+    emitWaiver();
+  };
   writeW.onchange = () => {
     answers[c.key] = Object.assign({}, answers[c.key], {write_waiver: writeW.checked});
     save(); emitWaiver();
   };
-  ans.append(wlab);
-  const note = el('input', {type: 'text', class: 'note',
-                            placeholder: 'why (optional, and the most useful thing here)'});
-  note.value = a.note || '';
-  note.oninput = () => {
-    answers[c.key] = Object.assign({}, answers[c.key], {note: note.value}); save();
-    emitWaiver();
+  if (use) use.onclick = () => {
+    note.value = agentWhy;
+    answers[c.key] = Object.assign({}, answers[c.key], {note: agentWhy}); save(); emitWaiver();
   };
-  ans.append(note);
-  /* *** THE AGENT'S READING IS ALREADY ON THE CARD, TWO INCHES ABOVE THIS BOX. ***
-     "if optional is empty i feel like taking the agents output should be an option as the why."
-     Re-typing a reason you just read and agree with is the kind of work a form should not ask
-     for. It fills the box and nothing more: the verdict is still the reader's click, and the
-     text lands in a field they can edit before it is recorded. */
-  const agentWhy = (c.read && (c.read.note || c.read.why)) || (c.agent && c.agent.note) || '';
-  if (agentWhy) {
-    const use = el('button', {class: 'accept', type: 'button',
-                              text: 'use the agent\u2019s reason'});
-    use.onclick = () => {
-      note.value = agentWhy;
-      answers[c.key] = Object.assign({}, answers[c.key], {note: agentWhy});
-      save(); tick(); emitWaiver();
-    };
-    ans.append(use);
-  }
-  box.append(ans);
+  more.append(el('div', {class: 'vrow'}, [noteLab, note]), ...(use ? [use] : []), untilRow, wlab);
+  box.append(vbox, more);
+  showMore();
   return box;
+}
+
+/* A row in a navigator list shows the verdict given on it, as soon as it is given. */
+function markRow(key, v) {
+  for (const r of document.querySelectorAll('.frow[data-key="' + CSS.escape(key) + '"]')) {
+    r.classList.add('done');
+    const st = r.querySelector('.fstate'); if (st) st.textContent = v;
+  }
+}
+
+/* *** 822 FINDINGS IN ONE SCROLLING LIST, 42 PAGES OF 20. *** (R1, R5)
+   The same three columns as the report: the groups on the left, their entries in the middle, the
+   one being worked on the right. Findings group by check and Words by why each word is here. */
+const NAV = {};
+function nav3(host, o) {
+  const st = NAV[o.name] = NAV[o.name] || {g: '__all', key: null, q: ''};
+  const all = {id: '__all', label: o.allLabel, rows: o.groups.flatMap(g => g.rows)};
+  const every = [all, ...o.groups];
+  if (!every.some(g => g.id === st.g)) st.g = '__all';
+  const grid = el('div', {class: 'fnav'});
+  const left = el('div', {class: 'fgroups'}), mid = el('div', {class: 'frows'});
+  const right = el('div', {class: 'fdetail'});
+  const q = el('input', {type: 'text', placeholder: o.filterText || 'filter...'});
+  q.value = st.q;
+  const cnt = el('span', {class: 'count'});
+  const list = el('div', {class: 'frowlist'});
+  mid.append(el('div', {class: 'fbar'}, [q, cnt]), list);
+  grid.append(left, mid, right);
+  const group = () => every.find(g => g.id === st.g);
+  function paintLeft() {
+    left.replaceChildren(...every.map(g => {
+      const b = el('button', {class: 'fg' + (g.id === st.g ? ' on' : '')},
+                   [el('span', {class: 'fgname'}, [wb(g.label)]),
+                    el('span', {class: 'fgn', text: num(g.rows.length)})]);
+      const sub = o.subOf && o.subOf(g);
+      if (sub) b.append(el('span', {class: 'fgsub', text: sub}));
+      b.onclick = () => { st.g = g.id; st.key = null; paintLeft(); paintMid(); };
+      return b;
+    }));
+  }
+  function paintMid() {
+    let rows = group().rows;
+    if (st.q) { const t = st.q.toLowerCase(); rows = rows.filter(x => o.textOf(x).toLowerCase().includes(t)); }
+    cnt.textContent = num(rows.length) + ' of ' + num(group().rows.length);
+    if (!rows.some(x => o.keyOf(x) === st.key)) st.key = rows.length ? o.keyOf(rows[0]) : null;
+    list.replaceChildren(...rows.map(x => {
+      const k = o.keyOf(x);
+      const d = el('div', {class: 'frow' + (k === st.key ? ' on' : '') + (o.doneOf(x) ? ' done' : ''),
+                           'data-key': k}, o.cellsOf(x));
+      d.onclick = () => {
+        st.key = k;
+        list.querySelectorAll('.frow.on').forEach(e => e.classList.remove('on'));
+        d.classList.add('on'); paintRight(x);
+      };
+      return d;
+    }));
+    if (!rows.length) list.append(el('p', {class: 'measured', text: 'nothing matches'}));
+    const cur = rows.find(x => o.keyOf(x) === st.key);
+    if (cur) paintRight(cur); else right.replaceChildren();
+  }
+  function paintRight(x) { right.replaceChildren(o.detailOf(x)); right.scrollTop = 0; }
+  q.oninput = () => { st.q = q.value; paintMid(); };
+  paintLeft(); paintMid();
+  return grid;
+}
+
+function findingsPane(host) {
+  const by = {};
+  for (const c of D.cards) (by[c.question] = by[c.question] || {id: c.question,
+    label: c.question, rows: []}).rows.push(c);
+  const groups = Object.values(by).sort((a, b) => b.rows.length - a.rows.length);
+  host.replaceChildren(nav3(host, {
+    name: 'findings', groups: groups, allLabel: 'every finding', filterText: 'filter by model...',
+    subOf: g => { const n = g.rows.filter(c => (answers[c.key] || {}).verdict).length;
+                  return n ? num(n) + ' answered' : null; },
+    keyOf: c => c.key, textOf: c => c.model + ' ' + c.question + ' ' + c.file,
+    doneOf: c => !!(answers[c.key] || {}).verdict,
+    cellsOf: c => [el('span', {class: 'mono fmain'}, [wb(c.model)]),
+                   el('span', {class: 'fmeta', text: num(c.marts) + ' marts'}),
+                   el('span', {class: 'fstate', text: (answers[c.key] || {}).verdict || ''})],
+    detailOf: c => card(c),
+  }));
 }
 
 /* *** THE BAR BELONGED TO ONE PANE AND SAT OVER ALL OF THEM. ***
@@ -1119,7 +1257,7 @@ function tick() {
     ? n + ' of ' + tot + ' answered' + (n ? '' : ' — nothing is recorded until you download')
     : (edits ? edits + ' box(es) filled across the form' : 'nothing filled yet');
   document.getElementById('dl').disabled = n === 0 && edits === 0;
-  const single = p.pages <= 1;
+  const single = p.pages <= 1 || pane === 'findings' || pane === 'words';
   document.getElementById('pager').style.display = single ? 'none' : '';
   if (!single) {
     document.getElementById('where').textContent =
@@ -1135,10 +1273,7 @@ const PANE_NOUN = {findings: 'to rule on', words: 'words', explanations: 'marts'
 function edits_() { return (typeof edits === 'undefined') ? {} : edits; }
 
 function render() {
-  const p = pageOf('findings');
-  const host = document.getElementById('cards');
-  host.replaceChildren(...D.cards.slice(p.from, p.to).map(card));
-  window.scrollTo(0, 0);
+  findingsPane(document.getElementById('p-findings'));
   tick();
 }
 
@@ -1161,6 +1296,17 @@ function download() {
   const a = el('a', {href: url, download: 'handback.json'});
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  /* *** NOTHING SAID WHERE THE FILE WENT OR WHAT TO DO WITH IT. *** (W1) */
+  const n = out.length, e = Object.keys(edits_()).length;
+  document.getElementById('saved').replaceChildren(
+    el('b', {text: 'handback.json saved'}),
+    el('span', {text: ' to your browser’s download folder (usually Downloads), with '
+      + n + ' verdict(s)' + (e ? ' and ' + e + ' config change(s)' : '') + '. Next, run '}),
+    el('code', {text: 'assay review --load latest'}),
+    el('span', {text: ' or ask your agent to load the handback. Nothing is recorded until then.'}),
+    Object.assign(el('button', {text: 'close'}), {onclick: () => {
+      document.getElementById('saved').hidden = true; }}));
+  document.getElementById('saved').hidden = false;
 }
 
 /* ------------------------------------------------------------------ words, and the rest
@@ -1256,66 +1402,78 @@ function wordsTab(host) {
     + 'That is why it improves answers to questions you never wrote -- and why one that is false '
     + 'in part of the project is false in every answer about that part.',
     'workshop'));
-  const _p = pageOf('words');
-  /* *** FORTY CARDS OF ONE SHAPE, AND THE THING THAT DIFFERED WAS WHY THEY WERE HERE. ***
-     Candidates come from different rules -- joined on across many models, named like a key and
-     nearly unique, described identically everywhere -- and each card said its reason on its own
-     line, forty times. The reason is said once, over the cards it explains, with the count. */
   const reason = w => w.known ? 'already in your vocabulary' : (w.basis || 'a candidate');
-  const counts = {};
-  for (const w of CTX.words) counts[reason(w)] = (counts[reason(w)] || 0) + 1;
-  const page = CTX.words.slice(_p.from, _p.to)
-    .map((w, i) => [w, i]).sort((a, b) => (a[0].known === b[0].known ? 0 : a[0].known ? -1 : 1)
-      || reason(a[0]).localeCompare(reason(b[0])) || a[1] - b[1]).map(x => x[0]);
-  let lastReason = null;
-  for (const w of page) {
-    if (reason(w) !== lastReason) {
-      lastReason = reason(w);
-      bits.push(el('h2', {class: 'wgroup', text: lastReason + ' \u00b7 ' + counts[lastReason]}));
-    }
-    const row = el('div', {class: 'wrow'});
-    const head = el('h3', {text: w.term});
-    row.append(head);
-    for (const i of (w.issues || []))
-      row.append(el('span', {class: 'flag' + (i.level === 'error' ? ' error' : ''),
-                             text: i.rule.replace(/_/g, ' ')}));
-    const u = w.used_by || {};
-    const where = (u.directories || []).map(d => d[0] + ' (' + d[1] + ')').join(', ');
-    row.append(el('div', {class: 'measured', text:
-      (w.known ? '' : 'not in your vocabulary yet. ')
-      + 'assay measured: ' + (u.models || 0) + ' of ' + (u.of || 0) + ' model(s) name this word'
-      + (where ? ', under ' + where : '')
-      + ((u.examples || []).length ? '  e.g. ' + u.examples.join(', ') : '')}));
-    row.append(field('means', ['vocab', w.term, 'means'], w.means,
-                     'what is ' + an(w.term) + '?', 1));
-    row.append(field('implies', ['vocab', w.term, 'implies'], w.implies,
-                     'what does knowing it is ' + an(w.term) + ' tell you?', 1));
-    row.append(field('applies_to', ['vocab', w.term, 'applies_to'], w.applies_to,
-                     'blank means every model'));
-    if (w.quoted_means && !w.means) {
-      /* A sentence this project already uses for the word, quoted and cited in `assay suggest`.
-         Offered, never filled: it becomes the answer only when somebody presses the button. */
-      const q = el('button', {class: 'accept', text: 'use the sentence your models already use'});
-      q.title = w.quoted_means;
-      q.onclick = () => { setEdit(['vocab', w.term, 'means'].join('\u001f'), w.quoted_means);
-                          render(); };
-      row.append(el('div', {class: 'measured', text: 'already written in this project: \u201c'
-                            + w.quoted_means + '\u201d'}));
-      row.append(q);
-    }
-    if (w.suggested) {
-      const b = el('button', {class: 'accept', text: 'use ' + w.suggested});
-      b.onclick = () => { setEdit(['vocab', w.term, 'applies_to'].join('\u001f'), w.suggested);
-                          render(); };
-      row.append(b);
-    }
-    bits.push(row);
-  }
-  if (!CTX.words.length)
+  const by = {};
+  for (const w of CTX.words) (by[reason(w)] = by[reason(w)] || {id: reason(w), label: reason(w),
+                                                               rows: []}).rows.push(w);
+  const groups = Object.values(by).sort((x, y) => (x.id === 'already in your vocabulary') -
+                                                  (y.id === 'already in your vocabulary')
+                                                  || y.rows.length - x.rows.length);
+  const filled = w => ['means', 'implies'].some(k => {
+    const key = ['vocab', w.term, k].join('\u001f');
+    return (key in edits ? edits[key] : w[k]) || '';
+  });
+  if (!CTX.words.length) {
     bits.push(el('p', {class: 'measured', text:
       'No vocabulary and no candidates. `assay suggest --section vocab` ranks them by how often '
       + 'this warehouse joins on them.'}));
+    host.replaceChildren(...bits);
+    return;
+  }
+  bits.push(nav3(host, {
+    name: 'words', groups: groups, allLabel: 'every word', filterText: 'filter words...',
+    subOf: g => { const n = g.rows.filter(filled).length; return n ? num(n) + ' written' : null; },
+    keyOf: w => w.term, textOf: w => w.term + ' ' + (w.means || ''),
+    doneOf: w => !!filled(w),
+    cellsOf: w => [el('span', {class: 'mono fmain'}, [wb(w.term)]),
+                   el('span', {class: 'fmeta', text: num((w.used_by || {}).models || 0) + ' models'}),
+                   el('span', {class: 'fstate', text: filled(w) ? 'written' : ''})],
+    detailOf: w => wordEditor(w),
+  }));
   host.replaceChildren(...bits);
+}
+
+function wordEditor(w) {
+  const row = el('div', {class: 'wedit'});
+  row.append(el('div', {class: 'pkind', text: 'word · ' + (w.known ? 'in your vocabulary'
+                                                                         : (w.basis || 'a candidate'))}));
+  row.append(el('h2', {class: 'ctitle mono', text: w.term}));
+  for (const i of (w.issues || []))
+    row.append(el('span', {class: 'flag' + (i.level === 'error' ? ' error' : ''),
+                           text: i.rule.replace(/_/g, ' ')}));
+  const u = w.used_by || {};
+  const where = (u.directories || []).map(d => d[0] + ' (' + d[1] + ')').join(', ');
+  row.append(el('div', {class: 'cwhere'}, [el('span', {text: num(u.models || 0) + ' of '
+    + num(u.of || 0) + ' models name this word' + (where ? ', under ' + where : '')})]));
+  if ((u.examples || []).length)
+    row.append(el('div', {class: 'q dim', text: 'for example ' + u.examples.join(', ')}));
+  const mark = () => { const d = document.querySelector('.frow[data-key="' + CSS.escape(w.term) + '"]');
+    if (d) { const on = ['means', 'implies'].some(k => edits[['vocab', w.term, k].join('\u001f')]);
+             d.classList.toggle('done', on || !!w.means);
+             const st = d.querySelector('.fstate'); if (st) st.textContent = on || w.means ? 'written' : ''; } };
+  const f1 = field('what it means', ['vocab', w.term, 'means'], w.means,
+                   'what is ' + an(w.term) + '?', 1);
+  const f2 = field('what follows from it', ['vocab', w.term, 'implies'], w.implies,
+                   'what does knowing it is ' + an(w.term) + ' tell you?', 1);
+  const f3 = field('where it is true', ['vocab', w.term, 'applies_to'], w.applies_to,
+                   'blank means every model');
+  for (const f of [f1, f2]) f.querySelector('textarea').addEventListener('input', mark);
+  row.append(f1, f2, f3);
+  if (w.quoted_means && !w.means) {
+    row.append(el('div', {class: 'q dim', text: 'already written in this project: “'
+                          + w.quoted_means + '”'}));
+    const qb = el('button', {class: 'accept', text: 'use that sentence'});
+    qb.onclick = () => { setEdit(['vocab', w.term, 'means'].join('\u001f'), w.quoted_means);
+                         f1.querySelector('textarea').value = w.quoted_means; mark(); };
+    row.append(qb);
+  }
+  if (w.suggested) {
+    const sb = el('button', {class: 'accept', text: 'use ' + w.suggested});
+    sb.onclick = () => { setEdit(['vocab', w.term, 'applies_to'].join('\u001f'), w.suggested);
+                         f3.querySelector('input').value = w.suggested; };
+    row.append(sb);
+  }
+  return row;
 }
 
 function settingsTab(host) {
@@ -1365,8 +1523,10 @@ function explanationsTab(host) {
     if (x.named) row.append(el('div', {class: 'measured', text: 'covers ' + x.applies_to}));
     for (const o of (x.options || []))
       row.append(field(o.name, [...base, o.name], o.means, '', 1));
-    row.append(field('(new option name)', [...base, '__new'], '',
-                     'e.g. backorder: an order placed for stock that has not arrived', 1));
+    /* *** EVERY ENTRY WAS LABELLED "(NEW OPTION NAME)". *** (R4) with an unrelated example as its
+       placeholder. The box says what goes in it, about this mart. */
+    row.append(field('add kinds of failing row, one per line', [...base, '__new'], '',
+                     'name: what that row is, one per line', 1));
     bits.push(row);
   }
   if (!CTX.explanations.length)
@@ -1488,6 +1648,7 @@ function drawPane(name) {
 
 function openPane(name) {
   pane = name;
+  document.querySelector('main').classList.toggle('fill', name === 'findings' || name === 'words');
   document.querySelectorAll('.tabs button').forEach(b =>
     b.classList.toggle('on', b.dataset.pane === name));
   document.querySelectorAll('.pane').forEach(p => { p.hidden = p.id !== 'p-' + name; });
@@ -1523,9 +1684,24 @@ document.getElementById('n-mon').textContent = ((CTX.monitoring || {}).findings 
 document.getElementById('n-set').textContent =
   (CTX.settings || []).filter(s => s.set_here).length || '';
 document.getElementById('n-find').textContent = D.cards.length || '';
-openPane(SAVED_PANE && (SAVED_PANE in PANES) ? SAVED_PANE
-         : (CTX.words.length ? 'words' : 'findings'));
+openPane(SAVED_PANE && (SAVED_PANE in PANES) ? SAVED_PANE : 'findings');
 """
+
+
+def newest_handback(dirs=None):
+    """The newest `handback*.json` in the download folder, or None. (W1)
+
+    *** THE FILE WENT TO ~/Downloads AND NOTHING PICKED IT UP. *** The form cannot write anywhere
+    but the browser's download folder, so `assay review --load latest` and the MCP tool look there
+    rather than asking a person to type a path they do not know.
+    """
+    from pathlib import Path
+    found = []
+    for d in (dirs or [Path.home() / "Downloads"]):
+        d = Path(d).expanduser()
+        if d.is_dir():
+            found += [p for p in d.glob("handback*.json") if p.is_file()]
+    return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
 
 def form_html(card_list: list, sql: dict, project: str, generated_at: str, version: str,
@@ -1568,11 +1744,11 @@ assay {e(version)} &middot; manifest {e(str(generated_at))}{report_link}</span>
      to a tab that has no pager slid them sideways: "so it doesnt get moved around by the UI when
      switching tabs". They belong to the form, so they hold position on the form's own row. -->
 <nav class="tabs">
-  <button data-pane="words" class="on" data-tip="Words your warehouse uses that assay has no definition for, and the ones already in your vocabulary.">Words<b id="n-words"></b></button>
+  <button data-pane="findings" class="on" data-tip="Every finding to rule on, grouped by check. The models with the most marts downstream come first: that is where a wrong verdict costs something.">Findings<b id="n-find"></b></button>
+  <button data-pane="waivers" data-tip="Findings you accepted, proposed as waivers with the reason you gave. Fills as you accept findings.">Waivers<b id="n-waiv"></b></button>
+  <button data-pane="words" data-tip="Words your warehouse uses that assay has no definition for, and the ones already in your vocabulary.">Words<b id="n-words"></b></button>
   <button data-pane="explanations" data-tip="The kinds of failing row each mart actually has, in your words.">Explanations<b id="n-expl"></b></button>
-  <button data-pane="waivers" data-tip="Findings somebody accepted, proposed as waivers with the reason they gave.">Waivers<b id="n-waiv"></b></button>
   <button data-pane="monitoring" data-tip="Whether a monitor EXISTS, is CURRENT and COVERS what matters. assay never measures volume or freshness itself, so everything here is about the monitoring, never about your data.">Monitoring<b id="n-mon"></b></button>
-  <button data-pane="findings" data-tip="Every finding to rule on, twenty at a time, highest blast radius first. Twenty and stopping is a good session: the models with the most marts downstream are where a wrong verdict costs something.">Findings<b id="n-find"></b></button>
   <button data-pane="settings" data-tip="The numbers this project is judged by, written to audit.yml.">Settings<b id="n-set"></b></button>
 </nav>
 <!-- The pager belongs to one pane, so it appears with that pane and nowhere else. -->
@@ -1582,13 +1758,14 @@ assay {e(version)} &middot; manifest {e(str(generated_at))}{report_link}</span>
   <button id="next">next &rarr;</button>
 </div>
 </header>
+<div id="saved" class="saved" hidden></div>
 <main>
-<div id="p-words" class="pane"></div>
+<div id="p-words" class="pane" hidden></div>
 <div id="p-explanations" class="pane" hidden></div>
 <div id="p-waivers" class="pane" hidden></div>
 <div id="p-monitoring" class="pane" hidden></div>
 <div id="p-settings" class="pane" hidden></div>
-<div id="p-findings" class="pane" hidden><div id="cards"></div></div>
+<div id="p-findings" class="pane"></div>
 </main>
 <script id="assay-form" type="application/json">{blob}</script>
 <script>{_JS}</script>

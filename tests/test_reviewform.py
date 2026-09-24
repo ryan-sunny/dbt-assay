@@ -375,9 +375,11 @@ def test_the_pagination_belongs_to_the_pane_you_are_looking_at():
     js = reviewform._JS
     assert "const PAGES" in js, "paging state is not per pane"
     assert "function pageOf(" in js and "paneItems(" in js
-    # every pane slices its own items
-    for pane in ("'words'", "'explanations'", "'waivers'", "'findings'"):
+    # every pane that pages slices its own items; Findings and Words list everything in the
+    # navigator (R1, R5), so they do not page and the pager is hidden on them
+    for pane in ("'explanations'", "'waivers'"):
         assert f"pageOf({pane})" in js, f"{pane} does not page itself"
+    assert "pane === 'findings' || pane === 'words'" in js
     # and the single global page is gone
     for gone in ("let page = 0", "page * PER", "page++", "page--"):
         assert gone not in js, f"the global pager survived: {gone}"
@@ -438,3 +440,53 @@ def test_the_form_opens_on_the_task_not_on_grey_paragraphs():
     assert ".task{display:flow-root}" in reviewform._CSS
     # and a backtick is code here too
     assert "function renderTicks(" in js and "new MutationObserver" in js
+
+
+def test_feedback_r1_r5_findings_and_words_are_navigators():
+    from dbt_assay import reviewform
+    js = reviewform._JS
+    assert "function nav3(" in js
+    assert "name: 'findings', groups: groups" in js and "name: 'words', groups: groups" in js
+    assert "by[c.question]" in js, "findings are not grouped by check"
+
+
+def test_feedback_r2_the_tabs_follow_the_work():
+    import re
+    from dbt_assay import reviewform
+    html = reviewform.form_html([], {}, "p", "x", "0")
+    order = re.findall(r'data-pane="([a-z]+)"', html)
+    assert order[:2] == ["findings", "waivers"], order
+    assert order.index("waivers") > order.index("findings")
+    assert "SAVED_PANE : 'findings'" in reviewform._JS, "the form does not open on Findings"
+
+
+def test_feedback_r3_each_verdict_says_what_it_means():
+    from dbt_assay import reviewform
+    js = reviewform._JS
+    for v in ("agree", "disagree", "accept", "unclear"):
+        assert f"['{v}'," in js, v
+    assert "more.hidden = !v" in js, "the reason shows before a verdict is picked"
+    assert "untilRow.hidden = v !== 'accept'" in js and "wlab.hidden = v !== 'accept'" in js
+
+
+def test_feedback_r4_a_new_kind_box_says_what_it_is_for():
+    from dbt_assay import reviewform
+    assert "(new option name)" not in reviewform._JS
+    assert "add kinds of failing row, one per line" in reviewform._JS
+
+
+def test_feedback_w1_the_newest_handback_is_found(tmp_path):
+    import os
+    import time
+    from dbt_assay import reviewform
+    assert reviewform.newest_handback([tmp_path]) is None
+    old = tmp_path / "handback.json"
+    old.write_text("{}")
+    newer = tmp_path / "handback (1).json"
+    newer.write_text("{}")
+    t = time.time()
+    os.utime(old, (t - 100, t - 100))
+    os.utime(newer, (t, t))
+    assert reviewform.newest_handback([tmp_path]) == newer
+    js = reviewform._JS
+    assert "assay review --load latest" in js, "the form does not say what to do next"

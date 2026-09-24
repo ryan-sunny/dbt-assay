@@ -68,8 +68,8 @@ records every verdict at once. A card nobody answered is never submitted and nev
 
 **Do not end the turn on "open this file".** The download writes `handback.json` and NOTHING
 happens until it is loaded — the most valuable work in this whole system, sitting in a downloads
-folder. Ask for the path the moment they say they have filled it in, and load it:
-`load_handback(path)` over MCP, or the `--load` line above. It is the only path that files
+folder. Load it the moment they say they have filled it in: `load_handback()` over MCP finds the
+newest one in `~/Downloads`, or `assay review --load latest`. It is the only path that files
 `human` verdicts, and it files only what the file carries.
 
 **The expensive half is what makes each card cheap, and the judged tier does it.** `assay read`

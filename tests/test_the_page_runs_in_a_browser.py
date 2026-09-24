@@ -373,14 +373,17 @@ def test_accept_on_a_card_and_a_waiver_from_the_tab_reach_the_handback(tmp_path,
             page.click('button[data-pane="findings"]')
             card = page.locator(".card").first
             until = card.locator("input.until")
-            assert until.is_hidden(), "the date only belongs to an accept"
+            note = card.locator("textarea.note")
+            # R3: nothing past the four verdicts shows until one is picked
+            assert until.is_hidden() and note.is_hidden(), "the reason shows before a verdict"
             card.locator('input[value="accept"]').check()
-            assert until.is_visible()
-            drafted = card.locator("input.note").input_value()
-            assert drafted.endswith("It stays because "), \
-                "the evidence half of the reason is drafted from the finding"
+            assert until.is_visible() and note.is_visible()
+            assert "why it stays" in card.locator(".vmore .vlab").first.inner_text().lower(), \
+                "the reason box does not say what it is for"
+            # and the list in the middle shows the verdict on its row
+            assert page.locator(".frow.on .fstate").first.inner_text() == "accept"
             until.fill("2027-06-01")
-            card.locator("input.note").fill("intended: the model is a lookup")
+            note.fill("intended: the model is a lookup")
 
             page.click('button[data-pane="waivers"]')
             page.locator("label.write input[type=checkbox]").first.check()
@@ -436,7 +439,7 @@ def test_a_waiver_is_written_from_the_card_it_was_decided_on(tmp_path, project_d
             card.locator('input[value="accept"]').check()
             box = card.locator("label.write input[type=checkbox]")
             assert box.is_visible() and box.is_checked()
-            card.locator("input.note").fill("the envelope is a grid cell, not a radius")
+            card.locator("textarea.note").fill("the envelope is a grid cell, not a radius")
             doc = handback(page)
             ws = [c for c in doc["config"] if c["path"][0] == "waivers"]
             assert len(ws) == 1 and ws[0]["value"]["reason"].startswith("the envelope")

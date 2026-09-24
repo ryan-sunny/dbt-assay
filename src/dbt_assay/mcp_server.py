@@ -586,7 +586,7 @@ class Backend:
                 f"reason is on screen.")
         return out
 
-    def load_handback(self, path: str, apply: bool = False, by: str = "") -> dict:
+    def load_handback(self, path: str = "", apply: bool = False, by: str = "") -> dict:
         """Record the verdicts a PERSON wrote in the review form. The one tool that files `human`.
 
         *** THE HUMAN DID THE MOST VALUABLE WORK IN THE SYSTEM AND THE FILE SAT IN ~/Downloads. ***
@@ -608,6 +608,14 @@ class Backend:
         from pathlib import Path as _P
 
         from . import reviewform
+        # No path means the newest handback in the download folder, which is where the form's
+        # download went: the person should not have to find and type it. (W1)
+        if not path or path == "latest":
+            found = reviewform.newest_handback()
+            if found is None:
+                return {"error": "no handback*.json in ~/Downloads. Ask the person where the "
+                                 "browser saved it."}
+            path = str(found)
         src = _P(path).expanduser()
         if not src.exists():
             return {"error": f"no file at {src}. The form downloads `handback.json` to wherever "
@@ -1407,7 +1415,7 @@ def build_app(target: str, store_path: str | None = None):
         return _out(be.review_queue(limit))
 
     @tool()
-    def load_handback(path: str, apply: bool = False, by: str = "") -> str:
+    def load_handback(path: str = "", apply: bool = False, by: str = "") -> str:
         return _out(be.load_handback(path, apply, by))
 
     @tool()

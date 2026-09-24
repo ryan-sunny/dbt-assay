@@ -441,8 +441,8 @@ def _declared_detail(name: str, q: dict, entry, v, answer: str, p_: float) -> st
     out = (f"`{name}` was asked about `{who}`" + (f" (about `{about}`)" if about else "")
            + f" and answered `{answer}` at {p_:.2f}. ")
     crit = _criterion(q, answer)
-    out += (f"This family declares that answer a finding: {crit}" if crit
-            else "This family declares that answer a finding.")
+    out += (f"This question counts that answer as a finding: {crit}" if crit
+            else "This question counts that answer as a finding.")
     if marts is not None or desc is not None:
         out += (f"\n\n`{who}` has {marts if marts is not None else 'an unknown number of'} "
                 f"mart(s) and {desc if desc is not None else 'an unknown number of'} model(s) "

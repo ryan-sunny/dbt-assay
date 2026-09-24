@@ -211,11 +211,12 @@ question does. Those are different files, and without the state you are guessing
     on this question" is being asked to do the reading you were there to do. Rule on everything
     in `review_queue()` first, then emit.
 
-12. `load_handback(path)` — **the moment they say they have filled the form in.** The form
+12. `load_handback()` — **the moment they say they have filled the form in.** The form
     downloads `handback.json` and nothing happens until it is loaded; a form that is downloaded
-    and never loaded is the most valuable work in this system sitting in a folder. Ask for the
-    path rather than guessing at a downloads directory. This is the only tool that files `human`
-    verdicts and it can only file what the file carries — you are the courier, not the reviewer.
+    and never loaded is the most valuable work in this system sitting in a folder. With no path
+    it loads the newest `handback*.json` in `~/Downloads`, and says which file it read; if they
+    saved it elsewhere, pass the path. This is the only tool that files `human` verdicts and it
+    can only file what the file carries — you are the courier, not the reviewer.
 
 ## When they have agreed with findings and want them fixed
 
@@ -315,7 +316,7 @@ and nothing is lost:
 | `violations()` | `assay check --json`, then read `action` |
 | `rule(finding, …)` | `assay review --subject <s> --question <q> --verdict <v> --note <why>` |
 | `review_queue()` | `assay review` |
-| `load_handback(path)` | `assay review --load handback.json` (add `--apply` to write audit.yml) |
+| `load_handback(path?)` | `assay review --load latest` or `--load <path>` (add `--apply` to write audit.yml) |
 | `plan()` | `assay plan -t target/` (writes `assay_plan.jsonl`) |
 | `suggestions()` | `assay suggest -t target/`, or `--section vocab` |
 | `evidence()` | `assay evidence -q <question> -s <model>` |
