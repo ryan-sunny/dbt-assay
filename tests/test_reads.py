@@ -197,3 +197,16 @@ def test_comments_inside_a_window_do_not_split_it():
         {"summary": "dedupe on `isf_key`", "evidence": {}}]})
     texts = [v["text"] for v in lines.values()]
     assert len(texts) == 1 and texts[0].endswith("n.comid) as rn") and "--" not in texts[0]
+
+
+def test_a_long_model_keeps_the_lines_its_findings_name():
+    """*** 69 OF 328 FIELD MODELS RAN PAST THE CUT, AND THE WINDOW WAS OFTEN AFTER IT. ***"""
+    from dbt_assay.subjects import _SQL_CHARS, _sql_excerpt
+    filler = "\n".join(f"    , col_{i} as filler_{i}" for i in range(900))
+    sql = ("select a" + "\n" + filler + "\nfrom t\nqualify row_number() over "
+           "(partition by id_business order by trank) = 1")
+    assert len(sql) > _SQL_CHARS
+    got = _sql_excerpt(sql, {"id_business", "trank"})
+    assert len(got) <= _SQL_CHARS and "partition by id_business" in got
+    assert "-- assay:" in got and "line(s) not shown" in got
+    assert _sql_excerpt("select 1", {"x"}) == "select 1", "a short model is sent whole"

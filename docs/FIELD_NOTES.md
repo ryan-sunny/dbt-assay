@@ -3697,8 +3697,9 @@ found that the report did not say.
   --extract` crashed on every project with anything to classify, and `verify` the same way.
 - **25.5's cause is a path, not a package.** The 30 Elementary models' compiled SQL exists, under
   `target/compiled/elementary/`; assay looks only under `target/compiled/<root project>/`. The
-  approved fix -- count them apart and name the package -- shipped. Resolving each node against its
-  own package would make those models readable and AUDITED, which is a decision left open.
+  approved fix -- count them apart and name the package -- shipped first; then each model was
+  resolved against its own package's directory, and all 358 read. The 30 Elementary models parse
+  and raise no findings.
 - **25.21 and 25.23b said the evidence carries the macro's file:line.** It carries the compiled
   expression. The collapse was built from that and the manifest: a macro is credited only when
   every member depends on it AND its file carries the construct.
@@ -3720,8 +3721,9 @@ found that the report did not say.
 - **`read`'s state cuts a model's SQL at 6,000 characters, and 69 of 328 field models are longer.**
   A card whose construct sits past the cut is read without it: the locator answered
   `none_of_these` on two `arbitrary_pick` cards for exactly that reason, which is the honest
-  answer. The fix is an excerpt around the construct rather than the head -- a change to the state
-  every cached reading was computed from, so it is left as a decision.
+  answer. The limit is now 10,000 characters, and past it the state carries the head plus every
+  stretch around a line the findings name, gaps marked. Re-read, both cards located the construct:
+  the window at line 143, and an `md5` tie-break inside a window's ORDER BY at line 96.
 - **dbt's checksum is sha256 of the file's text, whitespace stripped.** Not of the bytes: 0 of 328
   matched that way, 328 of 328 the other. It is what lets a git blob from any commit find the
   compiled SQL kept for it.

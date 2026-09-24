@@ -172,7 +172,51 @@ def _models(project, digests, schema) -> list[Subject]:
 
 # The SQL is the evidence a reading of a finding needs, and the one field that can be huge. The
 # largest real model on the field warehouse is 629 lines; this keeps the state readable and says so.
-_SQL_CHARS = 6000
+_SQL_CHARS = 10000
+# How much of a long model's head is kept before the excerpt around what the findings name.
+_SQL_HEAD = 3000
+
+
+def _sql_excerpt(sql: str, names: set, limit: int = _SQL_CHARS) -> str:
+    """The model's SQL, or, when it is longer than `limit`, its head plus every stretch around a
+    line naming something the findings are about.
+
+    *** THE CUT WAS THE FIRST 6,000 CHARACTERS, AND THE CONSTRUCT WAS OFTEN AFTER IT. ***
+    69 of 328 field models are longer than that, and a reading of an `arbitrary_pick` card was
+    asked about a window it was never shown -- the locator answered `none_of_these`, correctly.
+    Every gap is marked, so nothing reads as the whole model when it is not.
+    """
+    import re
+    if len(sql) <= limit:
+        return sql
+    lines = sql.splitlines()
+    keep: set = set()
+    used = 0
+    for i, line in enumerate(lines):                      # the head: what the model is
+        if used + len(line) + 1 > _SQL_HEAD:
+            break
+        keep.add(i)
+        used += len(line) + 1
+    words = [set(re.findall(r"[a-z_][a-z0-9_]*", t.lower())) for t in lines]
+    hits = [i for i, w in enumerate(words) if names and w & names and i not in keep]
+    for i in hits:                                       # each flagged line, with its neighbours
+        for j in range(max(0, i - 4), min(len(lines), i + 5)):
+            if j in keep:
+                continue
+            if used + len(lines[j]) + 1 > limit - 200:
+                break
+            keep.add(j)
+            used += len(lines[j]) + 1
+    out, last = [], -1
+    for i in sorted(keep):
+        if i != last + 1:
+            out.append(f"-- assay: {i - last - 1} line(s) not shown")
+        out.append(lines[i])
+        last = i
+    if last < len(lines) - 1:
+        out.append(f"-- assay: {len(lines) - 1 - last} line(s) not shown; this is an excerpt of "
+                   f"{len(sql):,} characters around what the findings name")
+    return "\n".join(out)
 
 
 def _findings(project, digests, schema, findings, store) -> list[Subject]:
@@ -190,11 +234,11 @@ def _findings(project, digests, schema, findings, store) -> list[Subject]:
         # A source or a seed has a card too, and no SQL: its finding is about where it reaches.
         m = project.models.get(uid) or _Named(fs[0].subject_name or uid.split(".")[-1],
                                               fs[0].file or "")
-        sql = m.compiled or ""
-        if len(sql) > _SQL_CHARS:
-            sql = (sql[:_SQL_CHARS] + f"\n-- assay: {_SQL_CHARS:,} of {len(sql):,} characters; "
-                   f"the rest is not in this state")
         fs = sorted(fs, key=lambda x: x.id)
+        from .reads import _names
+        sql = _sql_excerpt(m.compiled or "", _names({"findings": [
+            {"summary": f.summary, "claim": str((f.evidence or {}).get("claim") or ""),
+             "evidence": f.evidence or {}} for f in fs]}))
         out.append(Subject(
             "finding", f"{uid}::{check}", uid, f"{m.name} / {check}", file=m.path,
             state=_prune({

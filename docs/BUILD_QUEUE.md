@@ -1,9 +1,9 @@
 # Build queue for 0.51, from FIELD_REPORT section 25 — BUILT. Do not build from this file.
 
 Every item below landed on one branch, one commit each (see `docs/FIELD_NOTES.md`, "Field report
-section 25, and what building it found"). Two things were found and deliberately left as decisions:
-resolving installed-package models against their own compiled path (25.5), and giving `read` an
-excerpt around the construct instead of the first 6,000 characters of SQL.
+section 25, and what building it found"). The two decisions it left open were then taken: installed
+packages are read from their own compiled directory, and `read` sends 10,000 characters or, past
+that, the head plus every stretch around what the findings name.
 
 Sections 1 to 24 of `docs/FIELD_REPORT.md` shipped in 0.50.0. This queue covers section 25 only.
 Every item below was checked against `src/` on 2026-09-23, and the method is given for each one.
