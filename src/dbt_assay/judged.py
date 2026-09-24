@@ -18,6 +18,8 @@ measurement says otherwise.
 """
 from __future__ import annotations
 
+import re
+
 from .checks.structural import Finding
 
 # A judgment this confident is worth contradicting a human over; below it, the disagreement is
@@ -394,8 +396,7 @@ def declared_findings(project, entries) -> list[Finding]:
                     rests_on=name,
                     subject=e.uid, subject_name=e.name, file=e.path,
                     summary=_declared_summary(name, q, _with_ctx(e, v), answer),
-                    detail=((q.get("instructions") or {}).get("question", "").strip()
-                            or f"`{name}` answered `{answer}` for this model."),
+                    detail=_declared_detail(name, q, e, v, answer, p_),
                     base=2,
                     evidence={"answer": answer, "probability": round(p_, 3),
                               "asked": name, "context": (v or {}).get("context", "")},
@@ -406,6 +407,60 @@ def declared_findings(project, entries) -> list[Finding]:
 def _with_ctx(entry, v):
     from types import SimpleNamespace
     return SimpleNamespace(name=entry.name, _ctx=(v or {}).get("context", ""))
+
+
+def _criterion(q: dict, answer: str) -> str:
+    """What the family says an answer MEANS, from either shape a bank writes it in."""
+    crit = (q.get("criteria") or {}).get(answer)
+    if isinstance(crit, dict):
+        crit = crit.get("what") or crit.get("means") or ""
+    return " ".join(str(crit or "").split())
+
+
+_FIELD = re.compile(r"`([a-z][a-z0-9_]*)`")
+
+
+def _declared_detail(name: str, q: dict, entry, v, answer: str, p_: float) -> str:
+    """What was asked, about what, what came back, and why that answer is a finding.
+
+    *** THE DETAIL WAS THE QUESTION TEMPLATE, FIELD NAMES AND ALL. ***
+    It read "`model` has `marts_downstream` marts reading it and no volume monitor. Given what it
+    is and what it reads, is it worth watching?" -- the bank's wording, with the names of the
+    state's fields where the values should be, and nothing saying what the answer was. Reported
+    from the page with a screenshot.
+
+    The state an answer was given is not stored with it, so the question is filled only from what
+    the finding itself knows: the model, its reach, and what the answer was about. A template with
+    a field left over after that is not shown at all, because a question with a field name in it
+    is the thing that was reported.
+    """
+    who = entry.name
+    ctx = str((v or {}).get("context", "") or "")
+    about = ctx if ctx and ctx != who else ""
+    marts, desc = getattr(entry, "marts", None), getattr(entry, "descendants", None)
+    out = (f"`{name}` was asked about `{who}`" + (f" (about `{about}`)" if about else "")
+           + f" and answered `{answer}` at {p_:.2f}. ")
+    crit = _criterion(q, answer)
+    out += (f"This family declares that answer a finding: {crit}" if crit
+            else "This family declares that answer a finding.")
+    if marts is not None or desc is not None:
+        out += (f"\n\n`{who}` has {marts if marts is not None else 'an unknown number of'} "
+                f"mart(s) and {desc if desc is not None else 'an unknown number of'} model(s) "
+                f"downstream.")
+    words = " ".join(str((q.get("instructions") or {}).get("question", "") or "").split())
+    if words:
+        vals = {"model": f"`{who}`", "marts_downstream": marts, "models_downstream": desc,
+                "descendants": desc}
+        left = [t for t in _FIELD.findall(words) if vals.get(t) is None]
+        # One field the finding cannot name from the model is what the answer was ABOUT (the
+        # test, the monitor, the column) -- the subject finer than the model.
+        if about and len(set(left)) == 1:
+            vals[left[0]] = f"`{about}`"
+        filled = _FIELD.sub(lambda m: str(vals[m.group(1)]) if vals.get(m.group(1)) is not None
+                            else m.group(0), words)
+        if not [t for t in _FIELD.findall(filled) if t in left and vals.get(t) is None]:
+            out += f"\n\nWhat was asked, with this model's values: {filled}"
+    return out
 
 
 def _declared_summary(name: str, q: dict, entry, answer: str) -> str:
@@ -419,18 +474,17 @@ def _declared_summary(name: str, q: dict, entry, answer: str) -> str:
     # ALONGSIDE THIS. *** The shipped shape is `{answer: {what: "...", examples: [...]}}`; the
     # fixture used `{answer: "..."}` and passed, so the first real run raised on `.strip()`. Both
     # are read, because a bank is a file somebody wrote and either is a reasonable thing to write.
-    crit = (q.get("criteria") or {}).get(answer)
-    if isinstance(crit, dict):
-        crit = crit.get("what") or crit.get("means") or ""
-    label = str(crit or "").strip()
+    label = _criterion(q, answer)
     # *** TWO COLUMNS FLAGGED ON ONE MODEL READ AS ONE FINDING TWICE. ***
     # A family asked per column or per filter files every answer under the model, and the summary
     # named only the model. The subject the answer was about is in `context`; it is named when it
     # is finer than the model, so a family asked about whole models reads exactly as before.
     ctx = str(getattr(entry, "_ctx", "") or "")
     who = ctx if ctx and ctx != entry.name else entry.name
+    # The whole criterion. It was cut at 110 characters, which ended a sentence mid-word:
+    # "...the marts would be wrong without anything faili".
     if label:
-        return f"{who}: {label[:110]}"
+        return f"{who}: {label}"
     return f"{who}: `{name}` answered `{answer}`"
 
 

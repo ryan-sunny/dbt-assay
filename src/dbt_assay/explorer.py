@@ -357,6 +357,7 @@ padding:5px 0 5px 11px;margin:6px 0;color:var(--ink)}
 border-left:2px solid var(--rule);padding:8px 12px;margin:6px 0 0;overflow-x:auto}
 
 /* ---- rendered markdown */
+.md > p + p{margin-top:8px}
 .md > :first-child{margin-top:0}
 .md > :last-child{margin-bottom:0}
 .mdh{margin:14px 0 5px;font-family:Fell,Georgia,serif;font-size:15px;font-weight:400}

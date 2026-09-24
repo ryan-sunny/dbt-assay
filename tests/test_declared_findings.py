@@ -180,3 +180,47 @@ def test_a_criterion_is_read_whether_it_is_a_string_or_a_dict(custom):
     f = judged.declared_findings(None, [_entry()])[0]
     assert "hands a section_id downstream" in f.summary
     assert "examples" not in f.summary
+
+
+def test_the_detail_names_values_and_the_answer_never_the_template(monkeypatch):
+    """*** "`model` HAS `marts_downstream` MARTS READING IT" WAS THE WHOLE DETAIL. ***
+
+    The bank's question, with the state's field names where the values belong, and nothing
+    saying what the answer was. Reported from the page. The detail now says what was asked about
+    which model, what came back and at what probability, and why that answer is a finding; the
+    question appears only once its fields are values.
+    """
+    from dbt_assay import contracts
+    monkeypatch.setattr(contracts, "QUESTIONS", {"monitor_covers_what_matters": {
+        "id_prefix": "mcov", "finding_when": ["worth_watching"],
+        "criteria": {"worth_watching": {"what": "Its row count can change for reasons outside "
+                     "this project, and the marts would be wrong without anything failing."}},
+        "instructions": {"question": "`model` has `marts_downstream` marts reading it and no "
+                                     "volume monitor. Is it worth watching?"}}})
+    e = _entry(name="stg_cdss_structures", answer="worth_watching", p=0.7, prefix="mcov")
+    e.marts, e.descendants = 20, 30
+    f = judged.declared_findings(None, [e])[0]
+    assert "`marts_downstream`" not in f.detail and "`model` has" not in f.detail, f.detail
+    assert "`stg_cdss_structures` has 20 marts reading it" in f.detail
+    assert "answered `worth_watching` at 0.70" in f.detail
+    assert "without anything failing." in f.detail
+    # and the summary is the whole criterion, not 110 characters of it
+    assert f.summary.endswith("without anything failing."), f.summary
+
+
+def test_a_field_the_finding_cannot_fill_keeps_the_question_out(monkeypatch):
+    """A question with a field name left in it is the thing that was reported, so it is omitted
+    rather than shown half-filled. What was asked about is used for ONE unknown field."""
+    from dbt_assay import contracts
+    q = {"test_never_ran": {"id_prefix": "tnvr", "finding_when": ["gap"],
+                            "criteria": {"gap": "a hole"},
+                            "instructions": {"question": "`test` is declared on `model`. Gap?"}}}
+    monkeypatch.setattr(contracts, "QUESTIONS", q)
+    e = _entry(name="m", answer="gap", prefix="tnvr")
+    e.judged["tnvr"]["context"] = "not_null_m_id"
+    f = judged.declared_findings(None, [e])[0]
+    assert "`not_null_m_id` is declared on `m`" in f.detail, f.detail
+
+    q["test_never_ran"]["instructions"]["question"] = "`test` on `model` via `monitor`?"
+    f = judged.declared_findings(None, [e])[0]
+    assert "What was asked" not in f.detail and "`monitor`" not in f.detail, f.detail
