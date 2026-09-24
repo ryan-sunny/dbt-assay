@@ -1406,7 +1406,7 @@ def config(
     t.add_column(no_wrap=True)
     t.add_column(overflow="fold")
     t.add_row("audit.yml", f"[bold]{p}[/]" if p.exists()
-                           else f"[dim]{p} -- absent, so every default below is in force[/]")
+                           else f"[dim]{p} -- absent, so every setting below is a default[/]")
     t.add_row("provider", cfg.provider)
     t.add_row("model", cfg.model)
     t.add_row("spend cap", f"${cfg.max_spend_usd:.2f} per invocation")
@@ -3092,7 +3092,7 @@ def cost(
         notes.append("no call has ever returned an output token count. Jev does not bill output, "
                      "so nothing is missing from the dollars -- only from the counts.")
     if len(led["rates"]) > 1:
-        notes.append(f"{len(led['rates'])} different rates are in force across these calls. Each "
+        notes.append(f"{len(led['rates'])} different rates apply across these calls. Each "
                      f"call is priced at the rate stored on it, so a rate change does not rewrite "
                      f"what was already spent.")
     for r in CALLS_RECONSTRUCTED:

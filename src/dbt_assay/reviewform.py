@@ -804,6 +804,18 @@ font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-st
 h1 span{font-size:14px}
 h1{flex-wrap:nowrap}
 h1 > span:not(.hname):not(.ident){flex:1 1 auto;min-width:0}
+/* One line, always: the header held two lines once the counts were set in the text face. */
+.hmeta{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ident{flex:none;white-space:nowrap}
+@media (max-width:820px){
+  h1{flex-wrap:wrap}
+  .ident{width:100%;margin-left:0;flex-wrap:wrap;gap:8px 12px}
+  .ident .count{flex:1 1 100%}
+  .tabs{overflow-x:auto;flex-wrap:nowrap}
+  .tabs button{flex:none;padding-left:10px;padding-right:10px}
+  header{padding-left:16px;padding-right:16px}
+  main{padding:14px 16px}
+}
 .wedit input[type=text],.wedit input:not([type]){width:100%}
 .ident .count{font-size:14px}
 .tabs button b{font-size:12.5px}
@@ -1254,7 +1266,7 @@ function tick() {
   /* The count describes the pane you are on. On Findings that is verdicts; everywhere else it is
      boxes you have filled, because nothing on those panes is a verdict. */
   document.getElementById('count').textContent = pane === 'findings'
-    ? n + ' of ' + tot + ' answered' + (n ? '' : ' — nothing is recorded until you download')
+    ? n + ' of ' + tot + ' answered'
     : (edits ? edits + ' box(es) filled across the form' : 'nothing filled yet');
   document.getElementById('dl').disabled = n === 0 && edits === 0;
   const single = p.pages <= 1 || pane === 'findings' || pane === 'words';
@@ -1492,8 +1504,8 @@ function settingsTab(host) {
     row.append(el('div', {class: 'measured', text: s.what}));
     const shipped = s.shipped == null ? 'nothing' : String(s.shipped);
     row.append(el('div', {class: 'measured', text: s.set_here
-      ? 'this project set ' + String(s.current) + '. assay ships ' + shipped + '.'
-      : 'not set here, so assay ships ' + shipped + ' and that is what is in force.'}));
+      ? 'Set to ' + String(s.current) + ' in audit.yml. The default is ' + shipped + '.'
+      : 'Not set in audit.yml, so the default is used: ' + shipped + '.'}));
     row.append(field(s.kind === 'number' ? 'value (a number)' : 'value',
                      s.path, s.value === '' ? '' : String(s.value), ''));
     bits.push(row);
@@ -1602,8 +1614,8 @@ function monitoringTab(host) {
     + gap + '. Late is longer than this project has normally gone, so the derived threshold is '
     + (m.derived == null ? 'not derivable from that' : m.derived + ' day(s)')
     + (m.floored ? ' (held at one day, the shortest a threshold can be)' : '')
-    + (m.configured ? '. audit.yml says ' + m.configured : '. Nothing is configured, so the '
-       + 'derived number is what is in force') + '.'}));
+    + (m.configured ? '. audit.yml sets it to ' + m.configured
+                    : '. audit.yml does not set it, so the derived threshold is used') + '.'}));
   row.append(field('max_staleness_days',
                    ['monitoring', 'source_freshness', 'max_staleness_days'],
                    m.configured == null ? '' : String(m.configured),
@@ -1726,8 +1738,7 @@ def form_html(card_list: list, sql: dict, project: str, generated_at: str, versi
 <link rel="icon" href="{FAVICON}">
 <style>{FONT_CSS}{_CSS}</style></head><body>
 <header>
-<h1>{MARK_SVG}<span class="hname">{e(project)}</span><span>{len(card_list)} to rule on &middot; {len(ctx.get("words") or [])} word(s) &middot; {withread} carry a reading &middot;
-assay {e(version)} &middot; manifest {e(str(generated_at))}{report_link}</span>
+<h1>{MARK_SVG}<span class="hname">{e(project)}</span><span class="hmeta hint" data-tip="{withread} of the findings carry an agent&#39;s reading. Manifest generated {e(str(generated_at))}.">{len(card_list)} to rule on &middot; {len(ctx.get("words") or [])} words &middot; assay {e(version)}{report_link}</span>
 <!-- *** IT MOVED EVERY TIME THE COUNT TEXT CHANGED LENGTH OR A PAGER APPEARED. ***
      On the tab strip it wrapped to a second line on five panes and sat at x=176 on the sixth,
      measured. These belong to the whole form, not to a tab, so they sit on the masthead where

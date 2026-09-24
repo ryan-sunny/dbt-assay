@@ -602,3 +602,59 @@ def test_a_tip_shows_at_once_and_no_tab_starts_with_a_note(page_file):
                 assert "note" not in first.split(), f"`{tab}` opens on a grey note again"
         finally:
             browser.close()
+
+
+def test_the_tab_strip_is_one_row_and_a_menu_on_a_phone(page_file):
+    """*** "THE TABS GO OVER TO A SECOND ROW. UNACCEPTABLE". ***
+
+    One row at every desktop width, stepping down in size and then dropping the counts; on a
+    phone one menu button names the tab you are on and opens the grouped list."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            for w in (1920, 1440, 1280, 1100, 960):
+                page = browser.new_page(viewport={"width": w, "height": 800})
+                page.goto(page_file.as_uri())
+                page.wait_for_timeout(100)
+                rows = page.evaluate("""() => new Set([...document.querySelectorAll(
+                    'nav .navbtns button')].filter(b => b.offsetParent)
+                    .map(b => Math.round(b.getBoundingClientRect().top))).size""")
+                right = page.evaluate("""() => Math.max(...[...document.querySelectorAll(
+                    'nav .navbtns button')].map(b => b.getBoundingClientRect().right))""")
+                assert rows == 1, f"the tabs take {rows} rows at {w}px"
+                assert right <= w, f"the tabs run off the screen at {w}px"
+                page.close()
+            page = browser.new_page(viewport={"width": 420, "height": 800})
+            page.goto(page_file.as_uri())
+            page.wait_for_timeout(100)
+            assert page.locator("#navmenu").is_visible(), "a phone gets rows of tabs again"
+            assert not page.locator("nav").is_visible()
+            page.click("#navmenu")
+            page.click('nav button[data-tab="findings"]')
+            assert page.locator("#navcur").inner_text() == "Findings"
+            assert not page.locator("nav").is_visible(), "picking a tab did not close the menu"
+        finally:
+            browser.close()
+
+
+def test_the_form_header_is_one_line_and_says_nothing_is_in_force(tmp_path, project_dir):
+    from playwright.sync_api import sync_playwright
+
+    from dbt_assay import explorer, reviewform
+    for src in (reviewform._JS, explorer._VIEWS):
+        assert "in force" not in src, "'in force' is back on a page"
+    out = tmp_path / "review.html"
+    out.write_text(reviewform.form_html([], {}, "p", "x", "0"))
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            for w in (1500, 1100):
+                page = browser.new_page(viewport={"width": w, "height": 600})
+                page.goto(out.as_uri())
+                h = page.evaluate("() => document.querySelector('.hmeta').getBoundingClientRect().height")
+                assert h < 30, f"the form header wraps at {w}px ({h}px tall)"
+                page.close()
+        finally:
+            browser.close()

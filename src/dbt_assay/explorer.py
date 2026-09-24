@@ -75,7 +75,37 @@ margin-right:8px;border-right:1px solid var(--rule)}
 .navlab{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);
 padding:0 11px;font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif}
 .navbtns{display:flex;flex-wrap:nowrap}
-nav .navbtns button{padding:5px 11px 6px}
+/* *** ONE ROW. *** "the tabs go over to a second row. unacceptable". Set in normal case, the strip
+   is a third narrower than in spaced capitals; it steps down with the window, then drops the
+   counts (still in each tab's tip), and on a phone it is one menu button. It never wraps. */
+nav{flex-wrap:nowrap !important}
+nav .navbtns button{padding:4px 9px 6px;font-size:16px;letter-spacing:0;text-transform:none}
+nav .navbtns button b{font-size:12.5px;margin-left:5px}
+.navmenu{display:none}
+@media (max-width:1360px){
+  nav .navbtns button{font-size:14.5px;padding:4px 7px 6px}
+  .navlab{padding:0 7px;font-size:10.5px}
+  .navgroup{padding-right:5px;margin-right:5px}
+}
+@media (max-width:1180px){ nav .navbtns button b{display:none} }
+@media (max-width:940px){
+  .navmenu{display:inline-flex;align-items:center;gap:6px;margin:8px 0 10px;appearance:none;
+  background:#f1ede4;border:1px solid var(--rule);padding:7px 12px;font:inherit;font-size:16px;
+  color:var(--ink);cursor:pointer}
+  nav{display:none;position:absolute;left:16px;right:16px;z-index:60;background:var(--paper);
+  border:1px solid var(--ink);box-shadow:3px 3px 0 rgba(26,23,20,.14);padding:8px 0;
+  flex-direction:column;overflow:auto;max-height:75vh}
+  nav.open{display:flex}
+  .navgroup{border-right:0;margin:0;padding:4px 0;display:flex;align-items:stretch;width:100%}
+  .navlab{text-align:left;padding:4px 14px 2px}
+  .navbtns{flex-direction:column;align-items:stretch;width:100%}
+  nav .navbtns button{width:100%}
+  nav .navbtns button{text-align:left;font-size:16px;padding:7px 14px;border-bottom:0;
+  border-left:3px solid transparent}
+  nav .navbtns button[aria-selected=true]{border-left-color:var(--ink)}
+  nav .navbtns button b{display:inline}
+  header{position:relative}
+}
 nav button{appearance:none;border:0;border-bottom:3px solid transparent;background:none;
 font-family:Fell,Georgia,serif;font-size:15px;letter-spacing:.06em;text-transform:uppercase;
 color:var(--ash);padding:7px 15px 6px;cursor:pointer;margin-bottom:-3px}
@@ -910,7 +940,7 @@ def explorer_html(data: dict, record_html: str) -> str:
         "answers": "The latest answer to every question asked about this project.",
         "spend": "What the model calls and the warehouse statements cost.",
         "questions": "Every question assay asks, in full, and how often a person has ruled on it.",
-        "config": "The settings in force, and everything you wrote by hand.",
+        "config": "The settings assay is using, and everything you wrote by hand.",
     }
     # and what the number beside it counts, because "Monitoring 5" beside "Models 358" invites
     # reading both as sizes, and one of them is a count of findings.
@@ -952,6 +982,7 @@ def explorer_html(data: dict, record_html: str) -> str:
 <div class="sub">{meta['models']} models &middot; {meta['sources']} sources &middot;
 manifest generated {e(str(meta['generated_at']))} &middot;
 <span class="hint" data-tip="The build is a hash of the code that rendered this page: two pages claiming one version and differing here came from two different installs.&#10;&#10;The page is deterministic. It carries the manifest's own generated_at and never a wall clock, and every list arrives sorted, so a rerun against an unchanged store writes an identical file.">assay {e(meta['version'])} &middot; build {e(build_fingerprint())}</span>{form_link}</div>
+<button class="navmenu" id="navmenu" aria-expanded="false"><span id="navcur">Overview</span> ▾</button>
 <nav role="tablist">{nav}</nav>
 </header>
 <main>{panels}</main>
@@ -2379,7 +2410,7 @@ function configTab(host) {
   if (cut) bits.push(el('img', {class: 'cut tabcut', src: cut, alt: ''}));
   const scalars = Object.entries(c).filter(([, v]) => typeof v !== 'object' || v === null);
   if (scalars.length) bits.push(section('resolved', kv(scalars.map(([k, v]) => [k, String(v)])),
-    'The values in force after defaults are applied, which is not always what audit.yml says. '
+    'The values assay is using once its defaults are filled in, which can differ from audit.yml. '
     + 'Everything below this you wrote by hand.'));
 
   /* *** THE VOCABULARY IS THE POINT OF THE WHOLE CONFIG AND IT WAS A JSON BLOB. ***
@@ -3141,7 +3172,7 @@ function monitoringTab(host) {
                    + 'derived threshold.'
                    : 'Derived from the build cadence' + (cad.floored ? ', held at the one-day '
                    + 'floor because a threshold cannot be shorter than a day' : '')
-                   + '. Nothing is configured, so the derived number is in force. Each monitor '
+                   + '. audit.yml does not set it, so this derived number is used. Each monitor '
                    + 'also has its own threshold from its own write history where it has enough.'});
   if (cov.declared) {
     const never = (cov.declared || 0) - (cov.ever_ran || 0);
@@ -3354,6 +3385,8 @@ const built = {};
 function open(name) {
   document.querySelectorAll('nav button').forEach(b =>
     b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+  const cur = document.querySelector('nav button[data-tab="' + name + '"]');
+  if (cur) document.getElementById('navcur').textContent = cur.firstChild.textContent;
   document.querySelectorAll('.panel').forEach(p => { p.hidden = p.id !== 'p-' + name; });
   const host = document.getElementById('p-' + name);
   /* Built once, on first open. A 358-model warehouse renders eight tabs' worth of tables in well
@@ -3378,6 +3411,14 @@ document.addEventListener('scroll', () => dismissCards(), true);
 window.addEventListener('resize', () => dismissCards());
 
 document.querySelectorAll('nav button').forEach(b => {
-  b.onclick = () => { dismissCards(); open(b.dataset.tab); }; });
+  b.onclick = () => { dismissCards(); open(b.dataset.tab); closeMenu(); }; });
+/* *** ON A PHONE THE STRIP IS A MENU, NOT ROWS OF TABS. *** One button names the tab you are on,
+   and opens the grouped list; picking a tab closes it. */
+const NAVM = document.getElementById('navmenu'), NAVEL = document.querySelector('nav');
+function closeMenu() { NAVEL.classList.remove('open'); NAVM.setAttribute('aria-expanded', 'false'); }
+NAVM.onclick = ev => { ev.stopPropagation(); const on = !NAVEL.classList.contains('open');
+  NAVEL.classList.toggle('open', on); NAVM.setAttribute('aria-expanded', String(on)); };
+document.addEventListener('click', ev => {
+  if (!ev.target.closest('nav') && !ev.target.closest('#navmenu')) closeMenu(); });
 open(VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'understood');
 """
