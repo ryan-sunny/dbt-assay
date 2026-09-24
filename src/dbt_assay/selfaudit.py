@@ -33,6 +33,10 @@ _ALL = re.compile(r"\b(\d[\d,]*) ruled, all agreed\b")
 _AGREED_UNCLEAR = re.compile(r"\b(\d[\d,]*) agreed, (\d[\d,]*) unclear\b")
 _SOURCE_TOTAL = re.compile(r"\b(\d[\d,]*) (agent|human) (?:rulings|verdicts)\b")
 _NONE_CLEAR = re.compile(r"min_adjudications,? which none (?:do|of them do)\b")
+# "`assay calibrate` puts the grain judgment at 9 exact of 25, 9 flagged uncertain, 5 disagreeing"
+_CAL = re.compile(r"\b(\d[\d,]*) exact of (\d[\d,]*)\b")
+_CAL_UNSURE = re.compile(r"\b(\d[\d,]*) (?:flagged )?uncertain\b")
+_CAL_WRONG = re.compile(r"\b(\d[\d,]*) disagree(?:ing|s)?\b")
 # "before 0.15.0", "at 0.21.1", "until v2": a claim about a moment, not about now.
 _DATED = re.compile(r"\b(?:before|after|until|at|as of|in)\s+v?\d+\.\d+")
 
@@ -41,7 +45,7 @@ _DATED = re.compile(r"\b(?:before|after|until|at|as of|in)\s+v?\d+\.\d+")
 class Claim:
     line: int
     question: str          # the `questions:` key the comment sits above, or "" for the file
-    kind: str              # of | all | agreed_unclear | source_total | none_clear
+    kind: str              # of | all | agreed_unclear | source_total | none_clear | calibrate
     text: str
     numbers: tuple = ()
     source: str = ""
@@ -100,6 +104,12 @@ def _read_block(block: list[tuple[int, str]], question: str) -> list[Claim]:
         for m in _SOURCE_TOTAL.finditer(sentence):
             out.append(Claim(line_of(m.group(0)), question, "source_total", m.group(0),
                              (_n(m.group(1)),), source=m.group(2)))
+        for m in _CAL.finditer(sentence):
+            # The rest of the calibration sentence, when it gives them: None is "not claimed".
+            u, w = _CAL_UNSURE.search(sentence), _CAL_WRONG.search(sentence)
+            out.append(Claim(line_of(m.group(0)), question, "calibrate", m.group(0),
+                             (_n(m.group(1)), _n(m.group(2)), _n(u.group(1)) if u else None,
+                              _n(w.group(1)) if w else None)))
         for m in _NONE_CLEAR.finditer(sentence):
             out.append(Claim(line_of("min_adjudications"), question, "none_clear", m.group(0)))
     return out
@@ -171,6 +181,17 @@ def config_findings(config_path: str, store, cfg=None) -> list[Finding]:
                 continue
             store_says = (f"{len(cleared)} question(s) have cleared min_adjudications "
                           f"({floor}): {', '.join(cleared[:6])}")
+        elif c.kind == "calibrate":
+            cal = store.latest_calibration()
+            if cal is None:
+                continue                  # never calibrated here: nothing to read it against
+            exact, n, unsure, wrong = c.numbers
+            if (exact == cal["exact"] and n == cal["n"]
+                    and unsure in (None, cal["uncertain"]) and wrong in (None, cal["disagrees"])):
+                continue
+            store_says = (f"the latest `assay calibrate` ({str(cal['ran_at'])[:10]}) put it at "
+                          f"{cal['exact']} exact of {cal['n']}, {cal['uncertain']} flagged "
+                          f"uncertain, {cal['disagrees']} disagreeing")
         elif c.kind == "source_total":
             t = _tallies(store, c.question)[c.source]
             if t.get("total", 0) == c.numbers[0]:

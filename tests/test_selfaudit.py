@@ -79,3 +79,24 @@ def test_check_reports_it(project_dir, tmp_path):
                                  "--store", str(tmp_path / "s.duckdb"), "--json"])
     assert any(f["check"] == "config_comment_contradicts_the_store"
                for f in json.loads(r.output)["findings"])
+
+
+def test_a_calibrate_figure_in_a_comment_is_read_against_the_latest_calibration(tmp_path):
+    """*** THE COMMENT HAD DRIFTED AND THE CHECK FIRED THREE TIMES WITHOUT SEEING IT. *** (25.7)"""
+    from dbt_assay.selfaudit import config_findings
+    from dbt_assay.store import Store
+    (tmp_path / "audit.yml").write_text(
+        "# `assay calibrate` puts the grain judgment at 9 exact of 25, 9 flagged uncertain, 5\n"
+        "# disagreeing.\nquestions: {}\n")
+    s = Store(str(tmp_path / "s.duckdb"))
+    try:
+        assert config_findings(str(tmp_path), s) == [], "never calibrated: nothing to read against"
+        s.write_calibration({"n": 24, "exact": 8, "uncertain": 9, "kept_too_many": 1,
+                             "dropped_too_many": 2, "disagrees": 4, "code_exact": 5}, "0.51.0")
+        got = config_findings(str(tmp_path), s)
+        assert len(got) == 1 and "8 exact of 24" in got[0].detail, got
+        s.write_calibration({"n": 25, "exact": 9, "uncertain": 9, "kept_too_many": 1,
+                             "dropped_too_many": 1, "disagrees": 5, "code_exact": 5}, "0.51.0")
+        assert config_findings(str(tmp_path), s) == []
+    finally:
+        s.close()

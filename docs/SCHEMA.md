@@ -1,6 +1,6 @@
 # The store
 
-One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Eleven
+One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Twelve
 tables. The whole design turns on one split, so it is worth stating before the diagram:
 
 **Some of these cost nothing and some of them cost money or somebody's afternoon.** A table
@@ -11,7 +11,7 @@ prune` deletes only the first kind, and the split is declared in code rather tha
 ```python
 PRUNABLE     = ("findings", "edge_facts", "unreadable")
 NEVER_PRUNED = ("model_calls", "model_decisions", "claims", "adjudications", "observed_keys",
-                "runs", "states", "warehouse_calls")
+                "runs", "calibrations", "states", "warehouse_calls")
 ```
 
 A new table belongs to one list or the other and a test fails until it does, so nothing becomes
@@ -176,6 +176,17 @@ erDiagram
         varchar detail
         timestamp called_at
     }
+    CALIBRATIONS {
+        timestamp ran_at
+        varchar assay_version
+        int n "labeled models the grain judgment was measured on"
+        int exact
+        int uncertain "the judgment said it could not tell"
+        int kept_too_many
+        int dropped_too_many
+        int disagrees
+        int code_exact "what code alone got, for the comparison"
+    }
 ```
 </details>
 
@@ -240,6 +251,7 @@ rulings were structural, so a calibration report has to exclude them by construc
 | `claims` | what this project asserts, as data | **a model call** |
 | `observed_keys` | what a count actually found, over time | **a warehouse query** |
 | `warehouse_calls` | what each statement cost the warehouse | **the money itself** |
+| `calibrations` | what `assay calibrate` measured, so a comment quoting it can be checked | free from the cache, **a model call** without it |
 
 ---
 

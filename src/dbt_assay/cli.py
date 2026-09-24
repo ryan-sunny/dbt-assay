@@ -4413,6 +4413,11 @@ def calibrate(
     console.print(t)
     console.print(f"[dim]code alone was exact on {code_exact}/{len(work)}; "
                   f"with judgment {exact}/{n}[/]")
+    if rows:
+        # Kept, so a comment quoting these numbers can be read against them later (25.7).
+        store.write_calibration({"n": n, "exact": exact, "uncertain": unsure,
+                                 "kept_too_many": over, "dropped_too_many": under,
+                                 "disagrees": wrong, "code_exact": code_exact}, __version__)
     console.print(f"[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
                   f"${client.spent_usd:.4f}[/]")
     _report_vocab_drops()
