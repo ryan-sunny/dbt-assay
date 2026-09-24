@@ -2999,7 +2999,7 @@ function monitoringTab(host) {
    HTML, and leaves code, pre and inputs alone. */
 const TICK = /`([^`\n]+)`/;
 function renderTicks(root) {
-  const skip = n => n.closest && n.closest('pre, code, textarea, input, svg, .mono, .quote.raw');
+  const skip = n => n.closest && n.closest('pre, code, textarea, input, svg');
   const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {acceptNode: t =>
     TICK.test(t.nodeValue) && t.parentElement && !skip(t.parentElement)
       ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT});
