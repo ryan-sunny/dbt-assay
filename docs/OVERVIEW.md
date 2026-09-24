@@ -125,7 +125,7 @@ Every one of those shapes this tool: arithmetic and dates are settled by sqlglot
 never asked, states are the smallest thing that can answer the question, and there is one noul per
 rule rather than one over a list of them. The [README](../README.md) carries the measurements.
 
-Thirty-five question families ship. The one worth seeing first:
+Thirty-six question families ship. The one worth seeing first:
 
 ### Does the description still describe the code?
 
@@ -209,7 +209,7 @@ fires after the spend is not a cap.
 
 ## Every question, and what rests on it
 
-Thirty-five families ship. `assay config` shows how many verdicts each has and which can gate;
+Thirty-six families ship. `assay config` shows how many verdicts each has and which can gate;
 `rests_on` on a finding names the family it derives from, and these are those names.
 
 | family | type | finding it feeds |
@@ -305,6 +305,27 @@ the warehouse adds rows in and can move between builds on identical data; the ev
 one-line fix, `sum(cast(x as decimal(18, 2)))`. Types come from `catalog.json`, then the manifest.
 A sum whose type could not be read is counted and `check` says so; it is never a pass. A column
 whose role was never judged is counted, not flagged. Queued by default.
+
+**Incremental models, the branch `dbt compile` never renders.** Compiled SQL is the full refresh;
+the `{% if is_incremental() %}` branch that runs every day after is read from the raw code, with
+the model's `incremental_strategy` (Snowflake's default is `merge`), `unique_key`,
+`on_schema_change`, and microbatch's `event_time` / `lookback` / `batch_size`. Five checks, each
+queued by default: `incremental_merge_without_key` (a merge with no key appends),
+`incremental_key_not_unique` (nothing makes the key unique within one run's rows: no final group
+by, dedupe or DISTINCT ON over it, and no test or count), `incremental_filter_without_lookback`
+(`col > (select max(col) from this)` with nothing subtracted, so a late row is skipped forever),
+`microbatch_without_lookback` (`lookback: 0`, or rows measured arriving later than it), and
+`incremental_schema_change_ignored` (the columns changed since the last version `check` kept and
+`on_schema_change` ignores it). How late rows arrive is the `max_lateness` premise:
+
+```bash
+assay probe --lateness            # max(arrival - event) per incremental model, through your dbt
+assay ask --family arrival_time_column   # which column is the arrival, where no name says it
+```
+
+The arrival column is a loader's own (`_loaded_at`, `_fivetran_synced`, `inserted_at`, ...) by
+name, or the `arrival_time_column` judgment. With none, the premise is `unknown` and the finding
+says so. The model pane shows an **incremental** section with each setting and what was flagged.
 
 **The judged tier** — needs a key
 

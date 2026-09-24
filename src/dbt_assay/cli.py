@@ -4575,8 +4575,17 @@ def probe(
                                       "of it, for warehouses where an exact count is a real "
                                       "bill. EXACT IS THE DEFAULT: a sampled result is evidence, "
                                       "never a settled key, and every surface says so."),
+    lateness: bool = typer.Option(False, "--lateness",
+                                  help="instead: for each incremental model, count how late rows "
+                                       "arrive after their event time, max(arrival - event), "
+                                       "for the lookback premise"),
+    json_out: bool = typer.Option(False, "--json"),
 ):
     """Count what the SQL cannot settle. Runs through YOUR dbt; assay never sees a credential."""
+    if lateness:
+        _probe_lateness(target, project_dir, profiles_dir, dbt_bin, store_path, dry_run,
+                        json_out)
+        return
     cfg = Config.load(config_path)
     _tdir, project, digests, schema, declared, proposed = _grain_setup(target, store_path)
     # *** `--dialect` DEFAULTS TO NONE AND EVERYTHING DOWNSTREAM TAKES A DIALECT. ***
@@ -5455,6 +5464,41 @@ def trace(
     if last == "from_source":
         console.print("\n[dim]The trail ends at a source. What produced this value happened "
                       "outside this project, and assay will not guess at it.[/]")
+
+
+def _probe_lateness(target, project_dir, profiles_dir, dbt_bin, store_path, dry_run,
+                    json_out) -> None:
+    """`probe --lateness`: how late rows arrive, per incremental model. (G-D)"""
+    from .checks import incremental as inc_mod
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir)
+    store = Store(store_path)
+    try:
+        facts, _ = relate.run_all(project, digests, schema)
+        entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store),
+                                facts=facts)
+        rows = inc_mod.measure(
+            project, digests, schema, entries, store,
+            lambda sql: probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=2,
+                                          caller="assay.probe.lateness", kind="count"),
+            dry_run=dry_run)
+    finally:
+        store.close()
+    if json_out:
+        print(_json.dumps({"lateness": rows}, indent=2, default=str))
+        return
+    if not rows:
+        console.print("[dim]no incremental model filters on an event time, so there is nothing "
+                      "to measure.[/]")
+        return
+    for r in rows:
+        if r.get("measured"):
+            console.print(f"{r['model']}  [bold]{r['late']}[/] latest  [dim]{r['event']} -> "
+                          f"{r['arrival']} ({r['arrival_from']}), {r['rows']:,} rows[/]")
+        elif r.get("sql"):
+            console.print(f"{r['model']}  [dim]would run:[/] {r['sql']}")
+        else:
+            console.print(f"{r['model']}  [yellow]not measured[/] [dim]{r['why']}[/]")
 
 
 @app.command()

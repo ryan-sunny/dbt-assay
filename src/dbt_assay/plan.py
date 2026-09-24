@@ -136,6 +136,28 @@ SHAPES: dict[str, tuple[str, str]] = {
         (        "The measure is added up as a floating-point number, so its total depends on row "
         "order and moves between builds on the same data. `sum(cast(x as decimal(18, 2)))` "
         "makes the addition exact; the evidence carries the expression.")),
+    "incremental_merge_without_key": (
+        "set the unique_key",
+        (        "A merge or delete+insert with no `unique_key` appends: a rerun or overlapping "
+        "window inserts the same rows again. Set `unique_key` to what identifies a row.")),
+    "incremental_key_not_unique": (
+        "dedupe the new rows on the key",
+        (        "Nothing makes the merge key unique within one run's rows, so the merge fails or "
+        "updates from an arbitrary duplicate. Dedupe on the key (qualify row_number() ... = 1, "
+        "with a total order) before the merge.")),
+    "incremental_filter_without_lookback": (
+        "subtract a lookback window",
+        (        "The filter keeps only rows newer than the newest already loaded, so a late row is "
+        "skipped forever. Subtract a window sized to how late rows arrive (`assay probe "
+        "--lateness` measures it).")),
+    "microbatch_without_lookback": (
+        "raise the lookback",
+        (        "Rows arrive later than the batches microbatch reprocesses. Set `lookback` to "
+        "cover the measured lateness.")),
+    "incremental_schema_change_ignored": (
+        "set on_schema_change, or full-refresh once",
+        (        "The model's columns changed and the incremental table was not altered. Set "
+        "`on_schema_change: append_new_columns` or `sync_all_columns`, or run --full-refresh.")),
     "fixed_finding_returned": (
         "find what undid the fix",
         (        "A finding a person agreed with was fixed and is back. Compare the model at the "

@@ -1,6 +1,6 @@
 # The store
 
-One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Seventeen
+One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Eighteen
 tables. The whole design turns on one split, so it is worth stating before the diagram:
 
 **Some of these cost nothing and some of them cost money or somebody's afternoon.** A table
@@ -12,7 +12,7 @@ prune` deletes only the first kind, and the split is declared in code rather tha
 PRUNABLE     = ("findings", "edge_facts", "unreadable", "premises", "premise_uses")
 NEVER_PRUNED = ("model_calls", "model_decisions", "claims", "adjudications", "observed_keys",
                 "runs", "calibrations", "compiled_sql", "commits", "states", "warehouse_calls",
-                "test_status")
+                "test_status", "observed_lateness")
 ```
 
 A new table belongs to one list or the other and a test fails until it does, so nothing becomes
@@ -36,6 +36,7 @@ erDiagram
     PREMISES ||--o{ PREMISE_USES : "what rests on it"
     TEST_STATUS |o--o{ PREMISES : "a declared test's last result is evidence"
     OBSERVED_KEYS |o--o{ PREMISES : "a count is evidence"
+    OBSERVED_LATENESS |o--o{ PREMISES : "how late rows arrive is evidence"
 
     STATES ||--o{ MODEL_DECISIONS : "one state, many answers"
     MODEL_CALLS ||--o{ MODEL_DECISIONS : "one call, many answers"
@@ -180,6 +181,15 @@ erDiagram
         varchar model "the model it is about"
         varchar detail
     }
+    OBSERVED_LATENESS {
+        varchar relation PK
+        varchar event_column PK "the column an incremental filter or microbatch reads"
+        timestamp observed_at PK
+        varchar arrival_column "when a row landed: a loader column, or the judged one"
+        double max_late_seconds "max(arrival - event) over the table"
+        bigint rows_read
+        varchar via
+    }
     TEST_STATUS {
         varchar test_id PK "the dbt test's unique_id"
         timestamp ran_at PK
@@ -303,6 +313,7 @@ rulings were structural, so a calibration report has to exclude them by construc
 | `compiled_sql` | what a past version of a model compiled to, by dbt's checksum, so `backtest` replays it exactly | **a compile**, or a build that is gone |
 | `premises` | what each fact, suppression and proof rests on, its evidence and status | free |
 | `premise_uses` | which grain, held-back finding or proof rests on which premise | free |
+| `observed_lateness` | how late rows arrive after their event time, for an incremental model's lookback | **a warehouse query** |
 | `test_status` | each dbt test's last actual result, from Elementary or a build's `run_results.json` | **a build that is gone** |
 | `commits` | every commit touching the project, and the models it touched; with `runs.git_sha`, when a finding was first seen | free from git |
 

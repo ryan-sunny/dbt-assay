@@ -388,6 +388,34 @@ def sentinels(project, digests, schema) -> list:
     return out
 
 
+# ------------------------------------------------------------------------------ arrival time
+
+def arrival_candidates(project, digests, schema) -> list:
+    """The time columns of an incremental model whose names do not already say which is the
+    arrival: the only places `arrival_time_column` is worth asking. (G-D)"""
+    from .checks import incremental as inc_mod
+    from .subjects import Subject, _prune
+    out = []
+    for uid, i in sorted(inc_mod.read(project, digests).items()):
+        event = i.event_time if i.strategy == "microbatch" else i.filter_column
+        d = _ok(digests, uid)
+        if not event or d is None:
+            continue
+        cols = [c.lower() for c in d.output_columns]
+        if any(c in inc_mod.ARRIVAL_NAMES for c in cols):
+            continue                                  # a loader column: its name already says
+        m = project.models[uid]
+        times = [c for c in cols if c != event.lower() and (_TIME.search(c) or c.endswith("_on"))]
+        for c in times:
+            out.append(Subject(
+                "arrival_candidate", f"{uid}::arrival::{c}", uid, f"{m.name}.{c}", file=m.path,
+                state=_prune({"model": m.name, "column": c, "event_column": event,
+                              "expression": (d.output_exprs or {}).get(c, "")[:200],
+                              "column_description": _desc(m, c),
+                              "other_time_columns": [x for x in times if x != c][:8]})))
+    return out
+
+
 BUILDERS = {
     "default": defaults,
     "column_risk": column_risks,
@@ -396,6 +424,7 @@ BUILDERS = {
     "time_join": time_joins,
     "ranking_window": ranking_windows,
     "sentinel": sentinels,
+    "arrival_candidate": arrival_candidates,
 }
 
 STATE_FIELDS = {
@@ -418,6 +447,8 @@ STATE_FIELDS = {
                        "what_one_row_of_this_model_is"},
     "sentinel": {"model", "where", "sql", "sentinel_literals", "column_description",
                  "what_one_row_of_this_model_is"},
+    "arrival_candidate": {"model", "column", "event_column", "expression", "column_description",
+                          "other_time_columns", "what_one_row_of_this_model_is"},
 }
 
 

@@ -23,6 +23,7 @@ from typing import ClassVar
 import duckdb
 
 from .jev import DDL as JEV_DDL
+from .checks.incremental import DDL_LATENESS
 from .ledger import DDL as LEDGER_DDL
 
 # `accept`: the finding is CORRECT and the person chose to leave it. Not `agree`, which leaves it
@@ -50,7 +51,7 @@ def _shipping_versions() -> set:
         return set()
 
 
-DDL = JEV_DDL + LEDGER_DDL + """
+DDL = JEV_DDL + LEDGER_DDL + DDL_LATENESS + """
 create table if not exists runs (
     run_id       varchar primary key,
     started_at   timestamp,
@@ -1460,7 +1461,9 @@ NEVER_PRUNED = ("model_calls", "model_decisions", "claims", "adjudications", "ob
                 "warehouse_calls",
                 # A test's last result, read from Elementary or run_results.json. The build that
                 # produced it is gone once dbt overwrites the file, so it cannot be re-read.
-                "test_status")
+                "test_status",
+                # How late rows arrive, counted through the project's own dbt: a warehouse query.
+                "observed_lateness")
 
 
 def prune(store, keep: int = 10) -> dict:

@@ -155,6 +155,10 @@ def all_findings(project, digests, schema, entries=None, *,
 def _all_findings(project, digests, schema, entries, threshold, store) -> list:
     fs = structural_checks(project, digests, schema)
     fs += relate.run_all(project, digests, schema)[1]
+    # *** THE BRANCH `dbt compile` NEVER RENDERS. *** (G-D) Incremental models, read from their raw
+    # code and config; the lateness and per-batch premises land in the ledger in force.
+    from .checks import incremental as inc_mod
+    fs += inc_mod.run_all(project, digests, schema, entries, store)
     if entries:
         from . import judged as judged_mod
         from . import practices as prac_mod
@@ -276,6 +280,9 @@ def contract_of(state: LiveState, model: str) -> dict | None:
         # passed, was never run, or broke: {"status", "label", "why"} from the premise ledger.
         "grain_firm": e.grain.firm if e.grain else False,
         "grain_premise": (e.grain.premise or None) if e.grain else None,
+        # How it loads after its first build, when it is incremental. (G-D)
+        **({"incremental": _incremental_of(state, e.uid)} if e.materialized == "incremental"
+           else {}),
         "reads": e.reads,
         "descendants": e.descendants,
         "marts_downstream": e.marts,
@@ -289,6 +296,12 @@ def contract_of(state: LiveState, model: str) -> dict | None:
             for c in e.columns
         ],
     }
+
+
+def _incremental_of(state, uid: str) -> dict | None:
+    from .checks import incremental as inc_mod
+    got = inc_mod.read(state.project, state.digests).get(uid)
+    return got.as_dict() if got is not None else None
 
 
 def premises_report(project, digests, schema, entries, store, model: str = "",

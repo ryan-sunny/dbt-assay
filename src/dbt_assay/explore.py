@@ -140,6 +140,9 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         # per claim or per hop. Both belong to the model.
         dec_by_subject.setdefault(d["key"].split("::")[0], []).append(i)
 
+    # The incremental config and branch, with what the G-D checks flagged on each part.
+    from .checks import incremental as inc_mod
+    incs = inc_mod.model_rows(project, digests, [f for f in find_rows])
     models = []
     for e in sorted(entries, key=lambda x: x.uid):
         models.append({
@@ -173,6 +176,7 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
             "fanout_hops": [[c, round(float(p), 4)] for c, p in sorted(e.fanout_hops or [])],
             "claims": sorted(claim_by_subject.get(e.uid, [])),
             "findings": sorted(find_by_subject.get(e.uid, [])),
+            **({"incremental": incs[e.uid]} if e.uid in incs else {}),
             "decisions": sorted(dec_by_subject.get(e.uid, [])),
         })
 

@@ -1704,6 +1704,41 @@ function modelsTab(host) {
         : el('span', {class: 'tot', text: 'no exposure declares it'})],
     ])));
 
+    /* *** THE BRANCH `dbt compile` NEVER RENDERS. *** (G-D) An incremental model's strategy,
+       key, filter and schema-change setting, each with the badge of anything flagged on it. */
+    const inc = m.incremental;
+    if (inc) {
+      const flag = k => ((inc.flags || {})[k] || []).flatMap(x => {
+        const a = el('a', {class: 'lk plink', href: '#findings', text: x.check.replace(/_/g, ' ')});
+        a.onclick = ev => { ev.preventDefault(); open('findings'); GO.findings(x.id); };
+        return [badge('flagged', 'bad'), a];
+      });
+      const code = t => el('span', {class: 'mono'}, [wbr(t)]);
+      const none = t => el('span', {class: 'tot', text: t});
+      const rows = [
+        ['strategy', el('span', {}, [el('span', {text: inc.strategy || 'not set'}),
+          el('span', {class: 'tot', text: '  ' + (inc.strategy_from || '')})])],
+        ['unique_key', el('span', {}, [inc.unique_key && inc.unique_key.length
+          ? code(inc.unique_key.join(', ')) : none('none'), ...flag('unique_key')])],
+      ];
+      if (inc.strategy === 'microbatch')
+        rows.push(['event_time', inc.event_time ? code(inc.event_time) : none('not set')],
+                  ['lookback', el('span', {}, [el('span', {text: (inc.lookback == null
+                    ? '1 (dbt’s default)' : String(inc.lookback)) + ' × ' + (inc.batch_size || '?')}),
+                    ...flag('lookback')])]);
+      else
+        rows.push(['new rows are', el('span', {}, [inc.filter_sql ? code(inc.filter_sql)
+          : none(inc.block ? (inc.filter_read ? 'filtered some other way' : 'a branch assay could not read')
+                           : 'every row: no is_incremental() branch'),
+          ...(inc.filter_sql ? [badge(inc.filter_lookback ? 'with a lookback' : 'no lookback',
+                                      inc.filter_lookback ? '' : 'bad')] : []),
+          ...flag('filter')])]);
+      rows.push(['on_schema_change', el('span', {}, [inc.on_schema_change ? code(inc.on_schema_change)
+        : none('ignore (the default)'), ...flag('on_schema_change')])]);
+      d.append(section('incremental', kv(rows), 'How this model loads after its first build. '
+        + 'The compiled SQL is the full refresh; this is the other branch, read from the raw code.'));
+    }
+
     /* *** CORRECT AS LONG AS. *** Every premise something about this model rests on, one line
        each with its status, linked to Guarantees. Omitted when there are none. */
     const prem = PREM_BY_MODEL[m.uid] || [];

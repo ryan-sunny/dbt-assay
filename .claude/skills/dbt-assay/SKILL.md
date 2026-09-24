@@ -293,6 +293,10 @@ back is raised as `fixed_finding_returned` with both commits in its `timeline`, 
   feed, or the thing that makes the model mean what it means. `contract` and the model's own
   comments say which. Removing the wrong one deletes a rule nobody can reconstruct.
 - **A column that arrives `from_source` has no explanation inside this project.** Do not invent one.
+- **An incremental model has two branches, and the compiled SQL is only one.** Before editing
+  one, read its `incremental` block in `contract`/the page: a high-water-mark filter needs a
+  lookback sized to `assay probe --lateness`, a merge needs a `unique_key` the new rows cannot
+  repeat, and a column change needs `on_schema_change` or a full refresh.
 - **Never `sum` or `avg` a DOUBLE measure.** Cast it first: `sum(cast(x as decimal(18, 2)))`.
   A float total moves between builds on identical data, and `float_sum_is_not_reproducible`
   reports it.
@@ -527,7 +531,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay plan` | `assay_plan` | What to DO about the findings a person agreed with. | `--target/-t` `--config` `--store` `--out` `--dialect` `--json` |
 | `assay practices` | `assay_practices` | Standard dbt practice: deferred to where it exists, adjudicated where it is noisy. | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--evaluator-schema` `--dialect` `--verify` `--keys-only` `--model/-m` `--store` `--config` |
 | `assay premises` | `assay_premises` | What the findings rest on: every key a declared grain or a held-back finding assumes is unique, with its evidence, its status, and what rests on it. | `--model/-m` `--status` `--target/-t` `--store` `--dialect` `--json` |
-| `assay probe` | `assay_probe` | Count what the SQL cannot settle. | `--target/-t` `--project-dir` `--profiles-dir` `--dialect` `--dbt/--dbt-bin` `--dry-run` `--emit` `--load` `--limit/-n` `--store` `--config` `--sample` |
+| `assay probe` | `assay_probe` | Count what the SQL cannot settle. | `--target/-t` `--project-dir` `--profiles-dir` `--dialect` `--dbt/--dbt-bin` `--dry-run` `--emit` `--load` `--limit/-n` `--store` `--config` `--sample` `--lateness` `--json` |
 | `assay prune` | `assay_prune` | Drop old runs from the tables a parser can regenerate. | `--keep/-k` `--store` `--dry-run` |
 | `assay read` | `assay_read` | Read every unruled review card once, by the judged tier, into a file a person checks. | `--out/-o` `--target/-t` `--store` `--config` `--select/-s` `--check` `--limit/-n` `--dry-run` `--dialect` |
 | `assay regress` | `assay_regress` | Re-ask every question a person already agreed with, and report what moved. | `--target/-t` `--store` `--config` `--family/-f` |

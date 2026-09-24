@@ -108,7 +108,9 @@ class Premise:
         if self.prop == "unique_per_batch":
             return f"{cols} unique within each run's new rows of {where}"
         if self.prop == "max_lateness":
-            return f"no row of {where} arrives more than {self.param} after {cols}"
+            if str(self.param).startswith("0"):
+                return f"no row of {where} arrives after a later {cols} is already loaded"
+            return f"no row of {where} arrives more than {self.param} after its {cols}"
         return f"{self.prop}({cols}) in {where}"
 
     def as_dict(self) -> dict:
@@ -461,6 +463,14 @@ def apply_to_grains(led: Ledger, entries) -> None:
 def label(p: Premise) -> str:
     """The few words a badge carries about a declared key: what its strongest evidence says."""
     kinds = {e.kind: e for e in p.evidence}
+    if p.prop == "max_lateness":
+        return {BROKEN: "rows arrive later", HOLDING: "measured within",
+                UNCHECKED: "not measured", UNKNOWN: "no arrival column"}.get(p.status, p.status)
+    if p.prop == "unique_per_batch":
+        if p.status == HOLDING:
+            return "by its SQL" if "derived" in kinds else "holding"
+        return {BROKEN: "duplicates", UNCHECKED: "table only",
+                UNKNOWN: "nothing says"}.get(p.status, p.status)
     if p.status == BROKEN:
         obs = kinds.get("observed")
         return "counted duplicates" if obs is not None and obs.status == BROKEN else "failing"

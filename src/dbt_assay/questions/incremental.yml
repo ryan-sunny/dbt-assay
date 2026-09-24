@@ -1,0 +1,43 @@
+# Incremental models: the one fact the SQL cannot say. (G-D)
+#
+# *** A LOOKBACK IS ONLY RIGHT IF IT IS LONGER THAN THE LATEST ROW EVER ARRIVED. ***
+# How late rows arrive is `max(arrival - event)`, which `assay probe --lateness` counts. It needs to
+# know which column is the ARRIVAL: when the row landed in the warehouse, as opposed to when the
+# thing it describes happened. A loader's own column says so by its name (`_loaded_at`,
+# `_fivetran_synced`, ...) and is read without asking. This is asked only where no name says it.
+version: 1
+
+arrival_time_column:
+  id_prefix: "arrv"
+  type: choice
+  subject: arrival_candidate
+  prompt_version: "arrival.v1"
+  acknowledge:
+    finding_when: >-
+      Answers feed the max_lateness premise of an incremental model, which the incremental
+      checks read. The column is not a defect, so no answer is a finding.
+    dates_are_text: >-
+      No date is compared here: the question classifies what a column MEANS, and the gap between
+      arrival and event is counted in SQL by `assay probe --lateness`.
+  instructions:
+    question: >-
+      `model` is an incremental model that loads rows newer than its `event_column`. Is `column`
+      the time each row ARRIVED in the warehouse -- when it was loaded -- as opposed to when the
+      thing it describes happened?
+    note: >-
+      An arrival time is written by the pipeline: the load, the sync, the insert. An event time
+      is part of the data: when the order was placed, the reading taken, the case filed. A row can
+      arrive days after its event, and that gap is what this answer is used to measure.
+  criteria:
+    arrival_time:
+      what: "When the row landed in the warehouse: written by the load, not by the source."
+      examples:
+        - "`_loaded_at`, `synced_at`, `inserted_at`, `etl_timestamp`"
+    event_time:
+      what: "When the thing the row describes happened. Part of the data itself."
+      examples:
+        - "`order_placed_at`, `reading_date`, `filed_on`"
+    another_time:
+      what: "A time, but neither: a derived date, a period, a deadline, an update in the source."
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
