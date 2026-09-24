@@ -204,3 +204,19 @@ def test_the_lint_does_not_say_the_same_thing_twice(project):
     v = {"nontributary": {"means": "Denver Basin groundwater, C.R.S. 37-90-137(4)"}}
     rules = [i.rule for i in lint_vocab(v, project) if i.question == "vocab.nontributary"]
     assert rules.count("narrower_than_where_it_is_sent") == 0
+
+
+def test_a_state_in_an_example_is_not_a_jurisdiction():
+    """*** THE LINT FLAGGED THE TERM THAT IS FINE. *** (25.4)"""
+    assert lint_vocab({"geography": {
+        "means": "the market a row belongs to, e.g. a Colorado or Arizona metro",
+        "implies": "rows from different geographies are not comparable totals"}}) == []
+
+
+def test_a_court_convention_with_no_state_is_still_law():
+    """*** AND MISSED THE ONE THAT IS NOT. *** (25.4)"""
+    issues = lint_vocab({"case_number": {
+        "means": "a water court case, e.g. 97CW0059 or 25CW3045, assigned per division",
+        "implies": "never a key on its own"}})
+    assert [i.rule for i in issues] == ["asserts_law_everywhere"]
+    assert "court" in issues[0].detail

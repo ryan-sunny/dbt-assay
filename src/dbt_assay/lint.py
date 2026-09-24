@@ -650,6 +650,19 @@ _STATES = ("alabama", "alaska", "arizona", "arkansas", "california", "colorado",
            "wisconsin", "wyoming")
 
 
+# *** A PLACE IN AN EXAMPLE IS AN ILLUSTRATION, NOT A JURISDICTION. ***
+# Reported from the field (25.4): `geography` -- "the market a row belongs to, e.g. a Colorado or
+# Arizona metro" -- was flagged for naming a state, while `case_number` -- "a water court case ...
+# assigned per division", a court's convention asserted to every model -- passed. The first is a
+# term about the project's data, true everywhere; its states are examples. The second names an
+# institution whose rules hold in one place, and names no state at all.
+_EXAMPLE = re.compile(r"\b(e\.g\.|eg\.|for example|such as|for instance|like)\s[^.;:)]*",
+                      re.IGNORECASE)
+_INSTITUTION = re.compile(r"\b(court|decree[sd]?|statut\w*|ordinance|regulat\w*|adjudicat\w*|"
+                          r"jurisdiction\w*|tribunal|docket|water rights?|appropriation)\b",
+                          re.IGNORECASE)
+
+
 def _term_text(body) -> str:
     return _text(body) if not isinstance(body, str) else body
 
@@ -676,10 +689,13 @@ def lint_vocab(vocab: dict, project=None) -> list:
         # *** A TERM THAT ASSERTS LAW MUST SAY WHERE THE LAW RUNS. ***
         if not sel:
             statute = _STATUTE.search(txt)
-            named = [n for n in _STATES if n in txt.lower()]
-            if statute or named:
+            outside = _EXAMPLE.sub(" ", txt).lower()
+            named = [n for n in _STATES if n in outside]
+            body_ = _INSTITUTION.search(txt)
+            if statute or named or body_:
                 what = (f"cites {statute.group(0)!r}" if statute
-                        else f"names {named[0].title()}")
+                        else f"names {named[0].title()}" if named
+                        else f"names a {body_.group(0).lower()}")
                 out.append(Issue(
                     f"vocab.{term}", "warn", "asserts_law_everywhere",
                     f"{what} and declares no `applies_to`, so it is asserted to every model in "
