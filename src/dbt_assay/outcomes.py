@@ -154,7 +154,7 @@ def coverage(project, build: Build) -> dict:
 
 # --------------------------------------------------------------------------------- the loop
 
-def confirmed_and_fixed(store, findings) -> dict:
+def confirmed_and_fixed(store, findings, unchecked=()) -> dict:
     """Of the findings a PERSON agreed with, how many are gone.
 
     *** EVERY OTHER NUMBER HERE MEASURES THE TOOL. THIS ONE MEASURES THE LOOP. ***
@@ -185,6 +185,16 @@ def confirmed_and_fixed(store, findings) -> dict:
     if not agreed:
         return {"agreed": 0, "fixed": 0, "still_open": 0, "rows": []}
     here = {f.id for f in findings}
+    # A finding of a check this run did not evaluate is not gone: nobody looked.
+    if unchecked and store is not None:
+        ids = list(agreed)
+        skip = {r[0] for r in store.con.execute(
+            "select distinct finding_id from findings where finding_id in (select unnest(?)) "
+            "and check_name in (select unnest(?))", [ids, list(unchecked)]).fetchall()}
+        for fid in skip:
+            agreed.pop(fid, None)
+        if not agreed:
+            return {"agreed": 0, "fixed": 0, "still_open": 0, "rows": []}
     rows = []
     for fid, (who, when, note) in sorted(agreed.items()):
         rows.append({"finding": fid, "by": who, "at": str(when)[:10] if when else "",

@@ -258,6 +258,14 @@ where assay_rn <= 2
 """
 
 
+
+# *** THE CHECKS THAT ONLY RUN WITH `--verify`, IN ONE PLACE. *** A run without it did not look
+# at these, and a diff against a run that did must not call them resolved -- or, the run after,
+# new. A test holds this list to the `check=` names this module actually emits.
+MONITORING_CHECKS = ("monitor_declared_but_never_run", "monitor_ran_then_stopped",
+                     "test_declared_but_never_run", "test_skipped_rather_than_passed",
+                     "volume_is_not_being_watched")
+
 def _query(schema: str, rel: str) -> str:
     if rel == TEST_RESULTS:
         return _LATEST_TEST.format(schema=schema, rel=rel)

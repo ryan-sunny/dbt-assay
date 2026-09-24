@@ -365,7 +365,8 @@ class Store:
         # a full run; anything else says what the run was narrowed to.
         # `git_sha`: the commit the project was at, `+dirty` when uncommitted -- the join from a
         # finding to the commit it was first seen at.
-        "runs": [("scope", "varchar"), ("git_sha", "varchar")],
+        # `unchecked`: the checks this run did not evaluate (JSON), so a diff never calls them gone.
+        "runs": [("scope", "varchar"), ("git_sha", "varchar"), ("unchecked", "varchar")],
     }
 
     def _migrate(self) -> None:
@@ -376,6 +377,7 @@ class Store:
         self._backfill_model_calls()
         self.verdict_versions_filled = self._backfill_verdict_versions()
         self.scoped_runs_marked = self._backfill_scoped_runs()
+        self.unchecked_runs_marked = self._backfill_unchecked_runs()
         # *** THE ONE TABLE RECORDING A MEASUREMENT OF THE DATA WAS THE ONE THAT FORGOT. ***
         # `observed_keys` keyed on (relation, column) with `insert or replace`, so each probe
         # overwrote the last and assay could never say a key that held last week has stopped.
@@ -705,6 +707,33 @@ class Store:
                              [f"check:{only} (inferred)", run_id])
         return len(rows)
 
+    def _backfill_unchecked_runs(self) -> int:
+        """Mark the runs written before `unchecked` existed that did not run the monitoring checks.
+
+        A full run holding NO monitoring finding, in a store where other runs hold some, did not
+        look -- `--verify` is the only way they run. Marked so the next `--verify` run does not
+        call them new. A store where no run ever held one is left alone: there is nothing to say.
+        """
+        from .elementary import MONITORING_CHECKS
+        try:
+            checks = list(MONITORING_CHECKS)
+            some = self.con.execute(
+                "select count(*) from findings where check_name in (select unnest(?))",
+                [checks]).fetchone()[0]
+            if not some:
+                return 0
+            rows = self.con.execute("""
+                select r.run_id from runs r
+                where r.unchecked is null and r.scope is null
+                  and not exists (select 1 from findings f where f.run_id = r.run_id
+                                  and f.check_name in (select unnest(?)))""", [checks]).fetchall()
+        except Exception:                                        # noqa: BLE001
+            return 0
+        for (rid,) in rows:
+            self.con.execute("update runs set unchecked = ? where run_id = ?",
+                             [json.dumps(sorted(checks)), rid])
+        return len(rows)
+
     def _backfill_verdict_versions(self) -> int:
         """Give an already-reshaped store's unversioned verdicts their version back.
 
@@ -808,19 +837,19 @@ class Store:
 
     def write_run(self, run_id: str, project, coverage: dict, parse_ok: int, parse_failed: int,
                   target_dir: str, version: str, scope: str | None = None,
-                  git_sha: str = "") -> None:
+                  git_sha: str = "", unchecked: list | None = None) -> None:
         # Named, never positional, for the reason `write_findings` gives.
         self.con.execute(
             """insert or replace into runs
                (run_id, started_at, project, dbt_version, target_dir, assay_version, host,
                 models, sources, tests, edges, readable, unreadable, parse_ok, parse_failed,
-                scope, git_sha)
-               values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                scope, git_sha, unchecked)
+               values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [run_id, datetime.now(timezone.utc), project.project_name, project.dbt_version,
              target_dir, version, platform.node(),
              coverage["models"], coverage["sources"], coverage["tests"], coverage["edges"],
              coverage["readable"], coverage["unreadable"], parse_ok, parse_failed, scope,
-             git_sha or None])
+             git_sha or None, json.dumps(sorted(unchecked)) if unchecked else None])
 
     def write_calibration(self, counts: dict, version: str) -> None:
         self.con.execute(
@@ -1307,11 +1336,30 @@ class Store:
             [r[0]]).fetchall()
         return {"run_id": r[0], "started_at": str(r[1]), "assay_version": r[2]}, rows
 
+    def unchecked(self, *run_ids: str) -> set:
+        """Checks any of these runs did not evaluate."""
+        out: set = set()
+        for rid in run_ids:
+            try:
+                row = self.con.execute("select unchecked from runs where run_id = ?",
+                                       [rid]).fetchone()
+            except Exception:                                    # noqa: BLE001
+                row = None
+            out |= set(json.loads(row[0])) if row and row[0] else set()
+        return out
+
     def diff(self, run_a: str, run_b: str) -> dict:
-        """What appeared and what went away between two runs."""
+        """What appeared and what went away between two runs.
+
+        *** A CHECK ONE RUN DID NOT LOOK AT IS NEITHER RESOLVED NOR NEW. *** Reported from the
+        field: a run without `--verify` called the five monitoring findings resolved, on the same
+        screen that said monitoring was NOT checked -- and the next `--verify` run would have
+        called them new. Only checks both runs evaluated are compared.
+        """
+        skip = self.unchecked(run_a, run_b)
         q = """select check_name, subject_name, summary from findings where run_id = ?"""
-        a = {tuple(r) for r in self.con.execute(q, [run_a]).fetchall()}
-        b = {tuple(r) for r in self.con.execute(q, [run_b]).fetchall()}
+        a = {tuple(r) for r in self.con.execute(q, [run_a]).fetchall() if r[0] not in skip}
+        b = {tuple(r) for r in self.con.execute(q, [run_b]).fetchall() if r[0] not in skip}
         return {"new": sorted(b - a), "gone": sorted(a - b), "same": len(a & b)}
 
 

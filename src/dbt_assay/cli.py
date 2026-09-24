@@ -737,8 +737,11 @@ def check(
         run_scope = f"check:{check_name}" if check_name else None
         from . import history as history_mod
         repo = history_mod.repo_of(project)
+        from .elementary import MONITORING_CHECKS
+        unchecked = [] if verify else list(MONITORING_CHECKS)
         s.write_run(run_id, project, project.coverage(), ok, len(failures), str(tdir), __version__,
-                    scope=run_scope, git_sha=history_mod.head(repo) if repo else "")
+                    scope=run_scope, git_sha=history_mod.head(repo) if repo else "",
+                    unchecked=unchecked)
         # Every compiled body, under dbt's checksum, so a later replay of this version is exact.
         history_mod.harvest(s, project)
         s.write_findings(run_id, findings)
@@ -768,7 +771,7 @@ def check(
         # unrelated findings moving while the four you read sat there looks identical from here,
         # and is what it looks like when reviewing changes nothing.
         from .outcomes import confirmed_and_fixed
-        loop = (confirmed_and_fixed(s, findings) if not run_scope
+        loop = (confirmed_and_fixed(s, findings, s.unchecked(run_id)) if not run_scope
                 else {"agreed": 0, "fixed": 0, "still_open": 0})
         if loop["agreed"]:
             console.print(

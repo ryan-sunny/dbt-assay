@@ -171,3 +171,48 @@ def test_a_project_with_one_kind_of_finding_is_never_marked(tmp_path):
         assert s.scoped_runs_marked == 0
     finally:
         s.close()
+
+
+def test_the_monitoring_list_is_what_the_module_emits():
+    import re
+    from pathlib import Path
+
+    from dbt_assay import elementary
+    src = Path(elementary.__file__).read_text()
+    assert set(re.findall(r'check="([a-z_]+)"', src)) == set(elementary.MONITORING_CHECKS)
+
+
+def test_a_check_a_run_did_not_evaluate_is_neither_resolved_nor_new(tmp_path):
+    """Reported from the field: a run without --verify called 5 monitoring findings resolved."""
+    from datetime import datetime, timedelta, timezone
+
+    from dbt_assay.store import Store
+    s = Store(str(tmp_path / "s.duckdb"))
+    t0 = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    for i, (rid, unchecked, checks) in enumerate((
+            ("verified", None, ["volume_is_not_being_watched", "arbitrary_pick"]),
+            ("plain", '["volume_is_not_being_watched"]', ["arbitrary_pick"]),
+            ("verified2", None, ["volume_is_not_being_watched", "arbitrary_pick"]))):
+        s.con.execute("insert into runs (run_id, started_at, project, unchecked) "
+                      "values (?, ?, 'p', ?)", [rid, t0 + timedelta(minutes=i), unchecked])
+        for c in checks:
+            s.con.execute("insert into findings (run_id, check_name, subject, summary) "
+                          "values (?, ?, 'm', 's')", [rid, c])
+    try:
+        assert s.diff("verified", "plain") == {"new": [], "gone": [], "same": 1}
+        assert s.diff("plain", "verified2") == {"new": [], "gone": [], "same": 1}
+        assert s.diff("verified", "verified2")["same"] == 2
+    finally:
+        s.close()
+
+
+def test_a_run_before_the_column_that_held_no_monitoring_finding_is_marked(tmp_path):
+    from dbt_assay.store import Store
+    _fake_runs(tmp_path / "m.duckdb",
+               [(3, ["volume_is_not_being_watched", "a"]), (3, ["a"])])
+    s = Store(str(tmp_path / "m.duckdb"))
+    try:
+        assert s.unchecked("r1") >= {"volume_is_not_being_watched"}
+        assert s.unchecked("r0") == set()
+    finally:
+        s.close()
