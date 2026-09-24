@@ -63,6 +63,18 @@ fi
 say "running the gates the release workflow will re-run..."
 uv run pytest -q
 uv run ruff check src tests
+
+# *** THE SAMPLE ARTIFACT WAS TWO RELEASES STALE. ***
+# The suite renders assay on this repo into assay.html and assay-data/, so the committed copy is
+# whatever the last committed run produced, and it said 0.49.0 inside the 0.51.3 tag. The run
+# above just regenerated it at $VER, so it goes into the release, and the tag points at it.
+if [ -n "$(git status --porcelain -- assay.html assay-data)" ]; then
+  git add -A -- assay.html assay-data
+  git -c user.name="$GIT_NAME" -c user.email="$GIT_EMAIL" commit -q -m "the sample artifact at $VER"
+  say "committed the sample artifact at $VER"
+fi
+[ -z "$(git status --porcelain)" ] || die "the suite left something else behind:
+$(git status --short)"
 uv build >/dev/null
 say "built $(ls dist | tr '\n' ' ')"
 
