@@ -1296,6 +1296,7 @@ def test_feedback_p4_an_answer_is_linked_to_the_finding_it_produced(monkeypatch)
 
 def test_feedback_p5_a_question_is_a_question_and_the_bank_is_the_family():
     import re
+
     from dbt_assay import explore
     qs = explore._questions()
     assert qs and all(q.get("bank") for q in qs), "a question does not say which bank it is in"
@@ -1303,7 +1304,7 @@ def test_feedback_p5_a_question_is_a_question_and_the_bank_is_the_family():
     qb = v[v.index("function questionsTab"):v.index("function configTab")]
     assert "chip: g => g.label" in qb and "bankLabel(q)" in qb
     visible = re.findall(r"(?:label|text|tip): '([^']*)'", v)
-    assert not [t for t in visible if re.search(r"\bfamil(y|ies)\b", t, re.I)], \
+    assert not [t for t in visible if re.search(r"\bfamil(y|ies)\b", t, re.IGNORECASE)], \
         "the page calls a question a family again"
 
 
@@ -1323,6 +1324,7 @@ def test_feedback_p7_the_tabs_are_grouped_in_reading_order():
 def test_feedback_p8_the_page_counts_what_check_counts():
     """The page skipped the config's own findings and counted dismissed ones: 984 against 978."""
     import inspect
+
     from dbt_assay import cli, explore
     src = inspect.getsource(cli.page)
     assert "selfaudit.config_findings(config_path, store, cfg)" in src
@@ -1357,6 +1359,7 @@ def test_feedback_p11_monitoring_leads_with_a_picture():
 def test_skipped_tests_and_skipped_results_are_not_one_unit():
     """1,846 skipped against 1,291 declared: results per run, set beside a count of tests."""
     import inspect
+
     from dbt_assay import elementary
     src = inspect.getsource(elementary.test_coverage)
     assert '"skipped_now": one(skipped_now)' in src

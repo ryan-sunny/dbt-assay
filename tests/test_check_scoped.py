@@ -199,8 +199,8 @@ def test_a_check_a_run_did_not_evaluate_is_neither_resolved_nor_new(tmp_path):
             s.con.execute("insert into findings (run_id, check_name, subject, summary) "
                           "values (?, ?, 'm', 's')", [rid, c])
     try:
-        assert s.diff("verified", "plain") == {"new": [], "gone": [], "same": 1}
-        assert s.diff("plain", "verified2") == {"new": [], "gone": [], "same": 1}
+        assert s.diff("verified", "plain") == {"new": [], "gone": [], "same": 1, "reworded": 0}
+        assert s.diff("plain", "verified2") == {"new": [], "gone": [], "same": 1, "reworded": 0}
         assert s.diff("verified", "verified2")["same"] == 2
     finally:
         s.close()

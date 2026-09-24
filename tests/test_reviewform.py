@@ -452,6 +452,7 @@ def test_feedback_r1_r5_findings_and_words_are_navigators():
 
 def test_feedback_r2_the_tabs_follow_the_work():
     import re
+
     from dbt_assay import reviewform
     html = reviewform.form_html([], {}, "p", "x", "0")
     order = re.findall(r'data-pane="([a-z]+)"', html)
@@ -478,6 +479,7 @@ def test_feedback_r4_a_new_kind_box_says_what_it_is_for():
 def test_feedback_w1_the_newest_handback_is_found(tmp_path):
     import os
     import time
+
     from dbt_assay import reviewform
     assert reviewform.newest_handback([tmp_path]) is None
     old = tmp_path / "handback.json"

@@ -1601,8 +1601,7 @@ function monitoringTab(host) {
     'assay measured: across ' + num(m.runs) + ' run(s), 9 gaps in 10 between builds are under '
     + gap + '. Late is longer than this project has normally gone, so the derived threshold is '
     + (m.derived == null ? 'not derivable from that' : m.derived + ' day(s)')
-    + (m.floored ? ', which is the one-day floor rather than the measured gap: a threshold '
-       + 'cannot be shorter than a day' : '')
+    + (m.floored ? ' (held at one day, the shortest a threshold can be)' : '')
     + (m.configured ? '. audit.yml says ' + m.configured : '. Nothing is configured, so the '
        + 'derived number is what is in force') + '.'}));
   row.append(field('max_staleness_days',
