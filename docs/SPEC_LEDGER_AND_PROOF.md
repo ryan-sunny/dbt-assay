@@ -479,6 +479,30 @@ appears in Answers and Questions as any family does.
 - A browser test opens Guarantees, picks a broken premise, and finds its evidence and its
   dependents in the pane; another opens a `fixed_finding_returned` finding and finds both commits.
 
+## Decisions before building (2026-09-24)
+
+- **Releases, three checkpoints,** each tested on sunny-data before the next starts:
+  **0.52** items 1 to 7 (ledger, four gaps, their UI; no Lean); **0.53** item 8 (L1);
+  **0.54** items 9 to 11 (L2 to L4).
+- **Lean spike first, then L1 without stopping.** Before item 8, prove `inner_join_no_fanout` and
+  `pick_is_order_independent` fully, no `sorry`. They are the first two L1 theorems and stay in
+  `lean/`; the spike is the start of L1, not a throwaway. L1 is built in full afterwards; no phase
+  is left half done.
+- **Snowflake needs no configuration and no access to build.** assay reaches a warehouse only
+  through the project's own dbt connection (`dbt show`), so it works on a Snowflake project when
+  pointed at one. The incremental checks are built and tested on a fixture dbt project written in
+  Snowflake SQL; the round-trip and conformance run on DuckDB here. Until conformance has run on a
+  real Snowflake connection, each Snowflake `engine_conforms` premise reads `unchecked`, never
+  `holding`.
+- **New checks default to `queue`:** `fixed_finding_returned`, `float_sum_is_not_reproducible`
+  and all five incremental checks. A project opts into `fail` in audit.yml.
+- **Handled without a decision:** no existing finding's summary changes (C1: a reworded summary is
+  a new id); new store tables are additive; every new command gets an MCP tool (long ones as a
+  job) and a skill update; test results on a server come from Elementary; `assay prove`
+  re-proves only models whose checksum changed; warehouse statements are priced and count against
+  the spend cap; wording says "proven from the parsed structure" until L4 lands; the spec goes to
+  the sunny-data session to add re-test items to their checker.
+
 ## Build order
 
 One commit per item, tests with each. Each item ships with its UI from section 4 in the same
