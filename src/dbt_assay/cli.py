@@ -764,7 +764,8 @@ def check(
         if prev:
             d = s.diff(prev, run_id)
             console.print(f"\n[bold]vs previous run:[/] {len(d['new'])} new, "
-                          f"{len(d['gone'])} resolved, {d['same']} unchanged")
+                          f"{len(d['gone'])} resolved, {d['same']} unchanged"
+                          + (f" ({d['reworded']} of them reworded)" if d.get("reworded") else ""))
             for c, n, sm in d["new"][:5]:
                 console.print(f"  [red]+[/] {n}: {sm}")
             for c, n, sm in d["gone"][:5]:

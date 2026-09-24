@@ -1363,10 +1363,46 @@ class Store:
         called them new. Only checks both runs evaluated are compared.
         """
         skip = self.unchecked(run_a, run_b)
-        q = """select check_name, subject_name, summary from findings where run_id = ?"""
-        a = {tuple(r) for r in self.con.execute(q, [run_a]).fetchall() if r[0] not in skip}
-        b = {tuple(r) for r in self.con.execute(q, [run_b]).fetchall() if r[0] not in skip}
-        return {"new": sorted(b - a), "gone": sorted(a - b), "same": len(a & b)}
+        q = """select check_name, subject_name, summary, subject, evidence from findings
+               where run_id = ?"""
+        ra = [r for r in self.con.execute(q, [run_a]).fetchall() if r[0] not in skip]
+        rb = [r for r in self.con.execute(q, [run_b]).fetchall() if r[0] not in skip]
+        a = {tuple(r[:3]) for r in ra}
+        b = {tuple(r[:3]) for r in rb}
+        new, gone = b - a, a - b
+        # *** A REWORDED FINDING IS THE SAME FINDING. *** (C1) 0.51.3 stopped cutting summaries
+        # mid-word, and `check` reported "283 new, 283 resolved" on code nobody touched: the
+        # comparison was on the summary's text. A finding that went and one that came with the
+        # same check, the same model and the same evidence are one finding whose words changed,
+        # paired one to one so two different findings are never folded together.
+        key_of = {}
+        for r in ra + rb:
+            key_of[tuple(r[:3])] = finding_key(r[0], r[3], r[4])
+        pool: dict = {}
+        for t in sorted(gone):
+            pool.setdefault(key_of[t], []).append(t)
+        reworded = []
+        for t in sorted(new):
+            olds = pool.get(key_of[t])
+            if olds:
+                reworded.append((olds.pop(0), t))
+        for old_t, new_t in reworded:
+            gone.discard(old_t)
+            new.discard(new_t)
+        return {"new": sorted(new), "gone": sorted(gone), "same": len(a & b) + len(reworded),
+                "reworded": len(reworded)}
+
+
+def finding_key(check: str, subject: str, evidence) -> str:
+    """What a finding IS, apart from how it is worded: its check, its subject, and the parts of
+    its evidence that say what it points at (the measured numbers left out, the same rule the id
+    uses). Two runs' findings with one key are one finding. (C1)"""
+    from .checks.structural import _identity
+    try:
+        ev = json.loads(evidence) if isinstance(evidence, str) else (evidence or {})
+    except (TypeError, ValueError):
+        ev = {}
+    return f"{check}|{subject}|{_identity(ev if isinstance(ev, dict) else {})}"
 
 
 # --------------------------------------------------------------------------------- retention

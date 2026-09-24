@@ -114,17 +114,43 @@ def sync_commits(store, repo, project, since: str | None = None, limit: int = 20
 
 
 def first_seen(store) -> dict:
-    """{finding_id: (first full run's time, its git sha)} over every full run in the store."""
+    """{finding_id: (first full run's time, its git sha)} over every full run in the store.
+
+    *** A REWORDED FINDING KEEPS ITS DATE. *** (C1) A finding's id hashes its summary, so when
+    0.51.3 stopped cutting summaries mid-word, 283 findings got new ids and `history` said they
+    were first seen that day instead of four days earlier. A new id inherits the date of the id
+    it replaced: the one with the same check, subject and evidence in the run before, which is
+    gone in the run the new id appears in. One to one, so two findings never share a history.
+    """
+    from .store import finding_key
     try:
         rows = store.con.execute("""
-            select f.finding_id, min(r.started_at) as t,
-                   arg_min(coalesce(r.git_sha, ''), r.started_at) as sha
+            select f.finding_id, f.check_name, f.subject, f.evidence, r.run_id, r.started_at,
+                   coalesce(r.git_sha, '') as sha
             from findings f join runs r on r.run_id = f.run_id
             where r.scope is null and f.finding_id is not null
-            group by f.finding_id""").fetchall()
+            order by r.started_at, r.run_id""").fetchall()
     except Exception:                                            # noqa: BLE001
         return {}
-    return {fid: (t, sha) for fid, t, sha in rows}
+    runs: list = []                    # [(run_id, t, sha, {fid: key})] in time order
+    for fid, chk, subj, ev, run, t, sha in rows:
+        if not runs or runs[-1][0] != run:
+            runs.append((run, t, sha, {}))
+        runs[-1][3][fid] = finding_key(chk, subj, ev)
+    seen: dict = {}
+    prev: dict = {}
+    for _run, t, sha, ids in runs:
+        gone = {}
+        for fid, key in prev.items():
+            if fid not in ids:
+                gone.setdefault(key, []).append(fid)
+        for fid, key in sorted(ids.items()):
+            if fid in seen:
+                continue
+            olds = gone.get(key)
+            seen[fid] = seen[olds.pop(0)] if olds else (t, sha)
+        prev = ids
+    return seen
 
 
 def commit(store, sha: str) -> dict | None:

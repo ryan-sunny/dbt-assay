@@ -111,3 +111,37 @@ def test_history_says_first_seen_and_never_introduced(project_dir, tmp_path):
     assert doc["compiled_versions_kept"] > 0
     human = runner.invoke(app, ["history", "-t", str(project_dir), "--store", str(store)])
     assert "not necessarily when it was introduced" in " ".join(human.output.split())
+
+
+def test_feedback_c1_a_reworded_finding_is_the_same_finding(tmp_path):
+    """*** "283 NEW, 283 RESOLVED" ON CODE NOBODY TOUCHED. *** (C1)
+
+    0.51.3 stopped cutting summaries mid-word. A finding's id hashes its summary, so 283 ids
+    changed: `check` compared runs on the summary text and `history` dated them as first seen
+    that day. A finding with the same check, subject and evidence is the same finding reworded;
+    two findings that differ in their evidence are never folded together.
+    """
+    import json
+
+    from dbt_assay import history
+    from dbt_assay.store import Store
+    s = Store(str(tmp_path / "s.duckdb"))
+    for run, t in (("r1", "2026-09-20 10:00:00"), ("r2", "2026-09-24 10:00:00")):
+        s.con.execute("insert into runs (run_id, started_at, project) values (?, ?, 'p')", [run, t])
+    ev_a, ev_b = json.dumps({"column": "a", "marts": 3}), json.dumps({"column": "b", "marts": 3})
+    rows = [("r1", "x", "m", "the column a is undocume", ev_a, "old_a"),
+            ("r1", "x", "m", "the column b is undocume", ev_b, "old_b"),
+            ("r2", "x", "m", "the column a is undocumented", ev_a, "new_a"),
+            ("r2", "x", "m", "the column b is undocumented", ev_b, "new_b"),
+            ("r2", "x", "m", "a column c appeared", json.dumps({"column": "c"}), "new_c")]
+    for run, chk, subj, summ, ev, fid in rows:
+        s.con.execute("insert into findings (run_id, check_name, subject, subject_name, summary, "
+                      "evidence, finding_id) values (?, ?, ?, ?, ?, ?, ?)",
+                      [run, chk, "model.p." + subj, subj, summ, ev, fid])
+    d = s.diff("r1", "r2")
+    assert d["reworded"] == 2 and d["same"] == 2, d
+    assert [x[2] for x in d["new"]] == ["a column c appeared"] and not d["gone"], d
+    seen = history.first_seen(s)
+    assert str(seen["new_a"][0]).startswith("2026-09-20"), "a reworded finding lost its date"
+    assert str(seen["new_b"][0]).startswith("2026-09-20")
+    assert str(seen["new_c"][0]).startswith("2026-09-24"), "a new finding inherited a date"
