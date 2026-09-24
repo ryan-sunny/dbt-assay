@@ -137,7 +137,8 @@ def test_load_handback_is_the_only_mcp_tool_that_can_file_a_human_verdict():
     names = [n for n, _d in TOOLS]
     assert "load_handback" in names, "the form's output still reaches nothing from MCP"
     sig = inspect.signature(Backend.load_handback)
-    assert set(sig.parameters) - {"self"} == {"path", "apply", "by"}
+    # verdicts_only narrows what is written; nothing here can supply a verdict
+    assert set(sig.parameters) - {"self"} == {"path", "apply", "by", "verdicts_only"}
     for bad in ("verdict", "agree", "disagree", "note"):
         assert bad not in sig.parameters, f"an agent could invent a {bad} through this tool"
 

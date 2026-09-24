@@ -4849,6 +4849,14 @@ def review(
                                       help="also WRITE the audit.yml changes the form proposed. "
                                            "Without it they are shown as a diff and nothing is "
                                            "written."),
+    verdicts_only: bool = typer.Option(False, "--verdicts-only",
+                                       help="record the verdicts and REFUSE the handback's "
+                                            "config section, listing each refused edit. For a "
+                                            "server whose audit.yml comes from git."),
+    handbacks_dir: str = typer.Option(None, "--handbacks",
+                                      help="where --load with no path looks for the newest "
+                                           "handback. Default: review.handbacks in audit.yml, "
+                                           "then ~/Downloads"),
     reads: str = typer.Option(None, "--reads",
                               help="a JSON of {'<subject>::<check>': {verdict, why}} to "
                                    "pre-fill MY READ on the emitted form"),
@@ -4874,17 +4882,28 @@ def review(
         raise typer.Exit(0)
     if load:
         if load == "latest":
-            from . import reviewform as _rf
-            found = _rf.newest_handback()
+            from . import handback as hb
+            where = hb.folder(Config.load(config_path), handbacks_dir)
+            found = hb.newest(where)
             if found is None:
-                console.print("[red]no handback*.json in ~/Downloads.[/] [dim]Pass the path the "
-                              "browser saved it to.[/]")
+                console.print(f"[red]no handback*.json in {where}.[/] [dim]Pass the path the "
+                              f"browser saved it to, or --handbacks.[/]")
                 store.close()
                 raise typer.Exit(1)
             console.print(f"[dim]loading the newest handback: {found}[/]")
             load = str(found)
         _load_verdicts(store, load, who)
-        _load_config(load, config_path, apply_config)
+        if verdicts_only:
+            from . import handback as hb
+            refused = hb.refused_config(_json.loads(Path(load).read_text()))
+            if refused:
+                console.print(f"\n[yellow]refused {len(refused)} config edit(s)[/] [dim]"
+                              f"(--verdicts-only: audit.yml is not touched). Make them in the "
+                              f"repository:[/]")
+                for r in refused:
+                    console.print(f"   {r}", markup=False, highlight=False)
+        else:
+            _load_config(load, config_path, apply_config)
         store.close()
         raise typer.Exit(0)
 
@@ -5089,41 +5108,18 @@ def _load_config(path: str, config_path: str, do_write: bool) -> None:
 
 
 def _load_verdicts(store, path: str, who: str) -> None:
-    """Record every verdict the form handed back, and nothing it did not."""
-    from . import reviewform
+    """Record every verdict the form handed back, and nothing it did not. The recording is
+    `handback.record`, the one path the MCP tool and `assay serve` use too."""
+    from . import handback as hb
     payload = _json.loads(Path(path).read_text())
-    rows, bad = reviewform.load(payload)
-    # The person who filled the form named themselves in it; `--by` overrides. Neither is
-    # verified, and the skill says so -- `source='human'` is set by this code path, not by
-    # anything about who ran it.
-    by = who or (payload.get("by") if isinstance(payload, dict) else "") or "unknown"
-    fams, dismissed, agreed, accepted_n = Counter(), 0, 0, 0
-    for r in rows:
-        # *** AND A `disagree` HAS TO ACTUALLY REMOVE THE THING. ***
-        # The model-level verdict is the measurement -- it is what `calibration` and
-        # `effectiveness` read. It does not dismiss, because it is recorded per (subject,
-        # question) and one model carries several findings of one check. The card knows which
-        # findings it showed, so the dismissal is written against those, and `apply_policy` drops
-        # exactly them.
-        # *** AND AN `agree` IS RECORDED PER FINDING TOO, WHICH IS WHAT CLOSES THE LOOP. ***
-        # It dismisses nothing -- the finding is REAL. It is the record that a person read this
-        # exact one and said so, and without it "of the findings somebody agreed with, how many
-        # are now gone" cannot be asked: a verdict filed against (model, check) does not say
-        # which of that model's findings was the real one.
-        #
-        # Both writes go through ONE function, so they cannot disagree about the version again.
-        fids = (list(r.get("findings") or [])
-                if r["verdict"] in ("disagree", "agree", "accept") else [])
-        fams[_record_one_verdict(store, r["subject"], r["question"], r["verdict"],
-                                 r["correction"], r["note"], by, findings=fids,
-                                 until=r.get("until", ""))] += 1
-        for _fid in fids:
-            if r["verdict"] == "disagree":
-                dismissed += 1
-            elif r["verdict"] == "accept":
-                accepted_n += 1
-            else:
-                agreed += 1
+    got = hb.record(store, payload, who)
+    rows = range(got["recorded"])
+    by = got["by"]
+    agreed, accepted_n, dismissed = (got["findings_agreed"], got["findings_accepted"],
+                                     got["findings_dismissed"])
+    fams = got["by_family"]
+    bad = got["recorded_nothing"] + [""] * (got["recorded_nothing_total"]
+                                           - len(got["recorded_nothing"]))
     console.print(f"recorded [bold]{len(rows)}[/] verdict(s) as `{by}`.")
     if agreed:
         console.print(f"   [bold]{agreed} finding(s) confirmed real[/] [dim]-- they stay, and "
@@ -6034,6 +6030,13 @@ def hook(
 def mcp(
     target: str = typer.Option(None, "--target", "-t"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
+    handbacks_dir: str = typer.Option(None, "--handbacks",
+                                      help="where load_handback() with no path looks. Default: "
+                                           "review.handbacks in audit.yml, then ~/Downloads"),
+    verdicts_only: bool = typer.Option(False, "--verdicts-only",
+                                       help="load_handback records verdicts and refuses every "
+                                            "config edit. For a server whose audit.yml is in "
+                                            "git."),
 ):
     """Serve assay as tools an agent can call instead of reading your SQL.
 
@@ -6057,7 +6060,8 @@ def mcp(
         console.print(str(e), style="red", markup=False)
         raise typer.Exit(1) from e
     try:
-        mcp_server.serve(str(tdir), store_path if Path(store_path).exists() else None)
+        mcp_server.serve(str(tdir), store_path if Path(store_path).exists() else None,
+                         handbacks_dir, verdicts_only)
     except RuntimeError as e:
         console.print(f"[red]{e}[/]")
         raise typer.Exit(1) from None

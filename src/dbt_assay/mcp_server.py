@@ -28,8 +28,12 @@ MCP_LOCK_WAIT = 5.0
 class Backend:
     """Reloads when the manifest moves, so an agent never reads a stale contract."""
 
-    def __init__(self, target: str, store_path: str | None = None, config_path: str = "."):
+    def __init__(self, target: str, store_path: str | None = None, config_path: str = ".",
+                 handbacks: str | None = None, verdicts_only: bool = False):
         self.target = target
+        # Where `load_handback()` with no path looks, and whether it may only record verdicts.
+        self.handbacks = handbacks
+        self.verdicts_only = verdicts_only
         self.store_path = store_path
         # Where audit.yml lives, for the tools that read their words and their policy.
         self.config_path = config_path
@@ -586,7 +590,8 @@ class Backend:
                 f"reason is on screen.")
         return out
 
-    def load_handback(self, path: str = "", apply: bool = False, by: str = "") -> dict:
+    def load_handback(self, path: str = "", apply: bool = False, by: str = "",
+                      verdicts_only: bool = False) -> dict:
         """Record the verdicts a PERSON wrote in the review form. The one tool that files `human`.
 
         *** THE HUMAN DID THE MOST VALUABLE WORK IN THE SYSTEM AND THE FILE SAT IN ~/Downloads. ***
@@ -607,48 +612,37 @@ class Backend:
         """
         from pathlib import Path as _P
 
-        from . import reviewform
-        # No path means the newest handback in the download folder, which is where the form's
-        # download went: the person should not have to find and type it. (W1)
+        from . import handback as hb
+        # No path means the newest handback in the handback folder: `--handbacks` on `assay mcp`,
+        # then `review.handbacks` in audit.yml, then ~/Downloads, where the form's download goes.
+        # On a server the first two point at the folder `assay serve` saves into. (W1, S4)
         if not path or path == "latest":
-            found = reviewform.newest_handback()
+            from .config import Config
+            where = hb.folder(Config.load(self.config_path), self.handbacks)
+            found = hb.newest(where)
             if found is None:
-                return {"error": "no handback*.json in ~/Downloads. Ask the person where the "
-                                 "browser saved it."}
+                return {"error": f"no handback*.json in {where}. Ask the person where it was "
+                                 f"saved."}
             path = str(found)
         src = _P(path).expanduser()
         if not src.exists():
-            return {"error": f"no file at {src}. The form downloads `handback.json` to wherever "
-                             f"the browser puts downloads; ask for the path rather than guessing.",
+            return {"error": f"no file at {src}; ask for the path rather than guessing.",
                     "recorded": 0}
         store, why = self._store_or_why()
         if store is None:
             return {"error": why, "recorded": 0}
         try:
             payload = json.loads(src.read_text())
-            rows, bad = reviewform.load(payload)
-            who = by or (payload.get("by") if isinstance(payload, dict) else "") or "unknown"
-            from .cli import _record_one_verdict
-            fams: dict = {}
-            findings_ruled = 0
-            for r in rows:
-                fids = (list(r.get("findings") or [])
-                        if r["verdict"] in ("disagree", "agree", "accept") else [])
-                fam = _record_one_verdict(store, r["subject"], r["question"], r["verdict"],
-                                          r["correction"], r["note"], who, findings=fids,
-                                          until=r.get("until", ""))
-                fams[fam] = fams.get(fam, 0) + 1
-                findings_ruled += len(fids)
-            out = {"recorded": len(rows), "by": who, "as": "human",
-                   "findings_ruled": findings_ruled,
-                   "by_family": dict(sorted(fams.items())),
-                   # A row that recorded nothing is NAMED. "recorded 40" and "you answered 40 of
-                   # 212" have to be distinguishable from the outside.
-                   "recorded_nothing": bad[:12], "recorded_nothing_total": len(bad)}
-            if apply:
-                cfg_rows, cfg_bad = reviewform.load_config(payload)
-                out["config_changes"] = len(cfg_rows or [])
-                out["config_rejected"] = list(cfg_bad or [])[:12]
+            out = {"file": str(src), **hb.record(store, payload, by)}
+            edits = hb.refused_config(payload)
+            if verdicts_only:
+                # (S3) A server's audit.yml comes from git: refuse the edits, and name them.
+                out["config_refused"] = edits
+                out["config_note"] = ("verdicts only: audit.yml was not touched. Make these "
+                                      "edits in the repository.")
+            elif apply or edits:
+                out["config_changes"] = len(edits)
+                out["config_edits"] = edits[:12]
                 out["config_note"] = ("Changes are reported, not written from here: run "
                                       "`assay review --load <path> --apply` so the person sees "
                                       "the diff against their own audit.yml before it changes.")
@@ -1303,18 +1297,20 @@ def server_class():
         ) from e
 
 
-def serve(target: str, store_path: str | None = None) -> None:
-    build_app(target, store_path).run()
+def serve(target: str, store_path: str | None = None, handbacks: str | None = None,
+          verdicts_only: bool = False) -> None:
+    build_app(target, store_path, handbacks, verdicts_only).run()
 
 
-def build_app(target: str, store_path: str | None = None):
+def build_app(target: str, store_path: str | None = None, handbacks: str | None = None,
+              verdicts_only: bool = False):
     """The server with every tool registered, not yet running -- so a test can list them."""
     # *** THE SDK RENAMED ITS SERVER CLASS AT v2. ***
     # `FastMCP` became `MCPServer`. Importing only one spelling means this command dies on
     # whichever major the user happens to have, with a traceback instead of an explanation, so
     # both are tried and the failure says what to install.
     Server = server_class()
-    be = Backend(target, store_path)
+    be = Backend(target, store_path, handbacks=handbacks, verdicts_only=verdicts_only)
 
     def _out(obj) -> str:
         """Every tool result leaves through here, so the empty-store signal cannot be forgotten.
@@ -1415,8 +1411,9 @@ def build_app(target: str, store_path: str | None = None):
         return _out(be.review_queue(limit))
 
     @tool()
-    def load_handback(path: str = "", apply: bool = False, by: str = "") -> str:
-        return _out(be.load_handback(path, apply, by))
+    def load_handback(path: str = "", apply: bool = False, by: str = "",
+                      verdicts_only: bool = False) -> str:
+        return _out(be.load_handback(path, apply, by, verdicts_only or be.verdicts_only))
 
     @tool()
     def rebase() -> str:

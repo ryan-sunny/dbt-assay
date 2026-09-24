@@ -381,6 +381,9 @@ class Config:
     # 0.8 catches all three enrichment gaps on the warehouse this was built against (82%, 82%,
     # 94% lost); 0.9 catches one of three. It is a number somebody acts on, so it is theirs.
     row_loss_threshold: float = 0.8
+    # Where handbacks are kept on a server (`review.handbacks`), resolved against audit.yml's own
+    # folder. None means the browser's download folder. (S4)
+    handbacks: str | None = None
     path: Path | None = None
 
     @classmethod
@@ -429,6 +432,10 @@ class Config:
         jev_block = data.get("jev") or {}
         if "routing" in jev_block:
             cfg.jev_provider = jev_block.get("routing") or {}
+        hb = (data.get("review") or {}).get("handbacks")
+        if hb:
+            p = Path(str(hb)).expanduser()
+            cfg.handbacks = str(p if p.is_absolute() or path is None else Path(path).parent / p)
         cfg.elementary = data.get("elementary") or {}
         cfg.monitoring = data.get("monitoring") or {}
         cfg.cost = data.get("cost") or {}

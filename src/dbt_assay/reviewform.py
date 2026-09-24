@@ -1723,13 +1723,8 @@ def newest_handback(dirs=None):
     but the browser's download folder, so `assay review --load latest` and the MCP tool look there
     rather than asking a person to type a path they do not know.
     """
-    from pathlib import Path
-    found = []
-    for d in (dirs or [Path.home() / "Downloads"]):
-        d = Path(d).expanduser()
-        if d.is_dir():
-            found += [p for p in d.glob("handback*.json") if p.is_file()]
-    return max(found, key=lambda p: p.stat().st_mtime) if found else None
+    from . import handback
+    return handback.newest(list(dirs) if dirs else None)
 
 
 def form_html(card_list: list, sql: dict, project: str, generated_at: str, version: str,
