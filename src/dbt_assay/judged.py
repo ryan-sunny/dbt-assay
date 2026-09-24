@@ -235,6 +235,7 @@ FAMILIES_WITHOUT_FINDINGS = frozenset({
     "reading_rests_on",                    # locates a reading on a card; never a finding
     "where_the_fix_belongs",               # routes a shared fix; shown beside the cluster
     "claims_are_the_same_assertion",       # edges of a graph, printed as components
+    "arrival_time_column",                 # names an arrival column for the lateness premise
 })
 
 def code_contradicts_a_claim(project, entries) -> list[Finding]:

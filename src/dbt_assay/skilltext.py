@@ -302,9 +302,10 @@ back is raised as `fixed_finding_returned` with both commits in its `timeline`, 
   comments say which. Removing the wrong one deletes a rule nobody can reconstruct.
 - **A column that arrives `from_source` has no explanation inside this project.** Do not invent one.
 - **An incremental model has two branches, and the compiled SQL is only one.** Before editing
-  one, read its `incremental` block in `contract`/the page: a high-water-mark filter needs a
-  lookback sized to `assay probe --lateness`, a merge needs a `unique_key` the new rows cannot
-  repeat, and a column change needs `on_schema_change` or a full refresh.
+  one, read its `incremental` block in `contract` or on the page. A high-water-mark filter needs
+  a lookback sized to what `assay probe --lateness --project-dir <dbt project> --dbt "<dbt>"`
+  measures, a merge needs a `unique_key` the new rows cannot repeat, and a column change needs
+  `on_schema_change` or a full refresh.
 - **Never `sum` or `avg` a DOUBLE measure.** Cast it first: `sum(cast(x as decimal(18, 2)))`.
   A float total moves between builds on identical data, and `float_sum_is_not_reproducible`
   reports it.

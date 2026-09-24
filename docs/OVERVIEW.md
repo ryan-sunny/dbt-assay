@@ -236,6 +236,7 @@ Thirty-six families ship. `assay config` shows how many verdicts each has and wh
 | `where_the_fix_belongs` | choice | — *where a shared fix belongs, shown beside the cluster: `assay clusters --judge`* |
 | `the_odd_one_out` | choice | itself: the member of a family of filters that drifted (`assay clusters --judge`) |
 | `claims_are_the_same_assertion` | noul | — *edges of a graph; components printed by `assay clusters`* |
+| `arrival_time_column` | choice | — *names when a row arrived, for an incremental model's lateness premise: `assay ask --family arrival_time_column`* |
 | `reading_rests_on` | choice | — *which line of the SQL that reading turns on, chosen from lines code lists and copied onto the card: `assay read`* |
 | `default_is_a_measurement_or_an_absence` | choice | itself: a COALESCE default that marks "not found" (`assay ask`) |
 | `what_would_break_silently` | choice | itself: an untested column whose shape invites a silent failure (`assay ask`) |
@@ -319,7 +320,7 @@ by, dedupe or DISTINCT ON over it, and no test or count), `incremental_filter_wi
 `on_schema_change` ignores it). How late rows arrive is the `max_lateness` premise:
 
 ```bash
-assay probe --lateness            # max(arrival - event) per incremental model, through your dbt
+assay probe --lateness --project-dir . --dbt "uv run dbt"   # max(arrival - event), through your dbt
 assay ask --family arrival_time_column   # which column is the arrival, where no name says it
 ```
 
