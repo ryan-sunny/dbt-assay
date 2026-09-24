@@ -75,19 +75,21 @@ def test_the_order_is_total_so_two_emits_agree(store, tmp_path):
 
 # --------------------------------------------------------------- the agent's reading
 
-def test_a_model_level_agent_ruling_says_it_may_be_about_something_else(store, tmp_path):
+def test_a_model_level_agent_ruling_is_shown_only_on_the_check_it_answered(store, tmp_path):
     """*** THIS IS HOW SOMEBODY CONFIRMS A READING NOBODY DID. ***
 
-    An agent ruling is stored per model and lands on every finding that model has, so the same
-    note appears under a question it never addressed. Presented flat, it reads as an answer.
+    A model-level ruling used to land on every finding the model had, flagged "may be about a
+    different finding". Reported from the field: an agent's `bbox_as_radius` disagree was the
+    reading on three unrelated findings, and disagree is a permanent dismissal -- one careless
+    keypress from dismissing the wrong one. It is shown on the check it answered, and nowhere else.
     """
     store.adjudicate("model.p.a", "check_one", "check_one", "", "disagree", "",
                      "because of the union", "agent", source="agent")
-    fs = [_f("model.p.a", "check_two", "f1")]
-    cards, _sql = reviewform.cards(fs, store, tmp_path)
-    a = cards[0]["agent"]
-    assert a, "the agent's reading was dropped"
-    assert "different finding" in a["scope"], a["scope"]
+    cards, _sql = reviewform.cards([_f("model.p.a", "check_two", "f1"),
+                                    _f("model.p.a", "check_one", "f2")], store, tmp_path)
+    by = {c["question"]: c for c in cards}
+    assert by["check_two"]["agent"] is None, "a ruling about another check is not a reading"
+    assert by["check_one"]["agent"]["note"] == "because of the union"
 
 
 def test_a_card_with_no_reading_says_so_rather_than_showing_nothing(store, tmp_path):

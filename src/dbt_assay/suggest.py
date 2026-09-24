@@ -484,7 +484,10 @@ def _clusters(store, cfg) -> dict:
             "order by subject, question", list(_WROTE_A_REASON)).fetchall():
         sh = _shape(note)
         if sh:
-            seen[sh].append((subj, q, note))
+            # *** ONE DISMISSAL, WRITTEN TWICE, IS ONE SUBJECT. *** A card files its verdict on the
+            # model AND on each finding it showed; counted apart, one keypress read as "the same
+            # reason given on 2 subjects" -- all five of the field's top suggestions were that.
+            seen[sh].append((str(subj).split("::finding::")[0], q, note))
     for model, waivers in sorted((cfg.waivers or {}).items()):
         for w in waivers:
             sh = _shape(getattr(w, "reason", "") or "")

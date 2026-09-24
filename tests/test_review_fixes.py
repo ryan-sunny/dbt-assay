@@ -261,7 +261,8 @@ def test_the_review_queue_puts_read_findings_first_and_hides_nothing():
 
         @staticmethod
         def agent_rulings():
-            return [{"subject": "model.p.read", "verdict": "disagree", "note": "a union"}]
+            return [{"subject": "model.p.read", "question": "b", "verdict": "disagree",
+                     "note": "a union"}]
 
         @staticmethod
         def close():

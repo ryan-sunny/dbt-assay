@@ -1132,7 +1132,11 @@ def onboard(
             console.print(f"   wrote [bold]{sp}[/] [dim]({what})[/]")
         # markup=False, because rich reads `[mcp]` as a style tag and silently drops it -- which
         # would print an install line that installs no mcp.
-        console.print(f"   MCP: claude mcp add assay --scope project -- uvx --from 'dbt-assay[mcp]' "
+        # *** PINNED TO THE VERSION THAT WROTE IT. *** Reported from the field: an unpinned
+        # `uvx --from dbt-assay[mcp]` server picks up a new release, or misses a local build,
+        # whenever uvx's cache decides -- so which assay an agent is talking to was a guess.
+        console.print(f"   MCP: claude mcp add assay --scope project -- uvx --from "
+                      f"'dbt-assay[mcp]=={__version__}' "
                       f"assay mcp --target {tdir}", style="dim", markup=False)
         # *** THE GATE IS INSTALLED, NOT DESCRIBED. ***
         # A skill file is advice an agent follows when it chooses to. The hook fires on every
@@ -1982,8 +1986,8 @@ def effectiveness(
         st2 = Store(store_path)
         try:
             entries = inv_mod.build(project, digests, schema, st2, probe_mod.read(st2))
-            live = sug.live_pairs(live_mod.all_findings(project, digests, schema, entries, store=st2,
-                                                        threshold=cfg2.row_loss_threshold))
+            live = sug.live_pairs(live_mod.open_findings(project, digests, schema, entries, st2,
+                                                         cfg2, config_path)[0])
             gone = sug.resolved_clusters(st2, cfg2, live)
         finally:
             st2.close()
@@ -4013,8 +4017,9 @@ def suggest(
         # defect this tool checks other people's warehouses for.
         entries = inv_mod.build(project, digests, schema, store,
                                 probe_mod.read(store) if store else {})
-        _fs = live_mod.all_findings(project, digests, schema, entries, store=store,
-                                    threshold=cfg.row_loss_threshold)
+        # Open as `check` means it: a finding a person dismissed does not "still fire".
+        _fs, _w, _a = live_mod.open_findings(project, digests, schema, entries, store, cfg,
+                                             config_dir)
         firing = {f.check for f in _fs}
         # *** AND WHICH SUBJECT, NOT ONLY WHICH CHECK. ***
         # A rule that asks "is this still true" needs the subject. With only the check name, a

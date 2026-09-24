@@ -676,7 +676,11 @@ class Backend:
                     if "::finding::" in key:
                         mine[key.split("::finding::")[1]] = r          # exact
                     else:
-                        mine.setdefault(key.split("::")[0], r)         # model-level
+                        # *** A MODEL-LEVEL RULING ANSWERED ONE CHECK. *** Keyed by model alone, an
+                        # agent's `bbox_as_radius` disagree was shown as the reading on three
+                        # unrelated findings -- and disagree is a permanent dismissal, one careless
+                        # keypress from landing on the wrong one.
+                        mine.setdefault((key.split("::")[0], str(r.get("question") or "")), r)
                     if key.split("::")[0] not in known:
                         # *** A RULING THAT JOINS TO NOTHING IS REPORTED, NOT SWALLOWED. ***
                         # 99 of them existed before `rule` started refusing a subject it could
@@ -695,14 +699,15 @@ class Backend:
             if (str(f.subject), str(f.check)) in ruled_pairs \
                     or f"{f.subject}::finding::{f.id}" in ruled:
                 continue
-            a = mine.get(f.id) or mine.get(str(f.subject).split("::")[0])
+            a = mine.get(f.id) or mine.get((str(f.subject).split("::")[0], str(f.check)))
             rows.append({"finding": f.id,
                          "check": f.check, "model": f.subject_name, "file": f.file,
                          "summary": f.summary, "marts": f.marts,
                          "an_agent_already_said": (
                              {"verdict": a["verdict"], "because": a["note"],
                               "at": ("this exact finding" if mine.get(f.id) else
-                                     "the model, so it covers every finding on it")}
+                                     "this check on this model, so it covers every finding "
+                                     "of this check here")}
                              if a else None)})
         rows.sort(key=lambda r: (r["an_agent_already_said"] is None, -r["marts"]))
         out = {
@@ -760,7 +765,9 @@ class Backend:
             "would_fail_the_build": buckets["fail"],
             "queued_for_a_person": buckets["queue"][:20],
             "annotated_only": len(buckets["annotate"]),
-            "waived": [{"model": f.subject_name, "check": f.check, "why": w} for f, w in waived],
+            # *** ONE WAIVER, ONE ROW. *** A waiver covering two findings on one model was listed
+            # twice, which reads as two decisions. Grouped, with how many findings it covers.
+            "waived": _grouped_waivers(waived),
             "verdict": ("this would fail" if buckets["fail"] else "this would pass"),
             "note": ("Only `would_fail_the_build` stops CI. A judged question cannot appear there "
                      "until it has recorded human verdicts, so an empty list may mean nothing is "
@@ -1037,7 +1044,9 @@ class Backend:
         # Reported from the field (25.22): the one MCP tool that tells an agent what to put in
         # audit.yml raised AttributeError unconditionally. The CLI's `assay suggest` reads the
         # same single stream every other surface does; so does this now.
-        _fs = live.findings_for(self.state(), None, store)
+        st = self.state()
+        _fs = live.open_findings(st.project, st.digests, st.schema, st.entries, store, cfg,
+                                 self.config_path)[0]
         firing = {f.check for f in _fs}
         pairs = sug.live_pairs(_fs)
         run_id = None
@@ -1235,6 +1244,16 @@ TOOLS = [
 # wrong instructions for the right tool, which is the worst possible shape for this particular
 # failure. Position is not identity. The name is.
 _BY_NAME = {name: desc for name, desc in TOOLS}
+
+
+def _grouped_waivers(waived) -> list:
+    rows: dict = {}
+    for f, why in waived:
+        k = (f.subject_name, f.check, why)
+        rows.setdefault(k, 0)
+        rows[k] += 1
+    return [{"model": m, "check": c, "why": w, **({"findings": n} if n > 1 else {})}
+            for (m, c, w), n in sorted(rows.items())]
 
 
 def _desc(name: str) -> str:

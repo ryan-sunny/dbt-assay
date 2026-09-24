@@ -34,6 +34,10 @@ from pathlib import Path
 # A command that waits for a person at a keyboard has nothing to wait for over MCP.
 INTERACTIVE = {"review": ("-i", "--interactive")}
 MAX_OUTPUT = 60_000
+# A JSON result larger than this comes back with its long lists shortened -- every total kept --
+# and the path of the whole document.
+MAX_JSON = 200_000
+LIST_KEEP = 50
 
 
 def commands() -> list[dict]:
@@ -101,20 +105,50 @@ def _read(log: Path) -> tuple[str, bool]:
     return text, False
 
 
+def _shorten(obj, path: str = "") -> tuple:
+    """(obj with every list over LIST_KEEP cut to its first LIST_KEEP, {path: true length})."""
+    cut: dict = {}
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            out[k], c = _shorten(v, f"{path}.{k}" if path else str(k))
+            cut.update(c)
+        return out, cut
+    if isinstance(obj, list):
+        if len(obj) > LIST_KEEP:
+            cut[path] = len(obj)
+        return obj[:LIST_KEEP], cut
+    return obj, cut
+
+
 def _result(job: Job, code: int | None) -> dict:
     text, cut = _read(job.log)
     out: dict = {"command": " ".join(job.argv[3:]), "exit_code": code,
                  "seconds": round(time.time() - job.started, 1)}
-    stripped = text.strip()
-    at = stripped.find("{")
-    if at >= 0 and stripped.endswith("}"):
+    # *** THE JSON WAS PARSED FROM OUTPUT ALREADY CUT FROM THE FRONT. *** Reported from the field:
+    # `assay_check --json` lost its opening brace to the 60,000-character cut, so the totals were
+    # gone and nothing parsed. It is read whole; a large one is shortened, never beheaded.
+    try:
+        full = job.log.read_text(errors="replace").strip()
+    except OSError:
+        full = text.strip()
+    at = full.find("{")
+    if at >= 0 and full.endswith("}"):
         try:
-            out["json"] = json.loads(stripped[at:])
-            if at:
-                out["said_first"] = stripped[:at].strip()[-2000:]
-            return out
+            doc = json.loads(full[at:])
         except ValueError:
-            pass
+            doc = None
+        if doc is not None:
+            if len(full) > MAX_JSON:
+                doc, lens = _shorten(doc)
+                out["json_shortened"] = {
+                    "lists_cut_to_first": LIST_KEEP, "true_lengths": lens,
+                    "whole_document": str(job.log),
+                    "why": "too large to hand back whole; every count above is the true one"}
+            out["json"] = doc
+            if at:
+                out["said_first"] = full[:at].strip()[-2000:]
+            return out
     out["output"] = text
     if cut:
         out["truncated"] = f"the first part was cut; the log is {job.log}"

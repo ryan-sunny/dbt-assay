@@ -29,6 +29,10 @@ claude mcp add assay --scope project -- uvx --refresh --from 'dbt-assay[mcp]' as
 uvx --refresh --from 'dbt-assay[mcp]' assay skill all --write .
 ```
 
+**Pin the server's version** in `.mcp.json` -- `dbt-assay[mcp]==<version>`, which is what `onboard
+--agent` prints -- or a release reaches the server whenever uvx's cache decides, and nobody can say
+which assay an agent is talking to. Bump the pin to upgrade, and restart the server.
+
 `onboard` reads the project and says what would degrade the answers here -- no compiled SQL, no
 catalog, a guessed dialect -- BEFORE it shows a finding, and prints the command that fixes each
 one. `skill all --write .` lays these procedures into `.claude/skills/` so the next agent has

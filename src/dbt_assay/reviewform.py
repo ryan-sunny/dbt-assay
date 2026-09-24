@@ -76,7 +76,9 @@ def cards(findings, store, project_root, reads: dict | None = None,
                 if "::finding::" in key:
                     agent[key.split("::finding::")[1]] = r            # this exact finding
                 else:
-                    agent.setdefault(key.split("::")[0], r)           # the whole model
+                    # (model, the check it answered): a ruling about one check is never shown as
+                    # the reading of another -- disagree is a permanent dismissal.
+                    agent.setdefault((key.split("::")[0], str(r.get("question") or "")), r)
         except Exception:                                        # noqa: BLE001
             agent = {}
 
@@ -124,7 +126,7 @@ def cards(findings, store, project_root, reads: dict | None = None,
             # The quoted sentence, where the check is about one. Every claim family carries it.
             "claim": str(ev.get("claim") or ""),
         })
-        a = agent.get(f.id) or agent.get(str(f.subject).split("::")[0])
+        a = agent.get(f.id) or agent.get((str(f.subject).split("::")[0], str(f.check)))
         if a and not c["agent"]:
             c["agent"] = {
                 "verdict": a["verdict"], "note": a["note"],
@@ -133,7 +135,7 @@ def cards(findings, store, project_root, reads: dict | None = None,
                 # addressed a different one. Passing it off as an answer to THIS question is how
                 # a person confirms a reading nobody did.
                 "scope": ("this exact finding" if agent.get(f.id) else
-                          "the model, so it may be about a different finding"),
+                          "the model, for this check -- every finding of it here"),
             }
 
     sql: dict = {}

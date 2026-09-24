@@ -420,3 +420,19 @@ def test_an_agents_ruling_never_becomes_a_recommendation(tmp_path):
     got = [i for i in suggest.build(store, Config(), set(), "r1")
            if i.section == "questions" and i.key == "fam"]
     assert not got or "no agreement rate" in got[0].headline, got[0].headline if got else None
+
+
+def test_one_dismissal_written_on_the_model_and_the_finding_is_one_subject(tmp_path):
+    """Reported from the field: all five top suggestions were one keypress, counted twice."""
+    from dbt_assay import suggest
+    from dbt_assay.config import Config
+    from dbt_assay.store import Store
+    s = Store(str(tmp_path / "s.duckdb"))
+    try:
+        for subj in ("model.p.a", "model.p.a::finding::abc123"):
+            s.adjudicate(subj, "code_contradicts_a_claim", "code_contradicts_a_claim", "",
+                         "disagree", "", "the claim is about the python layer, not this sql",
+                         "ryan", source="human")
+        assert suggest._clusters(s, Config()) == {}
+    finally:
+        s.close()

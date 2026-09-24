@@ -60,3 +60,20 @@ def test_every_command_answers_as_a_module_the_way_the_tools_run_it():
         if r.returncode != 0:
             bad.append(c["name"])
     assert not bad, f"not runnable as a module: {bad}"
+
+
+def test_a_large_json_result_is_shortened_never_beheaded(tmp_path):
+    """Reported from the field: `assay_check --json` over MCP was cut from the front, the totals
+    went with it, and the rest did not parse."""
+    import json as _j
+
+    from dbt_assay.cli_tools import LIST_KEEP, Job, _result
+    log = tmp_path / "log"
+    log.write_text("preamble\n" + _j.dumps({"coverage": {"models": 9},
+                                          "findings": [{"x": "y" * 400}] * 900}))
+    job = Job.__new__(Job)
+    job.log, job.argv, job.started = log, ["python", "-m", "dbt_assay.cli", "check"], 0.0
+    got = _result(job, 0)
+    assert got["json"]["coverage"] == {"models": 9}
+    assert len(got["json"]["findings"]) == LIST_KEEP
+    assert got["json_shortened"]["true_lengths"] == {"findings": 900}
