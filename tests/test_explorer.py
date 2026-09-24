@@ -1375,7 +1375,9 @@ def test_config_is_a_navigator_and_policy_is_data_not_a_repr():
     v = explorer._VIEWS
     cb = v[v.index("function configTab"):v.index("function configTab") + 9000]
     assert "drill({" in cb, "Config is a long scroll again"
-    for k in ("'resolved'", "'vocab'", "'policy'", "'waivers'", "'runs'", "'unreadable'"):
+    assert "key: 'resolved'" not in cb, "the settings moved into the navigator; they sit above it"
+    assert "section('resolved'" in cb and "(DATA.cuts || {}).tower" in cb
+    for k in ("'vocab'", "'policy'", "'waivers'", "'runs'", "'unreadable'"):
         assert "key: " + k in cb, k
     from types import SimpleNamespace
 

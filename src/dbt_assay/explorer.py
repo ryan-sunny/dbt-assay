@@ -135,6 +135,12 @@ align-items:center;padding:3px 0}
 .mmark{position:absolute;top:-3px;width:2px;height:18px;background:var(--ink)}
 .mval{font-size:13px;color:var(--ash);white-space:nowrap;font-variant-numeric:tabular-nums}
 .apart{font-size:13px;color:var(--ash);margin-top:2px}
+.panel.cfgpanel{display:flex;flex-direction:column;overflow:hidden}
+.panel.cfgpanel[hidden]{display:none}
+.cfgpanel > .cfgtop{flex:0 0 auto}
+.cfgpanel > .cfgtop .tabcut{height:170px;margin-bottom:6px}
+.cfgpanel > .drillhost{flex:1 1 auto;min-height:320px;border-top:1px solid var(--rule);padding-top:12px}
+@media (max-width:820px){.panel.cfgpanel{display:block;overflow:visible}}
 .pkind{font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
 margin:0 0 2px}
 .plead{font-size:15px;color:var(--ink);margin:6px 0 4px;line-height:1.5}
@@ -2416,14 +2422,16 @@ function configTab(host) {
     {key: 'name', label: label, mono: 1, val: r => r.name},
     {key: 'v', label: 'value', clip: 1, val: r => brief(r.value)}];
   const groups = [];
-  const scalars = Object.entries(c).filter(([, v]) => typeof v !== 'object' || v === null)
-    .map(([k, v]) => ({name: k, value: v}));
-  if (scalars.length) groups.push({key: 'resolved', label: 'settings', rows: scalars,
-    cols: settingCols('setting'),
-    tip: 'The values assay is using once its defaults are filled in, which can differ from '
-      + 'audit.yml.',
-    detail: r => pane({kind: 'setting', title: [wbr(r.name)], mono: 1,
-      what: el('span', {class: 'big', text: String(r.value)})})});
+  /* The settings and the plate stay on top, as they were; vocabulary and everything after it
+     is the navigator underneath. */
+  const top = el('div', {class: 'cfgtop'});
+  const cut = (DATA.cuts || {}).tower;
+  if (cut) top.append(el('img', {class: 'cut tabcut', src: cut, alt: ''}));
+  const scalars = Object.entries(c).filter(([, v]) => typeof v !== 'object' || v === null);
+  if (scalars.length) top.append(section('resolved', kv(scalars.map(([k, v]) => [k, String(v)])),
+    'The values assay is using once its defaults are filled in, which can differ from audit.yml. '
+    + 'Everything below this you wrote by hand.'));
+  top.append(el('div', {class: 'clearcut'}));
   if (c.vocab && Object.keys(c.vocab).length) groups.push({key: 'vocab', label: 'vocabulary',
     rows: entries(c.vocab), cols: settingCols('term').map(x => x.key === 'v'
       ? {...x, label: 'what it means here'} : x),
@@ -2474,11 +2482,12 @@ function configTab(host) {
       reading: [el('p', {class: 'prose', text: 'Its SQL would not parse, so it is missing from '
         + 'every other tab and nothing was checked on it.'})]})});
   if (!groups.length) {
-    host.replaceChildren(el('p', {class: 'empty', text: 'No audit.yml was read.'}));
+    host.replaceChildren(top);
     return;
   }
   const kindOf = r => groups.find(g => g.rows.includes(r));
-  host.replaceChildren(drill({
+  host.classList.add('cfgpanel');
+  host.replaceChildren(top, drill({
     noun: 'settings', groups: groups, all: false, keepOrder: 1,
     chip: g => g.label, groupFilter: 'find a section...',
     rowsOf: g => g.rows, rowCols: groups[0].cols,
