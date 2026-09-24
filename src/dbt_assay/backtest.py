@@ -97,7 +97,7 @@ class Replay:
     after: set = field(default_factory=set)    # checks firing at this commit
     skipped: str = ""
     message_says_fix: bool = False             # a LABEL for context, never a filter
-    via: str = "stripped"                      # stripped | compiled
+    via: str = "stripped"                      # stripped | compiled | cached
 
     @property
     def verdict(self) -> str:
@@ -274,7 +274,10 @@ def _fire(sql: str, name: str) -> tuple[set, str]:
 
 def run(repo: str, limit: int = 60, since: str | None = None,
         fix_like_only: bool = False, compiler: Compiler | None = None,
-        on_commit=None) -> list[Replay]:
+        on_commit=None, cache=None) -> list[Replay]:
+    """`cache` is a store: a blob whose dbt checksum it holds is replayed from the compiled body
+    recorded for it -- exact, free, no warehouse -- and a body `--compile` pays for is kept."""
+    from . import history
     out: list[Replay] = []
     todo = commits(repo, limit, since, fix_like_only)
     for i, (sha, subject) in enumerate(todo):
@@ -290,6 +293,18 @@ def run(repo: str, limit: int = 60, since: str | None = None,
                 r.skipped = "the file was added or removed by this commit"
                 out.append(r)
                 continue
+            # *** BOTH SIDES FROM ONE SOURCE, OR NEITHER. *** A compiled "before" against a
+            # stripped "after" differs by the strip, and that difference would read as a catch.
+            got_b = history.compiled_for(cache, before_sql) if cache is not None else None
+            got_a = history.compiled_for(cache, after_sql) if cache is not None else None
+            if got_b and got_a:
+                r.before, skip_b = _fire_compiled(got_b, name)
+                r.after, skip_a = _fire_compiled(got_a, name)
+                r.via = "cached"
+                if skip_b or skip_a:
+                    r.skipped = skip_b or skip_a
+                out.append(r)
+                continue
             r.before, skip_b = _fire(before_sql, name)
             r.after, skip_a = _fire(after_sql, name)
             if (skip_b or skip_a) and compiler is not None:
@@ -300,6 +315,10 @@ def run(repo: str, limit: int = 60, since: str | None = None,
                     r.before, skip_b = _fire_compiled(got_b, name)
                     r.after, skip_a = _fire_compiled(got_a, name)
                     r.via = "compiled"
+                    if cache is not None:
+                        # Paid for once; the next replay of either version reads it for free.
+                        history.remember(cache, before_sql, name, got_b)
+                        history.remember(cache, after_sql, name, got_a)
             if skip_b or skip_a:
                 r.skipped = skip_b or skip_a
             out.append(r)

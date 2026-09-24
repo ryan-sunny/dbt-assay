@@ -927,8 +927,14 @@ at a commit whose message never contains the word "fix" — which is why the mes
 and never a filter. Three of the four commits that removed that defect would have been missed by
 matching on wording.
 
-Historical compiled SQL does not exist, so by default `ref()` and `source()` are resolved and
-control blocks stripped. That is fast and reads 83% of blobs. For the rest:
+**Historical compiled SQL is kept.** Every `check` stores each model's compiled body under dbt's
+own checksum of the model file (sha256 of its text, whitespace stripped -- 328 of 328 match on the
+field manifest), and `--compile` keeps what it pays for. A replay of any version assay has seen reads
+the body the warehouse actually ran: exact, free, nothing compiled. On the field repo two replays
+went from unreadable, to 22 seconds of compiling, to one second from the store.
+
+For a version assay has not seen, `ref()` and `source()` are resolved and control blocks stripped.
+That is fast and reads 83% of blobs. For the rest:
 
 ```bash
 assay backtest --compile --project-dir transform

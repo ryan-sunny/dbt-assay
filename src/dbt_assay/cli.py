@@ -735,8 +735,12 @@ def check(
             console.print(f"\n[yellow]{first}[/]")
         ok = sum(1 for d in digests.values() if d.ok)
         run_scope = f"check:{check_name}" if check_name else None
+        from . import history as history_mod
+        repo = history_mod.repo_of(project)
         s.write_run(run_id, project, project.coverage(), ok, len(failures), str(tdir), __version__,
-                    scope=run_scope)
+                    scope=run_scope, git_sha=history_mod.head(repo) if repo else "")
+        # Every compiled body, under dbt's checksum, so a later replay of this version is exact.
+        history_mod.harvest(s, project)
         s.write_findings(run_id, findings)
         s.write_edge_facts(run_id, facts)
         s.write_unreadable(run_id, [(uid, m.name, m.path, "no compiled SQL")
@@ -5443,6 +5447,9 @@ def backtest(
                                     help="the dbt project inside the repo, e.g. transform"),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
     dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin", help='e.g. "uv run dbt"'),
+    store_path: str = typer.Option("assay.duckdb", "--store",
+                                   help="where compiled SQL is kept by dbt checksum: a version "
+                                        "`check` or `--compile` has seen replays exactly, free"),
 ):
     """Replay this repo's own history and measure whether the checks catch what it already fixed.
 
@@ -5460,14 +5467,19 @@ def backtest(
             raise typer.Exit(1)
         console.print("[dim]compiling where the strip fails, in a detached worktree. "
                       "Your working tree is untouched.[/]")
+    cache = Store(store_path) if store_path and Path(store_path).exists() else None
     try:
         with console.status("replaying...") as st:
             replays = backtest_mod.run(
                 repo, limit, since, fix_like_only, compiler,
-                on_commit=lambda i, n, subj: st.update(f"replaying {i + 1}/{n}  {subj[:60]}"))
+                on_commit=lambda i, n, subj: st.update(f"replaying {i + 1}/{n}  {subj[:60]}"),
+                cache=cache)
     except RuntimeError as e:
         console.print(f"[red]{e}[/]")
         raise typer.Exit(1) from None
+    finally:
+        if cache is not None:
+            cache.close()
 
     if not replays:
         console.print("[yellow]no commits touching model SQL were found.[/] "
@@ -5497,6 +5509,10 @@ def backtest(
     n_compiled = sum(1 for r in replays if r.via == "compiled")
     if n_compiled:
         console.print(f"[dim]{n_compiled} replay(s) were recovered by a real compile.[/]")
+    n_cached = sum(1 for r in replays if r.via == "cached")
+    if n_cached:
+        console.print(f"[dim]{n_cached} replay(s) read the compiled SQL kept for that exact "
+                      f"version, by dbt's checksum: exact, and nothing was compiled.[/]")
     if rate is not None:
         console.print(f"[dim]a check was firing in {had} replay(s); a later commit silenced it in "
                       f"{rate:.0%} of them. The denominator is deliberately not every commit: most "
@@ -6079,6 +6095,70 @@ def version_stamps(
                 console.print(f"  [dim]{n}[/]")
     if drift:
         raise typer.Exit(1)
+
+
+@app.command()
+def history(
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    since: str = typer.Option(None, "--since", help="only commits after this, e.g. 2026-06-01"),
+    limit: int = typer.Option(15, "--limit", "-n", help="how many findings and models to show"),
+    as_json: bool = typer.Option(False, "--json"),
+    dialect: str = typer.Option(None, "--dialect"),
+) -> None:
+    """When each open finding was first seen, and which commit it was seen at.
+
+    *** A FINDING'S AGE IS WHEN IT WAS FIRST SEEN, NOT WHEN IT WAS INTRODUCED. *** (25.24d)
+    Every full `check` records the repository's HEAD, and this records every commit touching the
+    project -- sha, date, message, the files and models it touched -- so the first run holding a
+    finding names a commit and a date. The commit that INTRODUCED it can be earlier; `backtest`
+    replays history to find that. Also: how many compiled versions of models are kept, which is
+    what lets `backtest` replay a version exactly.
+    """
+    from . import history as h
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
+    store = Store(store_path)
+    repo = h.repo_of(project)
+    new = h.sync_commits(store, repo, project, since) if repo else 0
+    n_commits = store.con.execute("select count(*) from commits").fetchone()[0]
+    n_versions = store.con.execute("select count(*) from compiled_sql").fetchone()[0]
+    seen = h.first_seen(store)
+    open_now = live_mod.all_findings(project, digests, schema, store=store)
+    aged = []
+    for f in open_now:
+        if f.id not in seen:
+            continue
+        t, sha = seen[f.id]
+        c = h.commit(store, sha)
+        aged.append({"finding": f.id, "check": f.check, "model": f.subject_name,
+                     "summary": f.summary, "first_seen": str(t)[:10],
+                     "at_commit": (sha or "")[:9], "commit_subject": (c or {}).get("subject", "")})
+    aged.sort(key=lambda r: (r["first_seen"], r["model"], r["check"]))
+    churn = h.churn(store, limit)
+    store.close()
+    doc = {"commits_recorded": n_commits, "commits_new": new,
+           "compiled_versions_kept": n_versions,
+           "oldest_open_findings": aged[:limit], "open_findings_dated": len(aged),
+           "open_findings": len(open_now), "most_changed_models": churn}
+    if as_json:
+        print(_json.dumps(doc, indent=2, default=str))
+        return
+    console.print(f"[bold]{n_commits:,}[/] commit(s) recorded [dim]({new} new"
+                  f"{'' if repo else '; this project is not in a git repository'})[/] · "
+                  f"[bold]{n_versions:,}[/] compiled model version(s) kept "
+                  f"[dim](`backtest` replays these exactly)[/]")
+    console.print(f"\n[bold]{len(aged)}[/] of {len(open_now)} open finding(s) have a date. "
+                  f"[dim]First SEEN, at the commit HEAD was on -- not necessarily when it was "
+                  f"introduced; `backtest` replays history for that.[/]")
+    for r in aged[:limit]:
+        subj = f"  [dim]{r['commit_subject'][:60]}[/]" if r["commit_subject"] else ""
+        console.print(f"  {r['first_seen']}  [dim]{r['at_commit'] or 'no commit recorded'}[/]"
+                      f"  [bold]{r['model']}[/] [dim]{r['check']}[/]{subj}")
+    if churn:
+        console.print("\n[bold]most changed[/] [dim](commits touching each model)[/]")
+        for m, n in churn:
+            console.print(f"  {n:>4}  {m}")
 
 
 # The four cluster families, the subject kind each is asked of, and whether it is a noul.

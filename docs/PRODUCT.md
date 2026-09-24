@@ -367,6 +367,7 @@ assay tests               # tests that cannot fail, and what nothing asserts at 
 assay tests --count-defaults   # ...and how often each COALESCE default actually wins
 assay practices           # standard-practice violations, with judged exceptions
 assay clusters            # one filter written in several models, the one that differs, one claim made twice
+assay history             # when each open finding was first seen, at which commit; what changes most
 assay clusters --judge    # ...one rule or a coincidence, where the fix belongs, and the odd one out
 assay patch tests/assay   # WRITE the uniqueness tests it can prove will pass
 

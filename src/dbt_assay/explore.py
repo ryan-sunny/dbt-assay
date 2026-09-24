@@ -113,6 +113,15 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
     from . import groups as groups_mod
     find_rows = _findings(findings, store, acted,
                           groups_mod.membership(groups_mod.build(project, findings)))
+    # When each was first SEEN, and at which commit -- never "introduced", which is backtest's.
+    from . import history as history_mod
+    seen = history_mod.first_seen(store) if store is not None else {}
+    for r in find_rows:
+        if r["id"] in seen:
+            t, sha = seen[r["id"]]
+            c = history_mod.commit(store, sha) or {}
+            r["first_seen"] = {"at": str(t)[:10], "commit": (sha or "")[:9],
+                               "subject": c.get("subject", "")}
     find_by_subject: dict = {}
     for f in find_rows:
         find_by_subject.setdefault(f["subject"], []).append(f["id"])

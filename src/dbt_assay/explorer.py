@@ -283,7 +283,8 @@ display:inline-flex;gap:6px;align-items:baseline;color:var(--ash);margin-right:5
 .chip:hover{color:var(--ink)}
 .chip.on{color:var(--ink);border-bottom-color:var(--ink)}
 .chip b{font-weight:400;color:var(--faint);font-size:12px}
-.chips.flat .chip{cursor:default;border:1px solid var(--rule);padding:0 6px;margin:0}
+.chips.flat .chip{cursor:default;border:1px solid var(--rule);padding:0 6px;margin:0;
+max-width:100%;overflow-wrap:anywhere;white-space:normal}
 .chips .more{margin:0 14px 0 4px}
 label.chk{display:inline-flex;gap:6px;align-items:center;font-size:13px;color:var(--ash);
 cursor:pointer;user-select:none;white-space:nowrap;font-family:Fell,Georgia,serif}
@@ -1607,6 +1608,11 @@ function findingsTab(host) {
         ['weight', String(f.weight)],
         ['reaches', (f.exposures || []).length ? f.exposures.join(', ')
           : el('span', {class: 'tot', text: 'no exposure'})],
+        /* First SEEN by a full check, at the commit HEAD was on. Not "introduced": the commit that
+           introduced it can be earlier, and `backtest` is what finds that. */
+        ...(f.first_seen ? [['first seen', el('span', {text: f.first_seen.at +
+            (f.first_seen.commit ? ' at ' + f.first_seen.commit : '') +
+            (f.first_seen.subject ? ' \u00b7 ' + f.first_seen.subject.slice(0, 80) : '')})]] : []),
         ...(f.group ? [['same construct', el('span', {text: f.group.size + ' models (' +
             f.group.models.slice(0, 5).join(', ') + (f.group.size > 5 ? ', ...' : '') + ') — ' +
             (f.group.macro_at ? 'one edit in ' + f.group.macro_at : 'written inline in each')})]]

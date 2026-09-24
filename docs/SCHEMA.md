@@ -1,6 +1,6 @@
 # The store
 
-One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Twelve
+One DuckDB file, `assay.duckdb`, written by `assay check` and read by everything else. Fourteen
 tables. The whole design turns on one split, so it is worth stating before the diagram:
 
 **Some of these cost nothing and some of them cost money or somebody's afternoon.** A table
@@ -11,7 +11,7 @@ prune` deletes only the first kind, and the split is declared in code rather tha
 ```python
 PRUNABLE     = ("findings", "edge_facts", "unreadable")
 NEVER_PRUNED = ("model_calls", "model_decisions", "claims", "adjudications", "observed_keys",
-                "runs", "calibrations", "states", "warehouse_calls")
+                "runs", "calibrations", "compiled_sql", "commits", "states", "warehouse_calls")
 ```
 
 A new table belongs to one list or the other and a test fails until it does, so nothing becomes
@@ -46,7 +46,9 @@ erDiagram
         varchar dbt_version
         int models
         int readable
-        int unreadable
+        int unreadable "this project's own; installed packages are counted apart"
+        varchar scope "NULL for a full run; a narrowed run is history, never the current one"
+        varchar git_sha "the commit HEAD was on, +dirty when uncommitted"
     }
     FINDINGS {
         varchar run_id PK, FK "carrying this is what makes it free to rebuild"
@@ -176,6 +178,20 @@ erDiagram
         varchar detail
         timestamp called_at
     }
+    COMPILED_SQL {
+        varchar checksum "dbt's own: sha256 of the model file's text, whitespace stripped"
+        varchar model
+        varchar sql "what that exact version compiled to"
+        timestamp first_seen
+    }
+    COMMITS {
+        varchar sha
+        timestamptz committed_at
+        varchar subject
+        varchar body "kept whole: the message is signal"
+        varchar files "json array"
+        varchar models "json array of the models it touched"
+    }
     CALIBRATIONS {
         timestamp ran_at
         varchar assay_version
@@ -252,6 +268,8 @@ rulings were structural, so a calibration report has to exclude them by construc
 | `observed_keys` | what a count actually found, over time | **a warehouse query** |
 | `warehouse_calls` | what each statement cost the warehouse | **the money itself** |
 | `calibrations` | what `assay calibrate` measured, so a comment quoting it can be checked | free from the cache, **a model call** without it |
+| `compiled_sql` | what a past version of a model compiled to, by dbt's checksum, so `backtest` replays it exactly | **a compile**, or a build that is gone |
+| `commits` | every commit touching the project, and the models it touched; with `runs.git_sha`, when a finding was first seen | free from git |
 
 ---
 

@@ -770,6 +770,7 @@ add a field to fix the other.
 ```bash
 assay diff --baseline <main target>        # what changed about what models MEAN
 assay backtest --repo . --limit 200        # would this have caught YOUR past bugs?
+assay history                              # when each open finding was first seen, at which commit
 assay version-check --baseline <target>    # does anything owe a version bump?
 assay version-stamps                       # write the stamps
 assay watch                                # rerun on save; print only what your edit changed

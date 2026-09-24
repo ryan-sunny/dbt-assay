@@ -475,7 +475,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay adjudicate` | `assay_adjudicate` | Rows a dbt test flagged: does the rest of the row explain it? | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--per-test` `--store` `--config` |
 | `assay align` | `assay_align` | Do two columns in different models mean the same thing? | `--target/-t` `--select/-s` `--max-pairs` `--store` `--config` |
 | `assay ask` | `assay_ask` | Run every question that declares a `subject:`, including your own. | `--target/-t` `--store` `--config` `--family/-f` `--select/-s` `--limit/-n` `--dry-run` |
-| `assay backtest` | `assay_backtest` | Replay this repo's own history and measure whether the checks catch what it already fixed. | `--repo/-r` `--limit/-n` `--fix-like-only` `--since` `--show` `--compile` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` |
+| `assay backtest` | `assay_backtest` | Replay this repo's own history and measure whether the checks catch what it already fixed. | `--repo/-r` `--limit/-n` `--fix-like-only` `--since` `--show` `--compile` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--store` |
 | `assay banks` | `assay_banks` | Every question assay will ask, where it came from, and whether its shape is sound. | `--lint` `--strict` `--judge` `--config` `--store` |
 | `assay calibrate` | `assay_calibrate` | Measure the grain judgment against the keys this project already declares. | `--target/-t` `--limit/-n` `--store` `--config` |
 | `assay calibration` | `assay_calibration` | When this thing is confident, is it right more often than when it is not? | `--store` `--source` |
@@ -493,6 +493,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay export <directory>` | `assay_export` | Put assay's tables in your warehouse, as data your own models can join to. | `--store` `--format` `--no-docs` |
 | `assay feeds` | `assay_feeds` | Has a feed changed its mind while its schema held still? | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--sample` `--limit/-n` `--store` `--config` |
 | `assay guide <topic>` | `assay_guide` | How to SET ASSAY UP, for somebody who has never used it. | — |
+| `assay history` | `assay_history` | When each open finding was first seen, and which commit it was seen at. | `--target/-t` `--store` `--since` `--limit/-n` `--json` `--dialect` |
 | `assay hook <action>` | `assay_hook` | The edit gate. | `--target/-t` `--store` `--config` `--project-dir` `--dbt/--dbt-bin` `--profiles-dir` `--compile` `--dialect` `--settings` `--assay-cmd` |
 | `assay import <directory>` | `assay_import` | Load an export back into a store: the verdicts in git, in a fresh checkout's store. | `--store` `--tables` |
 | `assay infer` | `assay_infer` | Infer each model's grain. | `--target/-t` `--print-state` `--limit/-n` `--store` `--config` |
