@@ -2910,7 +2910,7 @@ function spendTab(host) {
    `abandoned` means the monitor stopped, which is not the same as the data being late -- and in
    any monitoring view a monitor that stopped looks exactly like one that finds nothing. */
 function monitoringTab(host) {
-  const m = DATA.monitoring || {}, bits = [];
+  const m = DATA.monitoring || {};
   const cad = m.cadence || {}, cov = m.test_coverage || {};
   const readings = m.readings || [], unwatched = m.unwatched || [], mf = m.monitoring || [];
   const stale = m.stale_failures || [];
@@ -2918,127 +2918,138 @@ function monitoringTab(host) {
   /* *** AN EMPTY TAB READS AS "NOTHING IS WRONG". *** It is not measured until somebody
      measures it, and this says exactly which command does that. */
   if (!cad.runs && !readings.length && !cov.declared) {
-    bits.push(block('Nothing here has been measured',
-      'This page carries the monitoring only when it is handed the measurement, because taking '
-      + 'it needs your dbt connection and assay never holds a credential.', null));
-    bits.push(el('pre', {text: 'assay volume --json > volume.json\n'
-      + 'assay page assay.html --monitoring volume.json'}));
-    bits.push(el('p', {class: 'note', text:
-      'Nothing above is a statement about your monitoring. It says the numbers were not taken.'}));
-    host.replaceChildren(...bits);
+    host.replaceChildren(
+      block('Nothing here has been measured', 'Taking the measurement needs your dbt connection, '
+        + 'and assay never holds a credential, so the page carries it only when handed the file.',
+        el('pre', {text: 'assay volume --json > volume.json\n'
+                         + 'assay page assay.html --monitoring volume.json'}),
+        'This is not a statement about your monitoring. The numbers were not taken.'));
     return;
   }
 
-  // ---- how often this project actually builds, which every threshold below is derived from
-  const cadline = el('div', {});
-  cadline.append(el('p', {text: cad.explain || 'the build cadence could not be read'}));
-  if (cad.derived_staleness_days != null)
-    cadline.append(el('p', {class: 'note', text:
-      'So a monitor is called late after ' + cad.derived_staleness_days + ' day(s)'
-      + (cad.floored ? ', which is the one-day floor rather than the measured gap: a threshold '
-                     + 'cannot be shorter than a day' : '')
-      + (cad.configured ? '. audit.yml sets this one deliberately.'
-                        : '. Nothing is configured, so the derived number is what is in force.')}));
-  bits.push(block('How often this project builds', 'Every threshold on this tab is derived from '
-    + 'this rather than picked. A number somebody guesses cries wolf or stays quiet for a '
-    + 'quarter.', cadline));
-
-  // ---- the monitors, and whether each one is still being written to
-  if (readings.length) {
-    const live = readings.filter(r => r.state === 'live').length;
-    const off = readings.length - live;
-    const mbox = el('div', {});
-    mbox.append(grid(readings, [
-        {key: 'relation', label: 'relation', mono: 1, val: r => r.relation},
-        {key: 'state', label: 'state', val: r => r.state,
-         cell: r => el('span', {class: r.state === 'live' ? '' : 'bad',
-                                text: String(r.state).replace(/_/g, ' ')})},
-        {key: 'rows', label: 'rows', n: 1, val: r => r.rows},
-        {key: 'newest', label: 'newest', val: r => r.newest || ''},
-        {key: 'age', label: 'days since', n: 1, val: r => r.age_days,
-         cell: r => el('span', {text: r.age_days == null ? '' : r.age_days.toFixed(1)})},
-      ], {placeholder: 'filter monitors...', cap: 200}));
-    /* *** THE SENTENCE IS THE EVIDENCE, AND A TABLE CELL CANNOT HOLD IT. ***
-       Each reading carries the write history its threshold was derived from, which is what makes
-       the state arguable rather than a verdict handed down. One line per monitor that is not
-       live, inside the same block so it is part of that section rather than loose above the
-       next heading. */
-    for (const r of readings.filter(x => x.state !== 'live' && x.says))
-      mbox.append(el('p', {class: 'note', text: r.says}));
-    bits.push(block('The monitors themselves (' + num(readings.length) + ')',
-      off === 0
-        ? 'Every one of these has been written to recently.'
-        : num(off) + (off === 1 ? ' of them has' : ' of them have')
-          + ' stopped being written to, and a monitor that stopped reads exactly like one that '
-          + 'finds nothing.',
-      mbox));
-  }
-
-  // ---- what the declared tests are actually doing
+  /* *** SIX SECTIONS STACKED ON ONE SCROLL, AND THE LONGEST ONE CUT AT 400. ***
+     "the others definitely need some love to support the higher volume of shit that needs to be
+     able to be viewed and discovered". The sections are the groups of the navigator the other
+     high-volume tabs use: every list is paged, each row opens in the pane on the right, and the
+     sentences that sat under each heading are the rows' own detail or a column's tip. The facts
+     that were paragraphs -- how often this builds, what late means, what the tests are doing --
+     are the rows of the first group, so they are read the same way as everything else. */
+  const late = cad.derived_staleness_days;
+  const glance = [];
+  if (cad.explain || cad.runs != null)
+    glance.push({what: 'how often this project builds', value: cad.gap_text
+                   ? 'every ' + cad.gap_text : (cad.runs ? num(cad.runs) + ' writes' : 'unread'),
+                 why: (cad.explain || 'the build cadence could not be read')
+                   + '. Every threshold on this tab is derived from this rather than picked: a '
+                   + 'number somebody guesses cries wolf or stays quiet for a quarter.'
+                   + (cad.unreadable ? ' The statement that reads it did not run: ' + (cad.why || '') : '')});
+  if (late != null)
+    glance.push({what: 'a monitor is called late after', value: late + ' day(s)',
+                 why: cad.configured ? 'audit.yml sets this deliberately, overriding every '
+                   + 'derived threshold.'
+                   : 'Derived from the build cadence' + (cad.floored ? ', held at the one-day '
+                   + 'floor because a threshold cannot be shorter than a day' : '')
+                   + '. Nothing is configured, so the derived number is in force. Each monitor '
+                   + 'also has its own threshold from its own write history where it has enough.'});
   if (cov.declared) {
     const never = (cov.declared || 0) - (cov.ever_ran || 0);
-    const parts = [
-      {label: 'have produced a result', n: cov.ever_ran || 0, color: RAMP.declared},
-      {label: 'declared, never run', n: never, color: RAMP.judged},
-    ];
-    const legend = el('div', {class: 'legend'}, parts.filter(x => x.n).map(x =>
-      el('span', {class: 'lgi'}, [el('span', {class: 'sw', style: 'background:' + x.color}),
-                                  el('span', {text: x.label + ' ' + num(x.n)})])));
-    const box = el('div', {}, [stackedBar(parts.filter(x => x.n), cov.declared), legend]);
-    box.append(el('p', {class: 'note', text:
-      num(cov.declared) + ' test(s) declared, ' + num(cov.ever_ran || 0) + ' have ever produced a '
-      + 'result, ' + num(cov.skipped_results || 0) + ' result(s) are SKIPPED. A test that never '
-      + 'ran and a test that passed look identical in a summary, and only one of them has read '
-      + 'your data.'}));
-    bits.push(block('What your tests are doing', 'Declared is not run, and skipped is not '
-      + 'passed.', box));
+    const bar = () => {
+      const parts = [
+        {label: 'have produced a result', n: cov.ever_ran || 0, color: RAMP.declared},
+        {label: 'declared, never run', n: never, color: RAMP.judged}].filter(x => x.n);
+      return el('div', {}, [stackedBar(parts, cov.declared), el('div', {class: 'legend'},
+        parts.map(x => el('span', {class: 'lgi'}, [el('span', {class: 'sw',
+          style: 'background:' + x.color}), el('span', {text: x.label + ' ' + num(x.n)})])))]);
+    };
+    const why = 'Declared is not run, and skipped is not passed: a test that never ran and a '
+      + 'test that passed look identical in a summary, and only one of them has read your data.';
+    glance.push({what: 'tests declared', value: num(cov.declared), why: why, bar: bar});
+    glance.push({what: 'have produced a result', value: num(cov.ever_ran || 0), why: why, bar: bar});
+    glance.push({what: 'declared, never run', value: num(never), bad: never > 0, why: why, bar: bar});
+    glance.push({what: 'results that are SKIPPED', value: num(cov.skipped_results || 0),
+                 bad: (cov.skipped_results || 0) > 0, why: why, bar: bar});
   }
 
-  /* *** THE ONE NOBODY PREDICTED. ***
-     A test whose LAST result was a failure and which has not run since. In any Elementary view
-     it is indistinguishable from something failing right now, and it is neither: it is a
-     question nobody has asked for two months. */
-  if (stale.length) {
-    bits.push(block(num(stale.length) + ' test(s) whose last result was a FAILURE, and which have '
-      + 'not run since',
-      'This is not a live failure and it is not a pass. It is an answer that has gone out of '
-      + 'date, and it reads as a live failure in any view that sorts by status.',
-      grid(stale, [
-        {key: 'table', label: 'table', mono: 1, val: r => r.table, cell: r => link(r.table)},
-        {key: 'kind', label: 'what failed', val: r => r.kind + ' · ' + (r.sub_type || '')},
-        {key: 'age', label: 'days since', n: 1, val: r => r.age_days,
-         cell: r => el('span', {text: r.age_days == null ? '' : r.age_days.toFixed(0)})},
-      ], {placeholder: 'filter...', cap: 200})));
-  }
+  const groups = [
+    {key: 'glance', label: 'at a glance', rows: glance,
+     cols: [{key: 'what', label: 'what', val: r => r.what},
+            {key: 'value', label: 'measured', val: r => r.value,
+             cell: r => el('span', {class: r.bad ? 'bad' : '', text: r.value})}],
+     detail: r => [el('h2', {text: r.what}), el('p', {class: 'big', text: r.value}),
+                   el('p', {class: 'prose', text: r.why}), ...(r.bar ? [r.bar()] : [])]},
+    {key: 'monitors', label: 'the monitors themselves', rows: readings,
+     cols: [
+       {key: 'relation', label: 'relation', mono: 1, val: r => r.relation},
+       {key: 'state', label: 'state', val: r => r.state,
+        tip: 'live: written to recently. abandoned: nothing has written to it for longer than its '
+          + 'threshold, and a monitor that stopped reads exactly like one that finds nothing.',
+        cell: r => el('span', {class: r.state === 'live' ? '' : 'bad',
+                               text: String(r.state).replace(/_/g, ' ')})},
+       {key: 'age', label: 'days since', n: 1, val: r => r.age_days,
+        tip: 'Days since anything was written to it.',
+        cell: r => el('span', {text: r.age_days == null ? '' : r.age_days.toFixed(1)})}],
+     sort: 'relation',
+     detail: r => {
+       const pr = (cad.per_relation || {})[r.relation] || {};
+       return [el('h2', {class: 'mono', text: r.relation}),
+         kv([['state', el('span', {class: r.state === 'live' ? '' : 'bad',
+                                   text: String(r.state).replace(/_/g, ' ')})],
+             ['rows', num(r.rows)], ['newest write', r.newest || '—'],
+             ['days since', r.age_days == null ? '—' : r.age_days.toFixed(1)],
+             ['late after', pr.threshold_days != null ? pr.threshold_days + ' day(s)' : '—']]),
+         ...(r.says ? [section('what it means', md(r.says))] : []),
+         ...(pr.explain ? [section('where the threshold came from', md(pr.explain))] : [])];
+     }},
+    {key: 'stale', label: 'last result a failure, not run since', rows: stale,
+     cols: [
+       {key: 'table', label: 'table', mono: 1, val: r => r.table, cell: r => link(r.table)},
+       {key: 'kind', label: 'what failed', val: r => r.kind + (r.sub_type ? ' · ' + r.sub_type : '')},
+       {key: 'age', label: 'days since', n: 1, val: r => r.age_days,
+        cell: r => el('span', {text: r.age_days == null ? '' : r.age_days.toFixed(0)})}],
+     sort: 'age', dir: -1,
+     detail: r => [el('h2', {}, [link(r.table)]),
+       kv([['what failed', r.kind + (r.sub_type ? ' · ' + r.sub_type : '')],
+           ['days since it last ran', r.age_days == null ? '—' : r.age_days.toFixed(0)]]),
+       el('p', {class: 'prose', text: 'Its last result was a FAILURE and it has not run since. '
+         + 'That is not a live failure and it is not a pass: it is an answer gone out of date, and '
+         + 'any view that sorts by status shows it as a live failure.'})]},
+    {key: 'findings', label: 'findings about the monitoring', rows: mf,
+     cols: [
+       {key: 'check', label: 'check', mono: 1, val: f => f.check},
+       {key: 'summary', label: 'what', clip: 1, val: f => f.summary}],
+     sort: 'check',
+     detail: f => [el('h2', {text: f.check.replace(/_/g, ' ')}), md(f.summary || ''),
+       section('evidence', kvAny(f.evidence)),
+       el('p', {class: 'prose', text: 'A statement about whether something is watching, never '
+         + 'about your data.'})]},
+    {key: 'unwatched', label: 'models nothing watches', rows: unwatched,
+     cols: [
+       {key: 'model', label: 'model', mono: 1, val: r => r.model, cell: r => link(r.model)},
+       {key: 'marts', label: 'marts', n: 1, val: r => r.marts,
+        tip: 'Marts downstream. A mart downstream is what makes an unnoticed change expensive.'},
+       {key: 'descendants', label: 'descendants', n: 1, val: r => r.descendants}],
+     sort: 'marts', dir: -1,
+     detail: r => [el('h2', {}, [link(r.model)]),
+       kv([['marts downstream', num(r.marts)], ['descendants', num(r.descendants)]]),
+       el('p', {class: 'prose', text: 'No volume history covers this model. assay does not '
+         + 'measure volume and does not intend to; elementary-data does, and it is a dbt '
+         + 'package.'})]},
+  ].filter(g => g.rows.length);
+  const kindOf = r => groups.find(g => g.rows.includes(r));
 
-  // ---- the monitoring findings, which are about the monitoring and not about the data
-  if (mf.length) {
-    bits.push(block(num(mf.length) + ' finding(s) about the monitoring',
-      'Every one of these is a statement about whether something is watching. None of them is a '
-      + 'statement about your data.',
-      el('div', {}, mf.map(f => {
-        const row = el('div', {class: 'mfrow'});
-        row.append(el('span', {class: 'rlab mono', text: f.check.replace(/_/g, ' ')}));
-        row.append(el('span', {text: f.summary}));
-        return row;
-      }))));
-  }
-
-  // ---- and the models nothing watches at all
-  if (unwatched.length) {
-    const worst = unwatched.filter(u => u.marts).length;
-    bits.push(block(num(unwatched.length) + ' model(s) with nothing watching them',
-      num(worst) + ' of them have a mart downstream, which is what makes an unnoticed change '
-      + 'expensive. assay does not measure volume and does not intend to; `elementary-data` does, '
-      + 'and it is a dbt package.',
-      grid(unwatched, [
-        {key: 'model', label: 'model', mono: 1, val: r => r.model, cell: r => link(r.model)},
-        {key: 'marts', label: 'marts downstream', n: 1, val: r => r.marts},
-        {key: 'descendants', label: 'descendants', n: 1, val: r => r.descendants},
-      ], {placeholder: 'filter models...', cap: 400, sort: 'marts', dir: -1})));
-  }
-
-  host.replaceChildren(...bits);
+  host.replaceChildren(drill({
+    noun: 'rows', groups: groups, all: false, keepOrder: 1,
+    chip: g => g.label, groupFilter: 'find a section...',
+    groupSub: g => g.key === 'monitors'
+      ? (() => { const off = g.rows.filter(r => r.state !== 'live').length;
+                 return off ? num(off) + ' stopped' : 'all live'; })()
+      : g.key === 'unwatched' ? 'each has a mart downstream' : null,
+    rowsOf: g => g.rows, rowCols: groups[0].cols,
+    colsFor: g => g.cols, sortFor: g => g.sort, dirFor: g => g.dir,
+    rowFilter: 'filter...',
+    rowText: r => JSON.stringify(r),
+    detailOf: r => (kindOf(r) || groups[0]).detail(r),
+  }));
 }
 
 /* *** A BACKTICK IS MARKUP EVERYWHERE ON THIS PAGE, NOT ONLY IN A DESCRIPTION. ***

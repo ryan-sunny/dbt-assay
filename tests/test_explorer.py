@@ -1228,3 +1228,20 @@ def test_no_tab_opens_on_a_grey_sentence():
     import re
     tabs = re.findall(r'<button role="tab" data-tab="([a-z]+)"[^>]*data-tip="([^"]+)"', doc)
     assert len(tabs) >= 10, f"tabs without a tip saying what they are: {tabs}"
+
+
+def test_monitoring_is_a_navigator_and_no_list_is_capped():
+    """*** SIX SECTIONS STACKED ON ONE SCROLL, AND THE LONGEST CUT AT 400. ***
+
+    Monitoring was on the list of tabs that "need some love to support the higher volume". Its
+    sections are the groups of the navigator the other high-volume tabs use, every list is paged,
+    and the facts that were paragraphs are the rows of an "at a glance" group.
+    """
+    v = explorer._VIEWS
+    mb = v[v.index("function monitoringTab"):]
+    mb = mb[:mb.index("\n}\n")]
+    assert "drill({" in mb, "Monitoring is a stacked scroll again"
+    for key in ("'glance'", "'monitors'", "'stale'", "'findings'", "'unwatched'"):
+        assert "key: " + key in mb, f"the {key} group is gone"
+    assert "cap: 400" not in mb, "the unwatched models are capped again"
+    assert "class: 'note'" not in mb, "a grey note is back"
