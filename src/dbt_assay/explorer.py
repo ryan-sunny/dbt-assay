@@ -3630,14 +3630,18 @@ const USEWORD = {grain: 'the grain of', held_back: 'a finding held back on',
 
 /* ---- certificates (L2): a guarantee's word, badge class and tip. */
 const GWORD = {holding: 'proven', conditional: 'proven, conditional', lost: 'guarantee lost',
+               refuted: 'does not hold',
                stale: 'file changed', not_proven: 'not proven', not_attempted: 'not proven'};
-const GCLASS = {holding: 'proven', conditional: 'unchecked', lost: 'broken', stale: 'unchecked',
+const GCLASS = {holding: 'proven', conditional: 'unchecked', lost: 'broken', refuted: 'assumed',
+                stale: 'unchecked',
                 not_proven: 'assumed', not_attempted: 'unknown'};
 const GTIP = {
   holding: 'Checked by Lean, and every premise it rests on is holding.',
   conditional: 'Checked by Lean. It holds for every input its premises allow, and one of them '
     + 'has not been checked.',
   lost: 'Checked by Lean, and a premise it rests on broke: the guarantee no longer applies.',
+  refuted: 'The key it would need was never declared, and a count shows it repeats: this join '
+    + 'can multiply rows here, often on purpose (a join to many readings, then a group by).',
   stale: 'The model’s file changed since this was proven. `assay prove` proves it again.',
   not_proven: 'Lean could not close the goal. What is missing is shown.',
   not_attempted: 'No proven rule applies to this structure yet, or a premise is missing.'};
@@ -3766,8 +3770,9 @@ function guaranteesTab(host) {
     const k = r.guarantee === 'not_attempted' ? 'not_proven' : r.guarantee;
     (pby[k] = pby[k] || []).push(r);
   }
-  for (const k of ['lost', 'conditional', 'stale', 'holding', 'not_proven'])
+  for (const k of ['lost', 'refuted', 'conditional', 'stale', 'holding', 'not_proven'])
     if (pby[k]) groups.push({key: 'proof_' + k, proof: 1, label: {lost: 'proofs: guarantee lost',
+      refuted: 'proofs: does not hold',
       conditional: 'proofs: conditional', stale: 'proofs: file changed', holding: 'proven',
       not_proven: 'not proven'}[k], rows: pby[k]});
   const proofCols = [

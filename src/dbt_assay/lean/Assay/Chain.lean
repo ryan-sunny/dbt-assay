@@ -217,3 +217,93 @@ theorem incremental_equals_full_refresh (g : Row → Row) (k : List String) (sel
   exact (List.perm_append_comm.trans (List.filter_append_perm sel Sold)).map g
 
 end Assay
+
+namespace Assay
+
+/-- **join_onto_grouped_no_fanout.** A join onto a subquery that groups by keys the join covers
+cannot multiply rows: the group by made those keys unique, whatever the table under it holds.
+No premise: it is true of every input. -/
+theorem join_onto_grouped_no_fanout {g lk rk : List String} {L R : Table}
+    (hcover : ∀ c ∈ g, c ∈ rk) :
+    (innerJoin lk rk L (groupBy g R)).length ≤ L.length :=
+  inner_join_no_fanout hcover (group_by_unique g R)
+
+/-- The same for a left join: exactly the left rows. -/
+theorem left_join_onto_grouped_preserves_rows {g lk rk : List String} {L R : Table}
+    (hcover : ∀ c ∈ g, c ∈ rk) :
+    (leftJoin lk rk L (groupBy g R)).length = L.length :=
+  left_join_preserves_rows hcover (group_by_unique g R)
+
+end Assay
+
+namespace Assay
+
+/-- **pick_unique.** A dedupe keeping one row per partition is unique on the partition. -/
+theorem pick_unique (o : KeyOrder) (part ord : List String) (t : Table) :
+    Unique part (pick o part ord t) := by
+  unfold Unique pick
+  rw [List.pairwise_filterMap]
+  refine List.Pairwise.imp ?_ (distinctKeys_nodup part t)
+  intro a a' hne b hb b' hb' _ heq
+  have ka := (List.mem_filter.mp (firstMin_mem o ord hb)).2
+  have ka' := (List.mem_filter.mp (firstMin_mem o ord hb')).2
+  simp only [decide_eq_true_eq] at ka ka'
+  exact hne (ka.symm.trans (heq.trans ka'))
+
+/-- A join onto a dedupe partitioned by keys the join covers cannot multiply rows. -/
+theorem join_onto_picked_no_fanout (o : KeyOrder) {part ord lk rk : List String} {L R : Table}
+    (hcover : ∀ c ∈ part, c ∈ rk) :
+    (innerJoin lk rk L (pick o part ord R)).length ≤ L.length :=
+  inner_join_no_fanout hcover (pick_unique o part ord R)
+
+theorem left_join_onto_picked_preserves_rows (o : KeyOrder) {part ord lk rk : List String}
+    {L R : Table} (hcover : ∀ c ∈ part, c ∈ rk) :
+    (leftJoin lk rk L (pick o part ord R)).length = L.length :=
+  left_join_preserves_rows hcover (pick_unique o part ord R)
+
+/-- A join onto a filter of a relation unique on keys the join covers cannot multiply rows. -/
+theorem join_onto_filtered_no_fanout {us lk rk : List String} {L R : Table} (p : Row → Bool)
+    (hcover : ∀ c ∈ us, c ∈ rk) (hu : Unique us R) :
+    (innerJoin lk rk L (filterT p R)).length ≤ L.length :=
+  inner_join_no_fanout hcover (filter_preserves_unique p hu)
+
+theorem left_join_onto_filtered_preserves_rows {us lk rk : List String} {L R : Table}
+    (p : Row → Bool) (hcover : ∀ c ∈ us, c ∈ rk) (hu : Unique us R) :
+    (leftJoin lk rk L (filterT p R)).length = L.length :=
+  left_join_preserves_rows hcover (filter_preserves_unique p hu)
+
+end Assay
+
+namespace Assay
+
+theorem mem_groupBy {g : List String} {t : Table} {x : Row} (hx : x ∈ groupBy g t) :
+    ∃ r ∈ t, x = project g r := by
+  unfold groupBy at hx
+  obtain ⟨k, -, hk⟩ := List.mem_filterMap.mp hx
+  obtain ⟨r, hr, rfl⟩ := Option.map_eq_some_iff.mp hk
+  exact ⟨r, List.mem_of_find?_eq_some hr, rfl⟩
+
+/-- A group key never null in the input is never null in the grouped output. -/
+theorem notnull_group_by {c : String} {g : List String} {t : Table}
+    (hc : c ∈ g) (h : NotNull c t) : NotNull c (groupBy g t) := by
+  intro x hx
+  obtain ⟨r, hr, rfl⟩ := mem_groupBy hx
+  simp [project, hc, h r hr]
+
+/-- A dedupe keeps rows of its input, so a column never null stays never null. -/
+theorem notnull_pick (o : KeyOrder) {c : String} {part ord : List String} {t : Table}
+    (h : NotNull c t) : NotNull c (pick o part ord t) := by
+  intro x hx
+  unfold pick at hx
+  obtain ⟨k, -, hk⟩ := List.mem_filterMap.mp hx
+  exact h x (List.mem_filter.mp (firstMin_mem o ord hk)).1
+
+theorem notnull_all_group_by {cs g : List String} {t : Table}
+    (hc : ∀ c ∈ cs, c ∈ g) (h : ∀ c ∈ cs, NotNull c t) : ∀ c ∈ cs, NotNull c (groupBy g t) :=
+  fun c m => notnull_group_by (hc c m) (h c m)
+
+theorem notnull_all_pick (o : KeyOrder) {cs part ord : List String} {t : Table}
+    (h : ∀ c ∈ cs, NotNull c t) : ∀ c ∈ cs, NotNull c (pick o part ord t) :=
+  fun c m => notnull_pick o (h c m)
+
+end Assay

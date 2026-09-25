@@ -138,6 +138,177 @@ def _bbox_corners(tree) -> dict:
     return out
 
 
+def _out_name(e) -> str | None:
+    """The output name of a select item, when it is a plain column or an aliased one."""
+    if isinstance(e, exp.Alias):
+        return e.alias.lower() if e.alias else None
+    if isinstance(e, exp.Column):
+        return e.name.lower()
+    return None
+
+
+def _unique_of_select(sel, cte_facts: dict) -> tuple[list | None, str, list]:
+    """(keys, how, order) a select is unique on by its own construction, in its OUTPUT names.
+
+    `group by` columns (a position resolves to the select item it names; an expression that is
+    not a column settles nothing), `DISTINCT ON`, or `qualify row_number() over (partition by P
+    ...) = 1`. A select that only reads one CTE, joins nothing and groups nothing keeps that CTE's
+    keys when it projects them."""
+    if not isinstance(sel, exp.Select):
+        return None, "", []
+    items = sel.expressions or []
+    names_by_src = {}
+    for it in items:
+        nm = _out_name(it)
+        inner = it.this if isinstance(it, exp.Alias) else it
+        if nm and isinstance(inner, exp.Column):
+            names_by_src.setdefault(inner.name.lower(), nm)
+    dist = sel.args.get("distinct")
+    on = dist.args.get("on") if dist is not None else None
+    if on is not None:
+        cols = [c for c in on.expressions] if hasattr(on, "expressions") else []
+        keys = [names_by_src.get(c.name.lower(), c.name.lower()) for c in cols
+                if isinstance(c, exp.Column)]
+        if keys and len(keys) == len(cols):
+            return keys, "distinct_on", []
+    if dist is not None and on is None:
+        # `select distinct a, b` is `group by a, b`: one row per combination of what it keeps
+        keys = [_out_name(it) for it in items]
+        if keys and all(keys) and all(isinstance(it.this if isinstance(it, exp.Alias) else it,
+                                                 exp.Column) for it in items):
+            return keys, "group_by", []
+    g = sel.args.get("group")
+    if g is not None and not (g.args.get("rollup") or g.args.get("cube")
+                              or g.args.get("grouping_sets") or g.args.get("all")):
+        keys = []
+        for x in g.expressions:
+            if isinstance(x, exp.Literal) and x.is_int:
+                i = int(x.this) - 1
+                if not 0 <= i < len(items):
+                    return None, "", []
+                nm = _out_name(items[i])
+                if nm is None:
+                    return None, "", []
+                keys.append(nm)
+            elif isinstance(x, exp.Column):
+                keys.append(names_by_src.get(x.name.lower(), x.name.lower()))
+            else:
+                return None, "", []
+        return (keys or None), "group_by", []
+    q = sel.args.get("qualify")
+    if q is not None:
+        cond = q.this
+        if isinstance(cond, exp.EQ):
+            w, one = cond.this, cond.expression
+            if isinstance(one, exp.Window):
+                w, one = one, w
+            if (isinstance(w, exp.Window) and isinstance(w.this, exp.RowNumber)
+                    and isinstance(one, exp.Literal) and one.this == "1"):
+                part = w.args.get("partition_by") or []
+                if part and all(isinstance(c, exp.Column) for c in part):
+                    o = w.args.get("order")
+                    order = [x.this.name.lower() for x in (o.expressions if o else [])
+                             if isinstance(getattr(x, "this", None), exp.Column)]
+                    return ([names_by_src.get(c.name.lower(), c.name.lower()) for c in part],
+                            "row_number", order)
+    frm = _from_of(sel)
+    # `select ... from (select ..., row_number() over (partition by k ...) as rn ...) where rn = 1`
+    w = sel.args.get("where")
+    if frm is not None and isinstance(frm.this, exp.Subquery) and w is not None \
+            and not sel.args.get("joins") and isinstance(w.this, exp.EQ):
+        col, one = w.this.this, w.this.expression
+        if isinstance(one, exp.Column):
+            col, one = one, col
+        inner = frm.this.this
+        if isinstance(col, exp.Column) and isinstance(one, exp.Literal) and one.this == "1" \
+                and isinstance(inner, exp.Select):
+            for it in inner.expressions:
+                if isinstance(it, exp.Alias) and it.alias.lower() == col.name.lower() \
+                        and isinstance(it.this, exp.Window) \
+                        and isinstance(it.this.this, exp.RowNumber):
+                    part = it.this.args.get("partition_by") or []
+                    if part and all(isinstance(c, exp.Column) for c in part):
+                        inner_names = {}
+                        for x in inner.expressions:
+                            nm = _out_name(x)
+                            src = x.this if isinstance(x, exp.Alias) else x
+                            if nm and isinstance(src, exp.Column):
+                                inner_names.setdefault(src.name.lower(), nm)
+                        keys = [names_by_src.get(inner_names.get(c.name.lower(), c.name.lower()),
+                                                 inner_names.get(c.name.lower(), c.name.lower()))
+                                for c in part]
+                        o = it.this.args.get("order")
+                        order = [x.this.name.lower() for x in (o.expressions if o else [])
+                                 if isinstance(getattr(x, "this", None), exp.Column)]
+                        return keys, "row_number", order
+    if frm is not None and isinstance(frm.this, exp.Table) and not sel.args.get("joins"):
+        up = cte_facts.get(frm.this.name.lower())
+        if up and up.get("unique"):
+            keys = [names_by_src.get(k) for k in up["unique"]]
+            if all(keys) and not any(isinstance(it, exp.Star) for it in items):
+                return keys, up["how"], up.get("order", [])
+            if any(isinstance(it, exp.Star) or (isinstance(it, exp.Column)
+                                                and isinstance(it.this, exp.Star)) for it in items):
+                return up["unique"], up["how"], up.get("order", [])
+    return None, "", []
+
+
+def _cte_facts(tree) -> dict:
+    """{cte name: {unique, how, order, sources, filter_of}} in definition order, so a CTE can
+    use the facts of the CTEs it reads."""
+    out: dict = {}
+    w = tree.args.get("with_") or tree.args.get("with")
+    for c in (w.expressions if w is not None else []):
+        name = c.alias_or_name.lower()
+        body = c.this
+        sources: set = set()
+        for t in body.find_all(exp.Table):
+            n = (t.name or "").lower()
+            if n in out:
+                sources |= set(out[n]["sources"])
+            elif n:
+                sources.add(n)
+        keys, how, order = _unique_of_select(body, out) if isinstance(body, exp.Select) \
+            else (None, "", [])
+        filter_of = None
+        if isinstance(body, exp.Select) and not body.args.get("joins") \
+                and not body.args.get("group") and not body.args.get("qualify") \
+                and not body.args.get("distinct") and not list(body.find_all(exp.AggFunc)) \
+                and not list(body.find_all(exp.Window)):
+            frm = _from_of(body)
+            if frm is not None and isinstance(frm.this, exp.Table):
+                n = (frm.this.name or "").lower()
+                filter_of = out[n]["filter_of"] if n in out else n
+        out[name] = {"unique": keys, "how": how, "order": order,
+                     "sources": sorted(sources), "filter_of": filter_of}
+    return out
+
+
+def _equi(on, alias: str) -> tuple[bool, list]:
+    """(is it an equi-join, the target-side equality columns)."""
+    if on is None:
+        return False, []
+    conj = list(on.flatten()) if isinstance(on, exp.And) else [on]
+    keys, ok = [], True
+    for c in conj:
+        while isinstance(c, exp.Paren):
+            c = c.this
+        if isinstance(c, exp.EQ) and isinstance(c.this, exp.Column) \
+                and isinstance(c.expression, exp.Column):
+            a, b = c.this, c.expression
+            if alias and (b.table or "").lower() == alias.lower():
+                keys.append(b.name.lower())
+            elif alias and (a.table or "").lower() == alias.lower():
+                keys.append(a.name.lower())
+            else:
+                ok = False
+            continue
+        tables = {(col.table or "").lower() for col in c.find_all(exp.Column)}
+        if alias and alias.lower() in tables and len(tables) > 1:
+            ok = False                    # a condition across both sides that is not equality
+    return (ok and bool(keys)), sorted(set(keys))
+
+
 def _final_dedupe(tree) -> tuple[str, list]:
     """("distinct_on" | "group_by", columns) that decide the MODEL's rows, or ("", []).
 
@@ -373,6 +544,22 @@ class JoinFact:
     target_is_subquery: bool = False
     target_aggregates: bool = False       # the subquery GROUPs or DISTINCTs: the grain is collapsed
     target_keys: list[str] = field(default_factory=list)  # unqualified cols on the TARGET side
+    # *** WHAT THE JOIN IS ON, AND WHAT IT READS, AS A PROOF NEEDS THEM. *** (L1, 0.52)
+    # `equi`: every condition is a column = column equality or touches one side only (a filter);
+    # a spatial or range join is not, and no row-count rule applies to it. `equi_keys`: the
+    # target-side columns of the equalities. `target_cte`: the CTE it joins, by name.
+    # `target_unique`: what the target is unique on BY CONSTRUCTION (its group by, its DISTINCT
+    # ON, its one-row-per-partition dedupe), with `target_unique_by` naming which and
+    # `target_order` the dedupe's order keys. `target_sources`: the tables the target reads.
+    # `target_filter_of`: the one table a CTE only filters and projects, when that is all it does.
+    equi: bool = True
+    equi_keys: list[str] = field(default_factory=list)
+    target_cte: str | None = None
+    target_unique: list | None = None
+    target_unique_by: str = ""
+    target_order: list = field(default_factory=list)
+    target_sources: list = field(default_factory=list)
+    target_filter_of: str | None = None
 
 
 @dataclass
@@ -466,6 +653,12 @@ class Digest:
     # -- already one row per key. The judgment saw join keys and no grouping and inferred fan-out
     # from true facts that were not the whole state.
     pre_aggregated: dict = field(default_factory=dict)
+    # What the model's own outermost select is unique on by construction: (keys, how, order).
+    own_unique: tuple = (None, "", [])
+    # The same for what the outermost FROM reads, when it is a CTE or a subquery, and the
+    # relations under it: a model reading a grouped CTE starts from that CTE's grain.
+    from_unique: tuple = (None, "", [])
+    from_sources: list = field(default_factory=list)
     # *** A UNION MEMBER CANNOT MULTIPLY. ***
     # One parent row becomes exactly one child row; the child having MORE rows than any single
     # parent is a different fact and not a fan-out. Ten of twelve disagreements on a hand-ruled
@@ -618,6 +811,7 @@ def _extract(tree, name: str, dialect: str) -> Digest:
             d.from_relations.append(_relname(src.this))
     d.from_relations = sorted(set(d.from_relations))
 
+    cte_facts = _cte_facts(tree)
     for j in tree.find_all(exp.Join):
         side = (j.args.get("side") or "").upper()
         kindw = (j.args.get("kind") or "").upper()
@@ -639,6 +833,23 @@ def _extract(tree, name: str, dialect: str) -> Digest:
                         if c.table and alias and c.table.lower() == alias.lower()}) if on else []
         if using:
             tkeys = sorted({u.alias_or_name.lower() for u in using})
+        if using:
+            equi, ekeys = True, list(tkeys)
+        else:
+            equi, ekeys = _equi(on, alias)
+        tcte = t_unique = None
+        t_how, t_order, t_sources, t_filter = "", [], [], None
+        if isinstance(tgt, exp.Table) and tgt.name and tgt.name.lower() in cte_names:
+            tcte = tgt.name.lower()
+            f = cte_facts.get(tcte) or {}
+            t_unique, t_how, t_order = f.get("unique"), f.get("how", ""), f.get("order", [])
+            t_sources, t_filter = f.get("sources", []), f.get("filter_of")
+        elif isinstance(tgt, exp.Subquery):
+            inner = tgt.this
+            t_unique, t_how, t_order = _unique_of_select(inner, cte_facts)
+            t_sources = sorted({(t.name or "").lower() for t in tgt.find_all(exp.Table)} - {""})
+        elif rel:
+            t_sources = [tgt.name.lower()]
         d.joins.append(JoinFact(
             kind=kind,
             lateral=isinstance(tgt, exp.Lateral) or bool(j.args.get("lateral")),
@@ -647,7 +858,9 @@ def _extract(tree, name: str, dialect: str) -> Digest:
             on_columns=on_cols,
             target_alias=alias, target_relation=rel,
             target_is_subquery=is_sub, target_aggregates=aggs,
-            target_keys=tkeys,
+            target_keys=tkeys, equi=equi, equi_keys=ekeys, target_cte=tcte,
+            target_unique=t_unique, target_unique_by=t_how, target_order=t_order,
+            target_sources=t_sources, target_filter_of=t_filter,
         ))
 
     # *** LOOK FOR DISTINCT EVERYWHERE, NOT JUST IN AN AGGREGATE IN THE FINAL SELECT. ***
@@ -656,6 +869,19 @@ def _extract(tree, name: str, dialect: str) -> Digest:
     # with a plain `select distinct` inside a CTE, which none of the above would have seen. Missing
     # any of these marks a deliberate, correct pattern as a defect.
     d.pre_aggregated = _pre_aggregated(tree, dialect)
+    d.own_unique = _unique_of_select(tree, cte_facts) if isinstance(tree, exp.Select) \
+        else (None, "", [])
+    if isinstance(tree, exp.Select):
+        frm = _from_of(tree)
+        src = frm.this if frm is not None else None
+        if isinstance(src, exp.Table) and (src.name or "").lower() in cte_facts:
+            f = cte_facts[src.name.lower()]
+            d.from_unique = (f["unique"], f["how"], f.get("order", []))
+            d.from_sources = list(f["sources"])
+        elif isinstance(src, exp.Subquery):
+            d.from_unique = _unique_of_select(src.this, cte_facts)
+            d.from_sources = sorted({(t.name or "").lower() for t in src.find_all(exp.Table)}
+                                    - {""} - set(cte_facts))
     d.union_members = _union_members(tree, dialect)
     kind, cols = _final_dedupe(tree)
     if kind == "distinct_on":

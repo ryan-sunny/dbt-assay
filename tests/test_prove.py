@@ -18,9 +18,10 @@ MODELS = {
 }
 
 
-def build(tmp_path):
+def build(tmp_path, models=None):
     nodes = {}
-    for name, sql in MODELS.items():
+    models = models or MODELS
+    for name, sql in models.items():
         uid = f"model.p.{name}"
         path = f"models/{name}.sql"
         nodes[uid] = {"resource_type": "model", "name": name, "original_file_path": path,
@@ -37,10 +38,12 @@ def build(tmp_path):
         "test_metadata": {"name": "unique", "kwargs": {"column_name": "id"}},
         "depends_on": {"nodes": ["model.p.stg_parent"]}}
     pm = {u: [] for u in nodes}
-    pm["model.p.covered"] = ["model.p.stg_parent"]
-    pm["model.p.uncovered"] = ["model.p.stg_parent"]
+    kids = [u for u in nodes if u.startswith("model.") and u != "model.p.stg_parent"
+            and "stg_parent" in (models.get(u.split(".")[-1]) or "")]
+    for u in kids:
+        pm[u] = ["model.p.stg_parent"]
     cm = {u: [] for u in nodes}
-    cm["model.p.stg_parent"] = ["model.p.covered", "model.p.uncovered"]
+    cm["model.p.stg_parent"] = kids
     (tmp_path / "target" / "manifest.json").write_text(json.dumps({
         "metadata": {"project_name": "p", "adapter_type": "duckdb"}, "nodes": nodes,
         "sources": {}, "parent_map": pm, "child_map": cm}))
@@ -213,3 +216,62 @@ def test_export_carries_premises_proofs_and_conformance(tmp_path):
                                  "--export-proofs", str(tmp_path / "out")])
     assert r.exit_code == 0, r.output
     assert (tmp_path / "out" / "m__grain.lean").read_text().startswith("theorem x")
+
+
+# --- L1 (sunny-data feedback): what a join actually reads --------------------------------------
+
+def test_the_parser_knows_what_a_join_target_is_unique_on():
+    from dbt_assay.parse import digest
+    sql = ("with per as (select k, max(v) as m from raw.t group by 1), "
+           "latest as (select k, v from (select k, v, row_number() over (partition by k order by v) "
+           "as rn from raw.t) where rn = 1), "
+           "flt as (select k, v from raw.u where v > 0), "
+           "ds as (select distinct k from raw.w) "
+           "select a.k from raw.a a "
+           "left join per p on p.k = a.k left join latest l on l.k = a.k "
+           "left join flt f on f.k = a.k left join ds on ds.k = a.k "
+           "left join raw.geo g on st_contains(g.geom, a.pt) "
+           "left join (select k from raw.x group by k) x on x.k = a.k")
+    js = {(j.target_cte or j.target_alias): j for j in digest(sql, "m").joins}
+    assert js["per"].target_unique == ["k"] and js["per"].target_unique_by == "group_by"
+    assert js["latest"].target_unique == ["k"] and js["latest"].target_unique_by == "row_number"
+    assert js["flt"].target_unique is None and js["flt"].target_filter_of == "u"
+    assert js["ds"].target_unique == ["k"]
+    assert not js["g"].equi
+    assert js["x"].target_unique == ["k"] and js["x"].equi_keys == ["k"]
+
+
+def test_a_model_reading_a_grouped_cte_starts_from_its_grain():
+    from dbt_assay.parse import digest
+    d = digest("with e as (select k, min(x) as x from raw.t group by k) "
+               "select e.k, e.x from e join raw.u u on u.k = e.k", "m")
+    assert d.from_unique[0] == ["k"] and d.from_sources == ["t"]
+
+
+GROUPED = {
+    "stg_parent": "select id, name from raw.parent",
+    "grouped_join": ("select a.id from raw.a a left join (select id, count(*) as n from "
+                     "main.stg_parent group by id) g on g.id = a.id"),
+    "spatial": ("select a.id from raw.a a join main.stg_parent p "
+                "on st_contains(p.name, a.pt)"),
+}
+
+
+@needs_lean
+def test_a_join_onto_a_grouped_subquery_is_proven_with_no_premise(tmp_path, monkeypatch):
+    target = build(tmp_path, GROUPED)
+    p, d, sch = _load(target)
+    s = Store(str(tmp_path / "s.duckdb"))
+    # the parent's key is counted duplicated: it must not matter to the grouped join
+    rel = (sch.relation.get("model.p.stg_parent") or "").replace('"', "").lower()
+    s.con.execute("insert into observed_keys (relation, column_name, row_count, non_null, "
+                  "distinct_ct, status, detail, observed_at, via, minimality, sampled, "
+                  "sample_pct) values (?, 'id', 10, 10, 7, 'has_duplicates', '', now(), 't', "
+                  "'', false, 0)", [rel])
+    entries = inventory.build(p, d, sch, store=s)
+    rep = prove.run(p, d, sch, entries, s, target, say=lambda *_: None)
+    got = {(r["model_name"], r["property"]): r for r in rep["rows"]}
+    g = got[("grouped_join", "no_fanout:g")]
+    assert g["status"] == "proven" and g["premises"] == [] and g["guarantee"] == "holding"
+    sp = got[("spatial", "no_fanout:stg_parent")]
+    assert sp["status"] == "not_attempted" and "not key equality" in sp["missing"]

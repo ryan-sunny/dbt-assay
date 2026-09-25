@@ -5622,7 +5622,8 @@ def prove(
     by: dict = {}
     for r in rows:
         by.setdefault(r["model_name"], []).append(r)
-    colour = {"holding": "green", "conditional": "yellow", "lost": "red", "stale": "yellow"}
+    colour = {"holding": "green", "conditional": "yellow", "lost": "red", "stale": "yellow",
+              "refuted": "yellow"}
     for name, rs in sorted(by.items()):
         proven = [r for r in rs if r["status"] == "proven"]
         line = f"[bold]{name}[/]  {len(proven)} of {len(rs)} proven"

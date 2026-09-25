@@ -86,6 +86,8 @@ CONSTRUCTS = {
 RULE_CONSTRUCTS = {
     "inner_join_no_fanout": ["inner_join_null_key", "join_fanout"],
     "left_join_preserves_rows": ["left_join_null_key"],
+    "join_onto_grouped_no_fanout": ["inner_join_null_key", "group_by_null_key"],
+    "left_join_onto_grouped_preserves_rows": ["left_join_null_key", "group_by_null_key"],
     "grain_through_join": ["inner_join_null_key", "join_fanout"],
     "grain_through_left_join": ["left_join_null_key"],
     "group_by_unique": ["group_by_null_key"],

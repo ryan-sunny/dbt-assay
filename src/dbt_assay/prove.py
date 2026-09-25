@@ -121,7 +121,7 @@ def obligations(project, digests, schema, entries, led: L.Ledger,
         if d is None or not d.ok or e is None:
             continue
         cs = m.checksum or ""
-        out += _joins(uid, m, cs, e, led, declared)
+        out += _joins(uid, m, cs, e, led, declared, d)
         out += _picks(uid, m, cs, d, led, declared)
         g = _grain(uid, m, cs, d, e, led, declared)
         if g is not None:
@@ -132,33 +132,105 @@ def obligations(project, digests, schema, entries, led: L.Ledger,
     return out
 
 
-def _joins(uid, m, cs, e, led, declared) -> list[Obligation]:
-    out = []
-    for parent, cols in sorted((e.join_keys or {}).items()):
-        puid = L.uid_of(led.project, parent)
-        rk = [c.lower() for c in cols]
-        pk = [c.lower() for c in declared.get(puid) or []]
-        us = pk or rk
-        kind = (e.join_kind or {}).get(parent, "").upper()
-        left = kind.startswith("LEFT")
-        o = Obligation(uid, m.name, cs, f"no_fanout:{parent}",
-                       f"a {'left ' if left else ''}join onto `{parent}` cannot multiply "
-                       f"`{m.name}`'s rows" if not left else
-                       f"the left join onto `{parent}` keeps exactly `{m.name}`'s left rows",
-                       "left_join_preserves_rows" if left else "inner_join_no_fanout")
-        prem = L.unique(led, puid, us)
-        o.premises = [prem]
-        rkl = _lean_list(rk)
-        concl = (f"(leftJoin lk {rkl} L R).length = L.length" if left
-                 else f"(innerJoin lk {rkl} L R).length ≤ L.length")
-        o.lean = (f"theorem {o.theorem} (lk : List String) (L R : Table)\n"
-                  f"    ({_hyp(prem)} : Unique {_lean_list(prem.columns)} R) :\n"
-                  f"    {concl} :=\n"
-                  f"  {o.rule} (us := {_lean_list(prem.columns)}) (by decide) {_hyp(prem)}\n")
-        if pk and not set(pk) <= set(rk):
-            o.missing = (f"the join is on ({', '.join(rk)}) and `{parent}`'s declared key is "
-                         f"({', '.join(pk)}): join on {', '.join(sorted(set(pk) - set(rk)))} too, "
-                         f"or make ({', '.join(rk)}) unique in `{parent}`")
+def _target_name(led, j) -> tuple[str, str | None]:
+    """(what to call a join's target, its unique_id when it is a model or source)."""
+    if j.target_relation:
+        rel = j.target_relation.replace('"', "").lower()
+        uid = next((u for u, r in (led.schema.relation or {}).items()
+                    if (r or "").replace('"', "").lower() == rel), None) \
+            if led.schema is not None else None
+        name = led.project.name_of(uid) if uid else rel.split(".")[-1]
+        return name, uid
+    return (j.target_cte or j.target_alias or "a subquery"), None
+
+
+def _join_step(led, declared, j, i: int, used: set | None = None):
+    """How one join is carried in a certificate: a dict with the right-hand table term, the
+    uniqueness proof term, the hypotheses and premises it needs, and what to call it; or a
+    string saying why no rule applies. (L1: the target's own grouping, dedupe or filter first,
+    the base table's key only when the join reads the table itself.)"""
+    kind = (j.kind or "").upper()
+    if j.lateral or kind in ("CROSS", "RIGHT", "FULL"):
+        return f"a {kind or 'lateral'} join: no rule states its row count yet"
+    if not j.equi:
+        return ("the join condition is not key equality (a spatial, range or computed join): "
+                "no row-count rule applies to it")
+    rk = list(j.equi_keys)
+    name, uid = _target_name(led, j)
+    R = f"R{i}"
+    if j.target_unique:
+        keys = [k.lower() for k in j.target_unique]
+        if j.target_unique_by == "group_by":
+            return {"name": name, "rk": rk, "left": kind == "LEFT", "keys": keys, "premises": [],
+                    "hyps": [], "right": f"(groupBy {_lean_list(keys)} {R})",
+                    "unique": f"(group_by_unique {_lean_list(keys)} {R})",
+                    "why": f"grouped by ({', '.join(keys)})", "o": False}
+        order = [k.lower() for k in (j.target_order or [])]
+        return {"name": name, "rk": rk, "left": kind == "LEFT", "keys": keys, "premises": [],
+                "hyps": [], "right": f"(pick o {_lean_list(keys)} {_lean_list(order)} {R})",
+                "unique": f"(pick_unique o {_lean_list(keys)} {_lean_list(order)} {R})",
+                "why": f"one row per ({', '.join(keys)})", "o": True}
+    base_uid, filtered = uid, False
+    if base_uid is None and j.target_filter_of:
+        base_uid = L.uid_of(led.project, j.target_filter_of)
+        filtered = base_uid in led.project.models or base_uid in led.project.sources
+        if not filtered:
+            base_uid = None
+    if base_uid is None:
+        return ("the join reads a CTE or subquery built from several relations, and nothing "
+                "states what it is unique on")
+    pk = [c.lower() for c in declared.get(base_uid) or []]
+    us = pk or rk
+    prem = L.unique(led, base_uid, us)
+    base_name = led.project.name_of(base_uid)
+    # Two joins onto one relation assume one premise about two tables: one hypothesis each.
+    h = _hyp(prem)
+    if used is not None:
+        if h in used:
+            h = f"{h}_{i}"
+        used.add(h)
+    right = f"(filterT p{i} {R})" if filtered else R
+    unique = f"(filter_preserves_unique p{i} {h})" if filtered else h
+    return {"name": base_name if not filtered else f"{name} (a filter of {base_name})", "rk": rk,
+            "left": kind == "LEFT", "keys": us, "premises": [prem],
+            "hyps": [f"({h} : Unique {_lean_list(us)} {R})"], "right": right,
+            "unique": unique, "why": "", "o": False, "filtered": filtered, "pk": pk,
+            "base": base_name}
+
+
+def _joins(uid, m, cs, e, led, declared, d=None) -> list[Obligation]:
+    out, seen = [], {}
+    for i, j in enumerate(d.joins if d is not None else [], 1):
+        name, _u = _target_name(led, j)
+        seen[name] = seen.get(name, 0) + 1
+        prop = f"no_fanout:{name}" + (f"#{seen[name]}" if seen[name] > 1 else "")
+        step = _join_step(led, declared, j, 1)
+        left = (j.kind or "").upper() == "LEFT"
+        stmt = (f"the left join onto `{name}` keeps exactly `{m.name}`'s left rows" if left
+                else f"a join onto `{name}` cannot multiply `{m.name}`'s rows")
+        if isinstance(step, str):
+            o = Obligation(uid, m.name, cs, prop, stmt)
+            o.missing = step
+            out.append(o)
+            continue
+        rkl = _lean_list(step["rk"])
+        rule = "left_join_preserves_rows" if left else "inner_join_no_fanout"
+        o = Obligation(uid, m.name, cs, prop,
+                       stmt + (f", {step['why']}" if step["why"] else ""), rule)
+        o.premises = step["premises"]
+        concl = (f"(leftJoin lk {rkl} L {step['right']}).length = L.length" if left
+                 else f"(innerJoin lk {rkl} L {step['right']}).length ≤ L.length")
+        binders = "(lk : List String) (L R1 : Table)" + (" (o : KeyOrder)" if step["o"] else "") \
+            + (" (p1 : Row → Bool)" if step.get("filtered") else "")
+        o.lean = (f"theorem {o.theorem} {binders}" + "".join("\n    " + h for h in step["hyps"])
+                  + f" :\n    {concl} :=\n"
+                  f"  {rule} (us := {_lean_list(step['keys'])}) (by decide) {step['unique']}\n")
+        if not set(step["keys"]) <= set(step["rk"]):
+            what = (f"`{step.get('base', name)}`'s declared key is" if step.get("pk")
+                    else "it is unique on")
+            o.missing = (f"the join is on ({', '.join(step['rk'])}) and {what} "
+                         f"({', '.join(step['keys'])}): join on "
+                         f"{', '.join(sorted(set(step['keys']) - set(step['rk'])))} too")
         out.append(o)
     return out
 
@@ -214,60 +286,113 @@ def _picks(uid, m, cs, d, led, declared) -> list[Obligation]:
 
 
 def _grain(uid, m, cs, d, e, led, declared) -> Obligation | None:
-    g = [c.lower() for c in (getattr(d, "final_group_by", None) or [])]
-    top = [c.lower() for c in (d.group_by_columns or [])]
-    if not g and d.group_by and len(top) == len(d.group_by) and not d.windows:
-        g = top                                   # the outermost select's own group by
-    if g:
-        o = Obligation(uid, m.name, cs, "grain",
-                       f"`{m.name}` is one row per ({', '.join(g)}): its final group by",
-                       "group_by_unique")
-        o.lean = (f"theorem {o.theorem} (t : Table) : Unique {_lean_list(g)} "
-                  f"(groupBy {_lean_list(g)} t) :=\n  group_by_unique _ t\n")
-        return o
+    """The grain, proven: by the model's own group by or dedupe when it has one (no premise),
+    otherwise carried from its one driving relation through each join, and only when the model
+    passes rows through (no grouping, dedupe or union of its own to carry it past)."""
     grain = getattr(e, "grain", None)
+    gcols = [c.lower() for c in (grain.value if grain is not None and grain.value else [])]
+    own, how, order = getattr(d, "own_unique", (None, "", [])) or (None, "", [])
+    g = [c.lower() for c in (getattr(d, "final_group_by", None) or [])]
+    if own is None and g:
+        own, how, order = g, "group_by", []
+    if own:
+        own = [c.lower() for c in own]
+        target = gcols if gcols and set(own) <= set(gcols) else own
+        if how == "group_by":
+            base, proof = f"(groupBy {_lean_list(own)} t)", f"(group_by_unique {_lean_list(own)} t)"
+            words, binders = "its group by", "(t : Table)"
+        else:
+            base = f"(pick o {_lean_list(own)} {_lean_list(order)} t)"
+            proof = f"(pick_unique o {_lean_list(own)} {_lean_list(order)} t)"
+            words = "its DISTINCT ON" if how == "distinct_on" else "its row_number() = 1 dedupe"
+            binders = "(o : KeyOrder) (t : Table)"
+        o = Obligation(uid, m.name, cs, "grain",
+                       f"`{m.name}` is one row per ({', '.join(target)}): {words}",
+                       "group_by_unique" if how == "group_by" else "pick_unique")
+        if target == own:
+            o.lean = (f"theorem {o.theorem} {binders} : Unique {_lean_list(own)} {base} :=\n"
+                      f"  {proof}\n")
+        else:
+            o.lean = (f"theorem {o.theorem} {binders} : Unique {_lean_list(target)} {base} :=\n"
+                      f"  Unique.mono (by decide) {proof}\n")
+        return o
     drivers = sorted(getattr(e, "driving_parents", None) or [])
     if grain is None or grain.source not in ("declared", "derived", "observed") \
-            or len(drivers) != 1 or not grain.value:
+            or len(drivers) != 1 or not gcols:
         return None
-    gcols = [c.lower() for c in grain.value]
-    driver = L.uid_of(led.project, drivers[0])
-    joins = sorted((p, cols) for p, cols in (e.join_keys or {}).items() if p != drivers[0])
     o = Obligation(uid, m.name, cs, "grain",
                    f"`{m.name}` stays one row per ({', '.join(gcols)}) through its joins",
                    "grain_through_join")
-    pg = L.unique(led, driver, gcols)
-    pns = [L.not_null(led, driver, c) for c in gcols]
-    prem = [pg, *pns]
-    hyps = [f"({_hyp(pg)} : Unique {_lean_list(gcols)} L)"]
-    hyps += [f"({_hyp(p)} : NotNull {_lean_str(c)} L)" for p, c in zip(pns, gcols)]
-    term, nn = _hyp(pg), _all_notnull(gcols, [_hyp(p) for p in pns], "L")
-    table = "L"
-    rs = []
-    for i, (parent, cols) in enumerate(joins, 1):
-        puid = L.uid_of(led.project, parent)
-        pk = [c.lower() for c in declared.get(puid) or []]
-        rk = [c.lower() for c in cols]
-        us = pk or rk
-        pu = L.unique(led, puid, us)
-        prem.append(pu)
+    if d.group_by or d.windows or d.distinct or getattr(d, "union_members", None) \
+            or getattr(d, "distinct_on", None):
+        o.missing = ("the model groups, dedupes or unions on something other than its grain, so "
+                     "the grain is not carried row by row from one relation")
+        return o
+    fu, fhow, forder = getattr(d, "from_unique", (None, "", [])) or (None, "", [])
+    fsrc = getattr(d, "from_sources", []) or []
+    extra = []
+    if fu and set(c.lower() for c in fu) == set(gcols) and len(fsrc) == 1:
+        # *** THE MODEL READS A CTE ALREADY ONE ROW PER ITS GRAIN. *** (L1) The grain holds by
+        # that CTE's own group by or dedupe; only "never null" is assumed, of the table under it.
+        keys = [c.lower() for c in fu]
+        src = L.uid_of(led.project, fsrc[0])
+        pns = [L.not_null(led, src, c) for c in gcols]
+        prem = list(pns)
+        hyps = [f"({_hyp(p)} : NotNull {_lean_str(c)} T)" for p, c in zip(pns, gcols)]
+        nn0 = _all_notnull(gcols, [_hyp(p) for p in pns], "T")
+        if fhow == "group_by":
+            base = f"(groupBy {_lean_list(keys)} T)"
+            term = f"(Unique.mono (by decide) (group_by_unique {_lean_list(keys)} T))"
+            nn = f"(notnull_all_group_by (by decide) {nn0})"
+        else:
+            order = [c.lower() for c in forder]
+            base = f"(pick o {_lean_list(keys)} {_lean_list(order)} T)"
+            term = (f"(Unique.mono (by decide) (pick_unique o {_lean_list(keys)} "
+                    f"{_lean_list(order)} T))")
+            nn = f"(notnull_all_pick o {nn0})"
+            extra.append("(o : KeyOrder)")
+        o.statement = (f"`{m.name}` stays one row per ({', '.join(gcols)}): the CTE it reads is "
+                       f"one row per it, and its joins keep that")
+        table, rs = base, ["T"]
+    else:
+        driver = L.uid_of(led.project, drivers[0])
+        pg = L.unique(led, driver, gcols)
+        pns = [L.not_null(led, driver, c) for c in gcols]
+        prem = [pg, *pns]
+        hyps = [f"({_hyp(pg)} : Unique {_lean_list(gcols)} L)"]
+        hyps += [f"({_hyp(p)} : NotNull {_lean_str(c)} L)" for p, c in zip(pns, gcols)]
+        term, nn = _hyp(pg), _all_notnull(gcols, [_hyp(p) for p in pns], "L")
+        table, rs = "L", ["L"]
+    used = {_hyp(p) for p in prem}
+    for i, j in enumerate(d.joins or [], 1):
+        step = _join_step(led, declared, j, i, used)
+        if isinstance(step, str):
+            o.missing = f"a join cannot be carried: {step}"
+            return o
         rs.append(f"R{i}")
-        hyps.append(f"({_hyp(pu)} : Unique {_lean_list(us)} R{i})")
-        left = (e.join_kind or {}).get(parent, "").upper().startswith("LEFT")
-        op = "leftJoin" if left else "innerJoin"
-        rule = "grain_through_left_join" if left else "grain_through_join"
-        carry = "notnull_all_through_left_join" if left else "notnull_all_through_join"
-        term = f"({rule} (lk := lk{i}) (rk := {_lean_list(rk)}) {term} {nn} (by decide) {_hyp(pu)})"
-        nn = f"({carry} (lk := lk{i}) (rk := {_lean_list(rk)}) (R := R{i}) {nn})"
-        table = f"({op} lk{i} {_lean_list(rk)} {table} R{i})"
-        if pk and not set(pk) <= set(rk):
-            o.missing = (f"the join onto `{parent}` covers none of its declared key "
-                         f"({', '.join(pk)}): the grain cannot be carried through it")
+        prem += step["premises"]
+        hyps += step["hyps"]
+        if step["o"] and "(o : KeyOrder)" not in extra:
+            extra.append("(o : KeyOrder)")
+        if step.get("filtered"):
+            extra.append(f"(p{i} : Row → Bool)")
+        rk = _lean_list(step["rk"])
+        rule = "grain_through_left_join" if step["left"] else "grain_through_join"
+        carry = "notnull_all_through_left_join" if step["left"] else "notnull_all_through_join"
+        op = "leftJoin" if step["left"] else "innerJoin"
+        term = (f"({rule} (lk := lk{i}) (rk := {rk}) (us := {_lean_list(step['keys'])}) {term} "
+                f"{nn} (by decide) {step['unique']})")
+        nn = f"({carry} (lk := lk{i}) (rk := {rk}) (R := {step['right']}) {nn})"
+        table = f"({op} lk{i} {rk} {table} {step['right']})"
+        if not set(step["keys"]) <= set(step["rk"]):
+            o.missing = (f"the join onto `{step['name']}` covers none of what it is unique on "
+                         f"({', '.join(step['keys'])}): the grain cannot be carried through it")
     o.premises = prem
-    lks = " ".join(f"lk{i}" for i in range(1, len(joins) + 1))
-    binders = f"(L {' '.join(rs)} : Table)" if rs else "(L : Table)"
+    n_joins = len(rs) - 1
+    lks = " ".join(f"lk{i}" for i in range(1, n_joins + 1))
+    binders = f"({' '.join(rs)} : Table)"
     o.lean = (f"theorem {o.theorem} {('(' + lks + ' : List String) ') if lks else ''}{binders}"
-              f" (p : Row → Bool)\n    " + "\n    ".join(hyps) +
+              f" {' '.join(extra)} (p : Row → Bool)\n    " + "\n    ".join(hyps) +
               f" :\n    Unique {_lean_list(gcols)} (filterT p {table}) :=\n"
               f"  filter_preserves_unique p {term}\n")
     return o
@@ -487,13 +612,23 @@ def with_guarantees(rows: list[dict], led: L.Ledger, project, store=None) -> lis
         elif now and r["model_checksum"] and now != r["model_checksum"]:
             r["guarantee"] = "stale"
         elif any(p["status"] == L.BROKEN for p in prem):
-            r["guarantee"] = "lost"
+            # *** A GUARANTEE IS LOST ONLY IF SOMEBODY ASSERTED IT. *** (L1) A key nothing
+            # declared, taken from the join's own columns and counted duplicated, never held:
+            # the property does not hold here, often on purpose (a join to many readings, then a
+            # group by). Only a declared or configured key that stopped holding is "lost".
+            broke_p = [led.premises.get(p["id"]) for p in prem if p["status"] == L.BROKEN]
+            declared_ = any(x is not None and any(ev.kind in ("declared", "config")
+                                                  for ev in x.evidence) for x in broke_p)
+            r["guarantee"] = "lost" if declared_ else "refuted"
         elif all(p["status"] == L.HOLDING for p in prem):
             r["guarantee"] = "holding"
         else:
             r["guarantee"] = "conditional"
         broke = next((p for p in prem if p["status"] == L.BROKEN), None)
-        r["lost_because"] = (f"{broke['statement']} broke: {broke['why']}" if broke else "")
+        r["lost_because"] = ((f"{broke['statement']} broke: {broke['why']}"
+                              if r["guarantee"] == "lost" else
+                              f"{broke['statement']} is not so: {broke['why']}")
+                             if broke else "")
         # L4: does this project's engine do what the rule's constructs mean?
         from .conformance import RULE_CONSTRUCTS, status_of
         eng = engine_of(project)
