@@ -125,7 +125,7 @@ Every one of those shapes this tool: arithmetic and dates are settled by sqlglot
 never asked, states are the smallest thing that can answer the question, and there is one noul per
 rule rather than one over a list of them. The [README](../README.md) carries the measurements.
 
-Thirty-six question families ship. The one worth seeing first:
+Forty-four question families ship. The one worth seeing first:
 
 ### Does the description still describe the code?
 
@@ -209,7 +209,7 @@ fires after the spend is not a cap.
 
 ## Every question, and what rests on it
 
-Thirty-six families ship. `assay config` shows how many verdicts each has and which can gate;
+Forty-four families ship. `assay config` shows how many verdicts each has and which can gate;
 `rests_on` on a finding names the family it derives from, and these are those names.
 
 | family | type | finding it feeds |
@@ -249,6 +249,14 @@ Thirty-six families ship. `assay config` shows how many verdicts each has and wh
 | `monitor_covers_what_matters` | choice | itself: an unwatched model worth watching (`assay volume --judge`) |
 | `stale_monitor_still_matters` | choice | itself: a stale failed monitor still worth answering (`assay volume --judge`) |
 | `test_never_ran_is_a_gap_or_a_leftover` | choice | itself: a declared test that never ran on a live model (`assay volume --judge`) |
+| `staging_does_only_staging_work` | choice | itself: a staging model that joins, aggregates or filters to one use's subset (`assay ask`) |
+| `one_grain_stated` | choice | itself: a mart whose description does not say what one row is, or says another grain (`assay ask`) |
+| `intermediate_has_one_purpose` | choice | itself: an intermediate model doing several jobs (`assay ask`) |
+| `mart_is_one_kind_of_thing` | choice | itself: a mart stacking different kinds of rows (`assay ask`) |
+| `fact_or_dimension_and_named_so` | choice | itself: a fact or dimension its name says otherwise (`assay ask`) |
+| `literal_is_a_business_rule` | choice | itself: a threshold or cut-off written inline (`assay ask`) |
+| `the_clock_is_meant` | choice | itself: a model that should name the date it represents (`assay ask`) |
+| `union_should_collapse_duplicates` | choice | itself: a UNION that drops separate records (`assay ask`) |
 
 **A dash means no finding rests on it yet.** Those answers still fill the inventory, the page and
 `trace`, and ruling on them records evidence — but it moves no gate, and `assay review -i` says so
@@ -637,7 +645,11 @@ future-dated rows, like `d between '1900-01-01' and now()`, is not reported), `o
 any_value with no ORDER BY), `join_key_normalised_on_one_side` (lower, upper or trim on one side of
 a join key), `not_in_over_a_nullable_subquery` (quiet when a not_null test covers the column),
 `left_join_undone_by_where` (a WHERE on the right side that drops the unmatched rows) and
-`limit_in_a_model`. Each is a fact about the text; whether it is meant is the person's call.
+`limit_in_a_model`. Each is a fact about the text; whether it is meant is the person's call. Two
+more come from dbt's style guide and are counted from the catalog and the graph:
+`column_name_does_not_state_its_type` (a boolean not named as a question, a timestamp without
+`_at`, a date without `_date`) and `view_read_by_many_models` (a view five or more models read,
+so its SQL runs once per reader each build).
 
 **And values a source holds that the model never sees**, under `check --verify`:
 `values_lost_at_hop`. For every column a model takes from one source column through an expression,
@@ -646,6 +658,18 @@ sample of them: text a `try_cast` cannot parse, a pattern that does not match. I
 loader's type split, where a mixed-type column became `x` and `x__v_double` and the model reads
 only `x`. Every row still arrives, so nothing counting rows notices. One statement per source
 relation, through your dbt.
+
+**How the project is built, judged where intent decides it.** Eight families ask dbt Labs'
+own practices (from its "How we structure our dbt projects" and style guides), each only where a
+count already found the shape: `staging_does_only_staging_work` (a staging model that joins,
+groups or filters), `one_grain_stated` (a mart's description against the grain its SQL produces),
+`intermediate_has_one_purpose` (an intermediate model with three joins or five CTEs),
+`mart_is_one_kind_of_thing` (a mart that unions several arms), `fact_or_dimension_and_named_so`
+(a mart, against its fct_ or dim_ prefix), `literal_is_a_business_rule` (a threshold or date in a
+filter), `the_clock_is_meant` (a model reading today's date outside a future-date bound) and
+`union_should_collapse_duplicates` (a UNION without ALL). About 430 calls, three cents, on a
+358-model warehouse. Logic written in several places is `one_rule_or_a_coincidence`, and a
+sentinel value is `sentinel_is_not_a_value`, which already existed.
 
 **SQL outside dbt.** `outside_dbt: {paths: [product/, delivery/], paid: [product/reports/]}` in
 audit.yml names where code that queries the warehouse lives. assay parses the SQL string literals

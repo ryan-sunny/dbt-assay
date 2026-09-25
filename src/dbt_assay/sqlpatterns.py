@@ -158,6 +158,14 @@ def facts(tree, dialect: str = "duckdb") -> list[dict]:
             out.append({"kind": "not_in_subquery", "sql": _sql(n, dialect)[:240],
                         "column": col, "from": src})
     # --- LIMIT
+    # --- UNION without ALL: which is meant is intent, asked by `union_should_collapse_duplicates`
+    for n in tree.find_all(exp.Union):
+        if n.args.get("distinct"):
+            arms = []
+            for side in (n.this, n.expression):
+                rels = sorted({t.name.lower() for t in side.find_all(exp.Table) if t.name})
+                arms.append(", ".join(rels[:4]) or _sql(side, dialect)[:80])
+            out.append({"kind": "union_distinct", "sql": _sql(n, dialect)[:200], "arms": arms})
     # an ordered LIMIT inside a subquery is a top-N pick on purpose; one capping the whole model,
     # or any without an ORDER BY, is worth saying
     for n in tree.find_all(exp.Limit):

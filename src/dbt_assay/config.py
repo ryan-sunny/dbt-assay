@@ -752,6 +752,9 @@ questions:
   not_in_over_a_nullable_subquery:    {action: queue}
   left_join_undone_by_where:          {action: queue}
   limit_in_a_model:                   {action: annotate}
+  # dbt's style guide, counted: names that state their type, and a view many models recompute.
+  column_name_does_not_state_its_type: {action: annotate}
+  view_read_by_many_models:           {action: annotate}
   guarantee_lost:              {action: queue}
   guarantee_does_not_hold:     {action: queue}
   source_freshness_not_run:    {action: queue}

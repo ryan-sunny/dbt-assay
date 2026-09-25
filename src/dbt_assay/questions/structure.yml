@@ -1,0 +1,242 @@
+# How the project is built, judged where the SQL alone cannot settle it: whether a staging model
+# does only staging work, whether a mart is one kind of thing, whether a literal is a business rule.
+#
+# *** COUNTED FIRST, JUDGED ONLY WHERE INTENT DECIDES IT. *** Each family is asked only where a
+# parser already found the shape (a join in staging, a union in a mart, a threshold in a filter),
+# and only the facts that bear on it go in the state. What a count can settle (a name that does
+# not state its type, a view many models read) is a structural check, never a question here.
+#
+# The practices are dbt Labs' own, from "How we structure our dbt projects" (staging, intermediate
+# and marts layers) and "How we style our dbt models" (naming, CTE structure):
+#   https://docs.getdbt.com/best-practices/how-we-structure/1-guide-overview
+#   https://docs.getdbt.com/best-practices/how-we-style/1-style-guide-overview
+version: 1
+
+# Staging: "renaming, type casting, basic computations, categorizing". Joins and aggregations
+# belong downstream, where the staged sources meet.
+staging_does_only_staging_work:
+  id_prefix: "stgw"
+  type: choice
+  subject: staging_work
+  prompt_version: "stgw.v2"
+  finding_when: [business_logic, a_filter_that_changes_meaning]
+  instructions:
+    question: >-
+      `model` is a staging model, and it `joins`, `groups_by` or `filters_it_applies` as listed. Is that
+      staging work (cleaning one source so it can be used), or does it already decide something
+      the business means?
+    note: >-
+      Staging cleans one source: it renames, casts, fixes NULLs, removes exact duplicates, and
+      filters out rows that are not real records (test rows, deleted rows). Joining other
+      sources, aggregating, and filtering to the subset a report wants all belong in a later
+      layer, where every consumer can see and reuse the decision.
+  criteria:
+    cleaning_only:
+      what: >-
+        Everything listed prepares this one source: a dedupe, a filter dropping deleted or test
+        rows, a join to a lookup of the same source's own codes.
+    business_logic:
+      what: >-
+        It joins other sources or aggregates, so a business decision is made in staging, where
+        the next model reading the same source does not see it.
+    a_filter_that_changes_meaning:
+      what: >-
+        A filter keeps only the rows one use wants (a region, a status, a date range), so every
+        other reader of this staging model silently gets that subset.
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+# Marts: "one row per entity at a clearly stated grain". The description is where it is stated.
+one_grain_stated:
+  id_prefix: "grst"
+  type: choice
+  subject: grain_statement
+  prompt_version: "grst.v1"
+  finding_when: [states_a_different_grain, does_not_say]
+  instructions:
+    question: >-
+      `model` groups or dedupes on `grain_in_the_sql`. Does `description` say what one row of it
+      is, and is that the same grain?
+    note: >-
+      A reader decides whether they can sum a column or join on a key from the sentence "one row
+      per ...". Judge only what the description states about one row, against the grain the SQL
+      produces. A description that describes the contents without saying what one row is does
+      not say it.
+  criteria:
+    states_it_and_agrees:
+      what: "The description says what one row is, and it matches the grain in the SQL."
+    states_a_different_grain:
+      what: >-
+        The description says one row is something else than the SQL produces, so a reader will
+        sum or join on the wrong assumption.
+    does_not_say:
+      what: "The description never says what one row is."
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+# Intermediate: "each intermediate model should have a clear single purpose".
+intermediate_has_one_purpose:
+  id_prefix: "ione"
+  type: choice
+  subject: intermediate_purpose
+  prompt_version: "ione.v1"
+  finding_when: [several_jobs]
+  instructions:
+    question: >-
+      `model` is an intermediate model with the steps in `ctes` and the joins in `joins`. Does it
+      do one job that its name and description can state in a sentence, or several jobs that
+      would each be clearer, testable and reusable as a model of their own?
+    note: >-
+      Many steps serving one purpose (build one entity, derive one measure) are one job. Two
+      unrelated outputs built side by side, or a model that both reshapes a source and derives a
+      business measure from it, are several.
+  criteria:
+    one_job:
+      what: "Every step serves one purpose that a sentence states."
+    several_jobs:
+      what: >-
+        It does two or more things that do not need each other, so none of them can be tested or
+        reused alone.
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+# Marts: "a mart is an entity at its grain". A union of different kinds of rows is two grains.
+mart_is_one_kind_of_thing:
+  id_prefix: "mone"
+  type: choice
+  subject: mart_union
+  prompt_version: "mone.v1"
+  finding_when: [mixed_kinds]
+  instructions:
+    question: >-
+      `model` unions the arms in `arms`. Is every row of the result the same kind of thing, or
+      are rows of different kinds stacked together?
+    note: >-
+      Orders from three stores are one kind of thing. Orders and refunds stacked in one table, or
+      detail rows beside a total row, are two kinds, and every sum or count over the table mixes
+      them.
+  criteria:
+    one_kind:
+      what: "Every arm yields the same kind of row; they differ only in where they came from."
+    mixed_kinds:
+      what: >-
+        The arms yield different kinds of rows, so a count or a sum over the table adds things
+        that do not add.
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+# Marts: facts are events or measurements, dimensions are the things they are about; the name
+# says which, so a reader knows whether to aggregate it.
+fact_or_dimension_and_named_so:
+  id_prefix: "fdim"
+  type: choice
+  subject: mart_kind
+  prompt_version: "fdim.v1"
+  finding_when: [a_fact_named_otherwise, a_dimension_named_otherwise]
+  instructions:
+    question: >-
+      `model` is named `name_says` and has the columns in `columns`. Is it a fact (one row per
+      event or measurement, with measures to aggregate) or a dimension (one row per thing, with
+      attributes to filter and group by), and does its name say the same?
+    note: >-
+      Judge what one row is and whether its columns are mostly measures or mostly attributes.
+      `name_says` is what the prefix claims: fct_, dim_, or nothing.
+  criteria:
+    named_right:
+      what: "What it is and what its name says agree, or it is neither and not named as one."
+    a_fact_named_otherwise:
+      what: "It is a fact, and its name says dimension or says nothing."
+    a_dimension_named_otherwise:
+      what: "It is a dimension, and its name says fact or says nothing."
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+# Style: "hard-coded values that are business rules go in a seed or a variable", where they are
+# written once, reviewed, and changed without editing SQL.
+literal_is_a_business_rule:
+  id_prefix: "lbr"
+  type: choice
+  subject: business_literal
+  prompt_version: "lbr.v2"
+  finding_when: [a_business_rule]
+  instructions:
+    question: >-
+      `model` compares against `literal` in `predicate`. Is that literal a business rule
+      somebody chose (a threshold, a cut-off date, a region), or a fixed fact of the data (a
+      code the source always uses, a physical constant)?
+    note: >-
+      A rule is a number somebody decided and could decide differently next quarter: a minimum
+      value, a lookback, a cut-off. A fixed fact of the data is the code a source uses for a
+      status or the number of square feet in an acre. A rule written inline is changed by
+      editing SQL in every model that repeats it.
+  criteria:
+    a_business_rule:
+      what: >-
+        Somebody chose this value and could change it; it belongs in a seed or a var, written
+        once, and every model reads it from there.
+    a_fact_of_the_data:
+      what: >-
+        The value is fixed by the source or by the world, and nobody decides it: a status code
+        the source uses, square feet in an acre, the latitude range of a real state or county.
+      examples: ["latitude between 36.9 and 41.1 (Colorado's extent)", "status = 'A' (the
+                 source's code for active)"]
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+# Reproducibility: a model reading today's date gives different rows on each build. Counted as
+# `output_depends_on_the_clock`; asked here only whether the window is meant to roll.
+the_clock_is_meant:
+  id_prefix: "clk"
+  type: choice
+  subject: clock_use
+  prompt_version: "clk.v1"
+  finding_when: [should_be_pinned]
+  acknowledge:
+    dates_are_text: >-
+      No date is compared here: the question classifies whether a result is meant to roll with
+      the day. Which rows today's date keeps is counted by `output_depends_on_the_clock`.
+  instructions:
+    question: >-
+      `model` reads today's date in `uses`. Is the result meant to change with each day (a
+      rolling window a report defines as "the last five years"), or should it be pinned to the
+      date a build represents, so a rebuild of the same data gives the same rows?
+    note: >-
+      "Days since issued" and "the last two years" in a report read today are meant to roll.
+      A date bound that decides which rows a model keeps, or a status like "expired" computed as
+      of today, usually belongs to an as-of date the build names, so tests and goldens hold.
+  criteria:
+    rolling_by_design:
+      what: "The value is defined relative to the day it is read, and a report wants exactly that."
+    should_be_pinned:
+      what: >-
+        The rows should be the same for the same data; pass the date in (an `as_of` var) so a
+        build, a test and a golden can name the day they represent.
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."
+
+# SQL: UNION removes duplicate rows across its arms, UNION ALL keeps them. Which is meant is
+# intent, and the wrong one silently drops or duplicates rows.
+union_should_collapse_duplicates:
+  id_prefix: "unn"
+  type: choice
+  subject: union_distinct
+  prompt_version: "unn.v1"
+  finding_when: [union_all_was_meant]
+  instructions:
+    question: >-
+      `model` uses UNION (which removes duplicate rows) over the arms in `arms`. Should two
+      identical rows from different arms collapse into one, or are they separate records that
+      happen to look the same?
+    note: >-
+      Two orders with the same number, date and amount from two feeds may be one order reported
+      twice, or two orders that match. If the arms are separate sources of separate records,
+      collapsing them loses rows; if they overlap on purpose, collapsing is the dedupe.
+  criteria:
+    duplicates_should_collapse:
+      what: "An identical row from two arms is the same record, and UNION is the dedupe."
+    union_all_was_meant:
+      what: >-
+        Identical rows are separate records; UNION silently drops the second, and UNION ALL was
+        meant.
+    cannot_tell:
+      what: "The state does not settle it. Choose this rather than guess."

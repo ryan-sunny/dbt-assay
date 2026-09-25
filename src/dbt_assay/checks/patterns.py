@@ -135,3 +135,80 @@ def run_all(project, digests) -> list[Finding]:
         b = project.blast_radius(f.subject)
         f.descendants, f.marts = b["descendants"], b["marts"]
     return out
+
+
+# ------------------------------------------------------------ dbt's style guide, counted
+#
+# "How we style our dbt models": booleans read as a question (is_, has_), timestamps end in _at,
+# dates in _date. Counted from the catalog's types, so a column is judged by what it holds.
+
+_BOOL_OK = ("is_", "has_", "was_", "can_", "should_", "did_", "will_", "are_", "in_", "flag")
+_TS_OK = ("_at", "_ts", "_time", "_timestamp", "_datetime")
+_DATE_OK = ("_date", "_on", "_day", "date")
+
+
+def _catalog_types(schema, uid: str) -> dict:
+    cat = getattr(schema, "catalog", None) or {}
+    cols = ((cat.get("nodes") or {}).get(uid) or {}).get("columns") or {}
+    return {str(k).lower(): str((v or {}).get("type") or "").lower() for k, v in cols.items()}
+
+
+def name_states_type(project, schema) -> list[Finding]:
+    out = []
+    for uid, m in project.models.items():
+        if getattr(m, "is_installed_package", False):
+            continue
+        bad = []
+        for col, typ in sorted(_catalog_types(schema, uid).items()):
+            if typ.startswith("bool") and not col.startswith(_BOOL_OK) and not col.endswith(
+                    ("_flag", "_ind")):
+                bad.append((col, "a boolean", "is_ or has_"))
+            elif "timestamp" in typ and not col.endswith(_TS_OK + _DATE_OK) \
+                    and not col.startswith(("date_", "ts_", "time_")):
+                bad.append((col, "a timestamp", "_at"))
+            elif typ == "date" and not col.endswith(_DATE_OK + _TS_OK) \
+                    and not col.startswith(("date_", "dt_")):
+                bad.append((col, "a date", "_date"))
+        if not bad:
+            continue
+        out.append(Finding(
+            check="column_name_does_not_state_its_type", subject=uid, subject_name=m.name,
+            file=m.path, base=1,
+            summary=f"{len(bad)} column name(s) do not say what type they hold",
+            detail=("dbt's style guide names a boolean as a question (is_, has_), a timestamp "
+                    "with _at and a date with _date, so a reader knows what a column holds before "
+                    "reading its values, and a filter or a join on the wrong type stands out. "
+                    "Counted from the catalog's types."),
+            evidence={"columns": [f"{c}: {what}, expected {want}" for c, what, want in bad][:12],
+                      "count": len(bad)}))
+    return out
+
+
+VIEW_READERS = 5
+
+
+def view_read_by_many(project) -> list[Finding]:
+    """A view is recomputed by every model that reads it; one with many readers is the same
+    work done that many times each build."""
+    out = []
+    for uid, m in project.models.items():
+        if getattr(m, "is_installed_package", False) \
+                or str(getattr(m, "materialized", "") or "").lower() != "view":
+            continue
+        readers = [c for c in (getattr(m, "children", None) or []) if c in project.models]
+        if len(readers) < VIEW_READERS:
+            continue
+        out.append(Finding(
+            check="view_read_by_many_models", subject=uid, subject_name=m.name, file=m.path,
+            base=1,
+            summary=f"a view that {len(readers)} models read, so it is computed {len(readers)} "
+                    f"times each build",
+            detail=("A view is not stored: every model reading it runs its SQL again. dbt's "
+                    "guide materializes as a table what many models read, so the work is done "
+                    "once per build and every reader sees the same rows."),
+            evidence={"readers": sorted(project.models[c].name for c in readers)[:20],
+                      "count": len(readers)}))
+    for f in out:
+        b = project.blast_radius(f.subject)
+        f.descendants, f.marts = b["descendants"], b["marts"]
+    return out

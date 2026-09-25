@@ -23,6 +23,9 @@ from dataclasses import dataclass, field
 KINDS = ("model", "edge", "column", "predicate", "expression", "window", "ruling_pair",
          "finding", "default", "column_risk", "enumerated_filter", "same_name_measure",
          "time_join", "ranking_window", "sentinel", "arrival_candidate",
+         # how the project is built (questions/structure.yml)
+         "staging_work", "grain_statement", "intermediate_purpose", "mart_union", "mart_kind",
+         "business_literal", "clock_use", "union_distinct",
          # clusters: call sites no single model has (25.24b)
          "predicate_cluster", "predicate_cluster_route", "cluster_member", "claim_pair")
 

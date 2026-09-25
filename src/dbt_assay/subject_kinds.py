@@ -420,6 +420,203 @@ def arrival_candidates(project, digests, schema) -> list:
     return out
 
 
+# ------------------------------------------------------------------------ how it is built
+#
+# The structure families (questions/structure.yml). Each builder is the count that decides where
+# the question means anything: a staging model that joins, a mart that unions, a threshold in a
+# filter. dbt Labs' layers read from the folder and the name, the way the project names them.
+
+def _layer_kind(m) -> str:
+    lay = str(getattr(m, "layer", "") or "").lower()
+    name = str(getattr(m, "name", "") or "").lower()
+    path = str(getattr(m, "path", "") or "").lower()
+    if lay in ("staging", "base") or name.startswith(("stg_", "base_")) or "/staging/" in path:
+        return "staging"
+    if lay.startswith("int") or name.startswith("int_") or "/intermediate/" in path:
+        return "intermediate"
+    if lay.startswith("mart") or name.startswith(("fct_", "dim_", "fact_", "mart_")) \
+            or "/marts/" in path:
+        return "mart"
+    return ""
+
+
+def _yours(m) -> bool:
+    return not getattr(m, "is_installed_package", False)
+
+
+def staging_work(project, digests, schema) -> list:
+    """Staging models that join, group or filter: the only ones where "is this staging work"
+    means anything."""
+    from .subjects import Subject, _prune
+    out = []
+    for uid, m in project.models.items():
+        d = _ok(digests, uid)
+        if d is None or not _yours(m) or _layer_kind(m) != "staging":
+            continue
+        joined = sorted({str(getattr(j, "target", "") or "") for j in (d.joins or [])} - {""})
+        # a NULL check is cleaning, in either spelling sqlglot writes it
+        filters = [p for p in (d.predicates_atomic or [])
+                   if not re.fullmatch(r"(?is)\s*(?:not\s+)?[\w.\"]+\s+is\s+(?:not\s+)?null\s*",
+                                       p)]
+        if not (d.joins or d.group_by or filters):
+            continue
+        out.append(Subject("staging_work", f"{uid}::staging_work::model", uid, m.name,
+                           file=m.path, state=_prune({
+                               "model": m.name, "reads": sorted(d.relations)[:6],
+                               "joins": joined[:8] or ([f"{len(d.joins)} join(s)"]
+                                                       if d.joins else []),
+                               "groups_by": list(d.group_by_columns or [])[:8],
+                               "filters_it_applies": [" ".join(f.split())[:200]
+                                                      for f in filters[:6]],
+                               "model_description": str(getattr(m, "description", ""))[:400]})))
+    return out
+
+
+def grain_statements(project, digests, schema) -> list:
+    """Marts with a description and a grain the SQL produces: does the one say the other."""
+    from .subjects import Subject, _prune
+    out = []
+    for uid, m in project.models.items():
+        d = _ok(digests, uid)
+        desc = str(getattr(m, "description", "") or "").strip()
+        if d is None or not _yours(m) or _layer_kind(m) != "mart" or not desc:
+            continue
+        grain = list(d.group_by_columns or []) or list((d.own_unique or (None,))[0] or [])
+        if not grain:
+            continue
+        out.append(Subject("grain_statement", f"{uid}::grain_statement::model", uid, m.name,
+                           file=m.path, state=_prune({"model": m.name, "description": desc[:600],
+                                                      "grain_in_the_sql": grain[:8]})))
+    return out
+
+
+def intermediate_purposes(project, digests, schema) -> list:
+    """Intermediate models with many steps: three joins or five CTEs."""
+    from .subjects import Subject, _prune
+    out = []
+    for uid, m in project.models.items():
+        d = _ok(digests, uid)
+        if d is None or not _yours(m) or _layer_kind(m) != "intermediate":
+            continue
+        if len(d.joins or []) < 3 and len(d.ctes or []) < 5:
+            continue
+        out.append(Subject("intermediate_purpose", f"{uid}::intermediate_purpose::model", uid,
+                           m.name, file=m.path, state=_prune({
+                               "model": m.name, "ctes": list(d.ctes or [])[:12],
+                               "joins": sorted(d.relations)[:10],
+                               "output_columns": list(d.output_columns or [])[:30],
+                               "model_description": str(getattr(m, "description", ""))[:400]})))
+    return out
+
+
+def mart_unions(project, digests, schema) -> list:
+    """Marts that union several arms: whether every row is one kind of thing."""
+    from .subjects import Subject, _prune
+    out = []
+    for uid, m in project.models.items():
+        d = _ok(digests, uid)
+        if d is None or not _yours(m) or _layer_kind(m) != "mart":
+            continue
+        if len(d.union_members or ()) < 2:
+            continue
+        out.append(Subject("mart_union", f"{uid}::mart_union::model", uid, m.name, file=m.path,
+                           state=_prune({"model": m.name, "arms": sorted(d.union_members)[:10],
+                                         "output_columns": list(d.output_columns or [])[:30],
+                                         "model_description":
+                                             str(getattr(m, "description", ""))[:400]})))
+    return out
+
+
+def mart_kinds(project, digests, schema) -> list:
+    """Every mart: is it a fact or a dimension, and does its name say which."""
+    from .subjects import Subject, _prune
+    out = []
+    for uid, m in project.models.items():
+        d = _ok(digests, uid)
+        if d is None or not _yours(m) or _layer_kind(m) != "mart":
+            continue
+        n = m.name.lower()
+        says = ("fact" if n.startswith(("fct_", "fact_")) else
+                "dimension" if n.startswith("dim_") else "neither")
+        out.append(Subject("mart_kind", f"{uid}::mart_kind::model", uid, m.name, file=m.path,
+                           state=_prune({"model": m.name, "name_says": says,
+                                         "columns": list(d.output_columns or [])[:40],
+                                         "one_row_is": list(d.group_by_columns or [])[:6],
+                                         "model_description":
+                                             str(getattr(m, "description", ""))[:300]})))
+    return out
+
+
+_THRESHOLD = re.compile(r"(?i)(?:[<>]=?|=|between)\s*(-?\d{2,}(?:\.\d+)?|'\d{4}-\d{2}-\d{2}')")
+
+
+def business_literals(project, digests, schema) -> list:
+    """A number of two digits or more, or a date, compared against in a filter; sentinels are
+    their own family."""
+    from .subjects import Subject, _prune
+    out = []
+    for uid, m in project.models.items():
+        d = _ok(digests, uid)
+        if d is None or not _yours(m):
+            continue
+        n = 0
+        for i, p in enumerate(d.predicates_atomic or []):
+            hit = _THRESHOLD.search(p)
+            if not hit or _SENTINEL_DATE.match(hit.group(1)) or hit.group(1).strip("'") in \
+                    _SENTINEL_NUM:
+                continue
+            out.append(Subject("business_literal", f"{uid}::business_literal::{i}", uid,
+                               f"{m.name} filter {i + 1}", file=m.path, state=_prune({
+                                   "model": m.name, "predicate": " ".join(p.split())[:300],
+                                   "literal": hit.group(1),
+                                   "model_description":
+                                       str(getattr(m, "description", ""))[:300]})))
+            n += 1
+            if n >= 6:
+                break
+    return out
+
+
+def clock_uses(project, digests, schema) -> list:
+    """Models the counted check found reading today's date, outside a future-date bound."""
+    from .subjects import Subject, _prune
+    out = []
+    for uid, m in project.models.items():
+        d = _ok(digests, uid)
+        if d is None or not _yours(m):
+            continue
+        uses = [p for p in (getattr(d, "patterns", None) or [])
+                if p.get("kind") == "clock" and not p.get("guard")]
+        if not uses:
+            continue
+        out.append(Subject("clock_use", f"{uid}::clock_use::model", uid, m.name, file=m.path,
+                           state=_prune({"model": m.name,
+                                         "uses": [" ".join(u["sql"].split())[:200]
+                                                  for u in uses][:6],
+                                         "materialized": getattr(m, "materialized", ""),
+                                         "model_description":
+                                             str(getattr(m, "description", ""))[:300]})))
+    return out
+
+
+def union_distincts(project, digests, schema) -> list:
+    """Every UNION without ALL."""
+    from .subjects import Subject, _prune
+    out = []
+    for uid, m in project.models.items():
+        d = _ok(digests, uid)
+        if d is None or not _yours(m):
+            continue
+        for i, p in enumerate(p for p in (getattr(d, "patterns", None) or [])
+                              if p.get("kind") == "union_distinct"):
+            out.append(Subject("union_distinct", f"{uid}::union_distinct::{i}", uid,
+                               f"{m.name} union {i + 1}", file=m.path, state=_prune({
+                                   "model": m.name, "arms": p.get("arms") or [],
+                                   "model_description":
+                                       str(getattr(m, "description", ""))[:300]})))
+    return out
+
+
 BUILDERS = {
     "default": defaults,
     "column_risk": column_risks,
@@ -429,6 +626,14 @@ BUILDERS = {
     "ranking_window": ranking_windows,
     "sentinel": sentinels,
     "arrival_candidate": arrival_candidates,
+    "staging_work": staging_work,
+    "grain_statement": grain_statements,
+    "intermediate_purpose": intermediate_purposes,
+    "mart_union": mart_unions,
+    "mart_kind": mart_kinds,
+    "business_literal": business_literals,
+    "clock_use": clock_uses,
+    "union_distinct": union_distincts,
 }
 
 STATE_FIELDS = {
@@ -453,6 +658,15 @@ STATE_FIELDS = {
                  "what_one_row_of_this_model_is"},
     "arrival_candidate": {"model", "column", "event_column", "expression", "column_description",
                           "other_time_columns", "what_one_row_of_this_model_is"},
+    "staging_work": {"model", "reads", "joins", "groups_by", "filters_it_applies",
+                     "model_description", "what_one_row_of_this_model_is"},
+    "grain_statement": {"model", "description", "grain_in_the_sql", "what_one_row_of_this_model_is"},
+    "intermediate_purpose": {"model", "ctes", "joins", "output_columns", "model_description", "what_one_row_of_this_model_is"},
+    "mart_union": {"model", "arms", "output_columns", "model_description", "what_one_row_of_this_model_is"},
+    "mart_kind": {"model", "name_says", "columns", "one_row_is", "model_description", "what_one_row_of_this_model_is"},
+    "business_literal": {"model", "predicate", "literal", "model_description", "what_one_row_of_this_model_is"},
+    "clock_use": {"model", "uses", "materialized", "model_description", "what_one_row_of_this_model_is"},
+    "union_distinct": {"model", "arms", "model_description", "what_one_row_of_this_model_is"},
 }
 
 

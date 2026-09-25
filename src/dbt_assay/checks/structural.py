@@ -617,8 +617,12 @@ def run_all(project, digests: dict[str, Digest], schema=None) -> list[Finding]:
     for fn in CHECKS:
         out.extend(fn(project, digests))
     out.extend(variant_columns(project, digests, schema))
+    from .patterns import name_states_type, view_read_by_many
     from .patterns import run_all as _patterns
     out.extend(_patterns(project, digests))
+    out.extend(view_read_by_many(project))
+    if schema is not None:
+        out.extend(name_states_type(project, schema))
     # Completeness at the edge of the warehouse. Pure manifest, free, and in the SAME stream as
     # everything else so it reaches `check`, MCP, the store and the ruling loop by one path.
     for fn in SOURCE_CHECKS:

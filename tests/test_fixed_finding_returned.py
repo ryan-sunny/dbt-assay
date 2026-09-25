@@ -151,7 +151,7 @@ def test_the_page_shows_both_commits_of_a_returned_finding(project_dir, tmp_path
             assert fixed[:9] in text and back[:9] in text, text
             hrefs = pane.locator("a.lk").evaluate_all("as => as.map(a => a.href)")
             assert f"https://github.com/acme/warehouse/commit/{fixed}" in hrefs, hrefs
-            page.click('nav button[data-tab="understood"]')
+            page.click('nav button[data-section="overview"]')
             page.wait_for_timeout(300)
             assert "regressed" in page.locator("#p-understood").inner_text()
             assert not errors, errors

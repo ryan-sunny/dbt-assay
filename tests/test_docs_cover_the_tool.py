@@ -207,11 +207,11 @@ def test_the_docs_do_not_state_a_family_count_that_is_wrong():
              19: "nineteen", 20: "twenty"}
     # Past twenty the words are built, not typed: a table that stops at twenty read "Thirty
     # families ship" as no total at all the day a release crossed it.
-    for tens, word in ((20, "twenty"), (30, "thirty")):
+    for tens, word in ((20, "twenty"), (30, "thirty"), (40, "forty"), (50, "fifty"),
+                       (60, "sixty")):
         words[tens] = word
         for unit in range(1, 10):
             words[tens + unit] = f"{word}-{words[unit]}"
-    words[40] = "forty"
     right = words.get(len(load_all_banks()), str(len(load_all_banks())))
     # *** ONLY THE SENTENCES THAT CLAIM THE TOTAL. ***
     # A first version matched "two families sharing a prefix" and "nine families satisfied

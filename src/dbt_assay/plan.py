@@ -47,6 +47,47 @@ SHAPES: dict[str, tuple[str, str]] = {
         "declare it, or build it",
         ("Code outside dbt reads a relation no model builds and no source declares. Declare it as "
          "a source (with freshness) or build it as a model, so its tests and lineage exist.")),
+    "column_name_does_not_state_its_type": (
+        "rename the columns",
+        ("Name a boolean as a question (is_active, has_permit), a timestamp with _at and a date "
+         "with _date, in the model that first produces the column, and carry the name through.")),
+    "view_read_by_many_models": (
+        "materialize it as a table",
+        ("Set `materialized: table` (or incremental) on the model, so its SQL runs once per build "
+         "and every reader reads the stored rows.")),
+    "staging_does_only_staging_work": (
+        "move the decision out of staging",
+        ("Staging cleans one source. Move the join, the aggregation or the use-specific filter "
+         "into an intermediate or mart model, so every reader of the staging model sees the whole "
+         "source and the decision is made once, where it can be seen.")),
+    "one_grain_stated": (
+        "say what one row is",
+        ("Write \"one row per ...\" in the model's description, matching the grain the SQL "
+         "produces, and add the key test that asserts it.")),
+    "intermediate_has_one_purpose": (
+        "split the model",
+        ("Split it into one model per job, each with a name that states the job, so each can be "
+         "tested and reused alone.")),
+    "mart_is_one_kind_of_thing": (
+        "separate the kinds of row",
+        ("Build one mart per kind of row, or add the column that says which kind a row is and "
+         "make every consumer filter on it.")),
+    "fact_or_dimension_and_named_so": (
+        "rename it to say what it is",
+        ("Prefix a fact fct_ and a dimension dim_, so a reader knows from the name whether to "
+         "aggregate it or to filter and group by it.")),
+    "literal_is_a_business_rule": (
+        "move the rule into a seed or a var",
+        ("Put the value in a seed (or `var()` in dbt_project.yml), named for what it decides, and "
+         "read it wherever the rule applies, so changing the rule changes it everywhere.")),
+    "the_clock_is_meant": (
+        "pin the date",
+        ("Read an `as_of` date (a var defaulting to the current date) instead of the clock, so a "
+         "rebuild of the same data gives the same rows.")),
+    "union_should_collapse_duplicates": (
+        "write UNION ALL",
+        ("The arms are separate records, so UNION silently drops identical ones. Write UNION ALL, "
+         "and dedupe on a key where duplicates really are one record.")),
     "values_lost_at_hop": (
         "keep the values the expression drops",
         ("The source holds values the model turns into NULL. For a loader's type split, declare "

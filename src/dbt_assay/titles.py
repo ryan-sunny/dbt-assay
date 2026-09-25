@@ -71,6 +71,8 @@ TITLES: dict[str, str] = {
     "not_in_over_a_nullable_subquery": "NOT IN over a column that can be NULL",
     "left_join_undone_by_where": "A LEFT JOIN a WHERE turns into an inner join",
     "limit_in_a_model": "A LIMIT inside a model",
+    "column_name_does_not_state_its_type": "Column names that do not say their type",
+    "view_read_by_many_models": "A view many models recompute",
     "source_freshness_not_run": "Freshness is declared and nothing checks it",
     "config_comment_contradicts_the_store": "A comment in audit.yml is out of date",
     # pipeline structure (dbt-project-evaluator's rules, merged)
@@ -127,6 +129,15 @@ TITLES: dict[str, str] = {
     "units_are_what_the_column_claims": "Is the unit what the name says?",
     "volume_contradicts_a_claim": "Does a row-count change contradict a claim?",
     "what_would_break_silently": "What could break here without a test noticing?",
+    # how the project is built (questions/structure.yml)
+    "staging_does_only_staging_work": "Does this staging model do only staging work?",
+    "one_grain_stated": "Does the description say what one row is?",
+    "intermediate_has_one_purpose": "Does this intermediate model do one job?",
+    "mart_is_one_kind_of_thing": "Is every row of this mart one kind of thing?",
+    "fact_or_dimension_and_named_so": "Is this a fact or a dimension, and named so?",
+    "literal_is_a_business_rule": "Is this literal a business rule?",
+    "the_clock_is_meant": "Is reading today's date meant here?",
+    "union_should_collapse_duplicates": "Should UNION collapse duplicate rows here?",
 }
 
 

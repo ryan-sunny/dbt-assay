@@ -247,7 +247,6 @@ def test_installed_packages_premises_are_left_out_unless_asked_for(project_dir, 
 
 
 def test_the_page_counts_no_package_premise_and_offers_a_toggle():
-    import re
 
     from dbt_assay import explorer
     data = {"meta": {"project": "p", "models": 0, "sources": 0, "version": "0",
@@ -259,7 +258,7 @@ def test_the_page_counts_no_package_premise_and_offers_a_toggle():
                          {"status": "holding"}, {"status": "broken"}]}
     doc = explorer.explorer_html(data, "<html></html>")
     # B4: the badge counts the BROKEN ones (not the package's, not the unchecked)
-    assert re.search(r'data-tab="guarantees"[^>]*>Guarantees<b>1</b>', doc)
+    assert _sections(doc)["counts"]["guarantees"] == 1
     assert "showPackagedPrem" in doc and "premise(s) about installed packages" in doc
 
 
@@ -290,7 +289,6 @@ def test_a_premises_report_says_which_store_and_run_it_counted(project_dir, tmp_
 def test_the_guarantees_tab_says_what_is_proven_and_has_no_strip():
     """Ryan: the tab's number is "433 of 697" proven, it comes before Monitoring, and it opens on
     the list, not a strip of numbers."""
-    import re
 
     from dbt_assay import explorer
     data = {"meta": {"project": "p", "models": 0, "sources": 0, "version": "0",
@@ -301,6 +299,16 @@ def test_the_guarantees_tab_says_what_is_proven_and_has_no_strip():
             "premises": [{"status": "broken"}],
             "proofs": [{"status": "proven"}] * 2 + [{"status": "not_proven"}] * 3}
     doc = explorer.explorer_html(data, "<html></html>")
-    assert re.search(r'data-tab="guarantees"[^>]*>Guarantees<b>2 of 5</b>', doc)
-    assert doc.index('data-tab="guarantees"') < doc.index('data-tab="monitoring"')
+    sec = _sections(doc)
+    assert sec["counts"]["guarantees"] == "2 of 5"
+    explore = sec["subviews"]["explore"]
+    assert explore.index("guarantees") < explore.index("monitoring")
     assert "premises by status" not in doc
+
+
+def _sections(doc: str) -> dict:
+    """The views, their counts and their tips, as the page declares them."""
+    import json
+    import re
+    return json.loads(re.search(r'<script id="assay-sections" type="application/json">(.*?)'
+                                r'</script>', doc, re.DOTALL).group(1))

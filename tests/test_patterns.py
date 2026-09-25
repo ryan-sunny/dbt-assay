@@ -68,3 +68,23 @@ def test_not_in_is_quiet_when_a_test_keeps_the_column_non_null():
                  tests=[SimpleNamespace(tests_model="model.p.b", kind="not_null", column="id")])
     got = run_all(p, {"model.p.m": digest(sql, "m")})
     assert not [f for f in got if f.check == "not_in_over_a_nullable_subquery"]
+
+
+def test_names_that_do_not_state_their_type_and_a_view_many_models_read():
+    from dbt_assay.checks.patterns import name_states_type, view_read_by_many
+    m = SimpleNamespace(name="m", path="m.sql", is_installed_package=False, materialized="view",
+                        children=[f"model.p.c{i}" for i in range(5)])
+    models = {"model.p.m": m, **{f"model.p.c{i}": SimpleNamespace(name=f"c{i}")
+                                 for i in range(5)}}
+    project = SimpleNamespace(models=models,
+                              blast_radius=lambda uid: {"descendants": 5, "marts": 0})
+    schema = SimpleNamespace(catalog={"nodes": {"model.p.m": {"columns": {
+        "active": {"type": "BOOLEAN"}, "is_open": {"type": "BOOLEAN"},
+        "loaded": {"type": "TIMESTAMP"}, "created_at": {"type": "TIMESTAMP"},
+        "date_issued": {"type": "DATE"}, "sold": {"type": "DATE"}}}}})
+    got = name_states_type(project, schema)
+    cols = got[0].evidence["columns"]
+    assert [c.split(":")[0] for c in cols] == ["active", "loaded", "sold"]
+    assert view_read_by_many(project)[0].evidence["count"] == 5
+    m.materialized = "table"
+    assert view_read_by_many(project) == []
