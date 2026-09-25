@@ -576,3 +576,145 @@ def diff(fx: Fix, root: Path) -> str:
 def applied(fx: Fix, root: Path) -> list[str]:
     """The files of the fix whose content on disk is not yet what the fix writes."""
     return [p for p, text in sorted(fx.files.items()) if _read(root, p) != text]
+
+
+# ------------------------------------------------------ graduation: judged roles become tests
+
+def _args_style(project) -> bool:
+    """dbt 1.10 moved a generic test's arguments under `arguments:`; older dbt reads them flat."""
+    v = str(getattr(project, "dbt_version", "") or "")
+    try:
+        major, minor = (int(x) for x in v.split(".")[:2])
+    except ValueError:
+        return False
+    return (major, minor) >= (1, 10)
+
+
+def _test_yaml(project, name: str, args: dict) -> str:
+    import json as _j
+
+    def fmt(v):
+        if isinstance(v, list):
+            return "[" + ", ".join(fmt(x) for x in v) + "]"
+        return _j.dumps(v) if isinstance(v, str) else str(v)
+    inner = ", ".join(f"{k}: {fmt(v)}" for k, v in args.items())
+    return (f"{{{name}: {{arguments: {{{inner}}}}}}}" if _args_style(project)
+            else f"{{{name}: {{{inner}}}}}")
+
+
+def role_test_candidates(project, entries) -> list[dict]:
+    """What the judged column roles say a test should assert, before anything is counted:
+    a foreign key the relationships test to the model whose key it is, a status flag or a
+    dimension the accepted_values test of its values. Only judged roles a person has not
+    contradicted, on this project's own models."""
+    keyed: dict = {}
+    for e in entries or []:
+        g = e.grain.value if e.grain is not None else None
+        if isinstance(g, list) and len(g) == 1:
+            keyed.setdefault(str(g[0]).lower(), []).append(e)
+    out = []
+    for e in entries or []:
+        m = project.models.get(e.uid)
+        if m is None or getattr(m, "is_installed_package", False):
+            continue
+        tested = {(t.column or "").lower() for t in project.tests if t.tests_model == e.uid}
+        for c in e.columns or []:
+            role = str(c.role.value) if c.role is not None and c.role.value else ""
+            col = c.name.lower()
+            if role == "foreign_key" and col in keyed:
+                parents = [p for p in keyed[col] if p.uid != e.uid and p.uid in m.parents]
+                if len(parents) == 1:
+                    out.append({"kind": "relationships", "model": e.uid, "column": c.name,
+                                "to": parents[0].name, "field": c.name})
+            elif role in ("status_flag", "dimension") and col not in tested:
+                out.append({"kind": "accepted_values", "model": e.uid, "column": c.name})
+    return out
+
+
+def prove_role_tests(cands: list[dict], project, schema, probe_mod, project_dir: str,
+                     profiles_dir, dbt_bin: str, max_values: int = 20) -> list[dict]:
+    """Count each candidate through the project's dbt; keep only the ones that would pass."""
+    if not cands:
+        return []
+    rel_of = dict(getattr(schema, "relation", None) or {})
+
+    def rel(uid_or_name: str) -> str:
+        uid = uid_or_name if uid_or_name in project.models else next(
+            (u for u, m in project.models.items() if m.name == uid_or_name), uid_or_name)
+        return (rel_of.get(uid) or project.models[uid].name).replace('"', "")
+    stmts, kept = [], []
+    for c in cands:
+        child = rel(c["model"])
+        if c["kind"] == "relationships":
+            parent = rel(c["to"])
+            sql = (f"select count(*) as orphans from {child} c left join {parent} p "
+                   f"on c.{c['column']} = p.{c['field']} "
+                   f"where c.{c['column']} is not null and p.{c['field']} is null")
+            stmts.append(probe_mod.Statement(sql, caller="assay.graduate", kind="count", limit=1,
+                                             relation=child, columns=[c["column"]]))
+        else:
+            sql = (f"select cast({c['column']} as varchar) as v, count(*) as n from {child} "
+                   f"where {c['column']} is not null group by 1 order by 1 "
+                   f"limit {max_values + 1}")
+            stmts.append(probe_mod.Statement(sql, caller="assay.graduate", kind="profile",
+                                             limit=max_values + 1, relation=child,
+                                             columns=[c["column"]]))
+        kept.append(c)
+    got = probe_mod.run_many(stmts, project_dir, profiles_dir, dbt_bin,
+                             getattr(project, "dialect", "duckdb") or "duckdb")
+    out = []
+    for c, r in zip(kept, got):
+        if r.failed or not r.rows:
+            continue
+        if c["kind"] == "relationships":
+            if int(r.rows[0].get("orphans") or 0) == 0:
+                out.append({**c, "proof": "every non-null value has a parent row"})
+        else:
+            vals = [str(x.get("v")) for x in r.rows if x.get("v") is not None]
+            if 1 < len(vals) <= max_values and all(len(v) <= 40 for v in vals):
+                out.append({**c, "values": vals,
+                            "proof": f"{len(vals)} distinct value(s) today"})
+    return out
+
+
+def graduate(project, proven: list[dict], root: Path) -> list[Fix]:
+    """One fix per model: the tests its judged roles justify, proven to pass, in its own yml."""
+    from . import schemapatch
+    by: dict = {}
+    for p in proven:
+        by.setdefault(p["model"], []).append(p)
+    out = []
+    for uid, ps in sorted(by.items()):
+        m = project.models[uid]
+        edits = []
+        for p in ps:
+            if p["kind"] == "relationships":
+                t = _test_yaml(project, "relationships",
+                               {"to": f"ref('{p['to']}')", "field": p["field"]})
+            else:
+                t = _test_yaml(project, "accepted_values", {"values": p["values"]})
+            edits.append(schemapatch.Edit(column=p["column"], tests=[t]))
+        fx = Fix("add_proven_tests", f"roles|{uid}",
+                 f"Test what {m.name}'s columns were judged to be ({len(edits)} test(s))")
+        fx.models = [m.name]
+        yml = _yml_of(project, uid)
+        text = _read(root, yml) if yml else None
+        if text is not None:
+            new, refused = schemapatch.apply(text, m.name, edits)
+            if refused:
+                fx.refused += refused
+                continue
+            fx.files[yml] = new
+        else:
+            path = str(Path(m.path).with_name(f"_{m.name}.yml"))
+            fx.files[path] = schemapatch.new_entry(m.name, edits)
+            fx.new_files.append(path)
+        fx.how = ("The judged role of each column, confirmed as a test dbt runs on every build: a "
+                  "foreign key's relationships test to the model whose key it is, a status or "
+                  "category's accepted values. Each was counted to pass today: "
+                  + "; ".join(f"{p['column']}: {p['proof']}" for p in ps)
+                  + ". Once it is a test, the next run reads the answer from the project and does "
+                    "not ask.")
+        fx.recipe = [f"dbt test --select {m.name} (the new tests pass)"]
+        out.append(fx)
+    return out

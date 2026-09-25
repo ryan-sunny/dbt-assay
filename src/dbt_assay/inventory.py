@@ -275,6 +275,8 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
     out = []
 
     judged_rows = None
+    from .columns import declared_roles
+    stated = declared_roles(project)
     for uid in project.topological():
         m = project.models[uid]
         entry = ModelEntry(uid=uid, name=m.name, path=m.path, layer=m.layer,
@@ -409,7 +411,10 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
                       root=(getattr(p, "root", "") or "") if p else "")
             ce = ColumnEntry(name=c, provenance=pf, in_key=c in key_cols)
             r = judged.get(f"role__{c}")
-            if r:
+            if (uid, c) in stated:
+                # stated by the project (a relationships test) outranks any judged answer
+                ce.role = Fact(stated[(uid, c)], "declared")
+            elif r:
                 ce.role = Fact(r["answer"], "judged", r.get("confidence"))
             n = judged.get(f"null__{c}")
             if n:

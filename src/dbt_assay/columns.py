@@ -67,6 +67,21 @@ class Labels:
     null_meaning: dict = field(default_factory=dict)  # (uid, col) -> "impossible"
 
 
+def declared_roles(project) -> dict:
+    """{(model uid, column): role} the project states outright, so nobody asks.
+
+    *** A CONFIRMED JUDGMENT GRADUATES INTO THE PROJECT, AND THEN IT IS NOT ASKED AGAIN. ***
+    (Ryan: "make judgements and have that bless my warehouse") A relationships test says the
+    column is a foreign key: that is the role, stated by the team and enforced by dbt, so the
+    judged question about it is spent for nothing. (A `unique` test is NOT here: it declares
+    uniqueness, not identity; see `Labels`.)"""
+    out = {}
+    for t in project.tests:
+        if t.tests_model and t.column and t.kind == "relationships":
+            out[(t.tests_model, t.column.lower())] = "foreign_key"
+    return out
+
+
 def free_labels(project) -> Labels:
     out = Labels()
     for t in project.tests:

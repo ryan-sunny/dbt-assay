@@ -4566,6 +4566,11 @@ def plan(
                                   help="where the fixes, with their files, are written"),
     dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    project_dir: str = typer.Option(".", "--project-dir"),
+    verify: bool = typer.Option(False, "--verify",
+                                help="count, through your dbt, the tests the judged column roles "
+                                     "justify (a foreign key's relationships, a status's "
+                                     "accepted values) and offer the ones that would pass"),
     limit: int = typer.Option(20, "--limit", "-n"),
 ) -> None:
     """What to change next: the findings grouped into the fixes that resolve them, ranked.
@@ -4600,7 +4605,8 @@ def plan(
     from . import groups as groups_mod
     if not agreed:
         _fix_plan(project, digests, schema, entries, findings, store, tdir, dialect, measure,
-                  fixes_out, dbt_bin, profiles_dir, json_out, limit)
+                  fixes_out, dbt_bin, profiles_dir, json_out, limit,
+                  verify=verify, project_dir=project_dir)
         return
     rows = plan_mod.build(findings, store, groups_mod.build(project, findings), project=project)
 
@@ -4638,13 +4644,24 @@ def plan(
 
 
 def _fix_plan(project, digests, schema, entries, findings, store, tdir, dialect, measure: int,
-              fixes_out: str, dbt_bin: str, profiles_dir, json_out: bool, limit: int) -> None:
+              fixes_out: str, dbt_bin: str, profiles_dir, json_out: bool, limit: int, *,
+              verify: bool = False, project_dir: str = ".") -> None:
     from . import fixes as fixes_mod
     from . import groups as groups_mod
     from . import ledger as ledger_mod
     fx = fixes_mod.build(project, findings, entries=entries, digests=digests, schema=schema,
                          store=store, led=ledger_mod.last(),
                          groups=groups_mod.build(project, findings), root=project.project_root)
+    if verify:
+        # *** A CONFIRMED JUDGMENT BECOMES PART OF THE PROJECT. *** (Ryan: "bless my warehouse")
+        # The judged roles justify tests; the ones counted to pass today are offered as fixes.
+        cands = fixes_mod.role_test_candidates(project, entries)
+        proven = fixes_mod.prove_role_tests(cands, project, schema, probe_mod, project_dir,
+                                            profiles_dir, dbt_bin)
+        fx = fixes_mod.rank(fx + fixes_mod.graduate(project, proven, project.project_root))
+        if not json_out:
+            console.print(f"[dim]--verify: {len(cands)} test(s) the judged roles justify, "
+                          f"{len(proven)} counted to pass today.[/]")
     if measure:
         from . import fixmeasure
         fixmeasure.measure_top(fx, project, findings, n=measure, target_dir=Path(tdir),
@@ -5210,6 +5227,8 @@ def columns(
     cfg = Config.load(config_path)
     _tdir, project, digests, schema, declared, proposed = _grain_setup(target, store_path, dialect)
     labels = columns_mod.free_labels(project)
+    stated = columns_mod.declared_roles(project)
+    not_asked = 0
 
     work = []
     for uid in project.models:
@@ -5226,6 +5245,11 @@ def columns(
             # evidence about what a NULL would MEAN. Using it as such measured 0/25 and measured
             # the wrong thing.
             cols = [c for c in cols if (uid, c) in labels.role]
+        else:
+            # the project states these roles itself (a relationships test): nothing to ask
+            before = len(cols)
+            cols = [c for c in cols if (uid, c.lower()) not in stated]
+            not_asked += before - len(cols)
         if cols:
             grain = [x.lower() for x in (proposed[uid].columns if uid in proposed else
                                          declared.get(uid) or [])]
@@ -5237,6 +5261,9 @@ def columns(
     ncols = sum(len(c) for _u, _f, c, _g in work)
     console.print(f"[bold]{ncols}[/] columns across [bold]{len(work)}[/] models, "
                   f"{calls} calls at {columns_mod.CHUNK} columns each")
+    if not_asked:
+        console.print(f"[dim]{not_asked} column(s) not asked: the project states their role "
+                      f"itself, with a relationships test.[/]")
 
     if print_state:
         for uid, facts, cols, grain in work[:2]:

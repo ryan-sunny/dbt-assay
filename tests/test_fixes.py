@@ -90,3 +90,60 @@ def test_apply_is_refused_until_a_person_approved(tmp_path, monkeypatch):
     v = be.verify_plan_item(fx.id)
     assert v["verified"] and v["files_not_yet_as_the_fix_writes"] == []
     assert json.dumps(v)
+
+
+def test_judged_roles_become_tests_only_when_counted_to_pass(tmp_path):
+    """Graduation (assay-loops.md): a judged foreign key becomes a relationships test to the
+    model whose key it is, a status flag an accepted_values test, and only after a count says
+    each would pass. The test lands in the model's own yml."""
+    import yaml
+
+    from dbt_assay.inventory import ColumnEntry, Fact
+    from dbt_assay.probe import Result, Statement
+
+    def entry(uid, name, grain, cols):
+        return SimpleNamespace(uid=uid, name=name, grain=Fact(grain, "derived"),
+                               columns=[ColumnEntry(name=c, provenance=Fact("carried", "derived"),
+                                                    role=Fact(r, "judged", 0.9) if r else None)
+                                        for c, r in cols])
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "schema.yml").write_text(
+        "version: 2\n\nmodels:\n- name: orders\n  columns:\n  - name: order_id\n")
+    project = SimpleNamespace(
+        dbt_version="1.11.0", tests=[],
+        models={"model.p.orders": SimpleNamespace(name="orders", path="models/orders.sql",
+                                                  parents=["model.p.customers"],
+                                                  is_installed_package=False),
+                "model.p.customers": SimpleNamespace(name="customers", path="models/c.sql",
+                                                     parents=[], is_installed_package=False)},
+        raw={"nodes": {"model.p.orders": {"patch_path": "p://models/schema.yml"}}})
+    entries = [entry("model.p.orders", "orders", ["order_id"],
+                     [("order_id", "identifier"), ("customer_id", "foreign_key"),
+                      ("status", "status_flag"), ("channel", "status_flag")]),
+               entry("model.p.customers", "customers", ["customer_id"],
+                     [("customer_id", "identifier")])]
+    cands = fixes.role_test_candidates(project, entries)
+    assert sorted((c["kind"], c["column"]) for c in cands) == [
+        ("accepted_values", "channel"), ("accepted_values", "status"),
+        ("relationships", "customer_id")]
+
+    def run_many(stmts, *a, **k):
+        out = []
+        for st in stmts:
+            if "orphans" in st.sql:
+                out.append(Result(rows=[{"orphans": 0}]))
+            elif "channel" in st.sql:                       # too many values: not a category
+                out.append(Result(rows=[{"v": str(i), "n": 1} for i in range(40)]))
+            else:
+                out.append(Result(rows=[{"v": "open", "n": 3}, {"v": "shipped", "n": 9}]))
+        return out
+    probe = SimpleNamespace(Statement=Statement, run_many=run_many)
+    proven = fixes.prove_role_tests(cands, project, None, probe, ".", None, "dbt")
+    assert sorted(p["column"] for p in proven) == ["customer_id", "status"]
+    fx = fixes.graduate(project, proven, tmp_path)[0]
+    d = yaml.safe_load(fx.files["models/schema.yml"])
+    cols = {c["name"]: c for c in d["models"][0]["columns"]}
+    assert cols["customer_id"]["data_tests"] == [
+        {"relationships": {"arguments": {"to": "ref('customers')", "field": "customer_id"}}}]
+    assert cols["status"]["data_tests"] == [
+        {"accepted_values": {"arguments": {"values": ["open", "shipped"]}}}]
