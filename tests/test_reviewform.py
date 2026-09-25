@@ -714,3 +714,34 @@ def test_explanation_rows_show_dates_and_say_identical_rows_once():
     assert "!c.startsWith('__')" in js and "r.__n > 1" in js
     # the tab counts the failing tests it shows, as `review --emit` does
     assert "(x.failing || []).length" in js
+
+
+def test_a_failing_test_does_not_empty_the_form(project_dir, tmp_path):
+    """0.52.3: the Explanations summary reused the name `cards`, and with a failing test the form
+    was written with the failing-test cards and no findings ("10 card(s) covering 0 finding(s)").
+    The fixture had no failing test, so nothing here ran that line."""
+    import json
+    import re
+
+    from typer.testing import CliRunner
+
+    from dbt_assay import ledger
+    from dbt_assay.cli import app
+    from dbt_assay.manifest import Project
+    store = str(tmp_path / "s.duckdb")
+    CliRunner().invoke(app, ["check", "--target", str(project_dir), "--store", store])
+    t = next(t for t in Project.load(project_dir).tests if t.tests_model)
+    s = Store(store)
+    ledger.record_test_status(s, {t.unique_id: ("fail", "2026-09-25 06:00:00")}, "t")
+    s.close()
+    form = tmp_path / "form.html"
+    r = CliRunner().invoke(app, ["review", "--emit", str(form), "--target", str(project_dir),
+                                 "--store", store], env={"COLUMNS": "400"})
+    assert r.exit_code == 0, r.output
+    assert "Explanations: 1 failing test(s)" in r.output, r.output
+    m = re.search(r"([\d,]+) card\(s\) covering ([\d,]+) of", r.output)
+    html = form.read_text()
+    data = json.loads(html.split('<script id="assay-form" type="application/json">')[1]
+                      .split("</script>")[0].replace("<\\/", "</"))
+    assert len(data["cards"]) == int(m.group(1).replace(",", "")) > 0
+    assert sum(len(c["findings"]) for c in data["cards"]) == int(m.group(2).replace(",", ""))

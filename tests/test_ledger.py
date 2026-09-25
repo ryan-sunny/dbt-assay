@@ -285,3 +285,22 @@ def test_a_premises_report_says_which_store_and_run_it_counted(project_dir, tmp_
     s.close()
     assert ledger.counted_line({"store": "x", "run": "", "at": ""}) == \
         "counted from x, no full run yet"
+
+
+def test_the_guarantees_tab_says_what_is_proven_and_has_no_strip():
+    """Ryan: the tab's number is "433 of 697" proven, it comes before Monitoring, and it opens on
+    the list, not a strip of numbers."""
+    import re
+
+    from dbt_assay import explorer
+    data = {"meta": {"project": "p", "models": 0, "sources": 0, "version": "0",
+                     "generated_at": "x", "coverage": {}},
+            "models": [], "edges": [], "claims": [], "findings": [], "decisions": [],
+            "questions": [], "adjudications": [], "config": {}, "runs": [], "unreadable": [],
+            "unconfigured": [], "effectiveness": [], "moved": {},
+            "premises": [{"status": "broken"}],
+            "proofs": [{"status": "proven"}] * 2 + [{"status": "not_proven"}] * 3}
+    doc = explorer.explorer_html(data, "<html></html>")
+    assert re.search(r'data-tab="guarantees"[^>]*>Guarantees<b>2 of 5</b>', doc)
+    assert doc.index('data-tab="guarantees"') < doc.index('data-tab="monitoring"')
+    assert "premises by status" not in doc

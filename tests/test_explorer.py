@@ -1337,7 +1337,7 @@ def test_feedback_p7_the_tabs_are_grouped_in_reading_order():
     labels = re.findall(r'<span class="navlab">([^<]+)</span>', doc)
     assert labels == ["start here", "what is wrong", "your project", "what assay asked", "setup"]
     order = re.findall(r'<button role="tab" data-tab="([a-z]+)"', doc)
-    assert order[:4] == ["understood", "findings", "areas", "monitoring"], order
+    assert order[:5] == ["understood", "findings", "areas", "guarantees", "monitoring"], order
 
 
 def test_feedback_p8_the_page_counts_what_check_counts():

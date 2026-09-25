@@ -883,6 +883,13 @@ def build_fingerprint() -> str:
     return h.hexdigest()[:12]
 
 
+def _badge(n) -> str:
+    """A tab's number: a count, grouped, or a phrase like "433 of 697"."""
+    if n is None:
+        return ""
+    return f"<b>{html.escape(n) if isinstance(n, str) else format(n, ',')}</b>"
+
+
 def explorer_html(data: dict, record_html: str) -> str:
     """The whole thing: one file, embedded data, tabs.
 
@@ -930,12 +937,13 @@ def explorer_html(data: dict, record_html: str) -> str:
         # all three lists, not the first one: the tab said 16 while it held 16 + 39 + the odd ones
         "areas": sum(len((data.get("areas") or {}).get(k) or [])
                      for k in ("predicate_clusters", "odd_ones_out", "same_claim")) or None,
-        # premises about installed packages' models are not this project's to fix (L3). The
-        # number is the BROKEN ones: "350 not holding" was read as 350 wrong when 346 were only
-        # not yet checked (sunny-data feedback B4)
-        "guarantees": (sum(1 for p in data.get("premises") or [] if p.get("status") == "broken"
-                           and not p.get("package"))
-                       if data.get("premises") else None),
+        # Ryan: the tab's number is what is proven, "433 of 697"; without certificates, the
+        # premises measured false (B4: never "not holding", which counted the unchecked as wrong).
+        # Installed packages' premises are not this project's to fix (L3).
+        "guarantees": ((f"{sum(1 for r in data['proofs'] if r.get('status') == 'proven'):,} of "
+                        f"{len(data['proofs']):,}") if data.get("proofs") else
+                       sum(1 for p in data.get("premises") or [] if p.get("status") == "broken"
+                           and not p.get("package")) if data.get("premises") else None),
     }
     # *** THE OVERVIEW IS THE WAY IN, NOT THE LAST TAB. ***
     # It is the only surface here with an argument to make rather than a table to show, and a
@@ -952,10 +960,10 @@ def explorer_html(data: dict, record_html: str) -> str:
         # Present whether or not the numbers were taken: a tab that appears only when somebody
         # passed `--monitoring` is a tab nobody learns exists, and its absence reads as a tool
         # that does not do this rather than as a measurement not yet made.
-        ("monitoring", "Monitoring", counts["monitoring"]),
-        # *** WHAT THE FINDINGS REST ON. *** The number is the premises NOT holding: broken,
-        # unchecked, assumed or unknown. None when no ledger was built, so no count is a zero.
+        # *** WHAT THE FINDINGS REST ON, AND WHAT IS PROVEN. *** Before Monitoring (Ryan). The
+        # number is the properties proven of all stated, or the broken premises without proofs.
         ("guarantees", "Guarantees", counts["guarantees"]),
+        ("monitoring", "Monitoring", counts["monitoring"]),
         ("models", "Models", counts["models"]),
         ("chain", "The chain", counts["edges"]),
         ("claims", "Claims", counts["claims"]),
@@ -1000,14 +1008,22 @@ def explorer_html(data: dict, record_html: str) -> str:
     counted = {"models": "models", "chain": "hops between models", "claims": "sentences",
                "findings": "findings", "areas": "rows across its three lists",
                "monitoring": "findings about the monitoring", "suggest": "candidates",
-               "guarantees": "premises measured false (broken): a count or a failed test says "
-                             "otherwise. Unchecked ones are counted inside the tab",
+               "guarantees": ("properties proven, of all assay stated a proof for"
+                              if data.get("proofs") else
+                              "premises measured false (broken): a count or a failed test says "
+                              "otherwise"),
                "answers": "live answers", "questions": "questions"}
     for t, _label, n in tabs:
         if n is not None and t in counted:
-            tips[t] = f"{tips.get(t, '')}\nThe number is {n:,} {counted[t]}."
+            tips[t] = (f"{tips.get(t, '')}\nThe number is "
+                       f"{n if isinstance(n, str) else format(n, ',')} {counted[t]}.")
+    # which store and run the Guarantees numbers were counted from (L4), where the strip was
+    cf = (data.get("meta") or {}).get("counted") or {}
+    if cf.get("run"):
+        tips["guarantees"] = (f"{tips.get('guarantees', '')}\nCounted from "
+                              f"{cf.get('store') or 'the store'}, run {cf['run']} at {cf.get('at')}.")
     nav_groups = [("start here", ["understood"]),
-                  ("what is wrong", ["findings", "areas", "monitoring", "guarantees"]),
+                  ("what is wrong", ["findings", "areas", "guarantees", "monitoring"]),
                   ("your project", ["models", "chain", "claims"]),
                   ("what assay asked", ["answers", "questions"]),
                   ("setup", ["suggest", "config", "spend"])]
@@ -1018,7 +1034,7 @@ def explorer_html(data: dict, record_html: str) -> str:
             f'<button role="tab" data-tab="{t}" '
             f'aria-selected="{"true" if button[t][0] == 0 else "false"}" '
             f'data-tip="{e(tips.get(t, ""))}">'
-            f'{e(button[t][1])}{f"<b>{button[t][2]:,}</b>" if button[t][2] is not None else ""}'
+            f'{e(button[t][1])}{_badge(button[t][2])}'
             f'</button>' for t in members if t in button)
         + '</span></span>'
         for glabel, members in nav_groups)
@@ -3798,53 +3814,6 @@ function guaranteesTab(host) {
   const heldOn = ps => ps.reduce((n, p) => n + (p.uses || []).filter(u => u.kind === 'held_back').length, 0);
   const grainsOn = ps => ps.reduce((n, p) => n + (p.uses || []).filter(u => u.kind === 'grain').length, 0);
 
-  function top() {
-    const box = el('div', {class: 'mtop'});
-    const parts = PSTATUS.filter(s => by[s]).map(s => ({label: PWORD[s], n: by[s].length,
-                                                        color: PCOLOR[s]}));
-    const bar = el('div', {}, [
-      el('div', {class: 'tlab'}, [el('span', {text: 'premises by status',
-        tip: 'Every statement about the data that a grain, a held-back finding or a proof leans '
-          + 'on, by the strongest evidence for it. A count that found duplicates, or a test that '
-          + 'failed, beats everything.'})]),
-      stackedBar(parts, rows.length),
-      el('div', {class: 'legend'}, parts.map(x => el('span', {class: 'lgi'}, [
-        el('span', {class: 'sw', style: 'background:' + x.color}),
-        el('span', {text: x.label + ' ' + num(x.n), tip: PTIP[PSTATUS.find(s => PWORD[s] === x.label)]})])))]);
-    const notHolding = rows.filter(p => p.status !== 'holding');
-    const facts = [
-      {v: num(rows.length), l: 'premises', tip: 'Distinct statements: one key in one relation.'},
-      /* B4: broken leads; the rest are not yet checked, not wrong */
-      {v: num((by.broken || []).length), l: 'broken', bad: (by.broken || []).length > 0,
-       tip: PTIP.broken},
-      {v: num(notHolding.length - (by.broken || []).length), l: 'not yet checked',
-       tip: 'Unchecked (declared, its test has not run or no result was read), assumed, or with '
-         + 'no evidence at all. Not measured false: a count or a test result settles them.'},
-      {v: num(heldOn(notHolding)), l: 'findings held back on these',
-       tip: 'Findings a check did not raise because a key was unique, where that key is not '
-         + 'holding. A broken one raises its finding again.'},
-      {v: num(grainsOn(notHolding)), l: 'grains resting on these',
-       tip: 'Declared grains whose key is not holding. The value stands; it is not firm.'},
-    ];
-    if (PROOFS.length) {
-      const pv = PROOFS.filter(r => r.status === 'proven').length;
-      const lost = PROOFS.filter(r => r.guarantee === 'lost').length;
-      facts.push({v: num(pv) + ' of ' + num(PROOFS.length), l: 'properties proven',
-                  tip: 'Checked by Lean from the parsed structure. Each holds for every input its '
-                    + 'premises allow.'});
-      if (lost) facts.push({v: num(lost), l: 'guarantees lost', bad: true,
-                            tip: GTIP.lost});
-    }
-    box.append(bar, el('div', {class: 'mfacts'}, facts.map(f => el('div', {class: 'mfact'}, [
-      el('div', {class: 'mfv' + (f.bad ? ' bad' : ''), text: f.v}),
-      el('div', {class: 'mfl'}, [el('span', {text: f.l, tip: f.tip})])]))));
-    if (broke) box.append(el('p', {class: 'fact bad', text: num(broke) + ' premise(s) broke at '
-      + 'the latest check.'}));
-    const cf = (DATA.meta || {}).counted || {};
-    if (cf.run) box.append(el('p', {class: 'fact', text: 'Counted from ' + (cf.store || 'the store')
-      + ', run ' + cf.run + ' at ' + cf.at + '.'}));
-    return box;
-  }
 
   const groups = PSTATUS.filter(s => by[s]).map(s => ({key: s, label: PWORD[s], rows: by[s]}));
   /* Certificates, grouped by what their guarantee is now. */
@@ -3969,7 +3938,8 @@ function guaranteesTab(host) {
     return el('label', {class: 'chk'}, [cb, el('span', {text: 'include ' + PKG_PREM
       + ' premise(s) about installed packages’ models'})]);
   })() : null;
-  host.replaceChildren(...[top(), pkgBox, d].filter(Boolean));
+  /* Ryan: the list, not a strip of numbers over it; every number it had is a group's count */
+  host.replaceChildren(...[pkgBox, d].filter(Boolean));
   GO.guarantees = id => {
     const p = rows.find(x => x.id === id); if (!p) return;
     d.showRows(groups.find(g => g.key === p.status));
