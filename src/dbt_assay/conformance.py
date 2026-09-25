@@ -78,7 +78,7 @@ CONSTRUCTS = {
                         "one row per partition, whatever ties"),
     "row_number_desc_nulls": (("select k, v from t qualify row_number() over "
                               "(partition by k order by v desc) = 1"),
-                              "where NULL sorts: larger than every value"),
+                              "where NULL sorts: the dialect's rule, resolved as sqlglot does"),
     "integer_division": ("select v / 2 as h from t where v is not null",
                          "dividing integers truncates"),
     "concat_null": ("select s || 'x' as c from t", "concatenating NULL is NULL"),

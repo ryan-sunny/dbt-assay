@@ -38,9 +38,9 @@ def exe_path() -> Path:
     return toolchain.library() / ".lake" / "build" / "bin" / "assay_sql"
 
 
-def lean_parse(sql: str) -> str:
-    r = subprocess.run([str(exe_path()), "parse"], input=sql, capture_output=True, text=True,
-                       timeout=120, check=False)
+def lean_parse(sql: str, dialect: str = "duckdb") -> str:
+    r = subprocess.run([str(exe_path()), "parse", str(sqlfrag.null_rule(dialect))], input=sql,
+                       capture_output=True, text=True, timeout=120, check=False)
     return r.stdout.strip()
 
 
@@ -50,11 +50,14 @@ def _diverge(a: str, b: str, width: int = 70) -> str:
             f"lean:    …{b[max(0, i - width):i + width]}…")
 
 
-def theorem_file(name: str, sql: str, q: dict) -> str:
+def theorem_file(name: str, sql: str, q: dict, dialect: str = "duckdb") -> str:
     return ("import Sql\nopen Sql\n\n"
             "set_option maxRecDepth 200000 in\n"
+            # a model of a few hundred lines is a large term; the process timeout still bounds it
+            "set_option maxHeartbeats 4000000 in\n"
             f"/-- `{name}`: Lean's parse of the model's text is exactly the tree sqlglot read. -/\n"
-            f"theorem parse_faithful : parseCodes {sqlfrag.lean_codes(sql)} = some\n"
+            f"theorem parse_faithful : parseCodesIn {sqlfrag.null_rule(dialect)} "
+            f"{sqlfrag.lean_codes(sql)} = some\n"
             f"    {sqlfrag.l_query(q)} := by decide +kernel\n\n"
             "#print axioms parse_faithful\n")
 
@@ -89,12 +92,12 @@ def run(project, store, target_dir, *, select=None, force: bool = False, say=pri
             with deep():
                 q = sqlfrag.query(m.compiled, dialect)
                 ours = sqlfrag.s_query(q)
-                theorem = theorem_file(m.name, m.compiled, q)
+                theorem = theorem_file(m.name, m.compiled, q, dialect)
         except sqlfrag.Outside as e:
             rows.append((uid, m.checksum or "", L.UNCHECKED, (f"parse unproven: outside the "
                          f"fragment ({e})"), 0, VIA, now))
             continue
-        theirs = lean_parse(m.compiled)
+        theirs = lean_parse(m.compiled, dialect)
         if theirs.startswith("OUTSIDE"):
             rows.append((uid, m.checksum or "", L.UNCHECKED, ("parse unproven: outside Lean's "
                          f"grammar of the fragment ({theirs.split(' ', 1)[-1]})"), 0, VIA, now))

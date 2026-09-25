@@ -1,11 +1,13 @@
 /-!
 # The SQL fragment assay reads, as data
 
-The part of SQL the per-model parse proof (L4) covers: `WITH` named selects, one `SELECT` each,
-`FROM` a relation, `JOIN`s with `ON` or `USING`, `WHERE`, `GROUP BY`, `HAVING`, `QUALIFY`,
-`ORDER BY` and `LIMIT`, and expressions built from columns, literals, operators, `CASE`, `CAST`,
-`IN`, `BETWEEN`, `IS [NOT] NULL`, function calls and window calls. A model outside it is "parse
-unproven" and keeps the L2 round trip as its evidence.
+The part of SQL the per-model parse proof (L4) covers: `WITH` named selects, `UNION [ALL] [BY
+NAME]` of `SELECT [DISTINCT [ON (..)]]`s, `FROM` a relation, `JOIN`s with `ON` or `USING`, `WHERE`,
+`GROUP BY`, `HAVING`, `QUALIFY`, `ORDER BY` (with `NULLS FIRST|LAST`) and `LIMIT`, and expressions
+built from columns, literals, operators, `CASE`, `CAST`, typed literals, `IN`, `BETWEEN`,
+`IS [NOT] NULL`, `IS [NOT] DISTINCT FROM`, `[NOT] LIKE`, `INTERVAL`, `* EXCLUDE`, lambdas, `[..]`,
+function calls (with `DISTINCT`, `IGNORE NULLS`, `ORDER BY` inside, date units) and window calls.
+A model outside it is "parse unproven" and keeps the L2 round trip as its evidence.
 
 *** TEXT IS A LIST OF CODE POINTS. *** Lean's `String` is UTF-8 bytes, and the kernel evaluating a
 proof would encode and decode them for every comparison: lexing 900 characters did not finish in
@@ -40,15 +42,31 @@ mutual
     | filtered (f : Expr) (cond : Expr)
     | fn (name : Str) (distinct : Bool) (args : ExprList)
     | window (f : Expr) (part : ExprList) (order : OrderList)
+    /-- `* EXCLUDE (a, b)`: every column of the source but these. -/
+    | starExcept (qual : List Str) (cols : List Str)
+    /-- `INTERVAL '120' DAY`, `INTERVAL '3 months'`: the count as written, the unit lowercased. -/
+    | interval (count : Str) (unit : Str)
+    /-- `x -> body`, `(x, y) -> body`. -/
+    | lambda (params : List Str) (body : Expr)
+    /-- `xs[i]`, the index as written (1-based where the engine is). -/
+    | index (a : Expr) (i : Expr)
+    /-- `[a, b]`, a list literal. -/
+    | list (xs : ExprList)
+    /-- `f(x IGNORE NULLS)`, or `f(x) IGNORE NULLS`: the same call. -/
+    | ignoreNulls (f : Expr)
+    /-- An aggregate ordered inside its call: `string_agg(x, ',' ORDER BY y)`. -/
+    | fnOrdered (name : Str) (distinct : Bool) (args : ExprList) (order : OrderList)
   inductive ExprList where
     | nil
     | cons (x : Expr) (xs : ExprList)
   inductive WhenList where
     | nil
     | cons (c v : Expr) (rest : WhenList)
+  /-- Each key, descending or not, and whether NULLs come first: written, or the dialect's
+  default when not (the parser resolves it, the way sqlglot does). -/
   inductive OrderList where
     | nil
-    | cons (e : Expr) (desc : Bool) (rest : OrderList)
+    | cons (e : Expr) (desc : Bool) (nullsFirst : Bool) (rest : OrderList)
   inductive OptExpr where
     | none
     | some (e : Expr)
@@ -66,9 +84,9 @@ def WhenList.ofList : List (Expr × Expr) → WhenList
   | [] => .nil
   | (c, v) :: xs => .cons c v (ofList xs)
 
-def OrderList.ofList : List (Expr × Bool) → OrderList
+def OrderList.ofList : List (Expr × Bool × Bool) → OrderList
   | [] => .nil
-  | (e, d) :: xs => .cons e d (ofList xs)
+  | (e, d, nf) :: xs => .cons e d nf (ofList xs)
 
 def OptExpr.ofOption : Option Expr → OptExpr
   | Option.none => OptExpr.none
@@ -84,6 +102,7 @@ structure Join where
 
 structure Select where
   distinct : Bool
+  distinctOn : List Expr           -- `DISTINCT ON (a, b)`; empty otherwise
   items : List (Expr × Option Str)
   source : Option (List Str × Option Str)
   joins : List Join
@@ -91,14 +110,14 @@ structure Select where
   groupBy : List Expr
   having : Option Expr
   qualify : Option Expr
-  orderBy : List (Expr × Bool)
+  orderBy : List (Expr × Bool × Bool)
   limit : Option Str
   deriving Repr, Inhabited, DecidableEq
 
 /-- A select, or selects joined by `UNION [ALL]`, left to right. -/
 structure Compound where
   first : Select
-  rest : List (Str × Select)       -- (UNION | UNION ALL, the next select)
+  rest : List (Str × Select)       -- (UNION | UNION ALL, with ` BY NAME` when matched by name)
   deriving Repr, Inhabited, DecidableEq
 
 structure Query where

@@ -509,6 +509,18 @@ def write_project(target_dir, obls: list[Obligation]) -> dict:
         f'path = {json.dumps(str(lib))}\n\n[[lean_lib]]\nname = "Models"\n')
     (root / "lean-toolchain").write_text((lib / "lean-toolchain").read_text()
                                          if (lib / "lean-toolchain").exists() else "")
+    # *** LAKE TRUSTS ITS MANIFEST OVER THE LAKEFILE. *** A project written by an earlier assay
+    # kept `lake-manifest.json` pinned to that version's library, so after an upgrade every
+    # proof compiled against the OLD grammar and rules (found: a 0.52 project still reading
+    # library-0.51.6). A manifest naming any other library is removed; lake writes it again.
+    man = root / "lake-manifest.json"
+    if man.exists():
+        try:
+            dirs = [pk.get("dir") for pk in json.loads(man.read_text()).get("packages") or []]
+        except ValueError:
+            dirs = [None]
+        if dirs != [str(lib)]:
+            man.unlink()
     files: dict = {}
     by_model: dict = {}
     for o in obls:

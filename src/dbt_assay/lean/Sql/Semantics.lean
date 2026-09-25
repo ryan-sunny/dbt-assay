@@ -150,6 +150,9 @@ mutual
         | _ => none
       else none
     | .window _ _ _ => none
+    -- Read, not evaluated: these carry no meaning here yet, and an unknown is not a guess.
+    | .starExcept _ _ | .interval _ _ | .lambda _ _ | .index _ _ | .list _
+    | .ignoreNulls _ | .fnOrdered _ _ _ _ => none
   partial def evalList (r : Row) : ExprList → List V
     | .nil => []
     | .cons x xs => eval r x :: evalList r xs
@@ -167,9 +170,9 @@ def ExprList.toList : ExprList → List Expr
   | .nil => []
   | .cons x xs => x :: toList xs
 
-def OrderList.toList : OrderList → List (Expr × Bool)
+def OrderList.toList : OrderList → List (Expr × Bool × Bool)
   | .nil => []
-  | .cons e d r => (e, d) :: toList r
+  | .cons e d nf r => (e, d, nf) :: toList r
 
 /-- Is this expression (or anything in it) an aggregate call? -/
 partial def isAgg : Expr → Bool
@@ -221,22 +224,22 @@ partial def evalG (g : Tbl) : Expr → V
     else match g.head? with | some r => eval r e | none => none
   | e => match g.head? with | some r => eval r e | none => none
 
-/-- NULLs are larger than every value. -/
-def keyLe (ks : List (V × Bool)) (ks' : List (V × Bool)) : Bool :=
+/-- Each key's values ascending or descending; NULLs first or last as the key says, whichever
+way the values run. -/
+def keyLe (ks : List (V × Bool × Bool)) (ks' : List (V × Bool × Bool)) : Bool :=
   match ks, ks' with
   | [], [] => true
-  | (a, d) :: r, (b, _) :: r' =>
+  | (a, d, nf) :: r, (b, _, _) :: r' =>
     let o : Ordering := match a, b with
       | none, none => .eq
-      | none, some _ => .gt
-      | some _, none => .lt
-      | some x, some y => (cmpV x y).getD .eq
-    let o := if d then o.swap else o
+      | none, some _ => if nf then .lt else .gt
+      | some _, none => if nf then .gt else .lt
+      | some x, some y => let c := (cmpV x y).getD .eq; if d then c.swap else c
     if o == .lt then true else if o == .gt then false else keyLe r r'
   | _, _ => true
 
 /-- `qualify row_number() over (partition by p order by o) = 1`: the first row of each partition. -/
-def pickFirst (part : List Expr) (ord : List (Expr × Bool)) (t : Tbl) : Tbl :=
+def pickFirst (part : List Expr) (ord : List (Expr × Bool × Bool)) (t : Tbl) : Tbl :=
   let keyOf := fun (r : Row) => part.map (eval r)
   let parts := dedup' (t.map keyOf)
   parts.filterMap fun k =>
@@ -244,8 +247,8 @@ def pickFirst (part : List Expr) (ord : List (Expr × Bool)) (t : Tbl) : Tbl :=
     let first := g.foldl (fun (acc : Option Row) r => match acc with
       | none => some r
       | some b =>
-        let kr := ord.map (fun (e, d) => (eval r e, d))
-        let kb := ord.map (fun (e, d) => (eval b e, d))
+        let kr := ord.map (fun (e, d, nf) => (eval r e, d, nf))
+        let kb := ord.map (fun (e, d, nf) => (eval b e, d, nf))
         if keyLe kr kb && !keyLe kb kr then some r else some b) none
     first
 where
@@ -299,6 +302,8 @@ def evalSelect (env : List (Str × Tbl)) (s : Select) : Tbl :=
     | some (.bin _ (.window (.fn _ _ _) part ord) (.num _)) =>
       pickFirst (ExprList.toList part) (OrderList.toList ord) kept
     | _ => kept
+  -- `DISTINCT ON (k)`: the first row of each k, in `ORDER BY` order.
+  let picked := if s.distinctOn.isEmpty then picked else pickFirst s.distinctOn s.orderBy picked
   let grouped := !s.groupBy.isEmpty || s.items.any (fun (e, _) => isAgg e)
   let rows :=
     if grouped then
@@ -312,8 +317,11 @@ def evalSelect (env : List (Str × Tbl)) (s : Select) : Tbl :=
     else picked.map (fun r => project s.items (eval r) r)
   if s.distinct then rows.foldl (fun acc x => if acc.contains x then acc else acc ++ [x]) [] else rows
 
+def dedupK (ks : List (Str × Str)) : List (Str × Str) :=
+  ks.foldl (fun acc k => if acc.any (fun a => a.2 == k.2) then acc else acc ++ [k]) []
+
 /-- `UNION ALL` keeps every row; `UNION` one of each. The result's columns are the first
-select's, matched by position. -/
+select's, matched by position; with `BY NAME`, every name either side has, matched by name. -/
 def evalCompound (env : List (Str × Tbl)) (c : Compound) : Tbl :=
   c.rest.foldl (fun acc (op, s) =>
     let more := evalSelect env s
@@ -321,8 +329,17 @@ def evalCompound (env : List (Str × Tbl)) (c : Compound) : Tbl :=
     let rekey := fun (r : Row) => match keys with
       | some ks => ks.zip (r.map Prod.snd)
       | none => r
-    let rel := acc.map rekey ++ more.map rekey
-    if op == [85, 78, 73, 79, 78] then rel.foldl (fun a x => if a.contains x then a else a ++ [x]) [] else rel)
+    -- `BY NAME`: columns matched by name, a column one side lacks is NULL on that side.
+    let byName := op == [85, 78, 73, 79, 78, 32, 66, 89, 32, 78, 65, 77, 69] || op == [85, 78, 73, 79, 78, 32, 65, 76, 76, 32, 66, 89, 32, 78, 65, 77, 69]
+    let names := dedupK ((acc.head?.map (·.map Prod.fst)).getD [] ++
+                         (more.head?.map (·.map Prod.fst)).getD [])
+    let byNameRow := fun (r : Row) => names.map (fun k =>
+      (k, ((r.find? (fun (k', _) => k'.2 == k.2)).map Prod.snd).getD none))
+    let rel := if byName then acc.map byNameRow ++ more.map byNameRow
+               else acc.map rekey ++ more.map rekey
+    if op == [85, 78, 73, 79, 78] || op == [85, 78, 73, 79, 78, 32, 66, 89, 32, 78, 65, 77, 69] then
+      rel.foldl (fun a x => if a.contains x then a else a ++ [x]) []
+    else rel)
     (evalSelect env c.first)
 
 /-- What a query returns on these tables. -/

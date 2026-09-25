@@ -371,3 +371,27 @@ def test_a_refutation_is_lean_checked_and_a_file_that_never_loaded_is_not():
     got = prove.with_guarantees(rows, None, None)
     assert got[0]["lean_checked"] and got[0]["status"] == "not_proven"
     assert not got[1]["lean_checked"]
+
+
+def test_an_upgrade_does_not_prove_against_the_old_library(tmp_path, monkeypatch):
+    """*** LAKE TRUSTS ITS MANIFEST OVER THE LAKEFILE. *** (found on the laptop: a project
+    written by 0.51.6 kept compiling 0.52's proofs against library-0.51.6.)"""
+    import json
+
+    from dbt_assay import prove, toolchain
+    lib = tmp_path / "cache" / "library-new"
+    lib.mkdir(parents=True)
+    monkeypatch.setattr(toolchain, "library", lambda *a, **k: lib)
+    target = tmp_path / "target"
+    root = prove.workdir(target)
+    root.mkdir(parents=True, exist_ok=True)
+    stale = {"packages": [{"type": "path", "name": "assay",
+                           "dir": str(tmp_path / "cache" / "library-old")}]}
+    (root / "lake-manifest.json").write_text(json.dumps(stale))
+    prove.write_project(target, [])
+    assert not (root / "lake-manifest.json").exists()
+    # a manifest already naming this library is left alone
+    fresh = {"packages": [{"type": "path", "name": "assay", "dir": str(lib)}]}
+    (root / "lake-manifest.json").write_text(json.dumps(fresh))
+    prove.write_project(target, [])
+    assert (root / "lake-manifest.json").exists()

@@ -81,8 +81,9 @@ def test_the_suite_agrees_on_what_it_should_and_names_what_duckdb_does_different
     rep = conformance.run(s, n_random=150, seed=3)
     bad = {k for k, v in rep["constructs"].items() if v["status"] != "conforms"}
     assert {v["status"] for v in rep["constructs"].values()} == {"conforms", "differs"}
-    # DuckDB's `/` on integers returns a double, and it sorts NULLs last under DESC
-    assert bad == {"integer_division", "row_number_desc_nulls"}, rep["constructs"]
+    # DuckDB's `/` on integers returns a double. (Its NULLs-last under DESC used to differ too;
+    # the parser now resolves each key's NULL position by the dialect's rule, as sqlglot does.)
+    assert bad == {"integer_division"}, rep["constructs"]
     assert rep["random"]["differ"] == 0
     assert conformance.status_of(s, "left_join_null_key", "duckdb")[0] == "conforms"
     assert conformance.status_of(s, "left_join_null_key", "snowflake")[0] == "unchecked"
@@ -104,3 +105,37 @@ def test_the_warehouse_statement_carries_its_tables_as_ctes():
                                     "select k from t")
     assert "t AS (SELECT 1 AS k, 'a''b' AS s UNION ALL SELECT NULL AS k, NULL AS s)" in sql
     assert sql.endswith("SELECT * FROM __assay_q")
+
+
+@needs_lean
+def test_every_construct_added_for_coverage_reads_the_same_on_both_sides(tmp_path):
+    """113 of 328 models were proven; the constructs below took it to 244. Each must read the
+    same in sqlglot's tree and Lean's parse, and the kernel must check it, or a construct was
+    added on one side only."""
+    from dbt_assay import parseproof
+    toolchain.build_library(say=lambda *_: None)
+    sql = ("with a as (select distinct on (k) k, * exclude (junk), "
+           "date_diff('DAY', d, current_date) as age, date_trunc('Week', d) as wk, "
+           "extract(year from d) as y, d - interval '3 months' as back, "
+           "any_value(x) as anyx, first(x ignore nulls) as fx, "
+           "string_agg(distinct s, ',' order by s desc nulls first) as ss, "
+           "list_transform(xs, v -> v + 1) as ys, xs[1] as x1, [1, 2] as two, "
+           "left(s, 4) as l4, epoch_ms(ms) as t, regexp_extract(s, 'a(b)') as rx, "
+           "timestamp '2020-01-01' as ts0 from t "
+           "where s not like 'x%' and k is distinct from j "
+           "order by k, d desc nulls last) "
+           "select * from a union all by name select k from b")
+    q = sqlfrag.query(sql, "duckdb")
+    assert parseproof.lean_parse(sql, "duckdb") == sqlfrag.s_query(q)
+    # where NULLs sort when an ORDER BY does not say is the dialect's: Snowflake's are large
+    # (first under DESC), DuckDB's always last, and both sides resolve it the same way
+    plain = "select k from t order by k desc, j"
+    for dialect, first in (("duckdb", "nl"), ("snowflake", "nf")):
+        got = parseproof.lean_parse(plain, dialect)
+        assert got == sqlfrag.s_query(sqlfrag.query(plain, dialect)), dialect
+        assert f'((col [] "k") desc {first})' in got, got
+    f = tmp_path / "P.lean"
+    f.write_text(parseproof.theorem_file("m", sql, q))
+    r = subprocess.run([toolchain.lake_for_build(), "env", "lean", str(f)],
+                       cwd=toolchain.library(), capture_output=True, text=True, check=False)
+    assert r.returncode == 0 and "error" not in r.stdout, r.stdout

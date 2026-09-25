@@ -26,14 +26,43 @@ _TYPES = {"integer": "int", "int4": "int", "signed": "int", "int8": "bigint", "l
           "int2": "smallint", "float8": "double", "double_precision": "double", "float4": "float",
           "real": "float", "numeric": "decimal", "number": "decimal", "bool": "boolean",
           "logical": "boolean", "string": "varchar", "text": "varchar",
-          "char_varying": "varchar", "datetime": "timestamp"}
+          "char_varying": "varchar", "datetime": "timestamp", "timestampntz": "timestamp"}
 
 # One name per function the engines spell several ways, exactly as `Sql.normFn` in Lean.
 _FNS = {"substr": "substring", "ifnull": "coalesce", "nvl": "coalesce", "len": "length",
         "char_length": "length", "character_length": "length", "lcase": "lower",
         "ucase": "upper", "pow": "power", "ceiling": "ceil", "day_of_week": "dayofweek",
         "stddev_samp": "stddev", "var_samp": "variance", "array_agg": "list",
-        "string_agg": "group_concat", "listagg": "group_concat"}
+        "string_agg": "group_concat", "listagg": "group_concat", "datediff": "date_diff",
+        "datepart": "date_part", "list_contains": "array_contains", "string_split": "str_split"}
+
+# A function whose first argument is a unit string: the unit is kept lowercased, as `Sql.lowerUnit`.
+_UNIT_FNS = ("date_diff", "date_trunc", "date_part")
+
+
+def null_rule(dialect: str) -> int:
+    """The dialect's NULL order as `Sql.defaultNullsFirst` numbers it: 0 NULLs small, 1 large,
+    2 always last. sqlglot resolves an ORDER BY key's NULL position with it; so does Lean."""
+    try:
+        from sqlglot.dialects.dialect import Dialect
+        rule = Dialect.get_or_raise(dialect or "duckdb").NULL_ORDERING
+    except Exception:                                            # noqa: BLE001
+        return 2
+    return {"nulls_are_small": 0, "nulls_are_large": 1}.get(rule, 2)
+
+
+def _index_offset() -> int:
+    try:
+        from sqlglot.dialects.dialect import Dialect
+        return int(Dialect.get_or_raise(_DIALECT[0]).INDEX_OFFSET)
+    except Exception:                                            # noqa: BLE001
+        return 0
+
+
+def _lower_unit(name: str, args: list) -> list:
+    if name in _UNIT_FNS and args and args[0][0] == "str":
+        return [("str", args[0][1].lower()), *args[1:]]
+    return args
 
 _BIN = {exp.EQ: "=", exp.NEQ: "<>", exp.LT: "<", exp.LTE: "<=", exp.GT: ">", exp.GTE: ">=",
         exp.Add: "+", exp.Sub: "-", exp.Mul: "*", exp.Div: "/", exp.Mod: "%", exp.DPipe: "||",
@@ -68,13 +97,58 @@ def expr(e) -> tuple:
     """A node of the fragment's Expr, as a tuple."""
     while isinstance(e, exp.Paren):
         e = e.this
+    if e.args.get("negate") and not isinstance(e, (exp.Like, exp.ILike)):
+        raise Outside(f"a negated {type(e).__name__}")
+    if isinstance(e, (exp.Like, exp.ILike)) and e.args.get("negate"):
+        op = "LIKE" if isinstance(e, exp.Like) else "ILIKE"
+        return ("un", "NOT", ("bin", op, expr(e.this), expr(e.expression)))
+    if isinstance(e, exp.NullSafeNEQ):
+        return ("bin", "IS DISTINCT FROM", expr(e.this), expr(e.expression))
+    if isinstance(e, exp.NullSafeEQ):
+        return ("bin", "IS NOT DISTINCT FROM", expr(e.this), expr(e.expression))
+    if isinstance(e, exp.Identifier):
+        return ("col", [], _ident(e))          # a lambda's parameter, read in its body
+    if isinstance(e, exp.Interval):
+        v, u = e.this, e.args.get("unit")
+        if not isinstance(v, exp.Literal) or u is None:
+            raise Outside("an INTERVAL that is not a count and a unit")
+        return ("interval", str(v.this), str(u.name).lower())
+    if isinstance(e, exp.Lambda):
+        return ("lambda", [_ident(p) for p in e.expressions], expr(e.this))
+    if isinstance(e, exp.Bracket):
+        if len(e.expressions) != 1 or isinstance(e.expressions[0], exp.Slice):
+            raise Outside("a slice or a multi-index")
+        return ("index", expr(e.this), _bracket_index(e.expressions[0]))
+    if isinstance(e, exp.Array):
+        return ("list", [expr(x) for x in e.expressions])
+    if isinstance(e, exp.IgnoreNulls):
+        # *** DuckDB's any_value IS "ignore nulls"; sqlglot writes the meaning into the tree. ***
+        # `any_value(x)` reads as IgnoreNulls(AnyValue(x)) in DuckDB, where there is no other
+        # any_value. The fragment keeps the call as written; text that says IGNORE NULLS
+        # explicitly then reads differently and stays unproven, never wrongly proven.
+        if _DIALECT[0] == "duckdb" and isinstance(e.this, exp.AnyValue):
+            return expr(e.this)
+        return ("ignorenulls", expr(e.this))
+    if isinstance(e, exp.DateDiff):
+        u = e.args.get("unit")
+        if u is None:
+            raise Outside("DATE_DIFF without a unit")
+        return ("fn", "date_diff", False,
+                [("str", str(u.name).lower()), expr(e.expression), expr(e.this)])
+    if isinstance(e, (exp.TimestampTrunc, exp.DateTrunc)):
+        u = e.args.get("unit")
+        if u is None:
+            raise Outside("DATE_TRUNC without a unit")
+        return ("fn", "date_trunc", False, [("str", str(u.name).lower()), expr(e.this)])
+    if isinstance(e, exp.Extract):
+        return ("fn", "extract", False, [("str", str(e.this.name).lower()), expr(e.expression)])
+    if isinstance(e, exp.Star):
+        return _star(e, [])
     if isinstance(e, exp.Column):
         if isinstance(e.this, exp.Star):
-            return ("star", [_ident(p) for p in e.parts[:-1]])
+            return _star(e.this, [_ident(p) for p in e.parts[:-1]])
         qual = [_ident(e.args.get(k)) for k in ("catalog", "db", "table") if e.args.get(k)]
         return ("col", qual, _ident(e.this))
-    if isinstance(e, exp.Star):
-        return ("star", [])
     if isinstance(e, exp.Literal):
         return ("str", e.this) if e.is_string else ("num", e.this)
     if isinstance(e, exp.Null):
@@ -137,14 +211,27 @@ def expr(e) -> tuple:
         return ("fn", "count", False, [expr(t)] if t is not None else [])
     if isinstance(e, exp.Anonymous):
         name = str(e.name).lower()
-        return ("fn", _FNS.get(name, name), False, [expr(a) for a in e.expressions])
+        name = _FNS.get(name, name)
+        return ("fn", name, False, _lower_unit(name, [expr(a) for a in e.expressions]))
     if isinstance(e, exp.Func):
-        if isinstance(e.this, exp.Distinct):
-            raise Outside("DISTINCT inside a function")
+        # `f(DISTINCT x ORDER BY y, sep)`: sqlglot puts the DISTINCT and the ORDER BY on the first
+        # argument; the text puts them around the whole list.
+        first, order, distinct = e.this, None, False
+        if isinstance(first, exp.Order):
+            order = [_ordered(o) for o in first.expressions]
+            first = first.this
+        if isinstance(first, exp.Distinct):
+            distinct = True
         args = []
         for k in e.arg_types:
             v = e.args.get(k)
             if v is None or isinstance(v, (bool, str)):
+                continue
+            if k == "this" and v is e.this:
+                if isinstance(first, exp.Distinct):
+                    args += [expr(x) for x in first.expressions]
+                else:
+                    args.append(expr(first))
                 continue
             args += [expr(x) for x in v] if isinstance(v, list) else [expr(v)]
         # sqlglot names a function by its own class (`regexp_like`); the text names it as the
@@ -156,8 +243,72 @@ def expr(e) -> tuple:
                 name = head
         except Exception:                                        # noqa: BLE001, S110
             pass
-        return ("fn", _FNS.get(name, name), False, args)
+        name = _FNS.get(name, name)
+        # *** A DEFAULT sqlglot FILLS IN IS NOT IN THE TEXT. *** `regexp_extract(x, p)` gains
+        # group 0 and `epoch_ms(x)` a scale of 3; sqlglot's own printer leaves them out again, so
+        # the printed call says how many arguments the text wrote.
+        n = _printed_arity(e)
+        if n is not None and n < len(args):
+            args = args[:n]
+        args = _lower_unit(name, args)
+        if order:
+            return ("fnord", name, distinct, args, order)
+        return ("fn", name, distinct, args)
     raise Outside(type(e).__name__)
+
+
+def _printed_arity(e) -> int | None:
+    """How many arguments sqlglot prints for this call in the dialect, or None."""
+    try:
+        text = e.sql(dialect=_DIALECT[0])
+    except Exception:                                            # noqa: BLE001
+        return None
+    i = text.find("(")
+    if i < 0:
+        return 0
+    depth, n, quote, seen = 0, 0, None, False
+    for ch in text[i:]:
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "'\"":
+            quote, seen = ch, True
+            continue
+        if ch == "(":
+            depth += 1
+            continue
+        if ch == ")":
+            depth -= 1
+            if depth == 0:
+                break
+            continue
+        if depth == 1 and ch == ",":
+            n += 1
+        elif depth >= 1 and not ch.isspace():
+            seen = True
+    return n + 1 if seen else 0
+
+
+def _star(star, qual: list) -> tuple:
+    if star.args.get("replace") or star.args.get("rename"):
+        raise Outside("* REPLACE / RENAME")
+    ex = star.args.get("except_") or star.args.get("except")
+    if ex:
+        return ("starex", qual, [_ident(c.this if isinstance(c, exp.Column) else c)
+                                 for c in ex])
+    return ("star", qual)
+
+
+def _bracket_index(i) -> tuple:
+    """The index as the text writes it: sqlglot stores a literal index shifted to 0-based."""
+    off = _index_offset()
+    if isinstance(i, exp.Literal) and not i.is_string:
+        return ("num", str(int(i.this) + off))
+    if isinstance(i, exp.Neg) and isinstance(i.this, exp.Literal) and not i.this.is_string:
+        v = -int(i.this.this) + off
+        return ("un", "-", ("num", str(-v))) if v < 0 else ("num", str(v))
+    return expr(i)
 
 
 def _in(e, neg: bool) -> tuple:
@@ -167,9 +318,15 @@ def _in(e, neg: bool) -> tuple:
 
 
 def _ordered(x) -> tuple:
+    """(expr, desc, nulls first): the NULL position as sqlglot resolved it for the dialect."""
+    rule = null_rule(_DIALECT[0])
     if not isinstance(x, exp.Ordered):
-        return (expr(x), False)
-    return (expr(x.this), bool(x.args.get("desc")))
+        return (expr(x), False, rule == 0)
+    desc = bool(x.args.get("desc"))
+    nf = x.args.get("nulls_first")
+    if nf is None:
+        nf = (not desc) if rule == 0 else desc if rule == 1 else False
+    return (expr(x.this), desc, bool(nf))
 
 
 def _table(t) -> tuple:
@@ -191,8 +348,10 @@ def select(s, top: bool = False) -> dict:
         if s.args.get(bad):
             raise Outside(bad)
     d = s.args.get("distinct")
+    distinct_on = []
     if d is not None and d.args.get("on") is not None:
-        raise Outside("DISTINCT ON")
+        o = d.args["on"]
+        distinct_on = [expr(x) for x in (o.expressions if isinstance(o, exp.Tuple) else [o])]
     items = []
     for x in s.expressions:
         if isinstance(x, exp.Alias):
@@ -228,7 +387,9 @@ def select(s, top: bool = False) -> dict:
         if not isinstance(v, exp.Literal) or v.is_string:
             raise Outside("a LIMIT that is not a number")
         limit = v.this
-    return {"distinct": d is not None, "items": items, "source": source, "joins": joins,
+    return {"distinct": d is not None and not distinct_on, "on": distinct_on, "items": items,
+            "source": source,
+            "joins": joins,
             "where": expr(w.this) if w is not None else None,
             "group": [expr(x) for x in g.expressions] if g is not None else [],
             "having": expr(h.this) if h is not None else None,
@@ -243,8 +404,10 @@ def compound(t, top: bool = False) -> dict:
     while isinstance(t, exp.Union):
         if t.args.get("order") or t.args.get("limit") or t.args.get("offset"):
             raise Outside("ORDER BY or LIMIT on a UNION")
-        rest.insert(0, ("UNION" if t.args.get("distinct") else "UNION ALL",
-                        select(t.expression)))
+        op = "UNION" if t.args.get("distinct") else "UNION ALL"
+        if t.args.get("by_name"):
+            op += " BY NAME"
+        rest.insert(0, (op, select(t.expression)))
         t = t.this
     if isinstance(t, (exp.Intersect, exp.Except)):
         raise Outside(type(t).__name__)
@@ -326,9 +489,31 @@ def s_expr(e) -> str:
     if k == "fn":
         return f"(fn {_q(e[1])}{' distinct ' if e[2] else ' '}{_blist([s_expr(a) for a in e[3]])})"
     if k == "window":
-        order = _blist([f"({s_expr(x)} {'desc' if d else 'asc'})" for x, d in e[3]])
-        return f"(window {s_expr(e[1])} {_blist([s_expr(p) for p in e[2]])} {order})"
+        return f"(window {s_expr(e[1])} {_blist([s_expr(p) for p in e[2]])} {_s_order(e[3])})"
+    if k == "starex":
+        return f"(starex {_qs(e[1])} {_qs(e[2])})"
+    if k == "interval":
+        return f"(interval {_q(e[1])} {_q(e[2])})"
+    if k == "lambda":
+        return f"(lambda {_qs(e[1])} {s_expr(e[2])})"
+    if k == "index":
+        return f"(index {s_expr(e[1])} {s_expr(e[2])})"
+    if k == "list":
+        return f"(list {_blist([s_expr(x) for x in e[1]])})"
+    if k == "ignorenulls":
+        return f"(ignorenulls {s_expr(e[1])})"
+    if k == "fnord":
+        return (f"(fnord {_q(e[1])}{' distinct ' if e[2] else ' '}"
+                f"{_blist([s_expr(a) for a in e[3]])} {_s_order(e[4])})")
     raise ValueError(k)
+
+
+def _s_key(x, d, nf) -> str:
+    return f"({s_expr(x)} {'desc' if d else 'asc'} {'nf' if nf else 'nl'})"
+
+
+def _s_order(order) -> str:
+    return _blist([_s_key(x, d, nf) for x, d, nf in order])
 
 
 def _opt(e) -> str:
@@ -344,8 +529,9 @@ def s_select(s: dict) -> str:
     joins = " ".join(f"(join {_q(j['kind'])} {_qs(j['table'])} "
                      f"{_q(j['alias']) if j['alias'] is not None else '(none)'} "
                      f"{_opt(j['on'])} {_qs(j['using'])})" for j in s["joins"])
-    order = " ".join(f"({s_expr(e)} {'desc' if d else 'asc'})" for e, d in s["order"])
-    return (f"(select {'distinct ' if s['distinct'] else ''}[{items}] {src} [{joins}] "
+    order = " ".join(_s_key(e, d, nf) for e, d, nf in s["order"])
+    on = f"on [{' '.join(s_expr(x) for x in s['on'])}] " if s.get("on") else ""
+    return (f"(select {'distinct ' if s['distinct'] else ''}{on}[{items}] {src} [{joins}] "
             f"{_opt(s['where'])} [{' '.join(s_expr(g) for g in s['group'])}] "
             f"{_opt(s['having'])} {_opt(s['qualify'])} [{order}] "
             f"{_q(s['limit']) if s['limit'] is not None else '(none)'})")
@@ -419,10 +605,32 @@ def l_expr(e) -> str:
         return (f"(Expr.fn {_ls(e[1])} {'true' if e[2] else 'false'} "
                 f"(ExprList.ofList [{', '.join(l_expr(a) for a in e[3])}]))")
     if k == "window":
-        order = ", ".join(f"({l_expr(x)}, {'true' if d else 'false'})" for x, d in e[3])
         return (f"(Expr.window {l_expr(e[1])} (ExprList.ofList [{', '.join(l_expr(p) for p in e[2])}])"
-                f" (OrderList.ofList [{order}]))")
+                f" {_l_order(e[3])})")
+    if k == "starex":
+        return f"(Expr.starExcept {_lss(e[1])} {_lss(e[2])})"
+    if k == "interval":
+        return f"(Expr.interval {_ls(e[1])} {_ls(e[2])})"
+    if k == "lambda":
+        return f"(Expr.lambda {_lss(e[1])} {l_expr(e[2])})"
+    if k == "index":
+        return f"(Expr.index {l_expr(e[1])} {l_expr(e[2])})"
+    if k == "list":
+        return f"(Expr.list (ExprList.ofList [{', '.join(l_expr(x) for x in e[1])}]))"
+    if k == "ignorenulls":
+        return f"(Expr.ignoreNulls {l_expr(e[1])})"
+    if k == "fnord":
+        return (f"(Expr.fnOrdered {_ls(e[1])} {'true' if e[2] else 'false'} "
+                f"(ExprList.ofList [{', '.join(l_expr(a) for a in e[3])}]) {_l_order(e[4])})")
     raise ValueError(k)
+
+
+def _l_triple(x, d, nf) -> str:
+    return f"({l_expr(x)}, {'true' if d else 'false'}, {'true' if nf else 'false'})"
+
+
+def _l_order(order) -> str:
+    return f"(OrderList.ofList [{', '.join(_l_triple(x, d, nf) for x, d, nf in order)}])"
 
 
 def l_select(s: dict) -> str:
@@ -433,8 +641,10 @@ def l_select(s: dict) -> str:
         f"{{ kind := {_ls(j['kind'])}, table := {_lss(j['table'])}, "
         f"alias := {_lopt(j['alias'], _ls)}, on := {_lopt(j['on'], l_expr)}, "
         f"usingCols := {_lss(j['using'])} }}" for j in s["joins"])
-    order = ", ".join(f"({l_expr(e)}, {'true' if d else 'false'})" for e, d in s["order"])
-    return ("{ distinct := " + ("true" if s["distinct"] else "false") + f", items := [{items}], "
+    order = ", ".join(_l_triple(e, d, nf) for e, d, nf in s["order"])
+    on = ", ".join(l_expr(x) for x in s.get("on") or [])
+    return ("{ distinct := " + ("true" if s["distinct"] else "false")
+            + f", distinctOn := [{on}], items := [{items}], "
             f"source := {src}, joins := [{joins}], where_ := {_lopt(s['where'], l_expr)}, "
             f"groupBy := [{', '.join(l_expr(g) for g in s['group'])}], "
             f"having := {_lopt(s['having'], l_expr)}, qualify := {_lopt(s['qualify'], l_expr)}, "

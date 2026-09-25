@@ -56,7 +56,7 @@ def normType (t : Str) : Str :=
   | [110, 117, 109, 101, 114, 105, 99] | [110, 117, 109, 98, 101, 114] => [100, 101, 99, 105, 109, 97, 108]
   | [98, 111, 111, 108] | [108, 111, 103, 105, 99, 97, 108] => [98, 111, 111, 108, 101, 97, 110]
   | [115, 116, 114, 105, 110, 103] | [116, 101, 120, 116] | [99, 104, 97, 114, 95, 118, 97, 114, 121, 105, 110, 103] => [118, 97, 114, 99, 104, 97, 114]
-  | [100, 97, 116, 101, 116, 105, 109, 101] => [116, 105, 109, 101, 115, 116, 97, 109, 112]
+  | [100, 97, 116, 101, 116, 105, 109, 101] | [116, 105, 109, 101, 115, 116, 97, 109, 112, 110, 116, 122] => [116, 105, 109, 101, 115, 116, 97, 109, 112]
   | _ => t
 
 /-- One name for each function the engines spell several ways. -/
@@ -74,7 +74,31 @@ def normFn (f : Str) : Str :=
   | [118, 97, 114, 95, 115, 97, 109, 112] => [118, 97, 114, 105, 97, 110, 99, 101]
   | [97, 114, 114, 97, 121, 95, 97, 103, 103] => [108, 105, 115, 116]
   | [115, 116, 114, 105, 110, 103, 95, 97, 103, 103] | [108, 105, 115, 116, 97, 103, 103] => [103, 114, 111, 117, 112, 95, 99, 111, 110, 99, 97, 116]
+  | [100, 97, 116, 101, 100, 105, 102, 102] => [100, 97, 116, 101, 95, 100, 105, 102, 102]
+  | [100, 97, 116, 101, 112, 97, 114, 116] => [100, 97, 116, 101, 95, 112, 97, 114, 116]
+  | [108, 105, 115, 116, 95, 99, 111, 110, 116, 97, 105, 110, 115] => [97, 114, 114, 97, 121, 95, 99, 111, 110, 116, 97, 105, 110, 115]
+  | [115, 116, 114, 105, 110, 103, 95, 115, 112, 108, 105, 116] => [115, 116, 114, 95, 115, 112, 108, 105, 116]
   | _ => f
+
+/-- Functions whose first argument is a date or time unit, written as a string: the unit is
+compared case-insensitively, as the engines compare it, so it is kept lowercased. -/
+def unitFns : List Str := [[100, 97, 116, 101, 95, 100, 105, 102, 102], [100, 97, 116, 101, 95, 116, 114, 117, 110, 99], [100, 97, 116, 101, 95, 112, 97, 114, 116]]
+
+def lowerUnit (name : Str) : List Expr → List Expr
+  | Expr.str u :: rest => if memS name unitFns then Expr.str (lowerS u) :: rest else Expr.str u :: rest
+  | xs => xs
+
+/-- Where NULLs sort when an `ORDER BY` key does not say: the dialect's rule, as sqlglot applies
+it. `nr` 0: NULLs are small (first ascending); 1: NULLs are large (first descending); 2: NULLs
+are always last (DuckDB). -/
+def defaultNullsFirst (nr : Nat) (desc : Bool) : Bool :=
+  if nr == 0 then !desc else if nr == 1 then desc else false
+
+/-- Identifiers that name a function when written bare, as the engines read them. -/
+def bareFns : List Str := [[99, 117, 114, 114, 101, 110, 116, 95, 100, 97, 116, 101], [99, 117, 114, 114, 101, 110, 116, 95, 116, 105, 109, 101, 115, 116, 97, 109, 112], [99, 117, 114, 114, 101, 110, 116, 95, 116, 105, 109, 101]]
+
+/-- Type names that make a typed literal of the string after them: `timestamp '2020-01-01'`. -/
+def literalTypes : List Str := [[100, 97, 116, 101], [116, 105, 109, 101, 115, 116, 97, 109, 112], [116, 105, 109, 101], [116, 105, 109, 101, 115, 116, 97, 109, 112, 116, 122]]
 
 /-- A type name: `decimal(18, 2)`, `varchar`, `timestamp`. -/
 def typeName : P Str
@@ -90,6 +114,15 @@ def cmpOp : List Tok → Option Str
   | Tok.kw [76, 73, 75, 69] :: _ => some [76, 73, 75, 69]
   | Tok.kw [73, 76, 73, 75, 69] :: _ => some [73, 76, 73, 75, 69]
   | _ => none
+
+/-- `a, b, c` as names. -/
+def pNames : P (List Str)
+  | Tok.ident a :: Tok.sym [44] :: ts => (pNames ts).map (fun (xs, ts) => (a :: xs, ts))
+  | Tok.ident a :: ts => some ([a], ts)
+  | _ => none
+
+section
+variable (nr : Nat)
 
 mutual
   def pExpr : Nat → P Expr
@@ -143,12 +176,15 @@ mutual
       | none =>
         if isKw [73, 83] ts then
           let ts := ts.drop 1
-          if isKw [78, 79, 84] ts then do
-            let ((), ts) ← expectKw [78, 85, 76, 76] (ts.drop 1)
-            some (Expr.isNull a true, ts)
+          let neg := isKw [78, 79, 84] ts
+          let ts := if neg then ts.drop 1 else ts
+          if isKw [68, 73, 83, 84, 73, 78, 67, 84] ts then do
+            let ((), ts) ← expectKw [70, 82, 79, 77] (ts.drop 1)
+            let (b, ts) ← pAdd n ts
+            some (Expr.bin (if neg then [73, 83, 32, 78, 79, 84, 32, 68, 73, 83, 84, 73, 78, 67, 84, 32, 70, 82, 79, 77] else [73, 83, 32, 68, 73, 83, 84, 73, 78, 67, 84, 32, 70, 82, 79, 77]) a b, ts)
           else do
             let ((), ts) ← expectKw [78, 85, 76, 76] ts
-            some (Expr.isNull a false, ts)
+            some (Expr.isNull a neg, ts)
         else
           let neg := isKw [78, 79, 84] ts
           let ts' := if neg then ts.drop 1 else ts
@@ -162,6 +198,10 @@ mutual
             let ((), ts) ← expectKw [65, 78, 68] ts
             let (hi, ts) ← pAdd n ts
             some (Expr.between a lo hi neg, ts)
+          else if neg && (isKw [76, 73, 75, 69] ts' || isKw [73, 76, 73, 75, 69] ts') then do
+            let op := if isKw [76, 73, 75, 69] ts' then [76, 73, 75, 69] else [73, 76, 73, 75, 69]
+            let (b, ts) ← pAdd n (ts'.drop 1)
+            some (Expr.un [78, 79, 84] (Expr.bin op a b), ts)
           else if neg then none
           else some (a, ts)
 
@@ -215,6 +255,10 @@ mutual
       if isSym [58, 58] ts then do
         let (t, ts) ← typeName (ts.drop 1)
         pCasts n (Expr.cast a t) ts
+      else if isSym [91] ts then do
+        let (i, ts) ← pExpr n (ts.drop 1)
+        let ((), ts) ← expectSym [93] ts
+        pCasts n (Expr.index a i) ts
       else some (a, ts)
 
   def pList : Nat → P (List Expr)
@@ -226,16 +270,20 @@ mutual
         some (a :: rest, ts)
       else some ([a], ts)
 
-  def pOrderList : Nat → P (List (Expr × Bool))
+  def pOrderList : Nat → P (List (Expr × Bool × Bool))
     | 0, _ => none
     | n + 1, ts => do
       let (a, ts) ← pExpr n ts
       let (desc, ts) := if isKw [68, 69, 83, 67] ts then (true, ts.drop 1)
                         else if isKw [65, 83, 67] ts then (false, ts.drop 1) else (false, ts)
+      let (nf, ts) := match ts with
+        | Tok.ident [110, 117, 108, 108, 115] :: Tok.ident [102, 105, 114, 115, 116] :: ts => (true, ts)
+        | Tok.ident [110, 117, 108, 108, 115] :: Tok.ident [108, 97, 115, 116] :: ts => (false, ts)
+        | _ => (defaultNullsFirst nr desc, ts)
       if isSym [44] ts then do
         let (rest, ts) ← pOrderList n (ts.drop 1)
-        some ((a, desc) :: rest, ts)
-      else some ([(a, desc)], ts)
+        some ((a, desc, nf) :: rest, ts)
+      else some ([(a, desc, nf)], ts)
 
   def pWhens : Nat → P (List (Expr × Expr))
     | 0, _ => none
@@ -251,7 +299,9 @@ mutual
   def pOver : Nat → Expr → P Expr
     | 0, _, _ => none
     | n + 1, f, ts =>
-      if isKw [70, 73, 76, 84, 69, 82] ts then do
+      if (match ts with | Tok.ident [105, 103, 110, 111, 114, 101] :: Tok.ident [110, 117, 108, 108, 115] :: _ => true | _ => false) then
+        pOver n (Expr.ignoreNulls f) (ts.drop 2)
+      else if isKw [70, 73, 76, 84, 69, 82] ts then do
         let ((), ts) ← expectSym [40] (ts.drop 1)
         let ((), ts) ← expectKw [87, 72, 69, 82, 69] ts
         let (c, ts) ← pExpr n ts
@@ -280,7 +330,7 @@ mutual
       | Tok.kw [78, 85, 76, 76] :: ts => some (Expr.null, ts)
       | Tok.kw [84, 82, 85, 69] :: ts => some (Expr.bool true, ts)
       | Tok.kw [70, 65, 76, 83, 69] :: ts => some (Expr.bool false, ts)
-      | Tok.sym [42] :: ts => some (Expr.star [], ts)
+      | Tok.sym [42] :: ts => pStarRest n [] ts
       | Tok.sym [40] :: ts => do
         let (a, ts) ← pExpr n ts
         let ((), ts) ← expectSym [41] ts
@@ -309,27 +359,85 @@ mutual
         let (t, ts) ← typeName ts
         let ((), ts) ← expectSym [41] ts
         some (Expr.tryCast a t, ts)
+      | Tok.kw [76, 69, 70, 84] :: Tok.sym [40] :: ts => pCall n [108, 101, 102, 116] ts
+      | Tok.kw [82, 73, 71, 72, 84] :: Tok.sym [40] :: ts => pCall n [114, 105, 103, 104, 116] ts
+      | Tok.sym [91] :: ts => do
+        let (xs, ts) ← if isSym [93] ts then some ([], ts) else pList n ts
+        let ((), ts) ← expectSym [93] ts
+        some (Expr.list (ExprList.ofList xs), ts)
+      | Tok.ident [105, 110, 116, 101, 114, 118, 97, 108] :: Tok.str v :: Tok.ident u :: ts => some (Expr.interval v (lowerS u), ts)
+      | Tok.ident [105, 110, 116, 101, 114, 118, 97, 108] :: Tok.num v :: Tok.ident u :: ts => some (Expr.interval v (lowerS u), ts)
+      | Tok.ident [105, 110, 116, 101, 114, 118, 97, 108] :: Tok.str v :: ts =>
+        match span (fun c => c != 32) v with
+        | (count, 32 :: unit) => some (Expr.interval count (lowerS unit), ts)
+        | _ => none
+      | Tok.ident [101, 120, 116, 114, 97, 99, 116] :: Tok.sym [40] :: Tok.ident u :: Tok.kw [70, 82, 79, 77] :: ts => do
+        let (e, ts) ← pExpr n ts
+        let ((), ts) ← expectSym [41] ts
+        some (Expr.fn [101, 120, 116, 114, 97, 99, 116] false (ExprList.ofList [Expr.str (lowerS u), e]), ts)
+      | Tok.ident x :: Tok.sym [45, 62] :: ts => do
+        let (b, ts) ← pExpr n ts
+        some (Expr.lambda [x] b, ts)
+      | Tok.ident t :: Tok.str v :: ts =>
+        if memS t literalTypes then some (Expr.cast (Expr.str v) (normType t), ts) else none
+      | Tok.ident f :: ts =>
+        if memS f bareFns && !isSym [40] ts then some (Expr.fn f false ExprList.nil, ts)
+        else pNamed n (Tok.ident f :: ts)
+      | _ => none
+
+  /-- A column, `t.*` (with `EXCLUDE`), or a function call named by one identifier. -/
+  def pNamed : Nat → P Expr
+    | 0, _ => none
+    | n + 1, ts =>
+      match ts with
       | Tok.ident _ :: _ => do
         let (parts, ts) ← identChain n ts
-        if isSym [46] ts && isSym [42] (ts.drop 1) then some (Expr.star parts, ts.drop 2)
+        if isSym [46] ts && isSym [42] (ts.drop 1) then pStarRest n parts (ts.drop 2)
         else if isSym [40] ts then
           match parts with
-          | [name] => do
-            let ts := ts.drop 1
-            let (distinct, ts) := if isKw [68, 73, 83, 84, 73, 78, 67, 84] ts then (true, ts.drop 1) else (false, ts)
-            let (args, ts) ← if isSym [41] ts then some ([], ts) else pList n ts
-            let ((), ts) ← expectSym [41] ts
-            pOver n (Expr.fn (normFn name) distinct (ExprList.ofList args)) ts
+          | [name] => pCall n (normFn name) (ts.drop 1)
           | _ => none
         else match parts.reverse with
           | name :: qual => some (Expr.col qual.reverse name, ts)
           | [] => none
       | _ => none
+
+  /-- After `*` or `t.*`: `EXCLUDE (a, b)` or `EXCLUDE a`, or nothing. -/
+  def pStarRest : Nat → List Str → P Expr
+    | 0, _, _ => none
+    | _ + 1, qual, ts =>
+      match ts with
+      | Tok.ident [101, 120, 99, 108, 117, 100, 101] :: Tok.sym [40] :: ts => do
+        let (cs, ts) ← pNames ts
+        let ((), ts) ← expectSym [41] ts
+        some (Expr.starExcept qual cs, ts)
+      | Tok.ident [101, 120, 99, 108, 117, 100, 101] :: Tok.ident c :: ts => some (Expr.starExcept qual [c], ts)
+      | _ => some (Expr.star qual, ts)
+
+  /-- A call's arguments after its `(`: `DISTINCT`, the list, `IGNORE NULLS` or `ORDER BY`
+  inside, the `)`, then `IGNORE NULLS` / `FILTER` / `OVER` after. -/
+  def pCall : Nat → Str → P Expr
+    | 0, _, _ => none
+    | n + 1, name, ts => do
+      let (distinct, ts) := if isKw [68, 73, 83, 84, 73, 78, 67, 84] ts then (true, ts.drop 1) else (false, ts)
+      let (args, ts) ← if isSym [41] ts then some ([], ts) else pList n ts
+      let args := lowerUnit name args
+      let (ign, ts) := match ts with
+        | Tok.ident [105, 103, 110, 111, 114, 101] :: Tok.ident [110, 117, 108, 108, 115] :: ts => (true, ts)
+        | _ => (false, ts)
+      let (ord, ts) ← if isKw [79, 82, 68, 69, 82] ts then do
+          let ((), ts) ← expectKw [66, 89] (ts.drop 1)
+          pOrderList n ts
+        else some ([], ts)
+      let ((), ts) ← expectSym [41] ts
+      let call := if ord.isEmpty then Expr.fn name distinct (ExprList.ofList args)
+                  else Expr.fnOrdered name distinct (ExprList.ofList args) (OrderList.ofList ord)
+      pOver n (if ign then Expr.ignoreNulls call else call) ts
 end
 
 /-- `select_item [AS alias]`. -/
 def pItem (n : Nat) : P (Expr × Option Str) := fun ts => do
-  let (e, ts) ← pExpr n ts
+  let (e, ts) ← pExpr nr n ts
   if isKw [65, 83] ts then do
     let (a, ts) ← ident (ts.drop 1)
     some ((e, some a), ts)
@@ -340,7 +448,7 @@ def pItem (n : Nat) : P (Expr × Option Str) := fun ts => do
 def pItems : Nat → P (List (Expr × Option Str))
   | 0, _ => none
   | n + 1, ts => do
-    let (a, ts) ← pItem n ts
+    let (a, ts) ← pItem nr n ts
     if isSym [44] ts then do
       let (rest, ts) ← pItems n (ts.drop 1)
       some (a :: rest, ts)
@@ -381,7 +489,7 @@ def pJoins : Nat → P (List Join)
       let (t, ts) ← identChain n ts
       let (alias, ts) ← pAlias ts
       let (on, usingCols, ts) ← if isKw [79, 78] ts then do
-          let (e, ts) ← pExpr n (ts.drop 1)
+          let (e, ts) ← pExpr nr n (ts.drop 1)
           some (some e, [], ts)
         else if isKw [85, 83, 73, 78, 71] ts then do
           let ((), ts) ← expectSym [40] (ts.drop 1)
@@ -397,31 +505,39 @@ def optClause {α} (k : Str) (p : P α) : P (Option α) := fun ts =>
 
 def pSelect (n : Nat) : P Select := fun ts => do
   let ((), ts) ← expectKw [83, 69, 76, 69, 67, 84] ts
-  let (distinct, ts) := if isKw [68, 73, 83, 84, 73, 78, 67, 84] ts then (true, ts.drop 1) else (false, ts)
-  let (items, ts) ← pItems n ts
+  let (distinct, distinctOn, ts) ← if isKw [68, 73, 83, 84, 73, 78, 67, 84] ts then
+      if isKw [79, 78] (ts.drop 1) then do
+        let ((), ts) ← expectSym [40] (ts.drop 2)
+        let (on, ts) ← pList nr n ts
+        let ((), ts) ← expectSym [41] ts
+        some (false, on, ts)
+      else some (true, [], ts.drop 1)
+    else some (false, [], ts)
+  let (items, ts) ← pItems nr n ts
   let (source, ts) ← if isKw [70, 82, 79, 77] ts then do
       let (t, ts) ← identChain n (ts.drop 1)
       let (a, ts) ← pAlias ts
       some (some (t, a), ts)
     else some (none, ts)
-  let (joins, ts) ← pJoins n ts
-  let (where_, ts) ← optClause [87, 72, 69, 82, 69] (pExpr n) ts
+  let (joins, ts) ← pJoins nr n ts
+  let (where_, ts) ← optClause [87, 72, 69, 82, 69] (pExpr nr n) ts
   let (groupBy, ts) ← if isKw [71, 82, 79, 85, 80] ts then do
       let ((), ts) ← expectKw [66, 89] (ts.drop 1)
-      pList n ts
+      pList nr n ts
     else some ([], ts)
-  let (having, ts) ← optClause [72, 65, 86, 73, 78, 71] (pExpr n) ts
-  let (qualify, ts) ← optClause [81, 85, 65, 76, 73, 70, 89] (pExpr n) ts
+  let (having, ts) ← optClause [72, 65, 86, 73, 78, 71] (pExpr nr n) ts
+  let (qualify, ts) ← optClause [81, 85, 65, 76, 73, 70, 89] (pExpr nr n) ts
   let (orderBy, ts) ← if isKw [79, 82, 68, 69, 82] ts then do
       let ((), ts) ← expectKw [66, 89] (ts.drop 1)
-      pOrderList n ts
+      pOrderList nr n ts
     else some ([], ts)
   let (limit, ts) ← if isKw [76, 73, 77, 73, 84] ts then
       match ts.drop 1 with
       | Tok.num s :: ts => some (some s, ts)
       | _ => none
     else some (none, ts)
-  some ({ distinct, items, source, joins, where_, groupBy, having, qualify, orderBy, limit }, ts)
+  some ({ distinct, distinctOn, items, source, joins, where_, groupBy, having, qualify, orderBy,
+          limit }, ts)
 
 /-- `UNION [ALL] select`, repeated. -/
 def pUnions : Nat → P (List (Str × Select))
@@ -430,14 +546,17 @@ def pUnions : Nat → P (List (Str × Select))
     if isKw [85, 78, 73, 79, 78] ts then do
       let (op, ts) := if isKw [65, 76, 76] (ts.drop 1) then ([85, 78, 73, 79, 78, 32, 65, 76, 76], ts.drop 2)
                       else ([85, 78, 73, 79, 78], ts.drop 1)
-      let (s, ts) ← pSelect n ts
+      let (op, ts) := match ts with
+        | Tok.kw [66, 89] :: Tok.ident [110, 97, 109, 101] :: ts => (op ++ [32, 66, 89, 32, 78, 65, 77, 69], ts)
+        | _ => (op, ts)
+      let (s, ts) ← pSelect nr n ts
       let (rest, ts) ← pUnions n ts
       some ((op, s) :: rest, ts)
     else some ([], ts)
 
 def pCompound (n : Nat) : P Compound := fun ts => do
-  let (first, ts) ← pSelect n ts
-  let (rest, ts) ← pUnions n ts
+  let (first, ts) ← pSelect nr n ts
+  let (rest, ts) ← pUnions nr n ts
   some ({ first, rest }, ts)
 
 def pCtes : Nat → P (List (Str × Compound))
@@ -446,7 +565,7 @@ def pCtes : Nat → P (List (Str × Compound))
     let (name, ts) ← ident ts
     let ((), ts) ← expectKw [65, 83] ts
     let ((), ts) ← expectSym [40] ts
-    let (s, ts) ← pCompound n ts
+    let (s, ts) ← pCompound nr n ts
     let ((), ts) ← expectSym [41] ts
     if isSym [44] ts then do
       let (rest, ts) ← pCtes n (ts.drop 1)
@@ -455,18 +574,26 @@ def pCtes : Nat → P (List (Str × Compound))
 
 /-- A whole model: optional `WITH`, one select, an optional `;`, nothing else. -/
 def parseTokens (n : Nat) (ts : List Tok) : Option Query := do
-  let (ctes, ts) ← if isKw [87, 73, 84, 72] ts then pCtes n (ts.drop 1) else some ([], ts)
-  let (body, ts) ← pCompound n ts
+  let (ctes, ts) ← if isKw [87, 73, 84, 72] ts then pCtes nr n (ts.drop 1) else some ([], ts)
+  let (body, ts) ← pCompound nr n ts
   let ts := if isSym [59] ts then ts.drop 1 else ts
   if ts.isEmpty then some { ctes, body } else none
 
-/-- What a SQL text in the fragment is, as a tree; `none` outside the fragment. The text is
-given as code points: this is what a per-model proof evaluates. -/
-def parseCodes (cs : Str) : Option Query := do
+end
+
+/-- What a SQL text in the fragment is, as a tree, under a dialect's NULL-order rule `nr` (see
+`defaultNullsFirst`); `none` outside the fragment. The text is given as code points: this is
+what a per-model proof evaluates. -/
+def parseCodesIn (nr : Nat) (cs : Str) : Option Query := do
   let ts ← lexCodes cs
-  parseTokens (4 * ts.length + 8) ts
+  parseTokens nr (4 * ts.length + 8) ts
+
+/-- DuckDB's rule (NULLs last), the default. -/
+def parseCodes (cs : Str) : Option Query := parseCodesIn 2 cs
 
 /-- The same, from a `String`, for the executable. -/
-def parseSql (s : String) : Option Query := parseCodes (s.toList.map Char.toNat)
+def parseSqlIn (nr : Nat) (s : String) : Option Query := parseCodesIn nr (s.toList.map Char.toNat)
+
+def parseSql (s : String) : Option Query := parseSqlIn 2 s
 
 end Sql

@@ -35,6 +35,14 @@ mutual
     | .filtered f c => "(filter " ++ sExpr f ++ " " ++ sExpr c ++ ")"
     | .fn n d args => "(fn " ++ q n ++ (if d then " distinct " else " ") ++ sList args ++ ")"
     | .window f p o => "(window " ++ sExpr f ++ " " ++ sList p ++ " " ++ sOrder o ++ ")"
+    | .starExcept qual cs => "(starex " ++ qs qual ++ " " ++ qs cs ++ ")"
+    | .interval c u => "(interval " ++ q c ++ " " ++ q u ++ ")"
+    | .lambda ps b => "(lambda " ++ qs ps ++ " " ++ sExpr b ++ ")"
+    | .index a i => "(index " ++ sExpr a ++ " " ++ sExpr i ++ ")"
+    | .list xs => "(list " ++ sList xs ++ ")"
+    | .ignoreNulls f => "(ignorenulls " ++ sExpr f ++ ")"
+    | .fnOrdered n d args o => "(fnord " ++ q n ++ (if d then " distinct " else " ") ++ sList args
+        ++ " " ++ sOrder o ++ ")"
   partial def sList : ExprList → String
     | .nil => "[]"
     | .cons x xs => "[" ++ sExpr x ++ " " ++ (sList xs).drop 1
@@ -43,7 +51,8 @@ mutual
     | .cons c v r => "[(" ++ sExpr c ++ " " ++ sExpr v ++ ") " ++ (sWhens r).drop 1
   partial def sOrder : OrderList → String
     | .nil => "[]"
-    | .cons e d r => "[(" ++ sExpr e ++ (if d then " desc" else " asc") ++ ") " ++ (sOrder r).drop 1
+    | .cons e d nf r => "[(" ++ sExpr e ++ (if d then " desc" else " asc")
+        ++ (if nf then " nf" else " nl") ++ ") " ++ (sOrder r).drop 1
   partial def sOpt : OptExpr → String
     | .none => "(none)"
     | .some e => sExpr e
@@ -59,6 +68,8 @@ def sJoin (j : Join) : String :=
 
 def sSelect (s : Select) : String :=
   "(select " ++ (if s.distinct then "distinct " else "")
+    ++ (if s.distinctOn.isEmpty then "" else
+          "on [" ++ " ".intercalate (s.distinctOn.map sExpr) ++ "] ")
     ++ "[" ++ " ".intercalate (s.items.map fun (e, a) => "(" ++ sExpr e ++ " " ++
         (a.map q |>.getD "(none)") ++ ")") ++ "] "
     ++ (match s.source with
@@ -67,7 +78,8 @@ def sSelect (s : Select) : String :=
     ++ " [" ++ " ".intercalate (s.joins.map sJoin) ++ "] "
     ++ sOptE s.where_ ++ " [" ++ " ".intercalate (s.groupBy.map sExpr) ++ "] "
     ++ sOptE s.having ++ " " ++ sOptE s.qualify ++ " ["
-    ++ " ".intercalate (s.orderBy.map fun (e, d) => "(" ++ sExpr e ++ (if d then " desc" else " asc") ++ ")")
+    ++ " ".intercalate (s.orderBy.map fun (e, d, nf) => "(" ++ sExpr e ++ (if d then " desc" else " asc")
+        ++ (if nf then " nf" else " nl") ++ ")")
     ++ "] " ++ (s.limit.map q |>.getD "(none)") ++ ")"
 
 def sCompound (c : Compound) : String :=

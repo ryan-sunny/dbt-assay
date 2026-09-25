@@ -71,8 +71,8 @@ def skipLine : Str → Str
   | 10 :: cs => cs
   | _ :: cs => skipLine cs
 
-def twoSyms : List Str := [[60, 62], [33, 61], [60, 61], [62, 61], [124, 124], [58, 58]]
-def oneSyms : List Nat := [40, 41, 44, 46, 42, 61, 60, 62, 43, 45, 47, 37, 59]
+def twoSyms : List Str := [[60, 62], [33, 61], [60, 61], [62, 61], [124, 124], [58, 58], [45, 62]]
+def oneSyms : List Nat := [40, 41, 44, 46, 42, 61, 60, 62, 43, 45, 47, 37, 59, 91, 93]
 
 def lexAux : Nat → Str → Option (List Tok)
   | 0, _ => none

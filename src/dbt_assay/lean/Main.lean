@@ -1,7 +1,8 @@
 import Sql
 import Assay
 /-!
-`assay_sql parse`: the fragment's parse of the SQL on stdin, printed canonically, or `OUTSIDE`.
+`assay_sql parse [rule]`: the fragment's parse of the SQL on stdin, printed canonically, or
+`OUTSIDE`. `rule` is the dialect's NULL order (0 small, 1 large, 2 last; DuckDB's 2 by default).
 
 `assay_sql ops`: run the operations the RULES are proven about (`Assay/Ops.lean`) on tables, so
 the conformance suite can check them against the engine too. Input: the same `TABLE` / `ROW` lines,
@@ -97,8 +98,10 @@ def main (args : List String) : IO UInt32 := do
   let stdin ← IO.getStdin
   let text ← stdin.readToEnd
   match args with
-  | ["parse"] =>
-    match Sql.parseSql text with
+  | "parse" :: rule =>
+    -- the dialect's NULL-order rule (see `Sql.defaultNullsFirst`); DuckDB's when not given
+    let nr := (rule.head?.bind String.toNat?).getD 2
+    match Sql.parseSqlIn nr text with
     | some qry => IO.println (Sql.sQuery qry); pure 0
     | none =>
       match Sql.lex text with
