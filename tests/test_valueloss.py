@@ -46,8 +46,10 @@ def test_counted_once_then_read_from_the_last_count_until_the_data_moves(tmp_pat
         out = []
         for st in stmts:
             sent.append(st.sql)
-            if st.sql.startswith("select count(*) as n"):
-                out.append(Result(rows=[dict(rows_now)]))
+            if "duckdb_tables()" in st.sql and "estimated_size" in st.sql:
+                out.append(Result(rows=[{"s": "raw", "t": "permits", "v": str(rows_now["n"])}]))
+            elif "duckdb_tables()" in st.sql:                 # no dlt here
+                out.append(Result(rows=[]))
             elif st.kind == "count":
                 out.append(Result(rows=[{"l0": 2, "p0": 3, "l1": 0, "p1": 4}]))
             else:
@@ -58,6 +60,8 @@ def test_counted_once_then_read_from_the_last_count_until_the_data_moves(tmp_pat
     assert [f.evidence["column"] for f in got] == ["valuation"]
     assert got[0].evidence["lost"] == 2 and got[0].evidence["sample"] == ["abc", "n/a"]
     assert any("sum(case when" in x for x in sent)          # one statement per relation
+    # the fingerprint is table metadata, never a column scan
+    assert not any("max(" in x for x in sent), sent
     # same data: only the fingerprint is read, and the finding comes from the store
     sent.clear()
     got = valueloss.measure(cands, p, probe, ".", None, "dbt", store=s)

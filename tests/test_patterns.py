@@ -88,3 +88,25 @@ def test_names_that_do_not_state_their_type_and_a_view_many_models_read():
     assert view_read_by_many(project)[0].evidence["count"] == 5
     m.materialized = "table"
     assert view_read_by_many(project) == []
+
+
+def test_a_clock_read_through_a_macro_that_reads_a_var_is_already_pinned():
+    """sunny-data: `{{ run_date() }}` reads var('run_date') and falls back to current_date; 44
+    models compiled to current_date and were reported, wrongly."""
+    from dbt_assay.checks.patterns import clock_macros, how_the_clock_is_read
+    macros = {"macro.p.run_date": {"name": "run_date", "package_name": "p", "macro_sql":
+              "{% macro run_date() %}{%- if var('run_date', none) -%}cast('x' as date)"
+              "{%- else -%}current_date{%- endif -%}{% endmacro %}"},
+              "macro.p.today_raw": {"name": "today_raw", "package_name": "p",
+                                    "macro_sql": "{% macro today_raw() %}current_date{% endmacro %}"}}
+    nodes = {"model.p.a": {"raw_code": "select {{ run_date() }} - d as age from t"},
+             "model.p.b": {"raw_code": "select {{ today_raw() }} - d from t"},
+             "model.p.c": {"raw_code": "select current_date - d from t -- as of now (see x)"},
+             "model.p.d": {"raw_code": "select d from t -- until now (see the note)"}}
+    project = SimpleNamespace(raw={"macros": macros, "nodes": nodes}, project_name="p")
+    cm = clock_macros(project)
+    assert cm == {"run_date": True, "today_raw": False}
+    assert how_the_clock_is_read(project, "model.p.a", cm) == ("pinned", "run_date")
+    assert how_the_clock_is_read(project, "model.p.b", cm) == ("macro", "today_raw")
+    assert how_the_clock_is_read(project, "model.p.c", cm)[0] == "bare"
+    assert how_the_clock_is_read(project, "model.p.d", cm)[0] == "unknown"   # a comment

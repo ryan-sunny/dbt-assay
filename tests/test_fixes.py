@@ -147,3 +147,34 @@ def test_judged_roles_become_tests_only_when_counted_to_pass(tmp_path):
         {"relationships": {"arguments": {"to": "ref('customers')", "field": "customer_id"}}}]
     assert cols["status"]["data_tests"] == [
         {"accepted_values": {"arguments": {"values": ["open", "shipped"]}}}]
+
+
+def test_the_date_is_pinned_with_the_projects_own_macro_and_prose_is_left_alone(tmp_path):
+    (tmp_path / "m.sql").write_text(
+        "select current_date - d as age, now() as at -- until now (see x)\n"
+        "from t {{ var('x', 'current_date') }}\n")
+    project = SimpleNamespace(
+        raw={"macros": {"macro.p.run_date": {
+            "name": "run_date", "package_name": "p",
+            "macro_sql": "{% macro run_date() %}{% if var('run_date', none) %}x{% else %}"
+                         "current_date{% endif %}{% endmacro %}"}}},
+        project_name="p",
+        models={"model.p.m": SimpleNamespace(name="m", path="m.sql")})
+    f = _finding("output_depends_on_the_clock", "model.p.m", "m", "c1")
+    fx = fixes._pin_the_date(project, [f], tmp_path)
+    assert fx.files["m.sql"] == (
+        "select {{ run_date() }} - d as age, cast({{ run_date() }} as timestamp) as at "
+        "-- until now (see x)\nfrom t {{ var('x', 'current_date') }}\n")
+    assert "macros/as_of.sql" not in fx.files and fx.findings == ["c1"]
+
+
+def test_what_could_break_is_one_fix_per_model_and_the_rest_one_per_check():
+    project = SimpleNamespace(models={"model.p.a": SimpleNamespace(name="a", path="a.sql")})
+    fs = []
+    for i, ans in enumerate(("joins_would_fan_out_or_drop", "an_aggregate_would_be_wrong")):
+        f = _finding("what_would_break_silently", "model.p.a", "a", f"w{i}")
+        f.evidence = {"answer": ans, "context": f"a.col{i}"}
+        fs.append(f)
+    got = fixes._test_what_could_break(project, fs)
+    assert len(got) == 1 and got[0].findings == ["w0", "w1"] and got[0].decisions == 1
+    assert "col0: unique, or relationships" in got[0].how

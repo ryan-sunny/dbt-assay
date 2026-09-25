@@ -9156,6 +9156,15 @@ def run_steps(
 
     from . import cost as cost_mod
     group = _tm.get_command(app)
+    # *** ONE RUN AT A TIME ON ONE STORE. *** (RC box: a second run started, ran for minutes, and
+    # collided on the lock at page and review.) Refused at the start, naming who holds it.
+    if store_path and Path(store_path).exists():
+        from .store import StoreLocked
+        try:
+            Store(store_path).close()
+        except StoreLocked as e:
+            err_console.print(f"[red]not started:[/] {e}")
+            raise typer.Exit(2) from e
     shared = {"--target": target, "--store": store_path, "--config": config_path,
               "--project-dir": project_dir, "--profiles-dir": profiles_dir, "--dbt": dbt_bin}
     failed, rows = [], []

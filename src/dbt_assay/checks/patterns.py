@@ -8,9 +8,57 @@ a `NOT IN` over a column a test keeps non-null is quiet.
 """
 from __future__ import annotations
 
+import re
+
 from .structural import Finding
 
 DRIFTS_UNBUILT = ("view", "ephemeral")
+
+# *** 54 MODELS ALREADY PINNED THEIR DATE, AND THE CHECK SAID THEY DID NOT. *** (sunny-data:
+# `{{ run_date() }}` reads `var('run_date')` and falls back to current_date; compiled, it is
+# current_date, which is all the compiled SQL shows.) The model's own source says how the clock is
+# read: bare in the SQL, through a macro that reads a var (pinned: a build can name its day), or
+# through a macro that does not.
+CLOCK_TOKEN = re.compile(r"(?i)\b(current_date|current_timestamp|localtimestamp|sysdate)\b"
+                         r"|\b(now|getdate|today)\s*\(")
+JINJA = re.compile(r"(\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\})", re.DOTALL)
+# Jinja tags and SQL comments: neither is SQL that runs. ("until now (see ..." in a comment read
+# as a call to now().)
+NOT_CODE = re.compile(r"(\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}|--[^\n]*|/\*.*?\*/)", re.DOTALL)
+
+
+def code_only(text: str) -> str:
+    """The SQL that runs: the text with its Jinja tags and comments removed."""
+    return "".join(" " if NOT_CODE.fullmatch(p) else p for p in NOT_CODE.split(text))
+_CALL = re.compile(r"\{\{-?\s*(?:[\w]+\.)?(\w+)\s*\(")
+
+
+def clock_macros(project) -> dict:
+    """{macro name: reads a var} for this project's macros that read the clock."""
+    out = {}
+    for mm in ((getattr(project, "raw", None) or {}).get("macros") or {}).values():
+        if (mm or {}).get("package_name") not in (None, "", getattr(project, "project_name", "")):
+            continue
+        body = str((mm or {}).get("macro_sql") or "")
+        if CLOCK_TOKEN.search(code_only(body)):
+            out[str(mm.get("name"))] = "var(" in body
+    return out
+
+
+def how_the_clock_is_read(project, uid: str, macros: dict) -> tuple[str, str]:
+    """('bare' | 'pinned' | 'macro' | 'unknown', the macro's name when one is involved)."""
+    raw = str((((getattr(project, "raw", None) or {}).get("nodes") or {}).get(uid) or {})
+              .get("raw_code") or "")
+    if not raw:
+        return "unknown", ""
+    if CLOCK_TOKEN.search(code_only(raw)):
+        return "bare", ""
+    used = [n for n in _CALL.findall(raw) if n in macros]
+    if used and all(macros[n] for n in used):
+        return "pinned", used[0]
+    if used:
+        return "macro", next(n for n in used if not macros[n])
+    return "unknown", ""
 
 
 def _not_null_known(project, relation: str, column: str) -> bool:
@@ -31,6 +79,7 @@ def _not_null_known(project, relation: str, column: str) -> bool:
 
 def run_all(project, digests) -> list[Finding]:
     out: list[Finding] = []
+    cmacros = clock_macros(project)
     for uid, d in digests.items():
         if not d.ok or not getattr(d, "patterns", None):
             continue
@@ -45,6 +94,9 @@ def run_all(project, digests) -> list[Finding]:
         kw = {"subject": uid, "subject_name": m.name, "file": m.path}
 
         clock = [c for c in by.get("clock", []) if not c["guard"]]
+        how_read, via = how_the_clock_is_read(project, uid, cmacros) if clock else ("", "")
+        if how_read == "pinned":
+            clock = []                    # the project's own macro already lets a build name its day
         # A model whose only clock reads are bounds against future-dated rows is not reported:
         # the bound changes nothing unless the data holds dates from the future.
         if clock:
@@ -60,11 +112,15 @@ def run_all(project, digests) -> list[Finding]:
                         "output breaks with the calendar. Pass the date in (a project `as_of()` "
                         "macro reading `var('as_of')`, defaulting to the current date) so a "
                         "build, a test and a golden can name the day they represent. "
+                        + (f"Here the clock is read through the `{via}` macro, which reads no "
+                           f"var: making it read one pins every model that calls it. "
+                           if how_read == "macro" else "")
                         + "Only the SQL is read: code outside dbt that reads the clock is not "
                           "seen."),
                 base=base,
                 evidence={"uses": [c["sql"] for c in clock][:8], "where": where,
-                          "materialized": mat}))
+                          "materialized": mat,
+                          **({"through_macro": via} if how_read == "macro" else {})}))
 
         aggs = by.get("order_sensitive_aggregate", [])
         if aggs:

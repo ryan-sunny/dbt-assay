@@ -30,7 +30,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 KIND_ORDER = ("make_it_pass", "run_the_tests", "schedule_freshness", "add_proven_tests",
-              "document", "declare_premise", "stage_raw_source", "one_edit_in_a_macro", "review")
+              "document", "declare_premise", "pin_the_date", "test_what_could_break",
+              "stage_raw_source", "one_edit_in_a_macro", "review")
 
 KIND_TITLE = {
     "make_it_pass": "Make a failing test pass",
@@ -41,6 +42,8 @@ KIND_TITLE = {
     "declare_premise": "Declare what many things rest on",
     "stage_raw_source": "Stage a raw source",
     "one_edit_in_a_macro": "One edit in a macro",
+    "pin_the_date": "Pin the date a build represents",
+    "test_what_could_break": "Test what could break silently",
     "review": "Review",
 }
 
@@ -405,6 +408,127 @@ def _declare_premises(project, led, by_check, root: Path, top: int = 25) -> list
     return out
 
 
+_CLOCK_WORDS = re.compile(r"(?i)\b(current_date|current_timestamp|now\(\)|getdate\(\)|"
+                          r"sysdate\b|localtimestamp)(\(\))?")
+AS_OF_MACRO = """{% macro as_of(kind='date') -%}
+  {#- The date a build represents: the `as_of` var when a build, a test or a golden names one,
+      today otherwise. Written by assay's pin_the_date fix. -#}
+  {%- if var('as_of', none) is not none -%}
+    cast('{{ var("as_of") }}' as {{ kind }})
+  {%- elif kind == 'date' -%}
+    current_date
+  {%- else -%}
+    current_timestamp
+  {%- endif -%}
+{%- endmacro %}
+"""
+
+
+
+
+def _clock_to_as_of(sql: str, macro: str = "") -> str:
+    """Each clock call replaced: by the project's own pinning macro when it has one, else by
+    `as_of()`."""
+    def rep(mt):
+        date = mt.group(1).lower() == "current_date"
+        if macro:
+            return "{{ " + macro + "() }}" if date else "cast({{ " + macro + "() }} as timestamp)"
+        return "{{ as_of() }}" if date else "{{ as_of('timestamp') }}"
+    return _CLOCK_WORDS.sub(rep, sql)
+
+
+def _outside_jinja(text: str, fn) -> str:
+    """Apply `fn` to the SQL that runs, never inside a Jinja tag (a call replaced inside `{{ }}`
+    would nest one tag in another and stop the model compiling) or a comment (prose stays)."""
+    from .checks.patterns import NOT_CODE
+    parts = NOT_CODE.split(text)
+    return "".join(p if NOT_CODE.fullmatch(p) else fn(p) for p in parts)
+
+
+def _pin_the_date(project, findings, root: Path) -> Fix | None:
+    """Every model reading the clock, in ONE change: an `as_of()` macro and each call replaced.
+    Nothing moves until a build names a date; then every model agrees on which day it is."""
+    fs = [f for f in findings if f.check == "output_depends_on_the_clock"]
+    if not fs:
+        return None
+    from .checks.patterns import clock_macros
+    fx = Fix("pin_the_date", "project", f"Pin the date in {len(fs)} model(s) that read the clock")
+    # the project's own convention first: a macro that reads the clock AND a var already pins it
+    own = sorted(n for n, pins in clock_macros(project).items() if pins)
+    macro = own[0] if own else ""
+    have_as_of = any(str(k).endswith(".as_of") for k in (project.raw.get("macros") or {}))
+    if not macro and not have_as_of:
+        fx.files["macros/as_of.sql"] = AS_OF_MACRO
+        fx.new_files.append("macros/as_of.sql")
+    left_out = []
+    for f in fs:
+        m = project.models.get(f.subject)
+        text = _read(root, m.path) if m is not None else None
+        if text is None or not _CLOCK_WORDS.search(text):
+            left_out.append(f.subject_name)
+            continue
+
+        fx.files[m.path] = _outside_jinja(text, lambda t: _clock_to_as_of(t, macro))
+        fx.models.append(m.name)
+        fx.findings.append(f.id)
+    if not fx.models:
+        return None
+    fx.title = f"Pin the date in {len(fx.models)} model(s) that read the clock"
+    fx.decisions = 1
+    fx.how = ((f"This project already pins its date with `{macro}()`, which reads a var and "
+               f"falls back to today; these models read the clock directly instead, and each call "
+               f"becomes `{{{{ {macro}() }}}}`. " if macro else
+               "One macro, `as_of()`, returns the `as_of` var when a build names one and today "
+               "otherwise, and every model that read the clock reads it instead. ")
+              + "Nothing changes until a var is passed; then a rebuild of the same data gives the "
+                "same rows, and a test or a golden can name its day."
+              + (f" Left as it is (the clock is read through a macro that reads no var; make "
+                 f"that macro read one): {', '.join(left_out)}." if left_out else ""))
+    fx.recipe = ["dbt compile (the models compile with the macro)",
+                 "dbt build --vars '{as_of: <a past date>}' twice: the rows are the same"]
+    fx.moves_logic = False
+    return fx
+
+
+# the tests that catch what each judged failure mode names (questions/meaning.yml)
+_RISK_TEST = {
+    "joins_would_fan_out_or_drop": "unique, or relationships to the model it joins",
+    "a_value_would_fall_through": "accepted_values on the input it classifies",
+    "an_aggregate_would_be_wrong": "a range or a reconciliation test",
+    "a_default_would_hide_missing_data": "a test on the share of rows at the default",
+}
+
+
+def _test_what_could_break(project, findings) -> list[Fix]:
+    """One fix per model: the columns judged able to break silently, and the test each needs."""
+    by: dict = {}
+    for f in findings:
+        if f.check == "what_would_break_silently":
+            by.setdefault(f.subject, []).append(f)
+    out = []
+    for uid, fs in sorted(by.items()):
+        m = project.models.get(uid)
+        if m is None:
+            continue
+        lines = []
+        for f in fs:
+            col = str((f.evidence or {}).get("context") or "").split(".")[-1]
+            test = _RISK_TEST.get(str((f.evidence or {}).get("answer") or ""), "a test")
+            lines.append(f"{col}: {test}")
+        fx = Fix("test_what_could_break", uid,
+                 f"Test {len(fs)} column(s) of {m.name} that could break silently")
+        fx.findings = [f.id for f in fs]
+        fx.models = [m.name]
+        fx.decisions = 1
+        fx.how = ("Each column below was judged able to go wrong without any error, and the test "
+                  "named is what would catch it: " + "; ".join(lines[:20])
+                  + ". `assay plan --verify` counts the key and value tests through your dbt and "
+                    "writes the ones that pass today.")
+        fx.recipe = [f"dbt test --select {m.name} (the new tests pass)"]
+        out.append(fx)
+    return out
+
+
 # ------------------------------------------------------------------------ the whole plan
 
 
@@ -425,8 +549,10 @@ def build(project, findings, *, entries=None, digests=None, schema=None, store=N
             fx.how = SHAPES["test_is_failing"][1]
             fx.recipe = [f"dbt test --select {f.evidence.get('test', '')}"]
             fixes.append(fx)
+    # every test that never runs is one change to the job, whichever check noticed it
     never = [f for f in findings if f.check in ("test_declared_but_never_run",
-                                                "test_skipped_rather_than_passed")]
+                                                "test_skipped_rather_than_passed",
+                                                "test_never_ran_is_a_gap_or_a_leftover")]
     if never:
         fx = Fix("run_the_tests", "build", f"Run {len(never)} test finding(s) the build never "
                                            f"runs")
@@ -450,6 +576,10 @@ def build(project, findings, *, entries=None, digests=None, schema=None, store=N
     fixes += _document(project, entries, digests or {}, schema, by_check, root)
     fixes += _declare_premises(project, led, by_check, root)
     fixes += _stage(project, by_check, root, digests or {})
+    pin = _pin_the_date(project, findings, root)
+    if pin:
+        fixes.append(pin)
+    fixes += _test_what_could_break(project, findings)
     for g in groups or []:
         info = g.as_dict()
         if not info.get("macro_at"):
@@ -464,22 +594,26 @@ def build(project, findings, *, entries=None, digests=None, schema=None, store=N
         fx.recipe = [f"assay check (the {len(fx.findings)} finding(s) are gone)"]
         fixes.append(fx)
 
-    # everything not yet in a fix: one proposal per (check, model)
+    # everything not yet in a fix: one proposal per check, naming the models it is about, so the
+    # list is the kinds of change to read, not one row per model
     taken = {fid for fx in fixes for fid in fx.findings}
-    for (check, subj), fs in sorted(by_check.items()):
+    per_check: dict = {}
+    for (check, _subj), fs in sorted(by_check.items()):
         rest = [f for f in fs if f.id not in taken]
-        if not rest:
-            continue
+        if rest:
+            per_check.setdefault(check, []).extend(rest)
+    from .titles import title as _title
+    for check, rest in sorted(per_check.items()):
         shape, how = SHAPES.get(check, ("", ""))
-        from .titles import title as _title
-        who = rest[0].subject_name or subj
-        fx = Fix("review", f"{check}|{subj}",
-                 (f"{who}: " if who else "") + _title(check)
-                 + (f", {shape}" if shape else ""))
+        models = sorted({f.subject_name for f in rest if f.subject_name})
+        fx = Fix("review", check, _title(check)
+                 + (f": {len(models)} model(s)" if len(models) > 1 else
+                    f": {models[0]}" if models else ""))
         fx.findings = [f.id for f in rest]
-        fx.models = [rest[0].subject_name] if rest[0].subject_name else []
-        fx.decisions = len(rest)
-        fx.how = how or "No fix shape is recorded for this check; it needs reading."
+        fx.models = models
+        fx.decisions = max(1, len(models))
+        fx.how = ((f"{shape.capitalize()}. " if shape else "")
+                  + (how or "No fix shape is recorded for this check; it needs reading."))
         fixes.append(fx)
 
     # each finding counts once, against the first fix in order

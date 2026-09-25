@@ -120,8 +120,6 @@ def _sample_sql(c: Candidate, dialect: str = "duckdb") -> str:
 # first reads a fingerprint (the row count, and the newest load id where the loader writes one:
 # cheap, one statement per source), counts again only where it moved or the last count is a week
 # old, oldest first, inside a time budget, and reads the rest from the last count.
-LOAD_COLUMNS = ("_dlt_load_id", "_loaded_at", "loaded_at", "_airbyte_extracted_at",
-                "_fivetran_synced", "_etl_loaded_at", "ingested_at")
 RECOUNT_DAYS = 7
 
 DDL = """
@@ -142,15 +140,99 @@ def _key(c: Candidate) -> str:
     return f"{c.cause}|{c.source_column}|{c.expression}"
 
 
-def _load_column(project, schema, relation: str) -> str:
-    uid = _source_uid(project, relation)
-    names = []
-    if schema is not None and uid:
-        try:
-            names = [x.lower() for x in schema.columns(uid).names]
-        except Exception:                                        # noqa: BLE001
-            names = []
-    return next((c for c in LOAD_COLUMNS if c in names), "")
+def _norm(rel: str) -> tuple:
+    parts = [x.strip('"`[]').lower() for x in str(rel).split(".") if x]
+    return tuple(parts[-2:]) if len(parts) >= 2 else tuple(parts)
+
+
+def fingerprints(rels: list[str], project, probe_mod, project_dir: str, profiles_dir,
+                 dbt_bin: str, dialect: str) -> dict:
+    """{relation: fingerprint} from the engine's own table metadata, in one or two statements for
+    every source at once. Never a column scan (RC box: `max(_dlt_load_id)` per source was the
+    scan it was meant to avoid). DuckDB: `duckdb_tables()` row estimates and dlt's `_dlt_loads`;
+    Snowflake: information_schema row_count and last_altered; BigQuery: `__TABLES__`; Postgres
+    and Redshift: the statistics views. Anything else: `count(*)`, which reads metadata."""
+    want = {_norm(r): r for r in rels}
+    stmts = []
+    d = (dialect or "duckdb").lower()
+    if d == "duckdb":
+        stmts.append(("tables", ("select schema_name as s, table_name as t, "
+                                "cast(estimated_size as varchar) as v from duckdb_tables()")))
+        stmts.append(("loads", ("select schema_name as s from duckdb_tables() "
+                               "where table_name = '_dlt_loads'")))
+    elif d == "snowflake":
+        dbs = sorted({str(r).replace('"', "").split(".")[0] for r in rels if r.count(".") >= 2})
+        for db in dbs:
+            stmts.append(("tables", (f"select lower(table_schema) as s, lower(table_name) as t, "
+                                    f"row_count || '|' || to_varchar(last_altered) as v "
+                                    f"from {db}.information_schema.tables")))
+    elif d == "bigquery":
+        sets = sorted({".".join(str(r).replace("`", "").split(".")[:-1]) for r in rels
+                       if r.count(".") >= 1})
+        for ds in sets:
+            stmts.append(("tables", (f"select lower('{ds.split('.')[-1]}') as s, "
+                                    f"lower(table_id) as t, cast(row_count as string) || '|' || "
+                                    f"cast(last_modified_time as string) as v "
+                                    f"from `{ds}.__TABLES__`")))
+    elif d in ("postgres", "redshift"):
+        stmts.append(("tables", ("select lower(schemaname) as s, lower(relname) as t, "
+                                "cast(n_live_tup + n_tup_ins + n_tup_upd + n_tup_del as varchar) "
+                                "as v from pg_stat_user_tables")))
+    out: dict = {}
+    if stmts:
+        got = probe_mod.run_many([probe_mod.Statement(sql, caller="assay.valueloss",
+                                                      kind="metadata", limit=100000)
+                                  for _k, sql in stmts], project_dir, profiles_dir, dbt_bin,
+                                 dialect)
+        loads: dict = {}
+        for (kind, _sql), res in zip(stmts, got):
+            if res.failed:
+                continue
+            if kind == "tables":
+                for row in res.rows:
+                    k = (str(row.get("s") or "").lower(), str(row.get("t") or "").lower())
+                    if k in want:
+                        out[want[k]] = str(row.get("v") or "")
+            elif kind == "loads" and res.rows:
+                # dlt's own record: each dlt schema's newest completed load, and which tables that
+                # schema holds (its latest `_dlt_version`). A load that did not touch a table still
+                # recounts it, which is the safe side. (Measured on the box: 93 tables, 0.01s.)
+                datasets = [str(row.get("s")) for row in res.rows if row.get("s")]
+                q = " union all ".join(
+                    f"select * from (with v as (select schema_name, schema, row_number() over "
+                    f"(partition by schema_name order by inserted_at desc) rn "
+                    f"from {ds}._dlt_version), l as (select schema_name, max(load_id) as "
+                    f"last_load from {ds}._dlt_loads where status = 0 group by 1) "
+                    f"select '{ds}' as ds, v.schema_name as sn, l.last_load as v, "
+                    f"v.schema as js from v join l using (schema_name) where rn = 1)"
+                    for ds in datasets[:50])
+                lr = probe_mod.run_many([probe_mod.Statement(
+                    q, caller="assay.valueloss", kind="metadata", limit=10000)],
+                    project_dir, profiles_dir, dbt_bin, dialect)[0] if q else None
+                if lr is not None and not lr.failed:
+                    import json as _json
+                    for x in lr.rows:
+                        try:
+                            tables = (_json.loads(x.get("js") or "{}") or {}).get("tables") or {}
+                        except (ValueError, TypeError):
+                            continue
+                        for t in tables:
+                            if not str(t).startswith("_dlt"):
+                                loads[(str(x.get("ds")).lower(), str(t).lower())] = \
+                                    str(x.get("v") or "")
+        for r in list(out):
+            k = _norm(r)
+            if k in loads:
+                out[r] = "dlt:" + loads[k]          # the load id says it all
+    missing = [r for r in rels if r not in out]
+    if missing:
+        got = probe_mod.run_many([probe_mod.Statement(
+            f"select count(*) as n from {r}", caller="assay.valueloss", kind="count", limit=1,
+            relation=r) for r in missing], project_dir, profiles_dir, dbt_bin, dialect)
+        for r, res in zip(missing, got):
+            if not res.failed and res.rows:
+                out[r] = str(res.rows[0].get("n"))
+    return out
 
 
 def _cached(store) -> dict:
@@ -185,17 +267,8 @@ def measure(cands: list[Candidate], project, probe_mod, project_dir: str,
     rels = sorted(by_rel)
     cache = _cached(store)
     # 1. the fingerprints, one cheap statement per source
-    loadc = {r: _load_column(project, schema, r) for r in rels}
-    text = "string" if dialect == "bigquery" else "varchar"
-    fps_res = probe_mod.run_many([probe_mod.Statement(
-        "select count(*) as n" + (f", max(cast({loadc[r]} as {text})) as v" if loadc[r] else "")
-        + f" from {r}", caller="assay.valueloss", kind="count", limit=1, relation=r)
-        for r in rels], project_dir, profiles_dir, dbt_bin, dialect)
-    fp: dict = {}
-    for r, res in zip(rels, fps_res):
-        if not res.failed and res.rows:
-            row = res.rows[0]
-            fp[r] = f"{row.get('n')}|{row.get('v') or ''}"
+    started = _t.monotonic()
+    fp = fingerprints(rels, project, probe_mod, project_dir, profiles_dir, dbt_bin, dialect)
     # 2. what needs counting: moved, never counted, a candidate new since, or a week old
     stale_before = _t.time() - RECOUNT_DAYS * 86400
 
@@ -209,16 +282,19 @@ def measure(cands: list[Candidate], project, probe_mod, project_dir: str,
     todo = [r for r in rels if r in fp and not fresh(r)]
     todo.sort(key=lambda r: (min(((cache.get(r) or {}).get(_key(c)) or {}).get("at") or 0.0
                                  for c in by_rel[r]), r))
-    started = _t.monotonic()
     counted: dict = {}
     left = list(todo)
     while left and _t.monotonic() - started < max_seconds:
-        chunk, left = left[:12], left[12:]
+        chunk, left = left[:6], left[6:]
+        # hard: no statement may run past what is left of the budget
+        remaining = max(5, int(max_seconds - (_t.monotonic() - started)))
         stmts = [probe_mod.Statement(
             "select " + ", ".join(f"{_lost_expr(c)} as l{i}, {_present_expr(c)} as p{i}"
                                   for i, c in enumerate(by_rel[r])) + f" from {r}",
             caller="assay.valueloss", kind="count", limit=1, relation=r,
-            columns=sorted({c.source_column for c in by_rel[r]})) for r in chunk]
+            columns=sorted({c.source_column for c in by_rel[r]}),
+            timeout=max(5, remaining // 3))           # a batch may run 3x its longest
+            for r in chunk]
         for r, res in zip(chunk, probe_mod.run_many(stmts, project_dir, profiles_dir, dbt_bin,
                                                     dialect)):
             if res.failed or not res.rows:

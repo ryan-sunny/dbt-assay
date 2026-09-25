@@ -32,3 +32,15 @@ def test_a_failed_step_fails_the_run_and_the_next_one_still_runs(tmp_path, proje
     run = json.loads(next(x for x in r.output.splitlines() if x.startswith("RUN "))[4:])
     assert run["failed"][0] == "nosuchstep" and len(run["steps"]) == 2
     assert r.exit_code == 1
+
+
+def test_a_second_run_on_a_held_store_refuses_at_the_start(tmp_path, project_dir, monkeypatch):
+    from dbt_assay import store as store_mod
+    (tmp_path / "s.duckdb").write_bytes(b"")
+
+    def held(*a, **k):
+        raise store_mod.StoreLocked("the store is held by PID 4242 (assay run), since 06:01")
+    monkeypatch.setattr("dbt_assay.cli.Store", held)
+    r = CliRunner().invoke(app, ["run", "check", "--target", str(project_dir),
+                                 "--store", str(tmp_path / "s.duckdb")])
+    assert r.exit_code == 2 and "PID 4242" in r.output and "[1/1]" not in r.output
