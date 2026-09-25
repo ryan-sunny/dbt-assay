@@ -406,6 +406,9 @@ class Config:
         from . import probe as _probe
         _probe.set_policy(data.get("warehouse") or {})
         _gov.set_policy(data.get("governance") or {})
+        from . import outside as _outside
+        _outside.set_policy(data.get("outside_dbt") or {},
+                            Path(path).parent if path is not None else Path("."))
         if j.get("concurrency") is not None:
             from . import jev as _jev
             _jev.CONCURRENCY = max(1, int(j["concurrency"]))
@@ -653,6 +656,13 @@ jev:
 governance:
   metadata_only: false
 
+# SQL THAT READS THE WAREHOUSE FROM OUTSIDE dbt: Python or .sql files under these paths. assay
+# parses their SQL string literals (never runs them) and counts each file as a reader of what it
+# queries, like an exposure. `paid` marks the ones customers pay for.
+# outside_dbt:
+#   paths: [product/, delivery/]
+#   paid: [product/reports/]
+
 warehouse:
   # target: assay
   allow_queries: false
@@ -734,6 +744,9 @@ questions:
   # Counted under --verify: source values a model turns into NULL (a failed cast, a loader's
   # type split nothing reads).
   values_lost_at_hop:                 {action: queue}
+  # SQL outside dbt, in the paths `outside_dbt` names below.
+  sql_outside_dbt:                    {action: queue}
+  read_outside_dbt_undeclared:        {action: queue}
   order_sensitive_aggregate:          {action: annotate}
   join_key_normalised_on_one_side:    {action: queue}
   not_in_over_a_nullable_subquery:    {action: queue}

@@ -76,6 +76,9 @@ def _declared_reader(project, uid: str) -> str:
     n = (project.raw.get("sources", {}) or {}).get(uid) or {}
     meta = {**(n.get("meta") or {}), **((n.get("config") or {}).get("meta") or {})}
     v = meta.get(READ_BY)
+    if not v:
+        # read by code outside dbt that audit.yml's `outside_dbt` names (outside.py)
+        v = (getattr(project, "outside_readers", None) or {}).get(uid) or ""
     return ", ".join(map(str, v)) if isinstance(v, (list, tuple)) else (str(v) if v else "")
 
 

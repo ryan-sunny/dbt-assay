@@ -64,6 +64,8 @@ TITLES: dict[str, str] = {
     "test_is_failing": "A dbt test is failing",
     "output_depends_on_the_clock": "Output changes with today's date",
     "values_lost_at_hop": "Source values the model never sees",
+    "sql_outside_dbt": "SQL that reads the warehouse outside dbt",
+    "read_outside_dbt_undeclared": "A table read outside dbt that dbt does not know",
     "order_sensitive_aggregate": "An aggregate that depends on row order",
     "join_key_normalised_on_one_side": "A join key cleaned on one side only",
     "not_in_over_a_nullable_subquery": "NOT IN over a column that can be NULL",

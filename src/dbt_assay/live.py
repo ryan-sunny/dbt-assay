@@ -146,6 +146,9 @@ def all_findings(project, digests, schema, entries=None, *,
     # *** EVERY PREMISE A CHECK LEANS ON IS RECORDED AS IT LEANS. *** The checks below read the
     # ledger through `ledger.active()`; `ledger.last()` holds it afterwards for `check` to write
     # and the page to show.
+    # Readers outside dbt (audit.yml `outside_dbt`) count as exposures before anything reads them.
+    from . import outside as outside_mod
+    outside_mod.apply(project)
     from . import ledger as ledger_mod
     led = ledger_mod.build(project, schema, entries, store)
     ledger_mod.register_grains(led, entries)
@@ -257,6 +260,8 @@ def _with_source_readings(fs: list, store) -> None:
 
 def _all_findings(project, digests, schema, entries, threshold, store) -> list:
     fs = structural_checks(project, digests, schema)
+    from . import outside as outside_mod
+    fs += outside_mod.findings(project)
     if store is not None:
         _with_source_readings(fs, store)
     fs += relate.run_all(project, digests, schema)[1]

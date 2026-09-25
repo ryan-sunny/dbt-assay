@@ -38,6 +38,15 @@ SHAPES: dict[str, tuple[str, str]] = {
         ("A comment in audit.yml states a count the store no longer holds. Write the number the "
          "store holds now, or say when the old one was true -- \"38 of 38 agreed at 0.37\" is "
          "history and is not checked. Nothing in the warehouse changes.")),
+    "sql_outside_dbt": (
+        "say what it is for",
+        ("Code outside dbt queries the warehouse. Say what each query is for: a report that should "
+         "read a mart as it stands, logic that belongs in a model (move it, so it is tested and in "
+         "the lineage), or a one-off to delete.")),
+    "read_outside_dbt_undeclared": (
+        "declare it, or build it",
+        ("Code outside dbt reads a relation no model builds and no source declares. Declare it as "
+         "a source (with freshness) or build it as a model, so its tests and lineage exist.")),
     "values_lost_at_hop": (
         "keep the values the expression drops",
         ("The source holds values the model turns into NULL. For a loader's type split, declare "

@@ -261,16 +261,22 @@ class Project:
                 depends_on=list((e.get("depends_on") or {}).get("nodes") or []),
                 path=e.get("original_file_path", "") or "",
                 meta=dict(e.get("meta") or (e.get("config") or {}).get("meta") or {}))
-        for uid, e in self.exposures.items():
-            stack, seen = [d for d in e.depends_on if d in self.models or d in self.sources], set()
-            while stack:
-                n = stack.pop()
-                if n in seen:
-                    continue
-                seen.add(n)
-                self._exposed.setdefault(n, set()).add(uid)
-                if n in self.models:
-                    stack.extend(self.models[n].parents)
+        for e in list(self.exposures.values()):
+            self.add_exposure(e)
+
+    def add_exposure(self, e: Exposure) -> None:
+        """Record an exposure and everything it reaches back through the DAG. Also how a reader
+        outside dbt (outside.py) is added."""
+        self.exposures[e.unique_id] = e
+        stack, seen = [d for d in e.depends_on if d in self.models or d in self.sources], set()
+        while stack:
+            n = stack.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            self._exposed.setdefault(n, set()).add(e.unique_id)
+            if n in self.models:
+                stack.extend(self.models[n].parents)
 
     def exposures_of(self, uid: str) -> list[Exposure]:
         """The exposures this model or source reaches, directly or through what it feeds."""

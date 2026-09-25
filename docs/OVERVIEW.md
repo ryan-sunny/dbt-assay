@@ -647,6 +647,14 @@ loader's type split, where a mixed-type column became `x` and `x__v_double` and 
 only `x`. Every row still arrives, so nothing counting rows notices. One statement per source
 relation, through your dbt.
 
+**SQL outside dbt.** `outside_dbt: {paths: [product/, delivery/], paid: [product/reports/]}` in
+audit.yml names where code that queries the warehouse lives. assay parses the SQL string literals
+in those files (it never runs them) and counts each file as a reader of what it queries, the way
+an exposure is: a source only that code reads is no longer "read by nothing", what it reads reaches
+it, and a `paid` path is customer-facing in the priority. `sql_outside_dbt` names each file so
+somebody says what its queries are for, and `read_outside_dbt_undeclared` names a relation it reads
+that no model builds and no source declares.
+
 The ten tables, what each answers, and how they join are in **[SCHEMA.md](SCHEMA.md)**, with an ER diagram.
 
 **What it has cost, and what has gone stale**

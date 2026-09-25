@@ -191,6 +191,7 @@ Three kinds of setting, and they are decided differently.
 | `assay_questions/` | your own question families, or a shipped one replaced | `questions` |
 | `practices` | how a dbt-project-evaluator rule is treated here: enforce, recommend, adjudicate, off | `policy` |
 | source `meta: {read_by: ...}` | a reader outside dbt, so a source is not reported as unused | `waivers` |
+| `outside_dbt` | paths of code that queries the warehouse outside dbt; `paid` marks what customers pay for | `configure` |
 
 **Who decides:** the people who know the data. `assay suggest` ranks what is missing by how much
 of the warehouse it reaches, with the measurement behind each row; it leaves every meaning empty
