@@ -1327,6 +1327,13 @@ assay prove                # certificates for every model a proven rule applies 
 assay prove --parse-on warehouse --project-dir . --dbt "uv run dbt"   # parse check, your dbt
 ```
 
+The toolchain (~800 MB, SHA-256 checked, downloaded once) goes in `~/.cache/assay/lean/`, or
+`$ASSAY_CACHE/assay/lean/`: `ASSAY_CACHE` names the parent folder, like `XDG_CACHE_HOME`. A
+container whose home is not writable sets it to a volume. Every model's SQL that runs on generated
+inputs (the parse round trip, the run check) runs in a separate worker process, so an engine crash
+(DuckDB 1.5.4's spatial extension segfaults on Linux on some generated geometry) reads
+"unchecked: the engine crashed" for that model and the command carries on.
+
 For each join, dedupe, grain and incremental merge, assay writes a theorem about THAT model to
 `target/assay/lean/` (build output, never beside the models): "a join onto `stg_x` cannot
 multiply this model's rows, as long as `id` is unique in `stg_x`". Its hypotheses are the model's

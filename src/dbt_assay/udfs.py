@@ -16,6 +16,7 @@ Nothing here reads a credential: only the output's `plugins:` list.
 """
 from __future__ import annotations
 
+import functools
 import importlib
 import os
 import sys
@@ -58,47 +59,67 @@ def plugin_modules(project_dir, profiles_dir: str | None = None) -> list[str]:
     return []
 
 
-def load_plugins(con, modules: list[str], project_dir=None) -> list[str]:
-    """Run each importable plugin's `configure_connection` on `con`. [what was loaded]."""
-    loaded = []
-    extra = [str(Path(project_dir).resolve()), str(Path(project_dir).resolve().parent)] \
-        if project_dir else []
-    for mod in modules:
+# A failed import is not cached by Python, and the run check opens a connection per dataset: one
+# attempt per module per process, remembered (it was 40% of the run check's time).
+_PLUGINS: dict = {}
+
+
+def _plugin(mod: str, project_dir):
+    if mod not in _PLUGINS:
+        extra = [str(Path(project_dir).resolve()), str(Path(project_dir).resolve().parent)] \
+            if project_dir else []
         added = [p for p in extra if p not in sys.path]
         sys.path[:0] = added
         try:
-            m = importlib.import_module(mod)
-            cls = getattr(m, "Plugin", None)
-            if cls is None:
-                continue
+            cls = getattr(importlib.import_module(mod), "Plugin", None)
             try:
-                plugin = cls(mod, {})
+                _PLUGINS[mod] = cls(mod, {}) if cls is not None else None
             except TypeError:
-                plugin = cls.__new__(cls)
-            plugin.configure_connection(con)
-            loaded.append(mod)
-        except Exception:                                        # noqa: BLE001, S112
-            continue
+                _PLUGINS[mod] = cls.__new__(cls)
+        except Exception:                                        # noqa: BLE001
+            _PLUGINS[mod] = None
         finally:
             for p in added:
                 if p in sys.path:
                     sys.path.remove(p)
+    return _PLUGINS[mod]
+
+
+def load_plugins(con, modules: list[str], project_dir=None) -> list[str]:
+    """Run each importable plugin's `configure_connection` on `con`. [what was loaded]."""
+    loaded = []
+    for mod in modules:
+        plugin = _plugin(mod, project_dir)
+        if plugin is None:
+            continue
+        try:
+            plugin.configure_connection(con)
+            loaded.append(mod)
+        except Exception:                                        # noqa: BLE001, S112
+            continue
     return loaded
 
 
-def stand_ins(con, sql: str, dialect: str = "duckdb") -> list[str]:
-    """A macro for each function `sql` calls that `con` does not have: it returns its first
-    argument. [the names stood in for]."""
+@functools.lru_cache(maxsize=64)
+def _calls(sql: str, dialect: str) -> tuple:
+    """((function name, most arguments it is called with), ...) for the unrecognised calls."""
     from .parse import deep
     try:
         with deep():
             tree = sqlglot.parse_one(sql, read=dialect)
     except Exception:                                            # noqa: BLE001
-        return []
+        return ()
     arity: dict = {}
     for f in tree.find_all(exp.Anonymous):
         name = str(f.name).lower()
         arity[name] = max(arity.get(name, 0), len(f.expressions))
+    return tuple(sorted(arity.items()))
+
+
+def stand_ins(con, sql: str, dialect: str = "duckdb") -> list[str]:
+    """A macro for each function `sql` calls that `con` does not have: it returns its first
+    argument. [the names stood in for]."""
+    arity = dict(_calls(sql, dialect))
     if not arity:
         return []
     have = {r[0].lower() for r in con.execute(

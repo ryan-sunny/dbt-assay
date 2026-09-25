@@ -5545,7 +5545,9 @@ def prove(
     setup: bool = typer.Option(False, "--setup",
                                help="install the pinned Lean toolchain and compile assay's "
                                     "library, then stop: for a Docker image or CI, so a "
-                                    "scheduled run never downloads"),
+                                    "scheduled run never downloads. It goes in "
+                                    "$ASSAY_CACHE/assay/lean (ASSAY_CACHE is the parent "
+                                    "folder; default ~/.cache)"),
     offline: bool = typer.Option(False, "--offline",
                                  help="never download; say what is missing instead"),
     force: bool = typer.Option(False, "--force", help="re-prove models whose file has not "

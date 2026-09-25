@@ -181,21 +181,23 @@ def printed(sql: str, dialect: str) -> str:
     return sqlglot.parse_one(sql, read=dialect).sql(dialect=dialect)
 
 
-def check_duckdb(project, schema, sql: str, dialect: str) -> tuple[str, str, int]:
+def check_duckdb(project, schema, sql: str, dialect: str, worker=None) -> tuple[str, str, int]:
+    """`worker`: a sandbox.Worker the SQL runs in, so an engine crash is a result (B3)."""
     from .parse import deep
     with deep():
-        return _check_duckdb_retry(project, schema, sql, dialect)
+        return _check_duckdb_retry(project, schema, sql, dialect, worker)
 
 
-def _check_duckdb_retry(project, schema, sql: str, dialect: str) -> tuple[str, str, int]:
+def _check_duckdb_retry(project, schema, sql: str, dialect: str,
+                        worker=None) -> tuple[str, str, int]:
     """(status, detail, rows compared) in an in-memory DuckDB.
 
     A column with no known type is filled with text first; if the SQL cannot run because it
     compares one to a number, it is tried again with those columns as integers."""
-    got = _check_duckdb(project, schema, sql, dialect, untyped="text")
+    got = _check_duckdb(project, schema, sql, dialect, untyped="text", worker=worker)
     if got[0] == L.UNCHECKED and re.search(r"VARCHAR and type (INTEGER|DECIMAL|DOUBLE|BIGINT)"
                                            r"|Could not convert string", got[1]):
-        again = _check_duckdb(project, schema, sql, dialect, untyped="int")
+        again = _check_duckdb(project, schema, sql, dialect, untyped="int", worker=worker)
         if again[0] != L.UNCHECKED:
             return again
     return got
@@ -242,8 +244,28 @@ def fill(con, ins, sql: str, rows_for=None) -> None:
             con.executemany(f"insert into {q} values (" + ", ".join("?" * len(cols)) + ")", rows)
 
 
-def _check_duckdb(project, schema, sql: str, dialect: str, untyped: str = "text"):
+def execute(ins, sql: str, again: str) -> tuple:
+    """In the worker process (sandbox): fill the inputs, run the SQL and its printed parse.
+    ("ok", rows, rows) | ("sql", error) | ("printed", error, rows of the SQL)."""
     import duckdb
+    con = duckdb.connect(":memory:")
+    try:
+        fill(con, ins, sql)
+        try:
+            a = con.execute(sql).fetchall()
+        except Exception as e:                                   # noqa: BLE001
+            return ("sql", str(e))
+        try:
+            b = con.execute(again).fetchall()
+        except Exception as e:                                   # noqa: BLE001
+            return ("printed", str(e), a)
+        return ("ok", a, b)
+    finally:
+        con.close()
+
+
+def _check_duckdb(project, schema, sql: str, dialect: str, untyped: str = "text",
+                  worker=None):
     if (dialect or "duckdb") != "duckdb":
         return (L.UNCHECKED, (f"this project's SQL is {dialect}; the in-memory round trip runs "
                              f"DuckDB only. `assay prove --parse-on warehouse` runs it through "
@@ -256,18 +278,19 @@ def _check_duckdb(project, schema, sql: str, dialect: str, untyped: str = "text"
         again = printed(sql, dialect)
     except Exception as e:                                       # noqa: BLE001
         return L.UNCHECKED, f"not read: {str(e)[:200]}", 0
-    con = duckdb.connect(":memory:")
-    try:
-        fill(con, ins, sql)
-        try:
-            a = con.execute(sql).fetchall()
-        except Exception as e:                                   # noqa: BLE001
-            return L.UNCHECKED, _why_not_run(str(e)), 0
-        try:
-            b = con.execute(again).fetchall()
-        except Exception as e:                                   # noqa: BLE001
-            return (L.BROKEN, "the printed parse failed where the SQL ran: "
-                              + str(e).splitlines()[0][:200], len(a))
+    if worker is not None:
+        ok, got = worker.run(execute, ins, sql, again)
+        if not ok:
+            return L.UNCHECKED, str(got), 0
+    else:
+        got = execute(ins, sql, again)
+    if got[0] == "sql":
+        return L.UNCHECKED, _why_not_run(got[1]), 0
+    if got[0] == "printed":
+        return (L.BROKEN, "the printed parse failed where the SQL ran: "
+                          + got[1].splitlines()[0][:200], len(got[2]))
+    a, b = got[1], got[2]
+    if True:
         if _bag(a) == _bag(b):
             return (L.HOLDING, (f"the SQL and its printed parse agree on all {len(a)} row(s) "
                                f"from generated inputs"), len(a))
@@ -279,8 +302,6 @@ def _check_duckdb(project, schema, sql: str, dialect: str, untyped: str = "text"
                                  f"is not evidence about the parse"), len(a))
         return (L.BROKEN, (f"{sum(diff.values())} row(s) differ between the SQL and its printed "
                           f"parse, e.g. {list(diff)[:2]}"), len(a))
-    finally:
-        con.close()
 
 
 def warehouse_sql(project, schema, sql: str, dialect: str) -> tuple[str, str]:
@@ -364,13 +385,15 @@ def run(project, digests, schema, store, *, via: str = "duckdb", select=None, fo
             and (force or (u, m.checksum or "") not in done)]
     if todo:
         say(f"checking the parse of {len(todo)} model(s) against their SQL ({via})")
-    for uid, m in todo:
-        if via == "warehouse":
-            st, detail, n = check_warehouse(project, schema, m.compiled, dialect, runner)
-        else:
-            st, detail, n = check_duckdb(project, schema, m.compiled, dialect)
-        rows.append((uid, m.checksum or "", st, detail, n, via, datetime.now(timezone.utc)))
-        by_model[m.name] = st
+    from .sandbox import Worker
+    with Worker() as worker:
+        for uid, m in todo:
+            if via == "warehouse":
+                st, detail, n = check_warehouse(project, schema, m.compiled, dialect, runner)
+            else:
+                st, detail, n = check_duckdb(project, schema, m.compiled, dialect, worker)
+            rows.append((uid, m.checksum or "", st, detail, n, via, datetime.now(timezone.utc)))
+            by_model[m.name] = st
     if rows:
         store.con.executemany("insert or replace into parse_checks values (?,?,?,?,?,?,?)", rows)
     counts = Counter(r[2] for r in rows)

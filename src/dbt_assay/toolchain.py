@@ -37,8 +37,34 @@ URL = "https://github.com/leanprover/lean4/releases/download/v{v}/lean-{v}-{p}.z
 
 
 def cache_root() -> Path:
+    """`$ASSAY_CACHE/assay/lean`: ASSAY_CACHE is the PARENT, like XDG_CACHE_HOME (B2), so
+    ASSAY_CACHE=/app/.cache puts the toolchain in /app/.cache/assay/lean/<version>."""
     base = os.environ.get("ASSAY_CACHE") or os.environ.get("XDG_CACHE_HOME")
     return Path(base) / "assay" / "lean" if base else Path.home() / ".cache" / "assay" / "lean"
+
+
+def _owner(path: Path) -> str:
+    try:
+        import pwd
+        return pwd.getpwuid(path.stat().st_uid).pw_name
+    except Exception:                                            # noqa: BLE001
+        return "another user"
+
+
+def ensure_dir(path: Path) -> Path:
+    """mkdir -p, or ONE line saying which folder, who owns what is in the way, and how to point
+    assay elsewhere. (sunny-data feedback B1: an unwritable cache printed three stacked mkdir
+    tracebacks, the cause on the last line of ~60.)"""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    except OSError as e:
+        there = next((p for p in [path, *path.parents] if p.exists()), path)
+        raise RuntimeError(
+            f"assay cannot create its Lean cache folder {path}: {there} belongs to "
+            f"{_owner(there)} and this process ({os.environ.get('USER') or 'this user'}) cannot "
+            f"write there ({e.strerror or e}). Set ASSAY_CACHE to a folder it can write; the "
+            f"toolchain goes in $ASSAY_CACHE/assay/lean.") from None
 
 
 def platform_key() -> str:
@@ -96,8 +122,7 @@ def _install(say) -> None:
     key = platform_key()
     url = URL.format(v=VERSION, p=key)
     want = DIGESTS[key]
-    dest = cache_root() / VERSION
-    dest.mkdir(parents=True, exist_ok=True)
+    dest = ensure_dir(cache_root() / VERSION)
     archive = dest / f"lean-{VERSION}-{key}.zip"
     if not archive.exists() or _sha256(archive) != want:
         say(f"downloading Lean {VERSION} for {key} (~800 MB, once)")
@@ -168,8 +193,7 @@ def build_library(say=print) -> dict:
     lake = lake_for_build()
     if lake is None:
         raise RuntimeError("no Lean toolchain to build with")
-    lib = library()
-    lib.mkdir(parents=True, exist_ok=True)
+    lib = ensure_dir(library())
     for p in LEAN_DIR.rglob("*"):
         if ".lake" in p.parts or p.is_dir():
             continue

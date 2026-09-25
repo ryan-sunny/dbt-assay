@@ -149,12 +149,12 @@ def _join_counts(sql: str, index: int, dialect: str) -> tuple[str, str]:
 
 
 def check_model(project, schema, uid: str, sql: str, dialect: str, certs: list,
-                seed: int = 13, plugins: tuple = ((), None)) -> dict:
+                seed: int = 13, plugins: tuple = ((), None), worker=None) -> dict:
     """{property: (status, detail)} for one model's proven certificates. `plugins`: (the
     profile's plugin modules, the project directory to import them from)."""
     from .parse import deep
     with deep():
-        return _check_model(project, schema, uid, sql, dialect, certs, seed, plugins)
+        return _check_model(project, schema, uid, sql, dialect, certs, seed, plugins, worker)
 
 
 _TYPE_MISS = re.compile(r"VARCHAR and type (INTEGER|DECIMAL|DOUBLE|BIGINT)|Could not convert "
@@ -237,26 +237,29 @@ def _run_claim(con_for, ins, sql, dialect, claim, c, rel_of, uid, seed):
     return HOLDS, f"held on {N_DATASETS} generated datasets that meet its premises", notes
 
 
-def _check_model(project, schema, uid: str, sql: str, dialect: str, certs: list,
-                 seed: int = 13, plugins: tuple = ((), None)) -> dict:
+def claim_task(ins, sql, dialect, claim, cert, rel_of, uid, seed, modules, pdir):
+    """In the worker process (sandbox): one claim over its datasets. (status, detail, notes)"""
     import duckdb
 
     from . import parsecheck, udfs
-    out: dict = {}
-    modules, pdir = plugins
+    from .parse import deep
 
     def con_for():
-        """A connection with the project's plugins, and a stand-in for any function still
-        missing; [what was used, in words]."""
         con = duckdb.connect(":memory:")
         parsecheck.load_spatial(con, sql)        # real functions first, so none is stood in for
         used = [f"plugin {m} loaded" for m in udfs.load_plugins(con, list(modules), pdir)]
         used += [f"`{f}` stood in for by its first argument" for f in udfs.stand_ins(con, sql,
                                                                                      dialect)]
         return con, used
-    if (dialect or "duckdb") != "duckdb":
-        return {c["property"]: (UNCHECKED, f"runs DuckDB SQL only; this project is {dialect}")
-                for c in certs}
+    with deep():
+        return _run_claim(con_for, ins, sql, dialect, claim, cert, rel_of, uid, seed)
+
+
+def _check_model(project, schema, uid: str, sql: str, dialect: str, certs: list,
+                 seed: int = 13, plugins: tuple = ((), None), worker=None) -> dict:
+    from . import parsecheck
+    out: dict = {}
+    modules, pdir = plugins
     try:
         ins = _cast_to_number(parsecheck._inputs(project, schema, sql, dialect), sql, dialect)
     except Exception as e:                                       # noqa: BLE001
@@ -279,8 +282,13 @@ def _check_model(project, schema, uid: str, sql: str, dialect: str, certs: list,
         for variant in (ins, _numeric(ins)):
             if variant is None:
                 continue
-            status, detail, notes = _run_claim(con_for, variant, sql, dialect, claim, c,
-                                               rel_of, uid, seed)
+            args = (variant, sql, dialect, claim, c, rel_of, uid, seed, tuple(modules),
+                    str(pdir) if pdir else None)
+            if worker is not None:
+                ok, got = worker.run(claim_task, *args)
+                status, detail, notes = got if ok else (UNCHECKED, str(got), [])
+            else:
+                status, detail, notes = claim_task(*args)
             if not (status == UNCHECKED and _TYPE_MISS.search(detail)):
                 if variant is not ins and status != UNCHECKED:
                     notes.append("columns of unknown type filled with numbers")
@@ -312,8 +320,24 @@ def run(project, schema, store, obligations: list, proven: set, *, force: bool =
                  "property": p.prop} for p in o.premises]
         by_model.setdefault(o.model, []).append(
             {"property": o.prop, "claim": o.claim, "premises": prem, "checksum": o.checksum})
-    rows, n = [], 0
+    rows: list = []
+    counter = [0]
     now = datetime.now(timezone.utc)
+    # every model's SQL runs in one worker process: an engine crash costs that model, not the run
+    from .sandbox import Worker
+    with Worker() as worker:
+        _run_models(project, schema, by_model, have, force, dialect, plugins, worker, rows, now,
+                    counter)
+    n = counter[0]
+    if rows:
+        store.con.executemany("insert or replace into claim_checks values (?,?,?,?,?,?,?)", rows)
+    if n:
+        say(f"ran {n} proven claim(s) against their models")
+    return {"checked": n}
+
+
+def _run_models(project, schema, by_model, have, force, dialect, plugins, worker, rows, now,
+                counter) -> None:
     for uid, certs in sorted(by_model.items()):
         # the inputs meet EVERY premise of the model's proven certificates at once, so all its
         # claims are tested on the same runs
@@ -325,17 +349,13 @@ def run(project, schema, store, obligations: list, proven: set, *, force: bool =
         m = project.models.get(uid)
         if m is None or not m.readable:
             continue
-        n += len(todo)
+        counter[0] += len(todo)
         got = check_model(project, schema, uid, m.compiled, dialect,
-                          [{**c, "premises": allp} for c in todo], plugins=plugins)
+                          [{**c, "premises": allp} for c in todo], plugins=plugins,
+                          worker=worker)
         for c in todo:
             st, detail = got[c["property"]]
             rows.append((uid, c["property"], c["checksum"], key, st, detail, now))
-    if rows:
-        store.con.executemany("insert or replace into claim_checks values (?,?,?,?,?,?,?)", rows)
-    if n:
-        say(f"running {n} proven claim(s) against their models")
-    return {"checked": n}
 
 
 def stored(store) -> dict:
