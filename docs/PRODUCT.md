@@ -445,6 +445,50 @@ assay export <dir>        # the tables, as seeds your own models can join to
 
 ---
 
+## Your warehouse, and what leaves your network
+
+assay reads a local DuckDB file freely. Any other warehouse (Snowflake, BigQuery, Databricks,
+Postgres, Redshift, MySQL, MotherDuck) gets **nothing**, not even `select 1`, until you allow it:
+a yes at a terminal, `ASSAY_ALLOW_WAREHOUSE=1`, or, for a schedule, in audit.yml:
+
+```yaml
+warehouse:
+  target: assay           # a read-only output in profiles.yml; every dbt call assay makes uses it
+  allow_queries: true
+  max_queries: 200        # per command, stopped before the statement past it
+  max_spend_usd: 1.00     # per command, by assay's estimate, stopped before
+governance:
+  metadata_only: true     # never send a row value to the model provider
+```
+
+The refusal says what would run, where and as whom, read from profiles.yml (never a secret).
+Every query goes through your own dbt, so the adapter's own caps apply: set `query_tag` on
+Snowflake, `maximum_bytes_billed` and `job_execution_timeout_seconds` on BigQuery, a small SQL
+warehouse of its own on Databricks, a read-only role everywhere. `assay onboard` checks which of
+those your `assay` output sets, `--check-warehouse` says who assay is once connected, and it
+prints what leaves the machine:
+
+| what | where it goes |
+|---|---|
+| read-only statements: counts, distinct counts, small samples | your warehouse, through your dbt, after you allow it |
+| compiled SQL, names, your own descriptions and claims, counts and ratios | the model provider, per judged question |
+| row values | only from `assay feeds` (a sample per source) and `assay adjudicate` (failing rows dbt stored); `metadata_only` refuses both before sending |
+| the Lean toolchain | downloaded once from GitHub by `assay prove --setup`; nothing about your project is sent |
+| anything else | nothing: no telemetry, and the page and the form load nothing from the network |
+
+What differs by adapter, from the code:
+
+| | DuckDB | Snowflake | BigQuery | Databricks / Spark | Postgres / Redshift | MySQL | Trino / Athena / T-SQL |
+|---|---|---|---|---|---|---|---|
+| parse, structural checks, judged tier, Lean certificates | yes | yes | yes | yes | yes | yes | yes |
+| Lean parse proofs | the fragment is DuckDB-shaped | NULL order per dialect; more models unproven | backquoted names read | as Snowflake | as Snowflake | backquoted names read | as Snowflake |
+| run check on generated rows | yes | on its round-tripping DuckDB translation | as Snowflake | as Snowflake | as Snowflake | as Snowflake | as Snowflake |
+| engine parse check (`EXPLAIN`, runs nothing) | yes | yes | no EXPLAIN statement: the round trip only | yes | yes | yes | yes |
+| probes batched into one dbt call | yes | yes | yes | yes | Postgres yes, Redshift one per statement | one per statement | one per statement |
+| listing before counting (a missing column never splits a batch) | yes | yes | per dataset | no | yes | yes | no |
+| sampling | yes | yes | yes | yes | exact counts | exact counts | exact counts |
+| run end to end on a real engine | yes | not yet | not yet | not yet | not yet | not yet | not yet |
+
 ## What it costs
 
 Jev is **$0.042 per million input tokens, output free**. In practice:

@@ -493,7 +493,12 @@ def report(project, digests, store, pcs=None, odds=None, pairs=None, settled=Non
              **({"read_as": _ans(odd[f"cluster::odd::{o.key}"])}
                 if f"cluster::odd::{o.key}" in odd else {})}
             for o in odds],
-        "same_claim": [[{"model": r["subject_name"], "claim": r["text"]} for r in g]
-                       for g in claim_groups if len({r["subject"] for r in g}) > 1],
+        # Sorted: a component is a set, and a set's order changed between two runs of the same
+        # store, so the page's data did too.
+        "same_claim": sorted(
+            (sorted(({"model": r["subject_name"], "claim": r["text"]} for r in g),
+                    key=lambda x: (str(x["model"]), str(x["claim"])))
+             for g in claim_groups if len({r["subject"] for r in g}) > 1),
+            key=lambda grp: [(str(x["model"]), str(x["claim"])) for x in grp]),
         "claim_pairs_code_could_not_settle": len(pairs),
     }
