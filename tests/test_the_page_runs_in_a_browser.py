@@ -833,6 +833,8 @@ def test_the_page_shows_what_is_proven_and_what_lean_refuted(tmp_path):
             page.evaluate("() => GO.models('covered')")
             text = page.locator(".detail").first.inner_text()
             assert "proven (1 of 1)" in text.lower() and "as long as" in text
+            # in its own pane a certificate says "its rows", not the model's name again
+            assert "cannot multiply its rows" in text and "covered's rows" not in text, text
             page.click('nav button[data-tab="guarantees"]')
             page.wait_for_timeout(200)
             page.locator(".gitem", has_text="not proven").first.click()

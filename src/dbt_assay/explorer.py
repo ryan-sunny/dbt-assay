@@ -1746,21 +1746,30 @@ function modelsTab(host) {
     /* *** PROVEN. *** (L2) Each certificate about this model, what it rests on, and whether
        that still holds. */
     const pr = PROOFS_BY_MODEL[m.uid] || [];
+    /* *** EVERY LINE NAMED THE MODEL WHOSE PANE IT IS, AND THE SAME LINE CAME THREE TIMES. ***
+       In its own pane a certificate says "its rows"; identical ones (three joins onto one CTE)
+       read once with a count; what needs attention comes first; and a broken premise is said
+       once, not as "as long as X ... Not so: X is not so". */
+    const groupsP = [];
+    for (const r of [...pr].sort((a, b) => (PROOF_ORDER[a.guarantee] ?? 9)
+                                           - (PROOF_ORDER[b.guarantee] ?? 9))) {
+      const key = ownStatement(r) + '\u001f' + r.guarantee + '\u001f' + (r.lost_because || '')
+        + '\u001f' + (provedIt(r) ? '' : r.missing || '');
+      const g = groupsP.find(x => x.key === key);
+      if (g) g.n += 1; else groupsP.push({key, r, n: 1});
+    }
     if (pr.length) d.append(section('proven (' + pr.filter(r => r.status === 'proven').length
-      + ' of ' + pr.length + ')', el('div', {class: 'ulist'}, pr.map(r => el('div', {class: 'urow'}, [
-        el('span', {}, [wbr(r.statement)]), gbadge(r),
-        el('div', {class: 'usub'}, [wbr(provedIt(r)
-          ? ((r.premises || []).length ? 'as long as ' + r.premises.map(p =>
-              String(p.statement || '').replace(/`/g, '') + ' (' + p.label + ')').join('; ')
-             : 'needs no premise')
-            + (r.lost_because ? (r.guarantee === 'lost' ? '. Lost: ' : '. Not so: ')
-               + r.lost_because.replace(/`/g, '') : '')
-          : (r.missing || 'no proven rule covers it'))])]))),
+      + ' of ' + pr.length + ')', el('div', {class: 'ulist'}, groupsP.map(({r, n}) =>
+        el('div', {class: 'urow'}, [
+        el('span', {}, [wbr(ownStatement(r) + (n > 1 ? ' (' + n + ' times)' : ''))]), gbadge(r),
+        el('div', {class: 'usub'}, [wbr(proofSub(r))])]))),
       'Checked by Lean from the parsed structure: each holds for every input its premises allow.'));
 
     /* *** CORRECT AS LONG AS. *** Every premise something about this model rests on, one line
        each with its status, linked to Guarantees. Omitted when there are none. */
-    const prem = PREM_BY_MODEL[m.uid] || [];
+    /* premises only a certificate above rests on are already said there */
+    const prem = (PREM_BY_MODEL[m.uid] || []).filter(p => (p.uses || []).some(u =>
+      u.model === m.uid && u.kind !== 'proof'));
     if (prem.length) d.append(section('correct as long as', el('div', {class: 'ulist'},
       prem.map(p => {
         const a = el('a', {class: 'lk', href: '#guarantees'}, [wbr(p.statement)]);
@@ -3068,8 +3077,9 @@ function understoodTab(host) {
         tile(num(held), 'findings held back', 'on a premise that is not holding'),
         ...(PROOFS.length ? [tile(num(PROOFS.filter(r => r.status === 'proven').length) + ' of '
             + num(PROOFS.length), 'properties proven',
-            num(PROOFS.filter(r => r.guarantee === 'lost').length) + ' guarantee(s) lost; '
-            + 'proven from the parsed structure',
+            num(PROOFS.filter(r => r.status === 'proven' && (r.run_check || {}).status
+              === 'holds').length) + ' held on a run of the model; '
+            + num(PROOFS.filter(r => r.guarantee === 'lost').length) + ' guarantee(s) lost',
             PROOFS.some(r => r.guarantee === 'lost') ? 'bad' : '')] : []),
       ]), go])));
   }
@@ -3645,7 +3655,7 @@ const PTIP = {
   unknown: 'Nothing declares, counts or judges it.',
   holding: 'Its test ran and passed, or an exact count found no duplicates.'};
 const USEWORD = {grain: 'the grain of', held_back: 'a finding held back on',
-                 raised_on: 'a finding reading it on', proof: 'a proof about'};
+                 raised_on: 'a finding reading it on', proof: 'the proof about'};
 
 /* ---- certificates (L2): a guarantee's word, badge class and tip. */
 const GWORD = {holding: 'proven', conditional: 'proven, conditional', lost: 'guarantee lost',
@@ -3674,6 +3684,28 @@ const PROOFS = DATA.proofs || [];
 /* Lean proved this certificate (whatever its premises or a run say now): it has premises to show,
    not a missing piece. A refutation is Lean-checked too, and shows what is missing. */
 function provedIt(r) { return !['not_proven', 'not_attempted'].includes(r.status); }
+/* what needs attention first */
+const PROOF_ORDER = {contradicted: 0, lost: 1, refuted: 2, regrouped: 3, stale: 4, conditional: 5,
+                     holding: 6, not_proven: 7, not_attempted: 8};
+/* A certificate's statement where the model is already named (its own pane, a row beside its
+   name): "`m`'s rows" reads "its rows", "`m` is one row per" reads "One row per". */
+function ownStatement(r) {
+  const n = '`' + r.model_name + '`';
+  let s = String(r.statement || '').split(n + '\u2019s').join('its').split(n + "'s").join('its');
+  if (s.startsWith(n + ' is one row')) s = 'One row' + s.slice(n.length + ' is one row'.length);
+  else if (s.startsWith(n + ' stays ')) s = 'Stays' + s.slice(n.length + 6);
+  return s;
+}
+/* the line under a certificate: what it rests on, once */
+function proofSub(r) {
+  if (!provedIt(r)) return r.missing || 'no proven rule covers it';
+  const ps = r.premises || [];
+  if (r.lost_because) return (r.guarantee === 'lost' ? 'lost: ' : 'rests on ')
+    + r.lost_because.replace(/`/g, '').replace(/ (broke|is not so): /, ', which $1: ');
+  if (!ps.length) return 'needs no premise';
+  return 'as long as ' + ps.map(p => String(p.statement || '').replace(/`/g, '') + ' ('
+    + p.label + ')').join('; ');
+}
 const PROOFS_BY_MODEL = {};
 for (const r of PROOFS) (PROOFS_BY_MODEL[r.model] = PROOFS_BY_MODEL[r.model] || []).push(r);
 function gbadge(r) {
@@ -3702,7 +3734,13 @@ function proofBlock(r) {
           {holds: 'held', contradicted: 'contradicted'}[r.run_check.status] || 'could not run',
           r.run_check.detail) : null],
     /* L4: whether this project's engine does what the rule's constructs mean. */
-    ['the engine', (r.engine || []).length ? el('div', {class: 'ulist'}, r.engine.map(x =>
+    ['the engine', (r.engine || []).length && new Set(r.engine.map(x => x.status)).size === 1
+        && r.engine[0].status !== 'differs'
+      ? el('span', {}, [premBadge({conforms: 'holding'}[r.engine[0].status] || 'unchecked',
+          r.engine[0].status === 'conforms' ? 'conforms' : 'not measured',
+          r.engine.map(x => x.construct + ': ' + x.detail).join('\n')),
+          el('span', {class: 'tot', text: '  ' + r.engine.map(x => x.construct).join(', ')})])
+      : (r.engine || []).length ? el('div', {class: 'ulist'}, r.engine.map(x =>
         el('div', {class: 'urow'}, [el('span', {class: 'mono', text: x.construct}),
           /* the badge colour is a premise's: conforms reads as holding, differs as assumed
              (amber), never broken: it is the engine's defined behaviour. (L5) */
@@ -3721,8 +3759,8 @@ function premiseWhatToDo(p) {
   const obs = (p.evidence || []).find(e => e.kind === 'observed');
   const name = p.name, cols = (p.columns || []).join(', ');
   if (p.status === 'broken' && obs && obs.status === 'broken')
-    return 'The key is broken: ' + obs.detail + '. Either remove the duplicates upstream of `'
-      + name + '`, or change what reads it to use a key that is unique.';
+    return 'Remove the duplicates upstream of `' + name + '`, or change what reads it (listed '
+      + 'above) to use a key that is unique.';
   if (p.status === 'broken' && test)
     return test.detail.split(' last result')[0] + ' failed on its last run. Fix the data or '
       + 'the key, then run it again: `dbt test --select ' + name + '`.';
@@ -3819,16 +3857,15 @@ function guaranteesTab(host) {
     if (pby[k]) groups.push({key: 'proof_' + k, proof: 1, label: {
       contradicted: 'proofs: contradicted by a run', lost: 'proofs: guarantee lost',
       refuted: 'proofs: does not hold', regrouped: 'proofs: fan out, regrouped',
-      conditional: 'proofs: conditional', stale: 'proofs: file changed', holding: 'proven',
-      not_proven: 'not proven'}[k], rows: pby[k]});
+      conditional: 'proofs: proven, conditional', stale: 'proofs: file changed',
+      holding: 'proofs: proven', not_proven: 'proofs: not proven'}[k], rows: pby[k]});
   const proofCols = [
     {key: 'model', label: 'model', mono: 1, val: r => r.model_name, cell: r => link(r.model_name)},
-    {key: 'what', label: 'property', val: r => r.statement,
-     cell: r => el('span', {}, [wbr(r.statement)])},
+    {key: 'what', label: 'property', val: r => ownStatement(r),
+     cell: r => el('span', {}, [wbr(ownStatement(r))])},
     {key: 'g', label: 'guarantee', val: r => r.guarantee, cell: r => gbadge(r)}];
   const proofPane = r => pane({kind: 'proof · ' + String(r.property).split(':')[0].replace(/_/g, ' '),
-    title: link(r.model_name), where: el('span', {class: 'mono', text: r.theorem}),
-    what: r.statement, reading: [proofBlock(r)],
+    title: link(r.model_name), what: ownStatement(r), reading: [proofBlock(r)],
     act: r.guarantee === 'lost' ? el('p', {class: 'prose'}, [wbr('The premise broke: fix the data or '
           + 'the key it names, then `assay check`. Lean need not run again.')])
       : !provedIt(r) ? el('p', {class: 'prose'}, [wbr(r.missing || 'Nothing to do until '
@@ -3853,7 +3890,9 @@ function guaranteesTab(host) {
                   judged: 'a judgment'};
     for (const e of ev) {
       d.append(el('dt', {text: KIND[e.kind] || e.kind}));
-      d.append(el('dd', {}, [wbr(e.detail), premBadge(e.status, e.status),
+      /* the header already says the deciding piece; its row keeps only where and when */
+      d.append(el('dd', {}, [...(e.detail && e.detail !== p.why ? [wbr(e.detail)] : []),
+        premBadge(e.status, e.status),
         ...(e.at ? [el('span', {class: 'tot', text: '  ' + String(e.at).slice(0, 10)})] : [])]));
     }
     return d;
@@ -3866,10 +3905,12 @@ function guaranteesTab(host) {
     const d = el('div', {class: 'ulist'});
     for (const u of us) {
       const line = el('div', {class: 'urow'});
-      const check = u.kind === 'grain' ? '' : u.dependent.split(':')[0];
+      const check = ['grain', 'proof'].includes(u.kind) ? '' : u.dependent.split(':')[0];
       line.append(el('span', {text: (USEWORD[u.kind] || u.kind) + ' '}), link(u.model_name));
       if (check) line.append(el('span', {class: 'mono tot', text: '  ' + check}));
-      if (u.detail && u.kind !== 'grain') line.append(el('div', {class: 'usub'}, [wbr(u.detail)]));
+      if (u.detail && u.kind !== 'grain') line.append(el('div', {class: 'usub'}, [wbr(
+        u.kind === 'proof' ? ownStatement({statement: u.detail, model_name: u.model_name})
+                           : u.detail)]));
       const fid = u.finding || (u.kind === 'held_back' ? (p.raised || []).find(id =>
         (DATA.findings || []).some(f => f.id === id && f.subject === u.model)) : null);
       if (fid) {
