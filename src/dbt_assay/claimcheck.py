@@ -34,6 +34,8 @@ from datetime import datetime, timezone
 import sqlglot
 from sqlglot import exp
 
+from . import bulk
+
 HOLDS, CONTRADICTED, UNCHECKED = "holds", "contradicted", "unchecked"
 N_DATASETS = 3
 N_ROWS = 7
@@ -330,7 +332,7 @@ def run(project, schema, store, obligations: list, proven: set, *, force: bool =
                     counter)
     n = counter[0]
     if rows:
-        store.con.executemany("insert or replace into claim_checks values (?,?,?,?,?,?,?)", rows)
+        bulk.many(store.con, "insert or replace into claim_checks values (?,?,?,?,?,?,?)", rows)
     if n:
         say(f"ran {n} proven claim(s) against their models")
     return {"checked": n}

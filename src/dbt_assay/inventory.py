@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from . import contracts, provenance, relate
+from . import bulk, contracts, provenance, relate
 
 SOURCES = ("declared", "observed", "derived", "judged", "unknown")
 
@@ -463,7 +463,7 @@ def write_store(store, run_id: str, entries: list[ModelEntry]) -> None:
                     rows.append([run_id, e.name, c.name, prop, str(f.value), f.source,
                                  f.confidence, f.note[:400]])
     if rows:
-        store.con.executemany("insert or replace into inventory values (?,?,?,?,?,?,?,?)", rows)
+        bulk.many(store.con, "insert or replace into inventory values (?,?,?,?,?,?,?,?)", rows)
 
 
 def to_yaml_dict(entries: list[ModelEntry], adjudicated_only: bool = True,

@@ -27,8 +27,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import bulk, sqlfrag
 from . import ledger as L
-from . import sqlfrag
 
 VIA = "lean"
 
@@ -134,7 +134,7 @@ def run(project, store, target_dir, *, select=None, force: bool = False, say=pri
                              ("proven: Lean's parser reads exactly sqlglot's tree from the "
                              "model's text, checked by the kernel"), 0, VIA, now))
     if rows:
-        store.con.executemany("insert or replace into parse_checks values (?,?,?,?,?,?,?)", rows)
+        bulk.many(store.con, "insert or replace into parse_checks values (?,?,?,?,?,?,?)", rows)
     from collections import Counter
     by = Counter("proven" if r[2] == L.HOLDING else "unproven" for r in rows)
     names = {u: m.name for u, m in project.models.items()}

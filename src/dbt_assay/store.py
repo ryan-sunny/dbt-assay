@@ -22,6 +22,7 @@ from typing import ClassVar
 
 import duckdb
 
+from . import bulk
 from .checks.incremental import DDL_LATENESS
 from .claimcheck import DDL as DDL_CLAIMS
 from .conformance import DDL as DDL_CONFORMANCE
@@ -906,7 +907,7 @@ class Store:
         if rows:
             # Named, never positional: a migration appends at the END and a positional insert
             # then writes the id into whichever column happens to sit there.
-            self.con.executemany(
+            bulk.many(self.con,
                 """insert or replace into findings
                    (run_id, check_name, subject, subject_name, file, summary, detail,
                     base, weight, descendants, marts, evidence, finding_id, exposures,
@@ -918,12 +919,12 @@ class Store:
                  len(f.available), len(f.carried), len(f.dropped),
                  json.dumps(f.joined_on), json.dumps(f.dropped[:40])] for f in facts]
         if rows:
-            self.con.executemany(
+            bulk.many(self.con,
                 "insert or replace into edge_facts values (?,?,?,?,?,?,?,?,?,?)", rows)
 
     def write_unreadable(self, run_id: str, rows: list[tuple]) -> None:
         if rows:
-            self.con.executemany(
+            bulk.many(self.con,
                 "insert or replace into unreadable values (?,?,?,?,?)",
                 [[run_id, *r] for r in rows])
 
@@ -960,7 +961,7 @@ class Store:
     def save_claims(self, rows: list) -> None:
         """Named columns, never positional. Positional inserts broke twice after a migration."""
         self.con.execute(DDL)
-        self.con.executemany(
+        bulk.many(self.con,
             """insert or replace into claims
                (claim_id, subject, subject_name, text, source_kind, source_ref,
                 kind, kind_conf, citation, status, extracted_at)

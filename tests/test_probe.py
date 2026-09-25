@@ -180,3 +180,68 @@ def test_dbts_error_survives_a_warning_on_stderr():
     assert said == "dbt said: Could not find profile named 'x'", said
     # assay's own reason, when dbt never ran, is passed through without a second preamble
     assert dbt_error("could not reach the warehouse: no profiles.yml") == "no profiles.yml"
+
+
+# dbt 1.11.12's own output on a full parse, trimmed: two warnings, the error, the summary LAST.
+_FULL_PARSE = """\x1b[0m15:15:42  Running with dbt=1.11.12
+\x1b[0m15:15:42  [\x1b[33mWARNING\x1b[0m][MissingArgumentsPropertyInGenericTestDeprecation]: Deprecated
+functionality
+Found top-level arguments to test `accepted_values` defined on 'm' in package
+'depproj' (models/s.yml). Arguments to generic tests should be nested under the
+`arguments` property.
+\x1b[0m15:15:43  Encountered an error:
+Runtime Error
+  IO Error: Could not set lock on file "/w/warehouse.duckdb"
+\x1b[0m15:15:43  [\x1b[33mWARNING\x1b[0m][DeprecationsSummary]: Deprecated functionality
+Summary of encountered deprecations:
+- MissingArgumentsPropertyInGenericTestDeprecation: 139 occurrences
+- PropertyMovedToConfigDeprecation: 3 occurrences
+To see all deprecation instances instead of just the first occurrence of each,
+run command again with the `--show-all-deprecations` flag. You may also need to
+run with `--no-partial-parse` as some deprecations are only encountered during
+parsing.
+"""
+
+
+def test_the_deprecation_summary_does_not_push_the_error_out(monkeypatch):
+    """*** `volume` QUOTED dbt's DEPRECATION SUMMARY AS THE REASON IT COULD NOT REACH. ***
+    (sunny-data, 0.52.4) On a full parse dbt prints the summary last, and a failure was reported
+    by its tail. The warnings are taken out; the error is what is said; the counts get a line
+    of their own."""
+    from types import SimpleNamespace
+
+    from dbt_assay.elementary import dbt_error
+    p = SimpleNamespace(stdout=_FULL_PARSE, stderr="")
+    text = probe.failure_text(p, 300)
+    assert "Could not set lock" in text and "Summary of encountered" not in text
+    assert "Could not set lock" in dbt_error("x" + probe.DBT_OUTPUT + text)
+
+    rest, deps = probe.split_warnings(_FULL_PARSE)
+    assert deps == {"MissingArgumentsPropertyInGenericTestDeprecation": 139,
+                    "PropertyMovedToConfigDeprecation": 3}
+    assert "Deprecated" not in rest and "Running with dbt" in rest
+
+    monkeypatch.setattr(probe, "_DEPRECATIONS_SAID", [])
+    line = probe.say_deprecations(_FULL_PARSE)
+    assert line.startswith("dbt printed 142 deprecation warnings: "
+                           "MissingArgumentsPropertyInGenericTestDeprecation (139)")
+    assert probe.say_deprecations(_FULL_PARSE) == ""        # once per command
+    monkeypatch.setattr(probe, "_DEPRECATIONS_SAID", [])
+    assert probe.say_deprecations("15:15:42  Running with dbt=1.11.12") == ""
+
+
+def test_a_deprecation_on_a_successful_select_1_still_reaches(tmp_path, monkeypatch):
+    """dbt exits 0 and prints the summary after the JSON: reached, and the line is said."""
+    import subprocess
+    from types import SimpleNamespace
+    out = ("15:15:42  Running with dbt=1.11.12\n"
+           '{\n  "show": [\n    {\n      "assay_reachable": 1\n    }\n  ]\n}\n'
+           "15:15:43  [WARNING][DeprecationsSummary]: Deprecated functionality\n"
+           "Summary of encountered deprecations:\n"
+           "- MissingArgumentsPropertyInGenericTestDeprecation: 5 occurrences\n")
+    monkeypatch.setattr(probe, "_REACHED", {})
+    monkeypatch.setattr(probe, "_DEPRECATIONS_SAID", [])
+    monkeypatch.setattr(subprocess, "run",
+                        lambda *a, **k: SimpleNamespace(returncode=0, stdout=out, stderr=""))
+    probe._reach(str(tmp_path), None, "dbt")
+    assert probe._DEPRECATIONS_SAID and "5 deprecation warnings" in probe._DEPRECATIONS_SAID[0]

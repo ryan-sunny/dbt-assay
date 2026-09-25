@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 
 from dotenv import find_dotenv, load_dotenv
 
+from . import bulk
+
 # $0.042 per million INPUT tokens; output is free. A 300-model sweep at ~1k tokens of state each is
 # about 1.2 cents, and nothing at all once the cache is warm.
 USD_PER_INPUT_TOKEN = 0.042 / 1_000_000
@@ -524,7 +526,7 @@ def decide(store, client: Client, recipe, questions: dict, *,
                 usd_per_input_token, called_at)
                values (?,?,?,?,?,?,?,?, current_timestamp)""",
             [call_id, id_source, caller, served, used, out_used, usd, USD_PER_INPUT_TOKEN])
-        store.con.executemany(
+        bulk.many(store.con,
             """insert or replace into model_decisions
                (decision_key, question, kind, answer, confidence, probabilities, state_hash,
                 prompt_version, model_version, call_id, caller, context, input_tokens,

@@ -25,6 +25,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from . import bulk
+
 
 def checksum(text: str) -> str:
     """dbt's checksum of a model file: sha256 of its text, surrounding whitespace stripped."""
@@ -65,7 +67,7 @@ def harvest(store, project) -> int:
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)                  # the clock `runs` is on, not the session's
     before = store.con.execute("select count(*) from compiled_sql").fetchone()[0]
-    store.con.executemany(
+    bulk.many(store.con,
         "insert or ignore into compiled_sql (checksum, model, sql, first_seen) "
         "values (?, ?, ?, ?)", [(*r, now) for r in rows])
     return store.con.execute("select count(*) from compiled_sql").fetchone()[0] - before
@@ -107,7 +109,7 @@ def sync_commits(store, repo, project, since: str | None = None, limit: int = 20
         rows.append((sha, when, subject.strip(), body.strip(), json.dumps(paths),
                      json.dumps(models)))
     before = store.con.execute("select count(*) from commits").fetchone()[0]
-    store.con.executemany(
+    bulk.many(store.con,
         "insert or ignore into commits (sha, committed_at, subject, body, files, models) "
         "values (?, cast(? as timestamptz), ?, ?, ?, ?)", rows)
     return store.con.execute("select count(*) from commits").fetchone()[0] - before

@@ -29,6 +29,8 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
+from . import bulk
+
 BROKEN, HOLDING, UNCHECKED, ASSUMED, UNKNOWN = ("broken", "holding", "unchecked", "assumed",
                                                 "unknown")
 STATUSES = (BROKEN, UNCHECKED, ASSUMED, UNKNOWN, HOLDING)   # worst first, for display
@@ -223,7 +225,7 @@ def record_test_status(store, results: dict, via: str) -> int:
         return 0
     store.con.execute(DDL)
     rows = [(t, str(s), at or None, via) for t, (s, at) in results.items() if t]
-    store.con.executemany(
+    bulk.many(store.con,
         "insert or replace into test_status (test_id, status, ran_at, observed_at, via) "
         "values (?, ?, ?, now(), ?)", rows)
     return len(rows)
@@ -630,9 +632,9 @@ def write(store, run_id: str, led: Ledger) -> None:
     for u in led.uses:
         uses.append((run_id, u.premise_id, u.kind, u.dependent, u.model, u.detail))
     if rows:
-        store.con.executemany("insert or replace into premises values (?,?,?,?,?,?,?,?,?,?)", rows)
+        bulk.many(store.con, "insert or replace into premises values (?,?,?,?,?,?,?,?,?,?)", rows)
     if uses:
-        store.con.executemany("insert or replace into premise_uses values (?,?,?,?,?,?)", uses)
+        bulk.many(store.con, "insert or replace into premise_uses values (?,?,?,?,?,?)", uses)
 
 
 def changes(store, run_id: str) -> list:

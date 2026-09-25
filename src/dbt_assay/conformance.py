@@ -23,6 +23,8 @@ import subprocess
 from collections import Counter
 from datetime import datetime, timezone
 
+from . import bulk
+
 # *** "DIFFERS", NEVER "BROKEN". *** (sunny-data feedback L5) DuckDB's integer `/` returning a
 # double is how DuckDB is defined, not a bug in it. What is at risk is the certificate whose rule
 # assumes the other meaning, so the engine "differs" and the certificate says so. Stores written
@@ -261,7 +263,7 @@ def run(store, engine: str = "duckdb", runner=None, n_random: int = 0, seed: int
                      DIFFERS if bad else CONFORMS,
                      (f"{len(bad)} of {len(rnd)} random cases differ, e.g. {bad[0][1]}"
                       if bad else f"all {len(rnd)} random cases agree (seed {seed})"), now))
-    store.con.executemany("insert or replace into conformance values (?,?,?,?,?,?)", rows)
+    bulk.many(store.con, "insert or replace into conformance values (?,?,?,?,?,?)", rows)
     by = Counter(v[0] for k, v in out.items() if not k.startswith("random:"))
     return {"engine": engine, "version": version, "by_status": dict(by),
             "constructs": {k: {"status": v[0], "detail": v[1]} for k, v in out.items()

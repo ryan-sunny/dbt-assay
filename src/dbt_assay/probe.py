@@ -43,6 +43,8 @@ from datetime import datetime, timezone
 import sqlglot
 from sqlglot import exp
 
+from . import bulk
+
 # *** A HEURISTIC IS ALLOWED IN TARGETING AND NEVER IN A VERDICT. ***
 # Guessing WHAT TO COUNT costs a little compute when it is wrong. Guessing the ANSWER would be
 # wrong. So when a relation's children give no structural hint -- a plain `select * from source`
@@ -415,7 +417,57 @@ def failure_text(p, keep: int = 600) -> str:
     thrown away and the warning was printed in its place.
     """
     both = "\n".join(x.strip() for x in (p.stdout or "", p.stderr or "") if x and x.strip())
-    return (both or "no output")[-keep:].strip()
+    rest, _dep = split_warnings(both)
+    return (rest or both or "no output")[-keep:].strip()
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_STAMP = re.compile(r"^\d{2}:\d{2}:\d{2}(\.\d+)?\s")
+_DEP_LINE = re.compile(r"^- (\w+): (\d+) occurrence")
+
+
+def split_warnings(text: str) -> tuple[str, dict]:
+    """(dbt's output without its [WARNING] blocks, {deprecation: count}).
+
+    *** THE DEPRECATION SUMMARY PUSHED THE ERROR OUT OF THE MESSAGE. *** (sunny-data, 0.52.4) On
+    a full parse dbt prints every deprecation, then a summary, LAST. A failure was reported by
+    its tail, so `volume` said "could not reach the warehouse" and quoted only the summary. A
+    warning block runs from its `[WARNING]` line to the next timestamped line; dropping them leaves
+    the error. The counts come back separately, to be said on their own line.
+    """
+    kept, deps, in_warning, in_summary = [], {}, False, False
+    for line in _ANSI.sub("", text or "").splitlines():
+        stamped = bool(_STAMP.match(line))
+        if stamped:
+            in_warning = "[WARNING]" in line
+            in_summary = "DeprecationsSummary" in line
+        if in_warning:
+            m = _DEP_LINE.match(line.strip()) if in_summary else None
+            if m:
+                deps[m.group(1)] = deps.get(m.group(1), 0) + int(m.group(2))
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip(), deps
+
+
+# Said once per process: a command makes many dbt calls and dbt repeats itself on each full parse.
+_DEPRECATIONS_SAID: list = []
+
+
+def say_deprecations(text: str) -> str:
+    """Print dbt's deprecation counts to stderr, once. The line, or "" when there were none."""
+    _rest, deps = split_warnings(text)
+    if not deps or _DEPRECATIONS_SAID:
+        return ""
+    n = sum(deps.values())
+    line = (f"dbt printed {n} deprecation warning{'s' if n != 1 else ''}: "
+            + ", ".join(f"{k} ({v})" for k, v in sorted(deps.items(), key=lambda kv: -kv[1]))
+            + ". They did not stop assay; `dbt parse --no-partial-parse --show-all-deprecations` "
+              "lists each one.")
+    _DEPRECATIONS_SAID.append(line)
+    import sys
+    print(line, file=sys.stderr)
+    return line
 
 
 def profiles_args(profiles_dir: str | None) -> list:
@@ -464,6 +516,7 @@ def _reach(project_dir: str, profiles_dir: str | None, dbt_bin: str) -> None:
         p = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, timeout=180,
                            check=False)
         ok = p.returncode == 0 and parse_dbt_show(p.stdout or "") is not None
+        say_deprecations((p.stdout or "") + "\n" + (p.stderr or ""))
         why = "" if ok else failure_text(p, 1200)
     except (OSError, subprocess.TimeoutExpired) as e:
         why = str(e)[:600]
@@ -509,6 +562,7 @@ def _execute(sql: str, project_dir: str, profiles_dir: str | None = None,
     except (OSError, subprocess.TimeoutExpired) as e:
         return Result(failed=True, why=str(e)[:300], wall_ms=elapsed())
     ms = elapsed()
+    say_deprecations((p.stdout or "") + "\n" + (p.stderr or ""))
     if measure:
         # With JSON logging the result object is not on its own line: it is the `preview` field
         # of the ShowNode event, so it needs the other parser.
@@ -1016,7 +1070,7 @@ def write(store, observations: list[Observation], via: str = "dbt-show") -> None
     now = datetime.now(timezone.utc)
     # Named columns: a migration appends at the END and a positional insert then writes `via`
     # into whichever column happens to sit there.
-    store.con.executemany(
+    bulk.many(store.con,
         """insert or replace into observed_keys
            (relation, column_name, row_count, non_null, distinct_ct, status, detail,
             observed_at, via, minimality, sampled, sample_pct)

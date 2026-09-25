@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 import sqlglot
 from sqlglot import exp
 
+from . import bulk
 from . import ledger as L
 
 N_ROWS = 5
@@ -395,6 +396,6 @@ def run(project, digests, schema, store, *, via: str = "duckdb", select=None, fo
             rows.append((uid, m.checksum or "", st, detail, n, via, datetime.now(timezone.utc)))
             by_model[m.name] = st
     if rows:
-        store.con.executemany("insert or replace into parse_checks values (?,?,?,?,?,?,?)", rows)
+        bulk.many(store.con, "insert or replace into parse_checks values (?,?,?,?,?,?,?)", rows)
     counts = Counter(r[2] for r in rows)
     return {"checked": len(rows), "by_status": dict(counts), "by_model": by_model, "via": via}

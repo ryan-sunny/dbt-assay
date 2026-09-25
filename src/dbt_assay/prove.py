@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import bulk
 from . import ledger as L
 
 PROVEN, NOT_PROVEN, NOT_ATTEMPTED = "proven", "not_proven", "not_attempted"
@@ -610,7 +611,7 @@ def write(store, obls: list[Obligation], lean_version: str) -> None:
                      json.dumps(prem), o.status, o.detail, o.missing, "assay", o.lean,
                      lean_version, now))
     if rows:
-        store.con.executemany(
+        bulk.many(store.con,
             "insert or replace into proofs values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
 
 
