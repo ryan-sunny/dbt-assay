@@ -617,6 +617,12 @@ A step with flags of its own is quoted, as `"check --verify"`, and `>volume.json
 one sends that step's output to a file. Each step prints `[n/N] step: done in Xs, calls, $, warehouse queries`, every step runs even after
 one fails, and the run exits 1 if any did. The shared options reach each step that takes them.
 
+After the run, `assay digest --json` says what changed since the previous full run that somebody
+should hear about, customer-facing first: a guarantee lost, a test failing, a key that stopped
+holding, a premise that broke, a monitor that stopped, a fixed problem back, judged spend over a
+line, and how many findings came and went. On a day when nothing did it prints `{}`, so an email
+built from it says nothing rather than repeating the totals.
+
 **And it asks only for columns the warehouse actually has.** The catalog is read first — a
 metadata query that scans nothing — and the target list is intersected with it. Before that, 70 of
 271 statements on that warehouse were asking for columns that do not exist, and every one came

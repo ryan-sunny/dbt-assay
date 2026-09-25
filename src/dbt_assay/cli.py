@@ -8748,6 +8748,34 @@ def _record_from_labels(store, target, dialect: str) -> None:
                   f"Human verdicts so far: {human}. Add more with `assay review -i`.[/]")
 
 
+@app.command("digest")
+def digest_cmd(
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    project: str = typer.Option(None, "--project", help="when the store holds several projects"),
+    spend_over: float = typer.Option(1.0, "--spend-over",
+                                     help="mention judged spend since the last run above this"),
+    json_out: bool = typer.Option(False, "--json"),
+):
+    """What changed since the previous full run that somebody should hear about: a guarantee
+    lost, a test failing, a key that stopped holding, a premise that broke, a monitor that
+    stopped, a fixed problem back, spend over a line, and how many findings came and went.
+    Customer-facing first. `{}` (and no output) when nothing did."""
+    from . import digest as digest_mod
+    if not Path(store_path).exists():
+        console.print(f"[yellow]no store at {store_path}.[/]")
+        raise typer.Exit(2)
+    st = Store(store_path)
+    try:
+        d = digest_mod.build(st, project, spend_over)
+    finally:
+        st.close()
+    if json_out:
+        print(_json.dumps(d, indent=2, default=str))
+        return
+    for line in digest_mod.lines(d):
+        console.print(line, markup=False)
+
+
 @app.command()
 def gate(
     target: str = typer.Option(None, "--target", "-t"),

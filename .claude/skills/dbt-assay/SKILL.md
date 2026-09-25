@@ -547,6 +547,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay config` | `assay_config` | What assay resolved: the config file, the provider, where the key came from, the cap. | `--config` `--store` `--check` `--target/-t` `--strict` |
 | `assay cost` | `assay_cost` | What the judged tier has cost, by caller, by family and by day. | `--store` `--since` `--json` |
 | `assay diff` | `assay_diff` | What changed about what your models MEAN. | `--baseline/-b` `--target/-t` `--store` `--markdown` `--limit/-n` |
+| `assay digest` | `assay_digest` | What changed since the previous full run that somebody should hear about: a guarantee lost, a test failing, a key that stopped holding, a premise that broke, a monitor that stopped, a fixed problem back, spend over a line, and how many findings came and went. | `--store` `--project` `--spend-over` `--json` |
 | `assay disagreements` | `assay_disagreements` | Group the open disagreements. | `--store` `--config` `--source` `--judge` `--json` |
 | `assay effectiveness` | `assay_effectiveness` | Did the questions get BETTER? Agreement per family, per version of the question. | `--store` `--source` `--config` `--target/-t` `--json` |
 | `assay evidence` | `assay_evidence` | The exact state a judged answer was computed from, as it was sent. | `--key` `--question/-q` `--subject/-s` `--store` `--limit/-n` `--json` |
