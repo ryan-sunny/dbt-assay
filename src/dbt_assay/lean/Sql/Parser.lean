@@ -115,6 +115,32 @@ def cmpOp : List Tok → Option Str
   | Tok.kw [73, 76, 73, 75, 69] :: _ => some [73, 76, 73, 75, 69]
   | _ => none
 
+def pAlias : P (Option Str)
+  | Tok.kw [65, 83] :: Tok.ident a :: ts => some (some a, ts)
+  | Tok.ident a :: ts => some (some a, ts)
+  | ts => some (none, ts)
+
+def pIdents : Nat → P (List Str)
+  | 0, _ => none
+  | n + 1, ts => do
+    let (a, ts) ← ident ts
+    if isSym [44] ts then do
+      let (rest, ts) ← pIdents n (ts.drop 1)
+      some (a :: rest, ts)
+    else some ([a], ts)
+
+def joinKind : List Tok → Option (Str × List Tok)
+  | Tok.kw [74, 79, 73, 78] :: ts => some ([73, 78, 78, 69, 82], ts)
+  | Tok.kw [73, 78, 78, 69, 82] :: Tok.kw [74, 79, 73, 78] :: ts => some ([73, 78, 78, 69, 82], ts)
+  | Tok.kw [76, 69, 70, 84] :: Tok.kw [79, 85, 84, 69, 82] :: Tok.kw [74, 79, 73, 78] :: ts => some ([76, 69, 70, 84], ts)
+  | Tok.kw [76, 69, 70, 84] :: Tok.kw [74, 79, 73, 78] :: ts => some ([76, 69, 70, 84], ts)
+  | Tok.kw [82, 73, 71, 72, 84] :: Tok.kw [79, 85, 84, 69, 82] :: Tok.kw [74, 79, 73, 78] :: ts => some ([82, 73, 71, 72, 84], ts)
+  | Tok.kw [82, 73, 71, 72, 84] :: Tok.kw [74, 79, 73, 78] :: ts => some ([82, 73, 71, 72, 84], ts)
+  | Tok.kw [70, 85, 76, 76] :: Tok.kw [79, 85, 84, 69, 82] :: Tok.kw [74, 79, 73, 78] :: ts => some ([70, 85, 76, 76], ts)
+  | Tok.kw [70, 85, 76, 76] :: Tok.kw [74, 79, 73, 78] :: ts => some ([70, 85, 76, 76], ts)
+  | Tok.kw [67, 82, 79, 83, 83] :: Tok.kw [74, 79, 73, 78] :: ts => some ([67, 82, 79, 83, 83], ts)
+  | _ => none
+
 /-- `a, b, c` as names. -/
 def pNames : P (List Str)
   | Tok.ident a :: Tok.sym [44] :: ts => (pNames ts).map (fun (xs, ts) => (a :: xs, ts))
@@ -190,9 +216,14 @@ mutual
           let ts' := if neg then ts.drop 1 else ts
           if isKw [73, 78] ts' then do
             let ((), ts) ← expectSym [40] (ts'.drop 1)
-            let (xs, ts) ← pList n ts
-            let ((), ts) ← expectSym [41] ts
-            some (Expr.inList a (ExprList.ofList xs) neg, ts)
+            if isKw [83, 69, 76, 69, 67, 84] ts || isKw [87, 73, 84, 72] ts then do
+              let (q, ts) ← pQuery n ts
+              let ((), ts) ← expectSym [41] ts
+              some (Expr.inQuery a q neg, ts)
+            else do
+              let (xs, ts) ← pList n ts
+              let ((), ts) ← expectSym [41] ts
+              some (Expr.inList a (ExprList.ofList xs) neg, ts)
           else if isKw [66, 69, 84, 87, 69, 69, 78] ts' then do
             let (lo, ts) ← pAdd n (ts'.drop 1)
             let ((), ts) ← expectKw [65, 78, 68] ts
@@ -331,6 +362,15 @@ mutual
       | Tok.kw [84, 82, 85, 69] :: ts => some (Expr.bool true, ts)
       | Tok.kw [70, 65, 76, 83, 69] :: ts => some (Expr.bool false, ts)
       | Tok.sym [42] :: ts => pStarRest n [] ts
+      | Tok.sym [40] :: Tok.kw [83, 69, 76, 69, 67, 84] :: _ | Tok.sym [40] :: Tok.kw [87, 73, 84, 72] :: _ => do
+        let (q, ts) ← pQuery n (ts.drop 1)
+        let ((), ts) ← expectSym [41] ts
+        some (Expr.subquery q, ts)
+      | Tok.ident [101, 120, 105, 115, 116, 115] :: Tok.sym [40] :: Tok.kw [83, 69, 76, 69, 67, 84] :: _
+      | Tok.ident [101, 120, 105, 115, 116, 115] :: Tok.sym [40] :: Tok.kw [87, 73, 84, 72] :: _ => do
+        let (q, ts) ← pQuery n (ts.drop 2)
+        let ((), ts) ← expectSym [41] ts
+        some (Expr.exists q, ts)
       | Tok.sym [40] :: ts => do
         let (a, ts) ← pExpr n ts
         let ((), ts) ← expectSym [41] ts
@@ -433,151 +473,156 @@ mutual
       let call := if ord.isEmpty then Expr.fn name distinct (ExprList.ofList args)
                   else Expr.fnOrdered name distinct (ExprList.ofList args) (OrderList.ofList ord)
       pOver n (if ign then Expr.ignoreNulls call else call) ts
+
+  /-- `select_item [AS alias]`. -/
+  def pItem : Nat → P (Expr × Option Str)
+    | 0, _ => none
+    | n + 1, ts => do
+      let (e, ts) ← pExpr n ts
+      if isKw [65, 83] ts then do
+        let (a, ts) ← ident (ts.drop 1)
+        some ((e, some a), ts)
+      else match ts with
+        | Tok.ident a :: ts => some ((e, some a), ts)
+        | _ => some ((e, none), ts)
+
+  def pItems : Nat → P (List (Expr × Option Str))
+    | 0, _ => none
+    | n + 1, ts => do
+      let (a, ts) ← pItem n ts
+      if isSym [44] ts then do
+        let (rest, ts) ← pItems n (ts.drop 1)
+        some (a :: rest, ts)
+      else some ([a], ts)
+
+  /-- What a `FROM` or `JOIN` reads: `(query) alias`, or `a.b.c alias`. -/
+  def pSource : Nat → P Source
+    | 0, _ => none
+    | n + 1, ts =>
+      if isSym [40] ts && (isKw [83, 69, 76, 69, 67, 84] (ts.drop 1) || isKw [87, 73, 84, 72] (ts.drop 1)) then do
+        let (q, ts) ← pQuery n (ts.drop 1)
+        let ((), ts) ← expectSym [41] ts
+        let (alias, ts) ← pAlias ts
+        some (Source.sub q alias, ts)
+      else do
+        let (t, ts) ← identChain n ts
+        let (alias, ts) ← pAlias ts
+        some (Source.rel t alias, ts)
+
+  def pJoins : Nat → P (List (Str × Source × OptExpr × List Str))
+    | 0, _ => none
+    | n + 1, ts =>
+      match joinKind ts with
+      | none => some ([], ts)
+      | some (kind, ts) => do
+        let (src, ts) ← pSource n ts
+        let (on, usingCols, ts) ← if isKw [79, 78] ts then do
+            let (e, ts) ← pExpr n (ts.drop 1)
+            some (OptExpr.some e, [], ts)
+          else if isKw [85, 83, 73, 78, 71] ts then do
+            let ((), ts) ← expectSym [40] (ts.drop 1)
+            let (cs, ts) ← pIdents n ts
+            let ((), ts) ← expectSym [41] ts
+            some (OptExpr.none, cs, ts)
+          else some (OptExpr.none, [], ts)
+        let (rest, ts) ← pJoins n ts
+        some ((kind, src, on, usingCols) :: rest, ts)
+
+  def pOptExpr : Nat → Str → P OptExpr
+    | 0, _, _ => none
+    | n + 1, k, ts =>
+      if isKw k ts then do
+        let (e, ts) ← pExpr n (ts.drop 1)
+        some (OptExpr.some e, ts)
+      else some (OptExpr.none, ts)
+
+  def pSelect : Nat → P Select
+    | 0, _ => none
+    | n + 1, ts => do
+      let ((), ts) ← expectKw [83, 69, 76, 69, 67, 84] ts
+      let (distinct, distinctOn, ts) ← if isKw [68, 73, 83, 84, 73, 78, 67, 84] ts then
+          if isKw [79, 78] (ts.drop 1) then do
+            let ((), ts) ← expectSym [40] (ts.drop 2)
+            let (on, ts) ← pList n ts
+            let ((), ts) ← expectSym [41] ts
+            some (false, on, ts)
+          else some (true, [], ts.drop 1)
+        else some (false, [], ts)
+      let (items, ts) ← pItems n ts
+      let (source, ts) ← if isKw [70, 82, 79, 77] ts then do
+          let (src, ts) ← pSource n (ts.drop 1)
+          some (OptSource.some src, ts)
+        else some (OptSource.none, ts)
+      let (joins, ts) ← pJoins n ts
+      let (where_, ts) ← pOptExpr n [87, 72, 69, 82, 69] ts
+      let (groupBy, ts) ← if isKw [71, 82, 79, 85, 80] ts then do
+          let ((), ts) ← expectKw [66, 89] (ts.drop 1)
+          pList n ts
+        else some ([], ts)
+      let (having, ts) ← pOptExpr n [72, 65, 86, 73, 78, 71] ts
+      let (qualify, ts) ← pOptExpr n [81, 85, 65, 76, 73, 70, 89] ts
+      let (orderBy, ts) ← if isKw [79, 82, 68, 69, 82] ts then do
+          let ((), ts) ← expectKw [66, 89] (ts.drop 1)
+          pOrderList n ts
+        else some ([], ts)
+      let (limit, ts) ← if isKw [76, 73, 77, 73, 84] ts then
+          match ts.drop 1 with
+          | Tok.num s :: ts => some (some s, ts)
+          | _ => none
+        else some (none, ts)
+      some (Select.mk distinct (ExprList.ofList distinctOn) (ItemList.ofList items) source
+              (JoinList.ofList joins) where_ (ExprList.ofList groupBy) having qualify
+              (OrderList.ofList orderBy) limit, ts)
+
+  /-- `UNION [ALL] [BY NAME] select`, repeated. -/
+  def pUnions : Nat → P (List (Str × Select))
+    | 0, _ => none
+    | n + 1, ts =>
+      if isKw [85, 78, 73, 79, 78] ts then do
+        let (op, ts) := if isKw [65, 76, 76] (ts.drop 1) then ([85, 78, 73, 79, 78, 32, 65, 76, 76], ts.drop 2)
+                        else ([85, 78, 73, 79, 78], ts.drop 1)
+        let (op, ts) := match ts with
+          | Tok.kw [66, 89] :: Tok.ident [110, 97, 109, 101] :: ts => (op ++ [32, 66, 89, 32, 78, 65, 77, 69], ts)
+          | _ => (op, ts)
+        let (s, ts) ← pSelect n ts
+        let (rest, ts) ← pUnions n ts
+        some ((op, s) :: rest, ts)
+      else some ([], ts)
+
+  def pCompound : Nat → P Compound
+    | 0, _ => none
+    | n + 1, ts => do
+      let (first, ts) ← pSelect n ts
+      let (rest, ts) ← pUnions n ts
+      some (Compound.mk first (UnionList.ofList rest), ts)
+
+  def pCtes : Nat → P (List (Str × Compound))
+    | 0, _ => none
+    | n + 1, ts => do
+      let (name, ts) ← ident ts
+      let ((), ts) ← expectKw [65, 83] ts
+      let ((), ts) ← expectSym [40] ts
+      let (c, ts) ← pCompound n ts
+      let ((), ts) ← expectSym [41] ts
+      if isSym [44] ts then do
+        let (rest, ts) ← pCtes n (ts.drop 1)
+        some ((name, c) :: rest, ts)
+      else some ([(name, c)], ts)
+
+  /-- Optional `WITH`, then a compound: a whole model, or a subquery. -/
+  def pQuery : Nat → P Query
+    | 0, _ => none
+    | n + 1, ts => do
+      let (ctes, ts) ← if isKw [87, 73, 84, 72] ts then pCtes n (ts.drop 1) else some ([], ts)
+      let (body, ts) ← pCompound n ts
+      some (Query.mk (CteList.ofList ctes) body, ts)
 end
 
-/-- `select_item [AS alias]`. -/
-def pItem (n : Nat) : P (Expr × Option Str) := fun ts => do
-  let (e, ts) ← pExpr nr n ts
-  if isKw [65, 83] ts then do
-    let (a, ts) ← ident (ts.drop 1)
-    some ((e, some a), ts)
-  else match ts with
-    | Tok.ident a :: ts => some ((e, some a), ts)
-    | _ => some ((e, none), ts)
-
-def pItems : Nat → P (List (Expr × Option Str))
-  | 0, _ => none
-  | n + 1, ts => do
-    let (a, ts) ← pItem nr n ts
-    if isSym [44] ts then do
-      let (rest, ts) ← pItems n (ts.drop 1)
-      some (a :: rest, ts)
-    else some ([a], ts)
-
-def pAlias : P (Option Str)
-  | Tok.kw [65, 83] :: Tok.ident a :: ts => some (some a, ts)
-  | Tok.ident a :: ts => some (some a, ts)
-  | ts => some (none, ts)
-
-def pIdents : Nat → P (List Str)
-  | 0, _ => none
-  | n + 1, ts => do
-    let (a, ts) ← ident ts
-    if isSym [44] ts then do
-      let (rest, ts) ← pIdents n (ts.drop 1)
-      some (a :: rest, ts)
-    else some ([a], ts)
-
-def joinKind : List Tok → Option (Str × List Tok)
-  | Tok.kw [74, 79, 73, 78] :: ts => some ([73, 78, 78, 69, 82], ts)
-  | Tok.kw [73, 78, 78, 69, 82] :: Tok.kw [74, 79, 73, 78] :: ts => some ([73, 78, 78, 69, 82], ts)
-  | Tok.kw [76, 69, 70, 84] :: Tok.kw [79, 85, 84, 69, 82] :: Tok.kw [74, 79, 73, 78] :: ts => some ([76, 69, 70, 84], ts)
-  | Tok.kw [76, 69, 70, 84] :: Tok.kw [74, 79, 73, 78] :: ts => some ([76, 69, 70, 84], ts)
-  | Tok.kw [82, 73, 71, 72, 84] :: Tok.kw [79, 85, 84, 69, 82] :: Tok.kw [74, 79, 73, 78] :: ts => some ([82, 73, 71, 72, 84], ts)
-  | Tok.kw [82, 73, 71, 72, 84] :: Tok.kw [74, 79, 73, 78] :: ts => some ([82, 73, 71, 72, 84], ts)
-  | Tok.kw [70, 85, 76, 76] :: Tok.kw [79, 85, 84, 69, 82] :: Tok.kw [74, 79, 73, 78] :: ts => some ([70, 85, 76, 76], ts)
-  | Tok.kw [70, 85, 76, 76] :: Tok.kw [74, 79, 73, 78] :: ts => some ([70, 85, 76, 76], ts)
-  | Tok.kw [67, 82, 79, 83, 83] :: Tok.kw [74, 79, 73, 78] :: ts => some ([67, 82, 79, 83, 83], ts)
-  | _ => none
-
-def pJoins : Nat → P (List Join)
-  | 0, _ => none
-  | n + 1, ts =>
-    match joinKind ts with
-    | none => some ([], ts)
-    | some (kind, ts) => do
-      let (t, ts) ← identChain n ts
-      let (alias, ts) ← pAlias ts
-      let (on, usingCols, ts) ← if isKw [79, 78] ts then do
-          let (e, ts) ← pExpr nr n (ts.drop 1)
-          some (some e, [], ts)
-        else if isKw [85, 83, 73, 78, 71] ts then do
-          let ((), ts) ← expectSym [40] (ts.drop 1)
-          let (cs, ts) ← pIdents n ts
-          let ((), ts) ← expectSym [41] ts
-          some (none, cs, ts)
-        else some (none, [], ts)
-      let (rest, ts) ← pJoins n ts
-      some ({ kind, table := t, alias, on, usingCols } :: rest, ts)
-
-def optClause {α} (k : Str) (p : P α) : P (Option α) := fun ts =>
-  if isKw k ts then (p (ts.drop 1)).map (fun (a, ts) => (some a, ts)) else some (none, ts)
-
-def pSelect (n : Nat) : P Select := fun ts => do
-  let ((), ts) ← expectKw [83, 69, 76, 69, 67, 84] ts
-  let (distinct, distinctOn, ts) ← if isKw [68, 73, 83, 84, 73, 78, 67, 84] ts then
-      if isKw [79, 78] (ts.drop 1) then do
-        let ((), ts) ← expectSym [40] (ts.drop 2)
-        let (on, ts) ← pList nr n ts
-        let ((), ts) ← expectSym [41] ts
-        some (false, on, ts)
-      else some (true, [], ts.drop 1)
-    else some (false, [], ts)
-  let (items, ts) ← pItems nr n ts
-  let (source, ts) ← if isKw [70, 82, 79, 77] ts then do
-      let (t, ts) ← identChain n (ts.drop 1)
-      let (a, ts) ← pAlias ts
-      some (some (t, a), ts)
-    else some (none, ts)
-  let (joins, ts) ← pJoins nr n ts
-  let (where_, ts) ← optClause [87, 72, 69, 82, 69] (pExpr nr n) ts
-  let (groupBy, ts) ← if isKw [71, 82, 79, 85, 80] ts then do
-      let ((), ts) ← expectKw [66, 89] (ts.drop 1)
-      pList nr n ts
-    else some ([], ts)
-  let (having, ts) ← optClause [72, 65, 86, 73, 78, 71] (pExpr nr n) ts
-  let (qualify, ts) ← optClause [81, 85, 65, 76, 73, 70, 89] (pExpr nr n) ts
-  let (orderBy, ts) ← if isKw [79, 82, 68, 69, 82] ts then do
-      let ((), ts) ← expectKw [66, 89] (ts.drop 1)
-      pOrderList nr n ts
-    else some ([], ts)
-  let (limit, ts) ← if isKw [76, 73, 77, 73, 84] ts then
-      match ts.drop 1 with
-      | Tok.num s :: ts => some (some s, ts)
-      | _ => none
-    else some (none, ts)
-  some ({ distinct, distinctOn, items, source, joins, where_, groupBy, having, qualify, orderBy,
-          limit }, ts)
-
-/-- `UNION [ALL] select`, repeated. -/
-def pUnions : Nat → P (List (Str × Select))
-  | 0, _ => none
-  | n + 1, ts =>
-    if isKw [85, 78, 73, 79, 78] ts then do
-      let (op, ts) := if isKw [65, 76, 76] (ts.drop 1) then ([85, 78, 73, 79, 78, 32, 65, 76, 76], ts.drop 2)
-                      else ([85, 78, 73, 79, 78], ts.drop 1)
-      let (op, ts) := match ts with
-        | Tok.kw [66, 89] :: Tok.ident [110, 97, 109, 101] :: ts => (op ++ [32, 66, 89, 32, 78, 65, 77, 69], ts)
-        | _ => (op, ts)
-      let (s, ts) ← pSelect nr n ts
-      let (rest, ts) ← pUnions n ts
-      some ((op, s) :: rest, ts)
-    else some ([], ts)
-
-def pCompound (n : Nat) : P Compound := fun ts => do
-  let (first, ts) ← pSelect nr n ts
-  let (rest, ts) ← pUnions nr n ts
-  some ({ first, rest }, ts)
-
-def pCtes : Nat → P (List (Str × Compound))
-  | 0, _ => none
-  | n + 1, ts => do
-    let (name, ts) ← ident ts
-    let ((), ts) ← expectKw [65, 83] ts
-    let ((), ts) ← expectSym [40] ts
-    let (s, ts) ← pCompound nr n ts
-    let ((), ts) ← expectSym [41] ts
-    if isSym [44] ts then do
-      let (rest, ts) ← pCtes n (ts.drop 1)
-      some ((name, s) :: rest, ts)
-    else some ([(name, s)], ts)
-
-/-- A whole model: optional `WITH`, one select, an optional `;`, nothing else. -/
+/-- A whole model: one query, an optional `;`, nothing else. -/
 def parseTokens (n : Nat) (ts : List Tok) : Option Query := do
-  let (ctes, ts) ← if isKw [87, 73, 84, 72] ts then pCtes nr n (ts.drop 1) else some ([], ts)
-  let (body, ts) ← pCompound nr n ts
+  let (q, ts) ← pQuery nr n ts
   let ts := if isSym [59] ts then ts.drop 1 else ts
-  if ts.isEmpty then some { ctes, body } else none
+  if ts.isEmpty then some q else none
 
 end
 

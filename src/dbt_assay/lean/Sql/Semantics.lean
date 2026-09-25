@@ -153,6 +153,8 @@ mutual
     -- Read, not evaluated: these carry no meaning here yet, and an unknown is not a guess.
     | .starExcept _ _ | .interval _ _ | .lambda _ _ | .index _ _ | .list _
     | .ignoreNulls _ | .fnOrdered _ _ _ _ => none
+    -- A subquery needs the tables, which a row does not carry: unknown, never guessed.
+    | .subquery _ | .inQuery _ _ _ | .exists _ => none
   partial def evalList (r : Row) : ExprList → List V
     | .nil => []
     | .cons x xs => eval r x :: evalList r xs
@@ -166,13 +168,6 @@ mutual
       if hit then eval r v else evalCase r o rest e
 end
 
-def ExprList.toList : ExprList → List Expr
-  | .nil => []
-  | .cons x xs => x :: toList xs
-
-def OrderList.toList : OrderList → List (Expr × Bool × Bool)
-  | .nil => []
-  | .cons e d nf r => (e, d, nf) :: toList r
 
 /-- Is this expression (or anything in it) an aggregate call? -/
 partial def isAgg : Expr → Bool
@@ -259,25 +254,6 @@ def aliased (a : Str) (r : Row) : Row := r.map (fun ((_, c), v) => ((a, c), v))
 
 def nullsLike (r : Row) : Row := r.map (fun (k, _) => (k, none))
 
-/-- `FROM`/`JOIN` sources, from the tables given and the CTEs defined so far. -/
-def source (env : List (Str × Tbl)) (parts : List Str) (alias : Option Str) : Tbl :=
-  let name := parts.getLast?.getD []
-  let t := (env.find? (fun (n, _) => n == name)).map Prod.snd |>.getD []
-  t.map (aliased (alias.getD name))
-
-def joinStep (env : List (Str × Tbl)) (acc : Tbl) (j : Join) : Tbl :=
-  let r := source env j.table j.alias
-  let hit := fun (a b : Row) => match j.on with
-    | some e => truthy (eval (a ++ b) e) == some true
-    | none => true
-  let blank := match r.head? with | some b => nullsLike b | none => []
-  if j.kind == [76, 69, 70, 84] then
-    acc.flatMap fun a =>
-      match r.filter (hit a) with
-      | [] => [a ++ blank]
-      | ms => ms.map (fun b => a ++ b)
-  else acc.flatMap fun a => (r.filter (hit a)).map (fun b => a ++ b)
-
 def outCols (items : List (Expr × Option Str)) (t : Tbl) : List (Str × Str) :=
   items.flatMap fun (e, a) => match e with
     | .star _ => (t.head?.map (fun r => r.map Prod.fst)).getD []
@@ -290,61 +266,93 @@ def project (items : List (Expr × Option Str)) (value : Expr → V) (r : Row) :
     | .col _ n => [(([], a.getD n), value e)]
     | _ => [(([], a.getD [63]), value e)]
 
-def evalSelect (env : List (Str × Tbl)) (s : Select) : Tbl :=
-  let base := match s.source with
-    | some (parts, a) => source env parts a
-    | none => [[]]
-  let joined := s.joins.foldl (joinStep env) base
-  let kept := match s.where_ with
-    | some w => joined.filter (fun r => truthy (eval r w) == some true)
-    | none => joined
-  let picked := match s.qualify with
-    | some (.bin _ (.window (.fn _ _ _) part ord) (.num _)) =>
-      pickFirst (ExprList.toList part) (OrderList.toList ord) kept
-    | _ => kept
-  -- `DISTINCT ON (k)`: the first row of each k, in `ORDER BY` order.
-  let picked := if s.distinctOn.isEmpty then picked else pickFirst s.distinctOn s.orderBy picked
-  let grouped := !s.groupBy.isEmpty || s.items.any (fun (e, _) => isAgg e)
-  let rows :=
-    if grouped then
-      let keyOf := fun (r : Row) => s.groupBy.map (eval r)
-      let keys := pickFirst.dedup' (picked.map keyOf)
-      let groups := if s.groupBy.isEmpty then [picked] else keys.map (fun k => picked.filter (fun r => keyOf r == k))
-      let groups := match s.having with
-        | some h => groups.filter (fun g => truthy (evalG g h) == some true)
-        | none => groups
-      groups.map (fun g => project s.items (evalG g) (g.head?.getD []))
-    else picked.map (fun r => project s.items (eval r) r)
-  if s.distinct then rows.foldl (fun acc x => if acc.contains x then acc else acc ++ [x]) [] else rows
-
 def dedupK (ks : List (Str × Str)) : List (Str × Str) :=
   ks.foldl (fun acc k => if acc.any (fun a => a.2 == k.2) then acc else acc ++ [k]) []
 
-/-- `UNION ALL` keeps every row; `UNION` one of each. The result's columns are the first
-select's, matched by position; with `BY NAME`, every name either side has, matched by name. -/
-def evalCompound (env : List (Str × Tbl)) (c : Compound) : Tbl :=
-  c.rest.foldl (fun acc (op, s) =>
-    let more := evalSelect env s
-    let keys := (acc.head? <|> more.head?).map (fun r => r.map Prod.fst)
-    let rekey := fun (r : Row) => match keys with
-      | some ks => ks.zip (r.map Prod.snd)
-      | none => r
-    -- `BY NAME`: columns matched by name, a column one side lacks is NULL on that side.
-    let byName := op == [85, 78, 73, 79, 78, 32, 66, 89, 32, 78, 65, 77, 69] || op == [85, 78, 73, 79, 78, 32, 65, 76, 76, 32, 66, 89, 32, 78, 65, 77, 69]
-    let names := dedupK ((acc.head?.map (·.map Prod.fst)).getD [] ++
-                         (more.head?.map (·.map Prod.fst)).getD [])
-    let byNameRow := fun (r : Row) => names.map (fun k =>
-      (k, ((r.find? (fun (k', _) => k'.2 == k.2)).map Prod.snd).getD none))
-    let rel := if byName then acc.map byNameRow ++ more.map byNameRow
-               else acc.map rekey ++ more.map rekey
-    if op == [85, 78, 73, 79, 78] || op == [85, 78, 73, 79, 78, 32, 66, 89, 32, 78, 65, 77, 69] then
-      rel.foldl (fun a x => if a.contains x then a else a ++ [x]) []
-    else rel)
-    (evalSelect env c.first)
+mutual
+  /-- `FROM`/`JOIN` sources: a table given or a CTE defined so far, or a subquery run on them. -/
+  partial def source (env : List (Str × Tbl)) : Source → Tbl
+    | .rel parts alias =>
+      let name := parts.getLast?.getD []
+      let t := (env.find? (fun (n, _) => n == name)).map Prod.snd |>.getD []
+      t.map (aliased (alias.getD name))
+    | .sub q alias =>
+      let t := evalQueryIn env q
+      match alias with
+      | some a => t.map (aliased a)
+      | none => t
+
+  partial def joinStep (env : List (Str × Tbl)) (acc : Tbl)
+      (j : Str × Source × OptExpr × List Str) : Tbl :=
+    let (kind, src, on, _) := j
+    let r := source env src
+    let hit := fun (a b : Row) => match on with
+      | .some e => truthy (eval (a ++ b) e) == some true
+      | .none => true
+    let blank := match r.head? with | some b => nullsLike b | none => []
+    if kind == [76, 69, 70, 84] then
+      acc.flatMap fun a =>
+        match r.filter (hit a) with
+        | [] => [a ++ blank]
+        | ms => ms.map (fun b => a ++ b)
+    else acc.flatMap fun a => (r.filter (hit a)).map (fun b => a ++ b)
+
+  partial def evalSelect (env : List (Str × Tbl)) (s : Select) : Tbl :=
+    let base := match s.source with
+      | some src => source env src
+      | none => [[]]
+    let joined := s.joins.foldl (joinStep env) base
+    let kept := match s.where_ with
+      | some w => joined.filter (fun r => truthy (eval r w) == some true)
+      | none => joined
+    let picked := match s.qualify with
+      | some (.bin _ (.window (.fn _ _ _) part ord) (.num _)) =>
+        pickFirst (ExprList.toList part) (OrderList.toList ord) kept
+      | _ => kept
+    -- `DISTINCT ON (k)`: the first row of each k, in `ORDER BY` order.
+    let picked := if s.distinctOn.isEmpty then picked else pickFirst s.distinctOn s.orderBy picked
+    let grouped := !s.groupBy.isEmpty || s.items.any (fun (e, _) => isAgg e)
+    let rows :=
+      if grouped then
+        let keyOf := fun (r : Row) => s.groupBy.map (eval r)
+        let keys := pickFirst.dedup' (picked.map keyOf)
+        let groups := if s.groupBy.isEmpty then [picked] else keys.map (fun k => picked.filter (fun r => keyOf r == k))
+        let groups := match s.having with
+          | some h => groups.filter (fun g => truthy (evalG g h) == some true)
+          | none => groups
+        groups.map (fun g => project s.items (evalG g) (g.head?.getD []))
+      else picked.map (fun r => project s.items (eval r) r)
+    if s.distinct then rows.foldl (fun acc x => if acc.contains x then acc else acc ++ [x]) [] else rows
+
+  /-- `UNION ALL` keeps every row; `UNION` one of each. The result's columns are the first
+  select's, matched by position; with `BY NAME`, every name either side has, matched by name. -/
+  partial def evalCompound (env : List (Str × Tbl)) (c : Compound) : Tbl :=
+    c.rest.foldl (fun acc (op, s) =>
+      let more := evalSelect env s
+      let keys := (acc.head? <|> more.head?).map (fun r => r.map Prod.fst)
+      let rekey := fun (r : Row) => match keys with
+        | some ks => ks.zip (r.map Prod.snd)
+        | none => r
+      -- `BY NAME`: columns matched by name, a column one side lacks is NULL on that side.
+      let byName := op == [85, 78, 73, 79, 78, 32, 66, 89, 32, 78, 65, 77, 69] || op == [85, 78, 73, 79, 78, 32, 65, 76, 76, 32, 66, 89, 32, 78, 65, 77, 69]
+      let names := dedupK ((acc.head?.map (·.map Prod.fst)).getD [] ++
+                           (more.head?.map (·.map Prod.fst)).getD [])
+      let byNameRow := fun (r : Row) => names.map (fun k =>
+        (k, ((r.find? (fun (k', _) => k'.2 == k.2)).map Prod.snd).getD none))
+      let rel := if byName then acc.map byNameRow ++ more.map byNameRow
+                 else acc.map rekey ++ more.map rekey
+      if op == [85, 78, 73, 79, 78] || op == [85, 78, 73, 79, 78, 32, 66, 89, 32, 78, 65, 77, 69] then
+        rel.foldl (fun a x => if a.contains x then a else a ++ [x]) []
+      else rel)
+      (evalSelect env c.first)
+
+  /-- A query over the tables and CTEs in scope: its own CTEs added in order. -/
+  partial def evalQueryIn (env : List (Str × Tbl)) (q : Query) : Tbl :=
+    let env := q.ctes.foldl (fun env (n, c) => env ++ [(n, evalCompound env c)]) env
+    evalCompound env q.body
+end
 
 /-- What a query returns on these tables. -/
-def evalQuery (tables : List (Str × Tbl)) (q : Query) : Tbl :=
-  let env := q.ctes.foldl (fun env (n, c) => env ++ [(n, evalCompound env c)]) tables
-  evalCompound env q.body
+def evalQuery (tables : List (Str × Tbl)) (q : Query) : Tbl := evalQueryIn tables q
 
 end Sql

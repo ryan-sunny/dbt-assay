@@ -3,10 +3,12 @@
 # The SQL fragment assay reads, as data
 
 The part of SQL the per-model parse proof (L4) covers: `WITH` named selects, `UNION [ALL] [BY
-NAME]` of `SELECT [DISTINCT [ON (..)]]`s, `FROM` a relation, `JOIN`s with `ON` or `USING`, `WHERE`,
+NAME]` of `SELECT [DISTINCT [ON (..)]]`s, `FROM` a relation or a subquery, `JOIN`s (to either) with
+`ON` or `USING`, `WHERE`,
 `GROUP BY`, `HAVING`, `QUALIFY`, `ORDER BY` (with `NULLS FIRST|LAST`) and `LIMIT`, and expressions
 built from columns, literals, operators, `CASE`, `CAST`, typed literals, `IN`, `BETWEEN`,
 `IS [NOT] NULL`, `IS [NOT] DISTINCT FROM`, `[NOT] LIKE`, `INTERVAL`, `* EXCLUDE`, lambdas, `[..]`,
+scalar subqueries, `[NOT] IN (subquery)`, `EXISTS (subquery)`,
 function calls (with `DISTINCT`, `IGNORE NULLS`, `ORDER BY` inside, date units) and window calls.
 A model outside it is "parse unproven" and keeps the L2 round trip as its evidence.
 
@@ -24,7 +26,8 @@ abbrev Str := List Nat
 
 mutual
   /-- An expression. Its lists are their own types (not `List Expr`), so equality of trees is
-  decidable and the kernel can check a parse by evaluating both sides. -/
+  decidable and the kernel can check a parse by evaluating both sides. Expressions hold queries
+  (a subquery) and queries hold expressions, so every type is in this one block. -/
   inductive Expr where
     | col (qual : List Str) (name : Str)
     | star (qual : List Str)
@@ -57,6 +60,12 @@ mutual
     | ignoreNulls (f : Expr)
     /-- An aggregate ordered inside its call: `string_agg(x, ',' ORDER BY y)`. -/
     | fnOrdered (name : Str) (distinct : Bool) (args : ExprList) (order : OrderList)
+    /-- `(select ...)` where a value goes. -/
+    | subquery (q : Query)
+    /-- `a [NOT] IN (select ...)`. -/
+    | inQuery (a : Expr) (q : Query) (neg : Bool)
+    /-- `EXISTS (select ...)`. -/
+    | exists (q : Query)
   inductive ExprList where
     | nil
     | cons (x : Expr) (xs : ExprList)
@@ -71,11 +80,47 @@ mutual
   inductive OptExpr where
     | none
     | some (e : Expr)
+  /-- A select item and its alias. -/
+  inductive ItemList where
+    | nil
+    | cons (e : Expr) (alias : Option Str) (rest : ItemList)
+  /-- What a `FROM` or a `JOIN` reads: a relation's parts (or one CTE name), or a subquery. -/
+  inductive Source where
+    | rel (parts : List Str) (alias : Option Str)
+    | sub (q : Query) (alias : Option Str)
+  inductive OptSource where
+    | none
+    | some (s : Source)
+  /-- `kind` is INNER | LEFT | RIGHT | FULL | CROSS. -/
+  inductive JoinList where
+    | nil
+    | cons (kind : Str) (src : Source) (on : OptExpr) (usingCols : List Str) (rest : JoinList)
+  inductive Select where
+    | mk (distinct : Bool) (distinctOn : ExprList) (items : ItemList) (source : OptSource)
+        (joins : JoinList) (where_ : OptExpr) (groupBy : ExprList) (having : OptExpr)
+        (qualify : OptExpr) (orderBy : OrderList) (limit : Option Str)
+  /-- `(UNION | UNION ALL, with ` BY NAME` when matched by name, the next select)`, left to right. -/
+  inductive UnionList where
+    | nil
+    | cons (op : Str) (s : Select) (rest : UnionList)
+  /-- A select, or selects joined by `UNION [ALL]`. -/
+  inductive Compound where
+    | mk (first : Select) (rest : UnionList)
+  inductive CteList where
+    | nil
+    | cons (name : Str) (c : Compound) (rest : CteList)
+  inductive Query where
+    | mk (ctes : CteList) (body : Compound)
 end
 
-deriving instance DecidableEq for Expr
+-- Every type of the block in ONE command: listing only `Expr` registered only its instance,
+-- and `parseCodesIn .. = some q` needs `DecidableEq Query` for the kernel to decide it.
+deriving instance DecidableEq for Expr, ExprList, WhenList, OrderList, OptExpr, ItemList,
+  Source, OptSource, JoinList, Select, UnionList, Compound, CteList, Query
 deriving instance Repr for Expr
 instance : Inhabited Expr := ⟨Expr.null⟩
+instance : Inhabited Query := ⟨.mk .nil (.mk (.mk false .nil .nil .none .nil .none .nil .none .none
+  .nil Option.none) .nil)⟩
 
 def ExprList.ofList : List Expr → ExprList
   | [] => .nil
@@ -93,37 +138,73 @@ def OptExpr.ofOption : Option Expr → OptExpr
   | Option.none => OptExpr.none
   | Option.some e => OptExpr.some e
 
-structure Join where
-  kind : Str                       -- INNER | LEFT | RIGHT | FULL | CROSS
-  table : List Str                 -- a relation's parts, or one CTE name
-  alias : Option Str
-  on : Option Expr
-  usingCols : List Str
-  deriving Repr, Inhabited, DecidableEq
+def ItemList.ofList : List (Expr × Option Str) → ItemList
+  | [] => .nil
+  | (e, a) :: xs => .cons e a (ofList xs)
 
-structure Select where
-  distinct : Bool
-  distinctOn : List Expr           -- `DISTINCT ON (a, b)`; empty otherwise
-  items : List (Expr × Option Str)
-  source : Option (List Str × Option Str)
-  joins : List Join
-  where_ : Option Expr
-  groupBy : List Expr
-  having : Option Expr
-  qualify : Option Expr
-  orderBy : List (Expr × Bool × Bool)
-  limit : Option Str
-  deriving Repr, Inhabited, DecidableEq
+def OptSource.ofOption : Option Source → OptSource
+  | Option.none => OptSource.none
+  | Option.some s => OptSource.some s
 
-/-- A select, or selects joined by `UNION [ALL]`, left to right. -/
-structure Compound where
-  first : Select
-  rest : List (Str × Select)       -- (UNION | UNION ALL, with ` BY NAME` when matched by name)
-  deriving Repr, Inhabited, DecidableEq
+def JoinList.ofList : List (Str × Source × OptExpr × List Str) → JoinList
+  | [] => .nil
+  | (k, s, o, u) :: xs => .cons k s o u (ofList xs)
 
-structure Query where
-  ctes : List (Str × Compound)
-  body : Compound
-  deriving Repr, Inhabited, DecidableEq
+def UnionList.ofList : List (Str × Select) → UnionList
+  | [] => .nil
+  | (op, s) :: xs => .cons op s (ofList xs)
+
+def CteList.ofList : List (Str × Compound) → CteList
+  | [] => .nil
+  | (n, c) :: xs => .cons n c (ofList xs)
+
+-- Reading them back as lists, for the semantics and the printer.
+def ExprList.toList : ExprList → List Expr
+  | .nil => []
+  | .cons x xs => x :: toList xs
+
+def OrderList.toList : OrderList → List (Expr × Bool × Bool)
+  | .nil => []
+  | .cons e d nf r => (e, d, nf) :: toList r
+
+def ItemList.toList : ItemList → List (Expr × Option Str)
+  | .nil => []
+  | .cons e a r => (e, a) :: toList r
+
+def JoinList.toList : JoinList → List (Str × Source × OptExpr × List Str)
+  | .nil => []
+  | .cons k s o u r => (k, s, o, u) :: toList r
+
+def UnionList.toList : UnionList → List (Str × Select)
+  | .nil => []
+  | .cons op s r => (op, s) :: toList r
+
+def CteList.toList : CteList → List (Str × Compound)
+  | .nil => []
+  | .cons n c r => (n, c) :: toList r
+
+def OptExpr.toOption : OptExpr → Option Expr
+  | .none => Option.none
+  | .some e => Option.some e
+
+namespace Select
+def distinct : Select → Bool | .mk d _ _ _ _ _ _ _ _ _ _ => d
+def distinctOn : Select → List Expr | .mk _ o _ _ _ _ _ _ _ _ _ => o.toList
+def items : Select → List (Expr × Option Str) | .mk _ _ i _ _ _ _ _ _ _ _ => i.toList
+def source : Select → Option Source
+  | .mk _ _ _ s _ _ _ _ _ _ _ => match s with | .none => Option.none | .some x => Option.some x
+def joins : Select → List (Str × Source × OptExpr × List Str) | .mk _ _ _ _ j _ _ _ _ _ _ => j.toList
+def where_ : Select → Option Expr | .mk _ _ _ _ _ w _ _ _ _ _ => w.toOption
+def groupBy : Select → List Expr | .mk _ _ _ _ _ _ g _ _ _ _ => g.toList
+def having : Select → Option Expr | .mk _ _ _ _ _ _ _ h _ _ _ => h.toOption
+def qualify : Select → Option Expr | .mk _ _ _ _ _ _ _ _ q _ _ => q.toOption
+def orderBy : Select → List (Expr × Bool × Bool) | .mk _ _ _ _ _ _ _ _ _ o _ => o.toList
+def limit : Select → Option Str | .mk _ _ _ _ _ _ _ _ _ _ l => l
+end Select
+
+def Compound.first : Compound → Select | .mk f _ => f
+def Compound.rest : Compound → List (Str × Select) | .mk _ r => r.toList
+def Query.ctes : Query → List (Str × Compound) | .mk c _ => c.toList
+def Query.body : Query → Compound | .mk _ b => b
 
 end Sql

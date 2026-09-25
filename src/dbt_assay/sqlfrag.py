@@ -108,6 +108,10 @@ def expr(e) -> tuple:
         return ("bin", "IS NOT DISTINCT FROM", expr(e.this), expr(e.expression))
     if isinstance(e, exp.Identifier):
         return ("col", [], _ident(e))          # a lambda's parameter, read in its body
+    if isinstance(e, exp.Subquery) and not e.args.get("alias"):
+        return ("subq", _query_node(e.this))
+    if isinstance(e, exp.Exists):
+        return ("exists", _query_node(e.this))
     if isinstance(e, exp.Interval):
         v, u = e.this, e.args.get("unit")
         if not isinstance(v, exp.Literal) or u is None:
@@ -312,8 +316,12 @@ def _bracket_index(i) -> tuple:
 
 
 def _in(e, neg: bool) -> tuple:
-    if e.args.get("query") is not None or e.args.get("unnest") is not None:
-        raise Outside("IN over a subquery")
+    if e.args.get("unnest") is not None:
+        raise Outside("IN over UNNEST")
+    q = e.args.get("query")
+    if q is not None:
+        return ("inq", expr(e.this), _query_node(q.this if isinstance(q, exp.Subquery) else q),
+                neg)
     return ("in", expr(e.this), [expr(x) for x in e.expressions], neg)
 
 
@@ -330,14 +338,19 @@ def _ordered(x) -> tuple:
 
 
 def _table(t) -> tuple:
-    if not isinstance(t, exp.Table) or t.args.get("joins") or t.args.get("laterals"):
-        raise Outside("a FROM that is not a relation")
-    parts = [_ident(t.args.get(k)) for k in ("catalog", "db") if t.args.get(k)] + [_ident(t.this)]
-    a = t.args.get("alias")
-    alias = _ident(a.this) if a is not None and a.this is not None else None
+    """A FROM or JOIN source: ("rel", parts, alias) or ("sub", query, alias)."""
+    a = t.args.get("alias") if isinstance(t, (exp.Table, exp.Subquery)) else None
     if a is not None and a.args.get("columns"):
         raise Outside("column aliases on a relation")
-    return parts, alias
+    alias = _ident(a.this) if a is not None and a.this is not None else None
+    if isinstance(t, exp.Subquery):
+        if t.args.get("joins") or t.args.get("laterals"):
+            raise Outside("a subquery with joins attached")
+        return ("sub", _query_node(t.this), alias)
+    if not isinstance(t, exp.Table) or t.args.get("joins") or t.args.get("laterals"):
+        raise Outside("a FROM that is not a relation or a subquery")
+    parts = [_ident(t.args.get(k)) for k in ("catalog", "db") if t.args.get(k)] + [_ident(t.this)]
+    return ("rel", parts, alias)
 
 
 def select(s, top: bool = False) -> dict:
@@ -367,10 +380,10 @@ def select(s, top: bool = False) -> dict:
         if kind in ("SEMI", "ANTI", "ASOF", "POSITIONAL") or j.args.get("method"):
             raise Outside(f"{kind or j.args.get('method')} JOIN")
         k = side or ("CROSS" if kind == "CROSS" else "INNER")
-        parts, alias = _table(j.this)
+        src = _table(j.this)
         on = j.args.get("on")
         using = [_ident(u) for u in j.args.get("using") or []]
-        joins.append({"kind": k, "table": parts, "alias": alias,
+        joins.append({"kind": k, "src": src,
                       "on": expr(on) if on is not None else None, "using": using})
     w = s.args.get("where")
     g = s.args.get("group")
@@ -424,8 +437,21 @@ def query(sql: str, dialect: str) -> dict:
     trees = [t for t in trees if t is not None]
     if len(trees) != 1:
         raise Outside("more than one statement")
-    t = trees[0]
+    return _query_node(trees[0])
+
+
+def _query_node(t) -> dict:
+    """A whole query (a model, or a subquery): its own WITH, then the compound."""
+    if isinstance(t, exp.Subquery):
+        t = t.this
     w = t.args.get("with_") or t.args.get("with")
+    if w is None:
+        # sqlglot can hang a union's WITH on its first arm; the text puts it before the union
+        first = t
+        while isinstance(first, (exp.Union, exp.Except, exp.Intersect)):
+            first = first.this
+        if first is not t and isinstance(first, exp.Select):
+            w = first.args.get("with_") or first.args.get("with")
     ctes = []
     if w is not None:
         if w.args.get("recursive"):
@@ -505,7 +531,20 @@ def s_expr(e) -> str:
     if k == "fnord":
         return (f"(fnord {_q(e[1])}{' distinct ' if e[2] else ' '}"
                 f"{_blist([s_expr(a) for a in e[3]])} {_s_order(e[4])})")
+    if k == "subq":
+        return f"(subquery {s_query(e[1])})"
+    if k == "inq":
+        return f"(inq {s_expr(e[1])} {s_query(e[2])}{' not' if e[3] else ''})"
+    if k == "exists":
+        return f"(exists {s_query(e[1])})"
     raise ValueError(k)
+
+
+def _s_source(src) -> str:
+    alias = _q(src[2]) if src[2] is not None else "(none)"
+    if src[0] == "rel":
+        return f"{_qs(src[1])} {alias}"
+    return f"(sub {s_query(src[1])}) {alias}"
 
 
 def _s_key(x, d, nf) -> str:
@@ -523,11 +562,8 @@ def _opt(e) -> str:
 def s_select(s: dict) -> str:
     items = " ".join(f"({s_expr(e)} {_q(a) if a is not None else '(none)'})"
                      for e, a in s["items"])
-    src = (f"(from {_qs(s['source'][0])} "
-           f"{_q(s['source'][1]) if s['source'][1] is not None else '(none)'})"
-           if s["source"] else "(none)")
-    joins = " ".join(f"(join {_q(j['kind'])} {_qs(j['table'])} "
-                     f"{_q(j['alias']) if j['alias'] is not None else '(none)'} "
+    src = f"(from {_s_source(s['source'])})" if s["source"] else "(none)"
+    joins = " ".join(f"(join {_q(j['kind'])} {_s_source(j['src'])} "
                      f"{_opt(j['on'])} {_qs(j['using'])})" for j in s["joins"])
     order = " ".join(_s_key(e, d, nf) for e, d, nf in s["order"])
     on = f"on [{' '.join(s_expr(x) for x in s['on'])}] " if s.get("on") else ""
@@ -622,7 +658,24 @@ def l_expr(e) -> str:
     if k == "fnord":
         return (f"(Expr.fnOrdered {_ls(e[1])} {'true' if e[2] else 'false'} "
                 f"(ExprList.ofList [{', '.join(l_expr(a) for a in e[3])}]) {_l_order(e[4])})")
+    if k == "subq":
+        return f"(Expr.subquery {l_query(e[1])})"
+    if k == "inq":
+        return f"(Expr.inQuery {l_expr(e[1])} {l_query(e[2])} {'true' if e[3] else 'false'})"
+    if k == "exists":
+        return f"(Expr.exists {l_query(e[1])})"
     raise ValueError(k)
+
+
+def _l_source(src) -> str:
+    alias = _lopt(src[2], _ls)
+    if src[0] == "rel":
+        return f"(Source.rel {_lss(src[1])} {alias})"
+    return f"(Source.sub {l_query(src[1])} {alias})"
+
+
+def _l_optexpr(e) -> str:
+    return f"(OptExpr.some {l_expr(e)})" if e is not None else "OptExpr.none"
 
 
 def _l_triple(x, d, nf) -> str:
@@ -635,30 +688,27 @@ def _l_order(order) -> str:
 
 def l_select(s: dict) -> str:
     items = ", ".join(f"({l_expr(e)}, {_lopt(a, _ls)})" for e, a in s["items"])
-    src = (f"(some ({_lss(s['source'][0])}, {_lopt(s['source'][1], _ls)}))"
-           if s["source"] else "none")
-    joins = ", ".join(
-        f"{{ kind := {_ls(j['kind'])}, table := {_lss(j['table'])}, "
-        f"alias := {_lopt(j['alias'], _ls)}, on := {_lopt(j['on'], l_expr)}, "
-        f"usingCols := {_lss(j['using'])} }}" for j in s["joins"])
+    src = f"(OptSource.some {_l_source(s['source'])})" if s["source"] else "OptSource.none"
+    joins = ", ".join(f"({_ls(j['kind'])}, {_l_source(j['src'])}, {_l_optexpr(j['on'])}, "
+                      f"{_lss(j['using'])})" for j in s["joins"])
     order = ", ".join(_l_triple(e, d, nf) for e, d, nf in s["order"])
     on = ", ".join(l_expr(x) for x in s.get("on") or [])
-    return ("{ distinct := " + ("true" if s["distinct"] else "false")
-            + f", distinctOn := [{on}], items := [{items}], "
-            f"source := {src}, joins := [{joins}], where_ := {_lopt(s['where'], l_expr)}, "
-            f"groupBy := [{', '.join(l_expr(g) for g in s['group'])}], "
-            f"having := {_lopt(s['having'], l_expr)}, qualify := {_lopt(s['qualify'], l_expr)}, "
-            f"orderBy := [{order}], limit := {_lopt(s['limit'], _ls)} }}")
+    return (f"(Select.mk {'true' if s['distinct'] else 'false'} (ExprList.ofList [{on}]) "
+            f"(ItemList.ofList [{items}]) {src} (JoinList.ofList [{joins}]) "
+            f"{_l_optexpr(s['where'])} "
+            f"(ExprList.ofList [{', '.join(l_expr(g) for g in s['group'])}]) "
+            f"{_l_optexpr(s['having'])} {_l_optexpr(s['qualify'])} "
+            f"(OrderList.ofList [{order}]) {_lopt(s['limit'], _ls)})")
 
 
 def l_compound(c: dict) -> str:
     rest = ", ".join(f"({_ls(op)}, {l_select(x)})" for op, x in c["rest"])
-    return f"{{ first := {l_select(c['first'])}, rest := [{rest}] }}"
+    return f"(Compound.mk {l_select(c['first'])} (UnionList.ofList [{rest}]))"
 
 
 def l_query(q: dict) -> str:
     ctes = ", ".join(f"({_ls(n)}, {l_compound(s)})" for n, s in q["ctes"])
-    return f"{{ ctes := [{ctes}], body := {l_compound(q['body'])} }}"
+    return f"(Query.mk (CteList.ofList [{ctes}]) {l_compound(q['body'])})"
 
 
 def lean_codes(sql: str) -> str:

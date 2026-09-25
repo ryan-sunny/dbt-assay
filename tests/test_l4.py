@@ -27,7 +27,7 @@ def test_the_converter_writes_the_fragment_or_says_what_is_outside():
     s = sqlfrag.s_query(q)
     assert '(fn "count" [(star []) ])' in s and '(join "LEFT" ["u"]' in s
     with pytest.raises(sqlfrag.Outside):
-        sqlfrag.query("select * from (select 1) x", "duckdb")
+        sqlfrag.query("select * from t, lateral (select 1) x", "duckdb")
     assert sqlfrag.lean_codes("ab") == "[97, 98]"
 
 
@@ -124,7 +124,11 @@ def test_every_construct_added_for_coverage_reads_the_same_on_both_sides(tmp_pat
            "timestamp '2020-01-01' as ts0 from t "
            "where s not like 'x%' and k is distinct from j "
            "order by k, d desc nulls last) "
-           "select * from a union all by name select k from b")
+           "select * from a union all by name select k from b "
+           "union all select s.k from (with z as (select k from t) select k from z) s "
+           "join (select k from u) v on s.k = v.k "
+           "where s.k in (select k from w) and not exists (select 1 from w where w.k = s.k) "
+           "and s.k > (select max(k) from w)")
     q = sqlfrag.query(sql, "duckdb")
     assert parseproof.lean_parse(sql, "duckdb") == sqlfrag.s_query(q)
     # where NULLs sort when an ORDER BY does not say is the dialect's: Snowflake's are large
