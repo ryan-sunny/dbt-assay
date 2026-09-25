@@ -208,4 +208,10 @@ def build_library(say=print) -> dict:
                        timeout=1800, check=False)
     if r.returncode != 0:
         raise RuntimeError("the Lean library did not build:\n" + (r.stdout + r.stderr)[-2000:])
+    # *** A LEAN BUMP LEFT 3.2 GB BEHIND IT. *** (sunny-data, K1) This build and the pinned
+    # toolchain are what this assay proves with; another version's toolchain or library is
+    # unused from here on, and all of it can be rebuilt.
+    from .cachehygiene import after_install
+    for line in after_install():
+        say(line)
     return {**status(), "lake": lake}

@@ -1267,6 +1267,25 @@ def onboard(
         except Exception:                                        # noqa: BLE001,S110
             pass
 
+    # *** WHAT assay KEEPS ON THIS MACHINE. *** (K1) By part, with what nothing uses.
+    try:
+        from . import cachehygiene as _ch
+        _parts = _ch.parts()
+        if _parts:
+            _unused = sum(p["bytes"] for p in _parts if not p["in_use"])
+            _by: dict = {}
+            for p in _parts:
+                k = p["part"].split(",")[0].split(" ")[0] if not p["part"].startswith("dbt") \
+                    else "dbt targets"
+                k = {"Lean": "Lean", "parse": "parse cache"}.get(k, k)
+                _by[k] = _by.get(k, 0) + p["bytes"]
+            console.print(f"   [dim]cache {_ch.root()}: "
+                          + ", ".join(f"{k} {_ch.human(v)}" for k, v in _by.items())
+                          + (f". {_ch.human(_unused)} of it is unused: `assay prune --cache`."
+                             if _unused else ".") + "[/]")
+    except Exception:                                            # noqa: BLE001,S110
+        pass
+
     console.print("\n[bold]7. your warehouse, and what leaves your network[/]")
     _warehouse_panel(str(_project_dir_for(tdir) or "."), profiles_dir, check_warehouse, dbt_bin)
 
@@ -4229,6 +4248,10 @@ def prune(
     keep: int = typer.Option(10, "--keep", "-k", help="how many runs to keep"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     dry_run: bool = typer.Option(False, "--dry-run", help="say what would go, delete nothing"),
+    cache: bool = typer.Option(False, "--cache",
+                               help="instead: remove what nothing uses from assay's cache folder "
+                                    "(other Lean versions, other assays' builds, old parses, dbt "
+                                    "targets unused for 14 days). All of it can be rebuilt"),
 ) -> None:
     """Drop old runs from the tables a parser can regenerate. Never touches anything paid for.
 
@@ -4241,6 +4264,19 @@ def prune(
     reaches `model_decisions`, `claims` or `adjudications` at all. Nothing runs on its own --
     a destructive action as a side effect of opening a file is how this goes wrong.
     """
+    if cache:
+        from . import cachehygiene as ch
+        got = ch.prune(dry_run=dry_run)
+        t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        t.add_column("part"); t.add_column("size", justify="right"); t.add_column("")
+        for p in got["removed"]:
+            t.add_row(p["part"], ch.human(p["bytes"]), f"[dim]{p['why']}[/]")
+        if got["removed"]:
+            console.print(t)
+        verb = "would free" if dry_run else "freed"
+        console.print(f"{verb} [bold]{ch.human(got['freed'])}[/]; "
+                      f"{ch.human(got['kept'])} in use is kept. [dim]{ch.root()}[/]")
+        raise typer.Exit(0)
     from .store import NEVER_PRUNED, PRUNABLE, orphan_states
     from .store import prune as _prune
     if not Path(store_path).exists():

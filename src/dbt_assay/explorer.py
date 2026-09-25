@@ -883,6 +883,15 @@ def build_fingerprint() -> str:
     return h.hexdigest()[:12]
 
 
+def _models_line(meta: dict) -> str:
+    """The project's own models, with installed packages' said apart: 403 read as the project's
+    size when 75 of them were dbt_project_evaluator's and elementary's."""
+    yours, packaged = meta.get("yours"), meta.get("packaged") or 0
+    if yours is None:
+        return f"{meta['models']:,} models"
+    return f"{yours:,} models" + (f" (+{packaged:,} in installed packages)" if packaged else "")
+
+
 def _badge(n) -> str:
     """A tab's number: a count, grouped, or a phrase like "433 of 697"."""
     if n is None:
@@ -1051,7 +1060,7 @@ def explorer_html(data: dict, record_html: str) -> str:
 </style></head><body>
 <header>
 <h1>{MARK_SVG}<span class="hname">{e(meta['project'])}</span><span>everything assay knows</span></h1>
-<div class="sub">{meta['models']} models &middot; {meta['sources']} sources &middot;
+<div class="sub">{_models_line(meta)} &middot; {meta['sources']} sources &middot;
 manifest generated {e(str(meta['generated_at']))} &middot;
 <span class="hint" data-tip="The build is a hash of the code that rendered this page: two pages claiming one version and differing here came from two different installs.&#10;&#10;The page is deterministic. It carries the manifest's own generated_at and never a wall clock, and every list arrives sorted, so a rerun against an unchanged store writes an identical file.">assay {e(meta['version'])} &middot; build {e(build_fingerprint())}</span>{form_link}</div>
 <button class="navmenu" id="navmenu" aria-expanded="false"><span id="navcur">Overview</span> ▾</button>
@@ -3028,11 +3037,11 @@ function understoodTab(host) {
                   + (classified === DATA.claims.length ? ' and classified'
                      : classified ? ' and ' + num(classified) + ' classified' : ''));
   if (answered)
-    leadBits.push(num(answered) + ' questions answered across ' + num(meta.models) + ' models');
+    leadBits.push(num(answered) + ' questions answered across ' + num(meta.yours ?? meta.models) + ' models');
   const leadCost = spent == null ? '' : ' for $' + spent.toFixed(2);
   bits.push(el('p', {class: 'tlead', text: (leadBits.length
     ? leadBits.join(', and ') + leadCost + ', finding '
-    : 'Reading ' + num(meta.models) + ' models found ')
+    : 'Reading ' + num(meta.yours ?? meta.models) + ' models found ')
     + num(F.length) + ' defects no dbt test can express.'}));
 
   const ticket = el('div', {class: 'ticket'}, [

@@ -11,7 +11,7 @@ source files and sqlglot's version rather than assay's version number, which sta
 the code under it changes. A changed model misses and is parsed; nothing is ever read stale.
 
 The file is written with only the digests the load used, so an edited model's old parse leaves
-with the next run, and a file under a key no build produces any more is removed after 30 days.
+with the next run, and a file under a key no build produces any more is removed after 14 days unused.
 Set ASSAY_NO_DIGEST_CACHE=1 to parse everything every time.
 """
 from __future__ import annotations
@@ -96,7 +96,7 @@ class DigestCache:
             return
         if self.hits == len(self.new) == len(self.old):
             try:
-                os.utime(self.path)          # in use: the 30-day sweep goes by this
+                os.utime(self.path)          # in use: the 14-day sweep goes by this
             except OSError:
                 pass
             return
@@ -106,7 +106,10 @@ class DigestCache:
             with open(tmp, "wb") as fh:
                 pickle.dump(self.new, fh)
             os.replace(tmp, self.path)
-            cutoff = time.time() - 30 * 86400
+            # Each release reads under a new code hash, so the old one's file is unused from
+            # then on: gone after 14 days unused (not at once, so a checkout and an installed
+            # assay sharing this folder do not delete each other's on every run).
+            cutoff = time.time() - 14 * 86400
             for p in self.path.parent.glob("*.pickle"):
                 if p != self.path and p.stat().st_mtime < cutoff:
                     p.unlink(missing_ok=True)
