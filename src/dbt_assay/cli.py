@@ -211,6 +211,25 @@ def _report_vocab_drops() -> None:
 
 
 @contextlib.contextmanager
+def _progress_to_stderr(on: bool = True):
+    """Everything the module's `console` prints goes to stderr while this is open.
+
+    *** WITH `--json`, STDOUT IS THE DOCUMENT AND NOTHING ELSE. *** (sunny-data feedback V1)
+    `volume --judge --json` printed the judging progress and each bank's summary after the JSON,
+    so `> v.json` wrote a file `json.load` refused, and a page built from it had no monitoring.
+    """
+    global console
+    if not on:
+        yield
+        return
+    was, console = console, err_console
+    try:
+        yield
+    finally:
+        console = was
+
+
+@contextlib.contextmanager
 def _judging(label: str, total: int, plan=None):
     """A live line for a judged loop: done of total, answered from the store, sent, spent, left.
 
@@ -3613,15 +3632,16 @@ def volume(
             store.close()
         raise typer.Exit(0)
 
-    _judge_volume(project, digests, schema, store, store_path, cfg, rep, threshold, limit,
-                  dry_run)
-    from . import monitoring_bank as mb
-    try:
-        ran = mb.ran_test_ids(runner, schema_name)
-    except probe_mod.WarehouseUnreachable:
-        ran = None
-    _judge_monitoring(project, digests, schema, store, cfg, rep, ran, threshold, limit,
+    with _progress_to_stderr(as_json):
+        _judge_volume(project, digests, schema, store, store_path, cfg, rep, threshold, limit,
                       dry_run)
+        from . import monitoring_bank as mb
+        try:
+            ran = mb.ran_test_ids(runner, schema_name)
+        except probe_mod.WarehouseUnreachable:
+            ran = None
+        _judge_monitoring(project, digests, schema, store, cfg, rep, ran, threshold, limit,
+                          dry_run)
 
 
 def _judge_monitoring(project, digests, schema, store, cfg, rep, ran, threshold, limit,

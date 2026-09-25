@@ -270,3 +270,19 @@ def test_volume_json_says_it_could_not_reach_the_warehouse_and_why(project_dir, 
                               "--elementary-schema", "elem"], catch_exceptions=True)
     assert res.exit_code == 1
     assert res.output.count("Could not find profile named") == 1, res.output
+
+
+def test_volume_judge_json_keeps_stdout_for_the_document(project_dir, tmp_path, monkeypatch):
+    """sunny-data feedback V1: `volume --judge --json > v.json` must parse. The judging progress
+    and each bank's summary printed after the document, on stdout."""
+    import json
+
+    _fake_warehouse(monkeypatch, _elementary_rows)
+    res = runner.invoke(app, ["volume", "--target", str(project_dir),
+                              "--store", str(tmp_path / "s.duckdb"),
+                              "--elementary-schema", "elem", "--json", "--judge", "--dry-run"],
+                        catch_exceptions=True)
+    assert res.exception is None or not isinstance(res.exception, BROKEN), res.exception
+    payload = json.loads(res.stdout)
+    assert "readings" in payload and "monitoring" in payload
+    assert "no claims to check a movement against" in res.stderr, res.stderr
