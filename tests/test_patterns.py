@@ -51,13 +51,15 @@ def test_each_shape_fires_on_the_broken_case_only(sql, check, fires):
     assert (check in _checks(sql)) is fires
 
 
-def test_the_clock_in_a_view_weighs_more_and_a_future_guard_less():
+def test_the_clock_in_a_view_weighs_more_and_a_future_guard_is_not_reported():
     rolling = "select id from t where d >= current_date - interval 5 year"
     assert _checks(rolling, mat="view")["output_depends_on_the_clock"].base == 3
     assert _checks(rolling)["output_depends_on_the_clock"].base == 2
-    guard = _checks("select id from t where event_date <= current_date")
-    assert guard["output_depends_on_the_clock"].base == 1
-    assert guard["output_depends_on_the_clock"].evidence["only_future_guards"]
+    # a bound against future-dated rows only changes anything when the data is from the future
+    for g in ("select id from t where event_date <= current_date",
+              "select case when d between date '1900-01-01' and now() then d end as d from t",
+              "select id from t where y <= year(current_date)"):
+        assert "output_depends_on_the_clock" not in _checks(g), g
 
 
 def test_not_in_is_quiet_when_a_test_keeps_the_column_non_null():

@@ -44,10 +44,11 @@ def run_all(project, digests) -> list[Finding]:
         exposed = bool(project.exposures_of(uid)) if hasattr(project, "exposures_of") else False
         kw = {"subject": uid, "subject_name": m.name, "file": m.path}
 
-        clock = by.get("clock", [])
+        clock = [c for c in by.get("clock", []) if not c["guard"]]
+        # A model whose only clock reads are bounds against future-dated rows is not reported:
+        # the bound changes nothing unless the data holds dates from the future.
         if clock:
-            guards = all(c["guard"] for c in clock)
-            base = 3 if (mat in DRIFTS_UNBUILT or exposed) and not guards else 1 if guards else 2
+            base = 3 if (mat in DRIFTS_UNBUILT or exposed) else 2
             where = sorted({c["where"] for c in clock})
             out.append(Finding(
                 check="output_depends_on_the_clock", **kw,
@@ -59,13 +60,11 @@ def run_all(project, digests) -> list[Finding]:
                         "output breaks with the calendar. Pass the date in (a project `as_of()` "
                         "macro reading `var('as_of')`, defaulting to the current date) so a "
                         "build, a test and a golden can name the day they represent. "
-                        + ("Every use here is a guard against future-dated rows, which is "
-                           "legitimate and still changes with the day. " if guards else "")
                         + "Only the SQL is read: code outside dbt that reads the clock is not "
                           "seen."),
                 base=base,
                 evidence={"uses": [c["sql"] for c in clock][:8], "where": where,
-                          "materialized": mat, "only_future_guards": guards}))
+                          "materialized": mat}))
 
         aggs = by.get("order_sensitive_aggregate", [])
         if aggs:

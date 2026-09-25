@@ -69,16 +69,21 @@ def _is_clock(n) -> bool:
 
 
 def _future_guard(node) -> bool:
-    """`x <= current_date` / `x < now()` in a filter: a guard against future-dated rows, which is
-    legitimate and still changes with the day."""
-    p = node.parent
-    while isinstance(p, (exp.Cast, exp.Paren, exp.TryCast)):
-        p = p.parent
-    if isinstance(p, (exp.LTE, exp.LT)) and p.expression is not None \
-            and (p.expression is node or node in p.expression.find_all(type(node))):
-        return isinstance(p.this, exp.Column)
-    if isinstance(p, (exp.GTE, exp.GT)) and (p.this is node or node in p.this.find_all(type(node))):
-        return isinstance(p.expression, exp.Column)
+    """`x <= current_date`, `year(d) <= year(current_date)`, `d between '1900-01-01' and now()`:
+    a bound against future-dated rows. Legitimate, and it only changes which rows pass when the
+    data holds dates in the future, so it is not the time dependence this check is for."""
+    child, p = node, node.parent
+    # up through what wraps the clock without adding a column: casts, year(), date_trunc(), ...
+    while p is not None and (isinstance(p, (exp.Cast, exp.TryCast, exp.Paren))
+                             or (isinstance(p, exp.Func) and not isinstance(p, exp.AggFunc)
+                                 and not any(True for _ in p.find_all(exp.Column)))):
+        child, p = p, p.parent
+    if isinstance(p, exp.Between):
+        return p.args.get("high") is child
+    if isinstance(p, (exp.LTE, exp.LT)):
+        return p.expression is child
+    if isinstance(p, (exp.GTE, exp.GT)):
+        return p.this is child
     return False
 
 
