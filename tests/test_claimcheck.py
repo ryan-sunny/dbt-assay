@@ -211,3 +211,38 @@ def test_columns_of_unknown_type_are_tried_as_numbers_when_text_cannot_run(tmp_p
                                  [_cert("g", {"kind": "unique", "cols": ["rid"]}, UNIQUE_ID)])
     assert got["g"][0] == claimcheck.HOLDS, got
     assert "filled with numbers" in got["g"][1], got
+
+
+# --- sunny-data feedback M5 / M6 ------------------------------------------------------------------
+
+def test_a_model_ending_in_a_line_comment_still_runs(tmp_path):
+    """M5: `( <sql> )` put the closing parenthesis inside the model's last `--` comment."""
+    target = build(tmp_path, {**MODELS, "c": "select p.id as rid from main.stg_parent p\n"
+                                              "where p.id is not null   -- keep keyed rows"})
+    p, _d, sch = _load(target)
+    got = claimcheck.check_model(p, sch, "model.p.c", p.models["model.p.c"].compiled, "duckdb",
+                                 [_cert("g", {"kind": "unique", "cols": ["rid"]}, UNIQUE_ID)])
+    assert got["g"][0] == claimcheck.HOLDS, got
+
+
+def test_a_text_column_the_model_casts_to_a_number_gets_numbers(tmp_path):
+    """M6: `'a'` in a column the model casts to INT64 could not run."""
+    target = build(tmp_path, {**MODELS, "k": "select p.id as rid, cast(p.name as bigint) as n "
+                                              "from main.stg_parent p"})
+    p, _d, sch = _load(target)
+    got = claimcheck.check_model(p, sch, "model.p.k", p.models["model.p.k"].compiled, "duckdb",
+                                 [_cert("g", {"kind": "unique", "cols": ["rid"]}, UNIQUE_ID)])
+    assert got["g"][0] == claimcheck.HOLDS, got
+
+
+def test_a_text_column_joined_to_a_number_gets_numbers(tmp_path):
+    """M6: `on p.parid = s.parid`, one BIGINT and one of unknown type: DuckDB casts the text."""
+    target = build(tmp_path, {**MODELS, "ids": "select cast(k as bigint) as num from raw.k",
+                              "j": ("select p.id as rid from main.stg_parent p "
+                                    "join main.ids i on i.num = p.name")})
+    p, _d, _sch = _load(target)
+    ins = claimcheck._cast_to_number(
+        [("main.stg_parent", None, "main", "stg_parent", [("id", "text", ""), ("name", "text", "")]),
+         ("main.ids", None, "main", "ids", [("num", "int", "bigint")])],
+        p.models["model.p.j"].compiled, "duckdb")
+    assert {c: k for c, k, _r in ins[0][4]} == {"id": "text", "name": "numtext"}

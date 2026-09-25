@@ -56,11 +56,11 @@ def _pool(kind: str) -> list:
     return {"int": [1, 2, 2, 3], "float": [1.5, 2.25, 2.25], "text": ["a", "b", "b", "ab"],
             "date": ["2026-01-01", "2026-01-02", "2026-01-02"],
             "timestamp": ["2026-01-01 00:00:00", "2026-01-02 00:00:00"],
-            "bool": [True, False], "null": [None]}[kind]
+            "bool": [True, False], "null": [None], "numtext": ["1", "2", "2", "3"]}[kind]
 
 
 def _distinct(kind: str, i: int):
-    return {"int": i + 1, "float": i + 0.5, "text": f"k{i}",
+    return {"int": i + 1, "float": i + 0.5, "text": f"k{i}", "numtext": str(i + 1),
             "date": f"2026-02-{i + 1:02d}", "timestamp": f"2026-02-{i + 1:02d} 00:00:00"}.get(kind)
 
 
@@ -105,7 +105,9 @@ class _Unmet(Exception):
 
 
 def _wrap(sql: str) -> str:
-    return sql.strip().rstrip(";")
+    """The model's SQL for use inside `( ... )`. It ends on a new line: a model whose last line is
+    a `--` comment otherwise comments out the closing parenthesis (sunny-data feedback M5)."""
+    return sql.strip().rstrip(";") + "\n"
 
 
 def _unique_violations(con, sql: str, cols: list) -> tuple[int, str]:
@@ -159,6 +161,39 @@ _TYPE_MISS = re.compile(r"VARCHAR and type (INTEGER|DECIMAL|DOUBLE|BIGINT)|Could
                         r"string|Cannot compare values of type VARCHAR|No function matches the "
                         r"given name and argument types '[^']*VARCHAR[^']*"
                         r"(INTEGER|DECIMAL|DOUBLE|BIGINT)")
+
+
+_NUMERIC = {t for t in (getattr(exp.DataType.Type, n, None) for n in (
+    "INT", "BIGINT", "SMALLINT", "TINYINT", "DOUBLE", "FLOAT", "DECIMAL", "INT128", "UBIGINT",
+    "UINT", "USMALLINT", "UTINYINT")) if t is not None}
+
+
+def _cast_to_number(ins, sql: str, dialect: str):
+    """The inputs with each text column the model CASTs to a number, or compares with one,
+    filled with numeric strings, which the cast accepts: `'a'` cast to INT64 cannot run (M6).
+    TRY_CAST is left alone: a value it cannot read becomes NULL, which is a case worth having."""
+    try:
+        tree = sqlglot.parse_one(sql, read=dialect)
+    except Exception:                                            # noqa: BLE001
+        return ins
+    cast = {c.this.name.lower() for c in tree.find_all(exp.Cast)
+            if not isinstance(c, exp.TryCast) and isinstance(c.this, exp.Column)
+            and c.to.this in _NUMERIC}
+    # ...and one compared with `=` to a numeric column: DuckDB casts the text side to a number
+    # (`on p.parid = s.parid`, one BIGINT and one of unknown type)
+    numeric = {col for *_x, cols in ins for col, k, _r in cols if k in ("int", "float")}
+    for eq in tree.find_all(exp.EQ):
+        a, b = eq.this, eq.expression
+        if isinstance(a, exp.Column) and isinstance(b, exp.Column):
+            na, nb = a.name.lower(), b.name.lower()
+            if na in numeric:
+                cast.add(nb)
+            if nb in numeric:
+                cast.add(na)
+    if not cast:
+        return ins
+    return [(f, c, db, n, [(col, "numtext" if k == "text" and col in cast else k, raw)
+                           for col, k, raw in cols]) for f, c, db, n, cols in ins]
 
 
 def _numeric(ins):
@@ -223,7 +258,7 @@ def _check_model(project, schema, uid: str, sql: str, dialect: str, certs: list,
         return {c["property"]: (UNCHECKED, f"runs DuckDB SQL only; this project is {dialect}")
                 for c in certs}
     try:
-        ins = parsecheck._inputs(project, schema, sql, dialect)
+        ins = _cast_to_number(parsecheck._inputs(project, schema, sql, dialect), sql, dialect)
     except Exception as e:                                       # noqa: BLE001
         return {c["property"]: (UNCHECKED, f"not read: {str(e)[:160]}") for c in certs}
     rel_of = {_norm(r): u for u, r in (getattr(schema, "relation", {}) or {}).items() if r}

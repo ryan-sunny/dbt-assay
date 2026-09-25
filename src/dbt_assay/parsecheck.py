@@ -72,7 +72,8 @@ def _values(kind: str, last: bool) -> list:
 
 def _sqltype(kind: str) -> str:
     return {"int": "BIGINT", "float": "DOUBLE", "text": "VARCHAR", "date": "DATE",
-            "timestamp": "TIMESTAMP", "bool": "BOOLEAN", "null": "VARCHAR"}[kind]
+            "timestamp": "TIMESTAMP", "bool": "BOOLEAN", "null": "VARCHAR",
+            "numtext": "VARCHAR"}[kind]
 
 
 # A geometry carried as text (GeoJSON, WKT, WKB): `'a'` is not one, and a NULL is always valid.
@@ -312,7 +313,8 @@ def warehouse_sql(project, schema, sql: str, dialect: str) -> tuple[str, str]:
             t.replace(exp.to_table(names[full]))
     again = tree.sql(dialect=dialect)
     pre = "WITH " + ", ".join(ctes)
-    wrap = lambda body: f"{pre}, __assay_model AS ({body}) SELECT * FROM __assay_model"
+    # a new line before `)`: a model ending in a `--` comment would swallow it (M5)
+    wrap = lambda body: f"{pre}, __assay_model AS ({body}\n) SELECT * FROM __assay_model"
     return wrap(orig), wrap(again)
 
 
