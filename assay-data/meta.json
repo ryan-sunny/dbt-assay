@@ -1,4 +1,9 @@
 {
+  "counted": {
+    "at": "2026-09-25 02:22",
+    "run": "2c5d18fd17ee",
+    "store": "s.duckdb"
+  },
   "coverage": {
     "conflicting_copies": 0,
     "edges": 1,
@@ -18,7 +23,23 @@
   "new_store": "",
   "packaged": 0,
   "project": "p",
+  "repo_url": "",
+  "review": {
+    "card_findings": 26,
+    "cards": 26,
+    "findings": 26,
+    "line": "26 card(s) covering 26 of 26 open finding(s). A card is one (model, check): one answer covers every finding of that check on that model.",
+    "pairs": 26,
+    "ruled_findings": 0,
+    "ruled_pairs": 0,
+    "set_aside": {
+      "accepted": 0,
+      "dismissed": 0,
+      "switched off": 0,
+      "waived": 0
+    }
+  },
   "sources": 0,
-  "version": "0.51.6",
+  "version": "0.52.0",
   "yours": 11
 }
