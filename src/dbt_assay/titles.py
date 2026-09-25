@@ -1,0 +1,126 @@
+"""A plain title for every check and question family, where a person reads a list of them.
+
+*** `test_never_ran_is_a_gap_or_a_leftover` IS AN IDENTIFIER, NOT A LABEL. *** (Ryan, the review
+form's check list) The ids stay what every file, store row and config key uses; a person reading a
+list reads the title, with the id beside it for searching and for audit.yml. A check with no entry
+here (a project's own question family) reads as its id with the underscores gone, never as blank.
+"""
+from __future__ import annotations
+
+TITLES: dict[str, str] = {
+    # structural: what the parser settles
+    "arbitrary_pick": "Picks one row with no reliable tie-break",
+    "first_match_pick": "Takes the first match where several exist",
+    "bbox_as_radius": "Treats a bounding box as a distance",
+    "ranks_by_degrees": "Ranks by distance in degrees, not metres",
+    "duckdb_full_match": "A regex that only matches the whole string",
+    "join_fans_out": "A join that multiplies rows",
+    "hop_multiplies_rows": "A step that multiplies rows",
+    "hop_drops_most_rows": "A step that drops most of its rows",
+    "window_after_where": "A window computed after rows were filtered",
+    "narrow_read": "Reads less of a table than it needs",
+    "variant_column": "A column holding values of mixed types",
+    "float_sum_is_not_reproducible": "A floating-point sum that changes between builds",
+    "test_cannot_fail": "A test that can never fail",
+    "test_outruns_its_source": "A test that promises more than its source",
+    # grain and keys
+    "grain_unresolved": "Nobody knows what one row is",
+    "grain_contradicts_test": "The grain and the uniqueness test disagree",
+    "identifier_outside_grain": "An identifier that is not part of the grain",
+    "measure_inside_grain": "A measure used as part of the key",
+    "key_started_holding": "A column became unique",
+    "key_stopped_holding": "A column that was unique no longer is",
+    "key_column_started_mattering": "A key needs a column it did not need",
+    "key_column_stopped_mattering": "A key column became redundant",
+    "no_primary_key_test": "No test says what one row is",
+    # documentation and claims
+    "column_has_no_description": "Columns with no description",
+    "model_has_no_description": "Model with no description",
+    "source_has_no_description": "Source with no description",
+    "models_disagree_about_a_column": "Two models describe one column differently",
+    "description_contradicts_the_code": "The description says something the code does not do",
+    "description_promises_what_the_column_cannot_keep": "The description promises what the "
+                                                        "column cannot keep",
+    "code_contradicts_a_claim": "The code contradicts something the docs claim",
+    # sources, completeness, monitoring
+    "source_reaches_nothing": "A source nothing reads",
+    "source_is_never_used": "A source nothing reads",
+    "source_only_a_test_reads": "A source only a test reads",
+    "source_freshness_undeclared": "A source with no freshness rule",
+    "source_freshness_stale": "A source behind its own freshness rule",
+    "source_volume_not_monitored": "A source whose row count nothing watches",
+    "source_read_directly_by_many_models": "A source read directly by several models",
+    "source_declared_twice": "One table declared as two sources",
+    "seed_reaches_nothing": "A seed nothing reads",
+    "exposure_undeclared": "A final model with no declared use",
+    "monitor_declared_but_never_run": "A monitor that has never run",
+    "monitor_ran_then_stopped": "A monitor that stopped running",
+    "volume_is_not_being_watched": "Models whose row counts nothing watches",
+    "test_declared_but_never_run": "Tests that have never run",
+    "test_skipped_rather_than_passed": "Tests skipped rather than passed",
+    "fixed_finding_returned": "A fixed problem came back",
+    "config_comment_contradicts_the_store": "A comment in audit.yml is out of date",
+    # pipeline structure (dbt-project-evaluator's rules, merged)
+    "reads_raw_source_outside_staging": "Reads raw sources directly, skipping staging",
+    "staging_reads_downstream": "A staging model reads a later layer",
+    "staging_reads_staging": "A staging model reads another staging model",
+    "rejoins_an_upstream_concept": "Joins something it already gets through another model",
+    "model_has_many_leaf_children": "Several final models read it directly",
+    "too_many_joins": "Too many joins in one model",
+    "model_refs_nothing": "A model with no ref() or source()",
+    "hard_coded_reference": "A table named directly instead of through ref()",
+    "long_chain_of_views": "A long chain of views",
+    "model_name_breaks_convention": "A name that breaks the layer's naming rule",
+    "file_in_unexpected_directory": "A file outside the expected folder",
+    "public_model_without_contract": "A public model with no contract",
+    "exposure_rests_on_private_models": "A dashboard or app built on private models",
+    "exposure_rests_on_views": "A dashboard or app built on views",
+    "evaluator_config_does_not_fit": "The evaluator's settings do not fit this project",
+    "evaluator_rule": "A dbt-project-evaluator rule",
+    # clusters
+    "one_rule_or_a_coincidence": "Several models filter the same way",
+    "the_odd_one_out": "One model filters differently from the rest",
+    "where_the_fix_belongs": "Where a shared filter should live",
+    # judged question families
+    "arrival_time_column": "Is this the time each row arrived?",
+    "claim_alignment": "Does the code do what the docs claim?",
+    "claims_are_the_same_assertion": "Do two claims say the same thing?",
+    "column_is_part_of_the_key": "Is this column part of the key?",
+    "column_role": "What job does this column do?",
+    "default_is_a_measurement_or_an_absence": "Is this default a value or a missing one?",
+    "edge_preserves_the_grain": "Does this step keep one row per thing?",
+    "field_matches_its_name": "Do the values match the column's name?",
+    "filter_is_complete": "Does a hand-written list cover everything?",
+    "finding_is_correct": "Is this finding right?",
+    "monitor_covers_what_matters": "Is this source worth watching?",
+    "movement_is_expected_for_this_kind_of_table": "Is this row-count change expected?",
+    "null_meaning": "What does a NULL here mean?",
+    "options_overlap": "Do a question's answers overlap?",
+    "practice_exception": "Is this a real exception to the standard?",
+    "predicate_intent": "Why is this filter here?",
+    "reading_rests_on": "Which line of SQL decides this?",
+    "row_explanation": "Does the row explain why it was flagged?",
+    "row_is_internally_coherent": "Do this row's values agree?",
+    "same_concept": "Do two columns hold the same thing?",
+    "same_defect": "Do two rejections describe one problem?",
+    "sentence_is_a_claim": "Is this sentence a checkable claim?",
+    "sentinel_is_not_a_value": "Is a placeholder value handled as one?",
+    "severity_fit": "Is this test's severity right?",
+    "stale_monitor_still_matters": "Does a stopped monitor still matter?",
+    "test_never_ran_is_a_gap_or_a_leftover": "A test that never ran: a gap, or left over?",
+    "tie_break_is_total": "Can two rows tie?",
+    "time_grain": "Do both sides of a join share a time grain?",
+    "units_agree_across_models": "Do two models use the same unit?",
+    "units_are_what_the_column_claims": "Is the unit what the name says?",
+    "volume_contradicts_a_claim": "Does a row-count change contradict a claim?",
+    "what_would_break_silently": "What could break here without a test noticing?",
+}
+
+
+def title(check: str) -> str:
+    """The plain title, or the id made readable when there is none (a project's own family)."""
+    c = str(check or "")
+    if c in TITLES:
+        return TITLES[c]
+    words = c.replace("_", " ").strip()
+    return (words[:1].upper() + words[1:]) if words else c

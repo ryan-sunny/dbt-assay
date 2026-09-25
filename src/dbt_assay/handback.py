@@ -66,6 +66,15 @@ def preview(payload) -> dict:
             "recorded_nothing": len(bad), "config_edits": refused_config(payload)}
 
 
+def _count(verdict: str, fids, agreed: int, accepted: int, dismissed: int):
+    n = len([f for f in fids or [] if f]) if verdict != "unclear" else 0
+    if verdict == "disagree":
+        return agreed, accepted, dismissed + n
+    if verdict == "accept":
+        return agreed, accepted + n, dismissed
+    return agreed + n, accepted, dismissed
+
+
 def record(store, payload, by: str = "") -> dict:
     """File every verdict the handback carries as a `human` verdict, and nothing it does not.
 
@@ -78,20 +87,34 @@ def record(store, payload, by: str = "") -> dict:
     who = by or (payload.get("by") if isinstance(payload, dict) else "") or "unknown"
     fams: Counter = Counter()
     agreed = accepted = dismissed = 0
+    split: dict = {}
     for r in rows:
+        if r.get("split"):
+            split.setdefault((r["subject"], r["question"]), []).append(r)
+            continue
         fids = (list(r.get("findings") or [])
                 if r["verdict"] in ("disagree", "agree", "accept") else [])
         fams[_record_one_verdict(store, r["subject"], r["question"], r["verdict"],
                                  r["correction"], r["note"], who, findings=fids,
                                  until=r.get("until", ""))] += 1
-        for _fid in fids:
-            if r["verdict"] == "disagree":
-                dismissed += 1
-            elif r["verdict"] == "accept":
-                accepted += 1
-            else:
-                agreed += 1
-    return {"recorded": len(rows), "by": who, "as": "human",
+        agreed, accepted, dismissed = _count(r["verdict"], fids, agreed, accepted, dismissed)
+    # *** A CARD WHOSE FINDINGS WERE RULED APART HAS NO ONE ANSWER. *** Each finding is recorded
+    # with its own verdict. The pair gets `unclear`, saying how it split: it is read (so the
+    # card does not come back, and it counts toward the floor), and a check that was right on
+    # some findings and wrong on others is not counted as agreeing or as disagreeing.
+    for (subj, q), parts in sorted(split.items()):
+        how = ", ".join(f"{len(p['findings'])} {p['verdict']}" for p in parts)
+        for p in parts:
+            _record_one_verdict(store, subj, q, p["verdict"], p["correction"], p["note"], who,
+                                findings=p["findings"], until=p.get("until", ""), pair=False)
+            agreed, accepted, dismissed = _count(p["verdict"], p["findings"],
+                                                 agreed, accepted, dismissed)
+        note = parts[0]["note"].strip()
+        fams[_record_one_verdict(store, subj, q, "unclear", "",
+                                 f"ruled finding by finding in the review form: {how}"
+                                 + (f". {note}" if note else ""), who)] += 1
+    return {"recorded": len(rows) - sum(len(p) for p in split.values()) + len(split),
+            "by": who, "as": "human", "split_cards": len(split),
             "findings_agreed": agreed, "findings_accepted": accepted,
             "findings_dismissed": dismissed,
             "findings_ruled": agreed + accepted + dismissed,

@@ -29,6 +29,8 @@ import json
 import re
 from pathlib import Path
 
+from .titles import title as _title
+
 # The one thing a card cannot carry and still be honest.
 NO_READ = "nothing on this question"
 
@@ -156,24 +158,30 @@ def cards(findings, store, project_root, reads: dict | None = None,
     # four verdicts made 212 cards become 206 instead of 208.
     #
     # A verdict covers (subject, question). Nothing else may be inferred from it.
-    human = set()
+    human, human_f = set(), set()
     if store is not None:
         try:
             human = store.ruled_pairs()
+            # ...and a finding a person ruled on by itself, which is how a card that was split
+            # records its parts (and how `rule(finding=...)` records one)
+            human_f = {str(s).split("::finding::")[1] for s, in store.con.execute(
+                "select distinct subject from adjudications where source = 'human' "
+                "and subject like '%::finding::%'").fetchall()}
         except Exception:                                        # noqa: BLE001
-            human = set()
+            human, human_f = set(), set()
 
     root = Path(project_root)
     from .groups import membership
     _member = membership(groups or [])
     by_pair: dict = {}
     for f in findings:
-        if (str(f.subject), str(f.check)) in human:
+        if (str(f.subject), str(f.check)) in human or str(f.id) in human_f:
             continue
         key = f"{f.subject}::{f.check}"
         c = by_pair.setdefault(key, {
             "key": key, "subject": str(f.subject), "model": f.subject_name,
-            "question": str(f.check), "file": f.file or "", "marts": 0, "descendants": 0,
+            "question": str(f.check), "title": _title(str(f.check)),
+            "file": f.file or "", "marts": 0, "descendants": 0,
             "exposures": [], "findings": [], "agent": None, "read": None})
         c["marts"] = max(c["marts"], int(f.marts or 0))
         # The same construct in other models: the card says so, and still asks about THIS one.
@@ -303,9 +311,12 @@ def load(payload) -> tuple[list, list]:
                    # -- one model carries eight findings of one check. The card knows exactly
                    # which ones it showed, so the dismissal lands on those and no others.
                    "findings": [str(x) for x in (r.get("findings") or []) if x],
-                   "until": until if v == "accept" else ""})
+                   "until": until if v == "accept" else "",
+                   # How many findings the card held, when its findings were ruled apart: the
+                   # rows of one card then share a (subject, question) and none is its answer.
+                   "split": int(r.get("split") or 0)})
     # A total order, so loading the same file twice writes the same rows in the same sequence.
-    ok.sort(key=lambda r: (r["subject"], r["question"]))
+    ok.sort(key=lambda r: (r["subject"], r["question"], r["verdict"]))
     return ok, bad
 
 
@@ -973,7 +984,7 @@ input[type=text]:focus,textarea:focus{border-color:var(--ink);background:#fbf9f4
 .wrow,.wrow .measured,.q,.card{overflow-wrap:anywhere;min-width:0}
 /* The navigator panes fill the window; every other pane scrolls. */
 main.fill{overflow:hidden;display:flex;flex-direction:column;padding-bottom:12px}
-.tally{margin:0 0 8px;flex:0 0 auto}
+.tally{margin:0 0 8px;flex:0 0 auto}.tgrid{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;margin:0 0 10px;font-size:13px;line-height:1.35}.tgrid .tl{color:var(--ash)}.tgrid .tn{color:var(--ash)}
 main.fill > .pane:not([hidden]){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
 .fnav{flex:1 1 auto;min-height:0;display:grid;
 grid-template-columns:minmax(180px,250px) minmax(260px,1fr) minmax(0,2.1fr);gap:0}
@@ -1040,6 +1051,9 @@ padding:6px 8px;cursor:pointer;border:1px solid transparent}
 margin:0 0 4px}
 .vmore textarea{width:100%;min-height:64px;resize:vertical}
 .vmore .until{width:180px}
+.each{margin:8px 0 0}.each summary{cursor:pointer;color:var(--ash)}
+.eachrow{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 10px;align-items:baseline;
+  margin:3px 0}
 /* W1. Where the file went, and the one thing to do next. */
 .reading{display:grid;grid-template-columns:auto 1fr;gap:3px 16px;margin:2px 0 8px;font-size:14px}
 .reading dt{color:var(--ash);font-size:13px}
@@ -1204,7 +1218,8 @@ const REASON_LABEL = {agree: 'anything to add (optional)', disagree: 'why it is 
 function card(c) {
   const a = answers[c.key] || {};
   const box = el('div', {class: 'card' + (a.verdict ? ' done' : '')});
-  box.append(el('div', {class: 'pkind', text: 'finding · ' + c.question.replace(/_/g, ' ')}));
+  box.append(el('div', {class: 'pkind', text: (c.title || c.question.replace(/_/g, ' '))
+    + ' · ' + c.question}));
   box.append(el('h2', {class: 'ctitle mono', text: c.model}));
   box.append(el('div', {class: 'cwhere'}, [
     el('span', {class: 'mono', text: c.file}),
@@ -1343,6 +1358,7 @@ function card(c) {
   function emitWaiver() {
     const cur = answers[c.key] || {};
     const on = cur.verdict === 'accept' && writeW.checked && (cur.note || '').trim()
+               && !Object.keys(cur.per || {}).length
                && !(cur.note || '').trim().endsWith('It stays because');
     setEdit(wkey, on ? Object.assign({question: c.question, applies_to: c.model,
                                       reason: cur.note.trim()},
@@ -1386,6 +1402,36 @@ function card(c) {
   };
   more.append(el('div', {class: 'vrow'}, [noteLab, note]), ...(use ? [use] : []), untilRow, wlab);
   box.append(vbox, more);
+  /* *** ONE ANSWER FOR EIGHT FINDINGS, WHEN TWO OF THEM ARE WRONG. *** (Ryan: "what if some
+     findings on a model are right and some aren't") The card's verdict is the default for every
+     finding on it; any one of them can say otherwise here. The handback then carries one row per
+     verdict, each naming its own findings, and nothing is recorded as the card's single answer. */
+  if (c.findings.length > 1) {
+    const per = () => (answers[c.key] || {}).per || {};
+    const each = el('details', {class: 'each'});
+    const lead = el('summary');
+    const setLead = () => { const n = Object.keys(per()).length;
+      lead.textContent = n ? n + ' of ' + c.findings.length + ' ruled differently from the card'
+                           : 'not all of them? rule on each one'; };
+    each.append(lead);
+    for (const f of c.findings) {
+      const sel = el('select', {}, [['', 'as the card'], ['agree', 'agree'],
+        ['disagree', 'disagree'], ['unclear', 'can’t tell']].map(([v, t]) =>
+          Object.assign(el('option', {value: v, text: t}), {selected: per()[f.id] === v})));
+      sel.onchange = () => {
+        const p = Object.assign({}, per());
+        if (sel.value) p[f.id] = sel.value; else delete p[f.id];
+        answers[c.key] = Object.assign({}, answers[c.key], {per: p});
+        save(); setLead(); emitWaiver();
+      };
+      let who = String(f.summary || f.id);
+      if (who.startsWith(c.model + '.')) who = who.slice(c.model.length + 1);
+      each.append(el('div', {class: 'eachrow'}, [sel, el('span', {text: who})]));
+    }
+    setLead();
+    if (Object.keys(per()).length) each.open = true;
+    more.append(each);
+  }
   showMore();
   return box;
 }
@@ -1454,23 +1500,46 @@ function nav3(host, o) {
   return grid;
 }
 
+/* *** FOUR FACTS IN ONE SENTENCE WAS NOT READ. *** (Ryan) What the form shows, what it leaves
+   out and why, and what the evaluator's rows became: one labelled line each. */
+function tallyGrid(T, onPage) {
+  if (!T) return null;
+  const rows = [];
+  const add = (label, value, note) => rows.push(el('span', {class: 'tl', text: label}),
+    el('span', {}, [el('b', {text: value}), note ? el('span', {class: 'tn', text: ' ' + note}) : null]
+      .filter(Boolean)));
+  if (onPage) add('open', num(T.findings) + ' findings', 'on ' + num(T.pairs) + ' model + check pairs');
+  add(onPage ? 'on the review form' : 'to rule on', num(T.cards) + ' cards',
+      'one card is one model and one check; you can split a card if its findings differ');
+  if (T.ruled_pairs) add('already ruled', num(T.ruled_pairs) + ' cards (' + num(T.ruled_findings)
+      + ' findings)', onPage ? 'not on the form; still listed here until fixed'
+                             : 'left off this form; still open on the page until fixed');
+  const aside = Object.entries(T.set_aside || {}).filter(([, n]) => n)
+    .map(([k, n]) => num(n) + ' ' + k);
+  if (aside.length) add('set aside', aside.join(' · '), 'not open, so on neither list');
+  const E = T.evaluator;
+  if (E) add('dbt-project-evaluator', num(E.rows) + ' rows → ' + num(E.cards) + ' cards',
+      (E.folded ? num(E.folded) + ' rows landed on assay’s own findings; ' : '')
+      + 'one card per model and fact');
+  return el('div', {class: 'tgrid'}, rows);
+}
+
 function findingsPane(host) {
   const by = {};
   for (const c of D.cards) (by[c.question] = by[c.question] || {id: c.question,
-    label: c.question, rows: []}).rows.push(c);
+    label: c.title || c.question, rows: []}).rows.push(c);
   const groups = Object.values(by).sort((a, b) => b.rows.length - a.rows.length);
   /* U1: the numbers name their unit. A group's count is cards; its findings are said under it,
      and the line above says what the form leaves out, so it reconciles with the page. */
-  const T = CTX.tally;
-  /* the masthead has the counts; this says what a card is and what is left out */
-  const intro = T ? el('p', {class: 'measured tally', text: (T.rule || '') + (T.tail ? ' '
-    + T.tail : '')}) : null;
+  const intro = tallyGrid(CTX.tally, false);
   host.replaceChildren(...[intro, nav3(host, {
     name: 'findings', groups: groups, allLabel: 'every card', filterText: 'filter by model...',
     subOf: g => { const n = g.rows.filter(c => (answers[c.key] || {}).verdict).length;
                   const nf = g.rows.reduce((a, c) => a + (c.findings || []).length, 0);
-                  return num(nf) + ' finding(s)' + (n ? ' · ' + num(n) + ' answered' : ''); },
-    keyOf: c => c.key, textOf: c => c.model + ' ' + c.question + ' ' + c.file,
+                  return num(nf) + ' finding(s)' + (n ? ' · ' + num(n) + ' answered' : '')
+                    + (String(g.id).startsWith('__') ? '' : ' · ' + g.id); },
+    keyOf: c => c.key, textOf: c => c.model + ' ' + c.question + ' ' + (c.title || '') + ' '
+      + c.file,
     doneOf: c => !!(answers[c.key] || {}).verdict,
     cellsOf: c => [el('span', {class: 'mono fmain'}, [wb(c.model)]),
                    el('span', {class: 'fmeta', text: num(c.marts) + ' marts'}),
@@ -1543,15 +1612,22 @@ function download() {
   for (const c of D.cards) {
     const a = answers[c.key];
     if (!a || !a.verdict) continue;      // never an answer nobody gave
-    out.push(Object.assign({subject: c.subject, question: c.question, verdict: a.verdict,
-              note: a.note || '', model: c.model, findings: c.findings.map(f => f.id)},
-              a.verdict === 'accept' && a.until ? {until: a.until} : {}));
+    /* one row per verdict the card's findings carry: the card's, and any one ruled apart */
+    const by = {};
+    for (const f of c.findings) ((by[(a.per || {})[f.id] || a.verdict]) ||= []).push(f.id);
+    const vs = Object.keys(by);
+    for (const v of vs)
+      out.push(Object.assign({subject: c.subject, question: c.question, verdict: v,
+                note: a.note || '', model: c.model, findings: by[v]},
+                vs.length > 1 ? {split: c.findings.length} : {},
+                v === 'accept' && a.until ? {until: a.until} : {}));
   }
   out.sort((x, y) => (x.subject + x.question < y.subject + y.question ? -1 : 1));
   const body = JSON.stringify(
     {project: D.project, by: document.getElementById('by').value || '', verdicts: out,
      config: configChanges(), rows: rowVerdicts()}, null, 2);
-  const n = out.length, e = Object.keys(edits_()).length;
+  const n = new Set(out.map(r => r.subject + '\u001f' + r.question)).size,
+        e = Object.keys(edits_()).length;
   const saved = document.getElementById('saved');
   const close = () => Object.assign(el('button', {text: 'close'}),
                                     {onclick: () => { saved.hidden = true; }});

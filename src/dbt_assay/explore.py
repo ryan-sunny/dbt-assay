@@ -21,6 +21,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .titles import title as _title
+
 
 def _fact(f) -> dict | None:
     """A Fact as data, with its provenance, because a value without its source is a rumour."""
@@ -141,9 +143,7 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
     review_tally["line"] = reviewform.tally_line(review_tally)
     review_tally["tail"] = reviewform.tally_tail(review_tally)
     from . import evaluator as _ev_mod
-    _ev_line = _ev_mod.surface_line(find_rows)
-    if _ev_line:
-        review_tally["tail"] = (review_tally["tail"] + " " + _ev_line).strip()
+    review_tally["evaluator"] = _ev_mod.surface_counts(find_rows)
     for r in find_rows:
         r["pair_ruled"] = (str(r["subject"]), str(r["check"])) in _ruled
     find_by_subject: dict = {}
@@ -529,7 +529,8 @@ def _findings(findings, store, acted: dict | None = None, member: dict | None = 
     for f in findings:
         fid = f.id
         out.append({
-            "id": fid, "check": f.check, "subject": f.subject, "model": f.subject_name,
+            "id": fid, "check": f.check, "title": _title(f.check), "subject": f.subject,
+            "model": f.subject_name,
             "file": f.file, "summary": f.summary, "detail": f.detail,
             "base": f.base, "weight": round(f.weight, 3), "weight_parts": f.weight_parts(),
             "descendants": f.descendants, "marts": f.marts,

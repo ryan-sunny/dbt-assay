@@ -492,7 +492,8 @@ def test_no_tab_opens_on_a_flat_list_of_everything():
     fb = v[v.index("function findingsTab"):]
     fb = fb[:fb.index("function findingPane")]
     assert "drill({" in fb, "Findings is a flat list again"
-    assert "chip: g => g.check" in fb, "the groups are not the checks"
+    assert "chip: g => g.title" in fb and "groupText: g => g.check" in fb, \
+        "the groups are not the checks, named by their titles"
     assert "class: 'chips'" not in fb, "the chip wall is back"
 
 

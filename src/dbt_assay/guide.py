@@ -24,6 +24,7 @@ from __future__ import annotations
 # how `loop` shipped unlisted. One mapping now; both are derived from it.
 BLURBS: dict[str, str] = {
     "start": "the order to do things in, and what costs nothing",
+    "configure": "every setting in audit.yml: cost and safety, knowledge, thresholds",
     "loop": "findings -> verdicts -> fixes -> fewer findings, and what measures it",
     "vocab": "what your words mean HERE, sent with every question",
     "questions": "how to frame one the model can actually answer",
@@ -58,42 +59,163 @@ def _config_keys() -> list[str]:
     return sorted(set(re.findall(r"^([a-z_]+):", DEFAULT_YML, re.MULTILINE)))
 
 
-START = """\
-# Setting assay up on a project that has never run it
+# *** ONE PLAN, AND EVERY SURFACE READS IT. *** (Ryan: "it all needs to be coming from assay")
+# `guide start` listed six steps and said `review -i`; onboard printed its own list; the skill
+# pointed at the first. Three copies of the order, and an agent filling the gaps with its own
+# idea of how to use assay. The order lives here once, as data: `guide start` renders it,
+# `assay onboard` prints it for the project in front of it, and the MCP `guide` tool returns it.
+#
+# Each step: (phase, command, what it gives you, what it costs). `{t}` is the dbt target dir.
+PLAN: list[tuple[str, str, str, str]] = [
+    ("set up", "assay onboard -t {t}",
+     "reads the project and says what assay cannot see here (no compiled SQL, no catalog, the "
+     "dialect), where its warehouse queries would go, and what leaves your network",
+     "Costs nothing and writes nothing that gates"),
+    ("set up", "assay init",
+     "writes audit.yml with the defaults. Then set the limits before anything is sent: "
+     "`assay guide configure`, the section on cost and safety",
+     "Costs nothing and turns on no spending"),
+    ("free findings", "assay check -t {t}",
+     "every structural finding. A parser reads the compiled SQL, so each one is a fact about "
+     "the code", "Costs nothing and needs no key or network"),
+    ("free findings", "assay tests --gaps-only -t {t}",
+     "what should be tested and is not, and tests that cannot fail",
+     "Costs nothing"),
+    ("free findings", "assay prove -t {t}",
+     "Lean certificates for what each model cannot do (`--setup` once, to download Lean)",
+     "Costs nothing after the one download"),
+    ("warehouse", "assay check --verify -t {t}",
+     "counts rows through your own dbt, to find a hop that loses most of its rows, a key "
+     "that stopped holding, and a monitor that stopped running",
+     "Sends read-only queries to your warehouse, only after you allow it, under "
+     "warehouse.max_queries"),
+    ("warehouse", "assay practices -t {t}",
+     "dbt-project-evaluator's pipeline rules (staging, layers, fan-out, hard-coded references) "
+     "with what each one reaches downstream. Needs the package installed and built",
+     "Reads the warehouse. Its judged reading asks only about rules that have real exceptions"),
+    ("your knowledge", "assay suggest -t {t}",
+     "drafts vocab terms, waivers and explanations from measurements on this project. A person "
+     "writes what each word MEANS; `assay guide configure` says where each piece goes",
+     "Costs nothing"),
+    ("judged", "assay ask --dry-run -t {t}",
+     "how many questions and what they would cost, before anything is sent. Then `assay ask`, "
+     "`assay claims --extract` and `assay verify`, `assay traverse`",
+     "Sends questions to the model provider, capped by jev.max_spend_usd per command. Answers are cached, so a rerun costs nothing"),
+    ("people", "assay page -t {t}",
+     "one file with the findings, the chain, the claims, monitoring and spend",
+     "Costs nothing"),
+    ("people", "assay review --emit review.html -t {t}",
+     "the review form: one card per model and check, the SQL on it, a verdict per card or per "
+     "finding, and their words and settings as proposed audit.yml changes",
+     "Costs nothing and works offline"),
+    ("people", "assay review --load latest --apply",
+     "records the verdicts, shows the audit.yml diff, and writes it",
+     "Costs nothing"),
+    ("act", "assay plan -t {t}",
+     "what to change for each finding a person agreed with; `assay patch --dry-run` for the "
+     "uniqueness tests assay can prove will pass",
+     "Costs nothing"),
+    ("act", "assay effectiveness",
+     "agreement per question, from the verdicts. Only now choose what fails a build: "
+     "`assay guide policy`",
+     "Costs nothing"),
+]
 
-Nothing here spends anything until step 5. Do them in order; each one answers a question the next
-one needs.
 
-1. `assay onboard` — looks at the project and tells you what to run, in what order, for THIS
-   project. If models have no compiled SQL it says so, because a model assay cannot read is
-   absent from every result below and that is not a pass.
+def plan_rows(target: str = "target/") -> list[tuple[str, str, str, str]]:
+    return [(ph, cmd.replace("{t}", target), what, cost) for ph, cmd, what, cost in PLAN]
 
-2. `assay check` — every structural finding. No key, no network, no spend. This is a parser
-   reading your compiled SQL, so everything it says is a fact about code rather than an opinion.
 
-3. `assay tests --count-defaults` — tests that cannot fail, and how often each COALESCE default
-   actually wins. "This test cannot fail" is true; "this default is 99% of your rows" is the
-   sentence somebody acts on.
+def _start() -> str:
+    out = ["# Setting assay up on a project that has never run it\n",
+           "Follow these in order; each answers something the next one needs. Nothing costs "
+           "anything until the warehouse phase, and nothing is sent to a model provider until "
+           "the judged phase. An agent follows this list and does not invent steps: "
+           "`assay onboard` prints it for the project in front of you, with the fixes that "
+           "project needs first.\n"]
+    phase = ""
+    for n, (ph, cmd, what, cost) in enumerate(plan_rows(), 1):
+        if ph != phase:
+            out.append(f"\n## {ph}\n")
+            phase = ph
+        out.append(f"{n}. `{cmd}`  \n   {what[:1].upper() + what[1:]}. {cost}.")
+    out.append(
+        "\n\n**Then every day**, on a schedule: `check --verify`, `practices`, `ask`, `verify`, "
+        "`traverse`, `prove`, `regress`, `volume`, `page` and `review --emit`. Warm runs send no "
+        "judged question that was already answered.\n\n"
+        "**The number to watch is `ruled on`, and a good release makes it look worse.** Finding "
+        "more raises the denominator and nothing a release does raises the numerator, because "
+        "that moves when somebody reads SQL and at no other time.\n")
+    return "\n".join(out)
 
-4. `assay init` — writes `audit.yml` with the defaults. It enables no spend. Then configure it,
-   in this order, because each section is worth more once the one before it exists:
 
-     vocab         what words mean HERE          `assay guide vocab`
-     waivers       findings that are fine, why   `assay guide waivers`
-     questions     what a check does on a build  `assay guide policy`
-     explanations  options for row adjudication  `assay guide explanations`
+START = _start()
 
-5. Only now, the judged tier. `assay claims --extract` then `assay verify`, or
-   `assay ask --dry-run` first, which prints the subject count and the cost estimate BEFORE
-   spending anything. `jev.max_spend_usd` is a hard cap checked before the call.
+CONFIGURE = """\
+# configure: every setting in audit.yml, what it is for, and who knows the answer
 
-6. `assay review -i` — rule on what came back, least certain first. Nothing gates a build until
-   a person has done this: `min_adjudications` refuses `fail` for a judged question with too few
-   HUMAN verdicts and downgrades it to `queue`.
+`audit.yml` belongs in git. `assay init` writes it with the defaults; `assay config -t <target>`
+shows what was resolved and warns about any key that matches nothing. The review form's Words,
+Waivers and Settings tabs propose changes to it as a diff, which `assay review --load --apply`
+writes, so most of this can be filled in by the person who knows the warehouse without opening
+the file.
 
-**The number to watch is `ruled on`, and a good release makes it look worse.** Finding more raises
-the denominator and nothing a release does raises the numerator, because that moves when somebody
-reads SQL and at no other time.
+Three kinds of setting, and they are decided differently.
+
+## 1. Cost and safety: set these FIRST, before anything is sent
+
+| setting | what it does | default |
+|---|---|---|
+| `jev.max_spend_usd` | hard cap per command on judged questions, checked before each request | 1.00 |
+| `jev.concurrency` | judged requests in flight at once | 8 |
+| `jev.provider`, `jev.model` | TypeSafe direct or OpenRouter; the key stays in the environment | auto |
+| `jev.routing` | asks a router not to keep your SQL (sent; a router may not confirm it) | deny collection |
+| `warehouse.allow_queries` | a scheduled run may query a non-local warehouse | false |
+| `warehouse.target` | the profiles.yml output assay's queries use: make it read-only | your default |
+| `warehouse.max_queries`, `warehouse.max_spend_usd` | per command; stops before, never after | 200, 1.00 |
+| `governance.metadata_only` | never send a row value (`feeds`, `adjudicate` refuse) | false |
+| `cost` | your warehouse's rate card, so `assay cost` prices assay's own queries | none |
+
+**Who decides:** whoever pays for the warehouse and the provider. Start small: run
+`assay ask --dry-run`, look at the estimate, then raise the cap to fit.
+
+## 2. Knowledge: what only the people who built the warehouse know
+
+| setting | what it holds | guide |
+|---|---|---|
+| `vocab` | what a word means HERE, sent with every judged question; scope it with `applies_to` | `vocab` |
+| `explanations` | the reasons a failing row can have, per model | `explanations` |
+| `waivers` | a finding that is right and stays, with the measured reason and an expiry | `waivers` |
+| `assay_questions/` | your own question families, or a shipped one replaced | `questions` |
+| `practices` | how a dbt-project-evaluator rule is treated here: enforce, recommend, adjudicate, off | `policy` |
+| source `meta: {read_by: ...}` | a reader outside dbt, so a source is not reported as unused | `waivers` |
+
+**Who decides:** the people who know the data. `assay suggest` ranks what is missing by how much
+of the warehouse it reaches, with the measurement behind each row; it leaves every meaning empty
+on purpose. An agent drafts from what a person says and never writes a meaning itself.
+
+## 3. Thresholds and gates: decide these from measurements, never up front
+
+| setting | what it does | default |
+|---|---|---|
+| `questions.<check>.action` | fail, queue, annotate or off for one check | by severity; never fail |
+| `questions.<check>.act` | per-action probability thresholds for a judged check (`"p > 0.75"`) | none |
+| `questions.<check>.when` | scope an action: `select`, or `exposed: true` for what feeds a product | everywhere |
+| `gating.min_adjudications` | human verdicts a judged check needs before it may fail a build | 20 |
+| `gating.min_agreement` | how often those verdicts had to agree | 0 (off) |
+| `completeness.row_loss_threshold` | the share of a parent a hop may lose before it is reported | 0.8 |
+| `monitoring` | staleness per relation (derived by default), `min_marts`, on or off | derived |
+| `elementary` | where Elementary's tables are, and when a monitor counts as stopped | `<schema>_elementary` |
+
+**Who decides:** the team, after the review form has come back. `assay effectiveness` prints the
+agreement rate per check; a gate chosen before that is a guess wearing a number. Structural
+checks are exact and may gate at once; judged ones wait for verdicts.
+
+## The order
+
+Cost and safety before the first command that sends anything. Knowledge before the judged
+tier, because every term rides every question and a question answered without it is paid for
+twice. Thresholds last, from the verdicts.
 """
 
 VOCAB = """\
@@ -435,7 +557,7 @@ it is the entire mechanism.
 """
 
 
-_TEXT = {"start": START, "vocab": VOCAB, "questions": QUESTIONS, "waivers": WAIVERS,
+_TEXT = {"start": START, "configure": CONFIGURE, "vocab": VOCAB, "questions": QUESTIONS, "waivers": WAIVERS,
          "policy": POLICY, "explanations": EXPLANATIONS, "ruling": RULING,
          "loop": LOOP}
 

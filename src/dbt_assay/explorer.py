@@ -1047,7 +1047,8 @@ def explorer_html(data: dict, record_html: str) -> str:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{e(meta['project'])} &middot; assay</title>
 <link rel="icon" href="{FAVICON}">
-<style>{FONT_CSS}{CSS}</style></head><body>
+<style>{FONT_CSS}{CSS}.tgrid{{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;margin:0 0 10px;font-size:13px;line-height:1.35}}.tgrid .tl{{color:var(--ash)}}.tgrid .tn{{color:var(--ash)}}
+</style></head><body>
 <header>
 <h1>{MARK_SVG}<span class="hname">{e(meta['project'])}</span><span>everything assay knows</span></h1>
 <div class="sub">{meta['models']} models &middot; {meta['sources']} sources &middot;
@@ -2210,6 +2211,30 @@ function pane(o) {
   return out;
 }
 
+/* *** FOUR FACTS IN ONE SENTENCE WAS NOT READ. *** (Ryan) What the form shows, what it leaves
+   out and why, and what the evaluator's rows became: one labelled line each. */
+function tallyGrid(T, onPage) {
+  if (!T) return null;
+  const rows = [];
+  const add = (label, value, note) => rows.push(el('span', {class: 'tl', text: label}),
+    el('span', {}, [el('b', {text: value}), note ? el('span', {class: 'tn', text: ' ' + note}) : null]
+      .filter(Boolean)));
+  if (onPage) add('open', num(T.findings) + ' findings', 'on ' + num(T.pairs) + ' model + check pairs');
+  add(onPage ? 'on the review form' : 'to rule on', num(T.cards) + ' cards',
+      'one card is one model and one check; you can split a card if its findings differ');
+  if (T.ruled_pairs) add('already ruled', num(T.ruled_pairs) + ' cards (' + num(T.ruled_findings)
+      + ' findings)', onPage ? 'not on the form; still listed here until fixed'
+                             : 'left off this form; still open on the page until fixed');
+  const aside = Object.entries(T.set_aside || {}).filter(([, n]) => n)
+    .map(([k, n]) => num(n) + ' ' + k);
+  if (aside.length) add('set aside', aside.join(' · '), 'not open, so on neither list');
+  const E = T.evaluator;
+  if (E) add('dbt-project-evaluator', num(E.rows) + ' rows → ' + num(E.cards) + ' cards',
+      (E.folded ? num(E.folded) + ' rows landed on assay’s own findings; ' : '')
+      + 'one card per model and fact');
+  return el('div', {class: 'tgrid'}, rows);
+}
+
 function findingsTab(host) {
   /* *** THE SAME THREE COLUMNS AS CLAIMS AND AREAS. *** (P2)
      Findings was one flat list with a dropdown of checks. The checks are the groups now, each
@@ -2217,7 +2242,8 @@ function findingsTab(host) {
      picking a model fills the pane. */
   const byCheck = {};
   for (const f of DATA.findings) {
-    const g = byCheck[f.check] = byCheck[f.check] || {check: f.check, rows: [], ruled: 0};
+    const g = byCheck[f.check] = byCheck[f.check] || {check: f.check, title: f.title || f.check,
+      rows: [], ruled: 0};
     g.rows.push(f); g.ruled += f.ruled_finding ? 1 : 0;
   }
   const groups = Object.values(byCheck);
@@ -2244,11 +2270,12 @@ function findingsTab(host) {
   const perCheck = [modelCol, weightCol, ...rest];
 
   const d = drill({
-    noun: 'findings', groups: groups, chip: g => g.check, groupFilter: 'find a check...',
+    noun: 'findings', groups: groups, chip: g => g.title, groupFilter: 'find a check...',
+    groupText: g => g.check,
     /* U1: a check's findings, and the cards the review form makes of them (one per model). */
     groupSub: g => {
       const cards = new Set(g.rows.filter(f => !f.pair_ruled).map(f => f.subject)).size;
-      return num(cards) + ' card(s) on the form' + (g.ruled ? ' · ' + num(g.ruled)
+      return g.check + ' · ' + num(cards) + ' card(s) on the form' + (g.ruled ? ' · ' + num(g.ruled)
         + ' read by a person' : '');
     },
     rowsOf: g => g.rows, rowCols: withCheck,
@@ -2258,10 +2285,7 @@ function findingsTab(host) {
     detailOf: f => findingPane(f),
   });
   const RT = (DATA.meta || {}).review;
-  host.replaceChildren(...[RT ? el('p', {class: 'fact tally', text: num(RT.findings)
-    + ' open finding(s) in ' + num(RT.pairs) + ' (model, check) pair(s). The review form shows '
-    + num(RT.cards) + ' of those pairs, one card each: one answer covers every finding of that '
-    + 'check on that model.' + (RT.tail ? ' ' + RT.tail : '')}) : null, d].filter(Boolean));
+  host.replaceChildren(...[tallyGrid(RT, true), d].filter(Boolean));
   GO.findings = id => {
     const f = FIND[id]; if (!f) return;
     d.showRows(byCheck[f.check]);

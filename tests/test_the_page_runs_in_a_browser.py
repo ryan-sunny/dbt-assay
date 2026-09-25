@@ -843,3 +843,52 @@ def test_the_page_shows_what_is_proven_and_what_lean_refuted(tmp_path):
             assert not errors, errors
         finally:
             b.close()
+
+
+def test_a_card_can_be_ruled_finding_by_finding_and_loads_back(tmp_path):
+    """Ryan: "what if some findings on a model are right and some aren't". A card's verdict is
+    every finding's default; one ruled differently comes back as its own row, and loading the
+    handback records each finding with its own verdict."""
+    import json
+
+    from playwright.sync_api import sync_playwright
+
+    from dbt_assay import handback, reviewform
+    from dbt_assay.store import Store
+    card = {"key": "model.p.orders::column_has_no_description", "subject": "model.p.orders",
+            "model": "orders", "question": "column_has_no_description",
+            "title": "Columns with no description", "file": "models/orders.sql", "marts": 0,
+            "descendants": 0, "exposures": [], "agent": None, "read": None,
+            "findings": [{"id": f"f{i}", "summary": f"orders.col{i}: no description",
+                          "detail": "", "claim": ""} for i in range(3)]}
+    out = tmp_path / "review.html"
+    out.write_text(reviewform.form_html([card], {}, "p", "x", "0"))
+    errors: list[str] = []
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(accept_downloads=True)
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(out.as_uri())
+            page.click('button[data-pane="findings"]')
+            page.locator(".frow").first.click()
+            c = page.locator(".card").first
+            c.locator('input[value="agree"]').check()
+            each = c.locator("details.each")
+            each.locator("summary").click()
+            each.locator("select").nth(1).select_option("disagree")
+            assert "1 of 3" in each.locator("summary").inner_text()
+            with page.expect_download() as dl:
+                page.click("#dl")
+            doc = json.loads(dl.value.path().read_text())
+            assert not errors, "\n".join(errors[:5])
+        finally:
+            browser.close()
+    v = {x["verdict"]: x for x in doc["verdicts"]}
+    assert set(v) == {"agree", "disagree"} and all(x["split"] == 3 for x in v.values())
+    assert v["disagree"]["findings"] == ["f1"] and v["agree"]["findings"] == ["f0", "f2"]
+    s = Store(str(tmp_path / "s.duckdb"))
+    got = handback.record(s, doc)
+    assert got["split_cards"] == 1 and got["findings_dismissed"] == 1 \
+        and got["findings_agreed"] == 2
+    s.close()

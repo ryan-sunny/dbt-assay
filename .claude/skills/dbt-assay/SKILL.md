@@ -128,8 +128,19 @@ was intended and it needs a version bump. Do not hand back work where the grain 
 `audit.yml` or `assay_questions/`.** Every other tool here reports what assay found; this one
 carries the rules for configuring it, and those rules were measured rather than reasoned out.
 
-`guide("start")` is the order for a project that has never run assay, and steps 1 to 4 cost
-nothing at all -- no key, no network, no spend. Do not skip to the judged tier to look clever.
+`guide("start")` is THE plan for a project that has never run assay: fourteen steps in order,
+the same list `assay onboard` prints. Follow it step by step and do not invent steps, reorder
+them or explore the project your own way first; each step's output says what the next one needs,
+so improvising only spends their time and your tokens. Nothing costs anything until the warehouse
+phase, and nothing goes to a model provider until the judged phase. Do not skip ahead to look
+clever.
+
+`guide("configure")` lists every setting in `audit.yml` in three groups, and says who decides
+each: cost and safety (spend caps, warehouse consent and limits, metadata-only), set BEFORE the
+first command that sends anything; knowledge (vocab, explanations, waivers, their own questions,
+practices), which only their people know; and thresholds and gates, chosen from `assay
+effectiveness` after verdicts exist and never up front. Walk them through it in that order and
+ask them for each value rather than choosing one.
 
 The four things a project configures, and what you must know before helping with each:
 

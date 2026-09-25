@@ -498,9 +498,32 @@ def test_onboarding_flags_the_vocabulary_and_what_has_been_spent():
     assert "lint_vocab" in src, "onboarding does not lint their vocabulary"
     assert "cost_mod.ledger" in src or "cost as cost_mod" in src, \
         "onboarding does not say what has already been spent"
-    assert "review --emit" in src, (
+    from dbt_assay.guide import plan_rows
+    assert "plan_rows(" in src and any("review --emit" in r[1] for r in plan_rows()), (
         "onboarding never points at the form. The queue is one turn per finding, which is a wall "
         "at two hundred; the form is where their reasons accrue.")
+
+
+def test_one_plan_and_every_surface_reads_it():
+    """Ryan: "it all needs to be coming from assay". `guide start`, `onboard` and the MCP guide
+    tool give one order, from guide.PLAN, and every command in it exists with the flags it names.
+    `guide configure` covers every top-level section audit.yml is read for."""
+    import re
+
+    from typer.testing import CliRunner
+
+    from dbt_assay import guide
+    from dbt_assay.cli import app
+    for _ph, cmd, _what, _cost in guide.plan_rows():
+        assert cmd in guide.START, cmd
+        words = cmd.split()
+        sub = words[1]
+        r = CliRunner().invoke(app, [sub, "--help"])
+        assert r.exit_code == 0, f"`{cmd}` names a command that does not exist"
+        for flag in (w for w in words if w.startswith("--")):
+            assert flag in re.sub(r"\s+", " ", r.output), f"`{cmd}`: {flag} is not a flag"
+    for k in guide._config_keys():
+        assert f"`{k}" in guide.CONFIGURE, f"guide configure never mentions `{k}`"
 
 
 def test_every_mcp_tool_reaches_the_skill_and_the_overview():
@@ -563,3 +586,14 @@ def test_the_reference_is_generated_rather_than_typed():
     assert "_command_reference()" in Path(skilltext.__file__).read_text()
     table = skilltext._command_reference()
     assert table.count("\n| `assay ") == len(list(_registered()))
+
+
+def test_every_check_and_shipped_family_has_a_plain_title():
+    """(Ryan) `test_never_ran_is_a_gap_or_a_leftover` is an identifier, not a label: every list a
+    person reads shows the title, with the id beside it."""
+    from dbt_assay.config import known_checks
+    from dbt_assay.contracts import load_all_banks
+    from dbt_assay.titles import TITLES, title
+    missing = sorted((set(known_checks()) | set(load_all_banks(with_user=False))) - set(TITLES))
+    assert not missing, missing
+    assert title("some_project_family") == "Some project family"

@@ -681,10 +681,12 @@ def check(
         by = {}
         for f in findings:
             by.setdefault(f.check, []).append(f)
+        from .titles import title as _title
         summary = Table(title="\nfindings", show_header=True, header_style="bold")
         summary.add_column("check"); summary.add_column("n", justify="right")
+        summary.add_column("id", style="dim")
         for k, v in sorted(by.items(), key=lambda kv: -len(kv[1])):
-            summary.add_row(k, _n(len(v)))
+            summary.add_row(_title(k), _n(len(v)), k)
         console.print(summary)
 
         console.print()
@@ -1278,27 +1280,16 @@ def onboard(
     if not schema.catalog_present:
         steps.append(("dbt docs generate",
                       "gives assay real column lists for your sources instead of inferring them"))
-    steps.append(("assay inventory --html inventory.html",
-                  "one page per model: columns, provenance, and any description that drifted"))
-    if findings:
-        steps.append((f"assay check --check {by.most_common(1)[0][0]}",
-                      "the finding there is most of"))
     if judged is None:
         steps.append(("assay onboard   (without --no-judge)",
                       "a key is present; section 4 was skipped because you asked it to be"))
-    if judged:
-        steps.append(("assay claims --extract",
-                      "pull every claim out of this project's own prose, as data you can audit"))
+    elif judged is False:
+        steps.append(("export OPENROUTER_API_KEY=...",
+                      ("the judged phase below needs a key, and everything above ran without "
+                       "one: openrouter.ai, or TYPESAFE_API_KEY from docs.typesafe.ai")))
     if findings:
-        # *** THE ONE NUMBER A RELEASE CANNOT MOVE. ***
-        # Every other line here improves when assay improves. Findings ruled on by a person moves
-        # only when somebody reads SQL, and on the warehouse this was built against it sat at 0 of
-        # 159 for months -- not for want of `assay review -i`, which has always existed, but
-        # because ruling meant leaving the conversation you were already in.
-        # *** IT SAID "NOBODY HAS RULED ON ANY OF THEM" TO A STORE HOLDING 136 VERDICTS. ***
-        # Hardcoded prose under `if findings:`, so the one line whose whole job is to report the
-        # number a release cannot move reported it wrong, confidently, to the person who had
-        # moved it. Counted now.
+        # *** THE ONE NUMBER A RELEASE CANNOT MOVE. *** Counted, never hardcoded: it once said
+        # "nobody has ruled on any of them" to a store holding 136 verdicts.
         ruled = 0
         if Path(store_path).exists():
             try:
@@ -1309,33 +1300,8 @@ def onboard(
             except Exception:                                    # noqa: BLE001,S110
                 pass
         models_with = len({f.subject for f in findings})
-        steps.append(("assay review -i",
-                      (f"{_n(len(findings))} finding(s) across {_n(models_with)} model(s), "
-                       + ("and nobody has ruled on any of them. "
-                          if not ruled else
-                          f"{_n(ruled)} of those models ruled on so far. ")
-                       + "An agent with the `assay-review` skill will walk them with you and "
-                         "read the SQL first, so each call costs you ten seconds.")))
-        # *** THE FORM IS WHERE THE CONTEXT ACCRUES, AND IT IS NOT THE SAME JOB AS THE QUEUE. ***
-        # One turn per finding is fine for ten and is a wall at two hundred. The form is one
-        # sitting, offline, at their own pace -- and every box they type into is a sentence about
-        # THEIR warehouse that no tool can produce: the reason a finding is wrong, the word that
-        # should have been in the vocabulary, the thing the description was trying to say.
-        steps.append((f"assay review --emit review.html -t {tdir}",
-                      ("more than about ten to get through: this writes a page they fill in at "
-                       "their own pace and hand back. Their reasons are the part of this store "
-                       "nothing else can generate, and they are what every gate waits on.")))
-        steps.append(("assay verify",
-                      "check each of those claims against what the code actually does"))
-        steps.append(("assay traverse",
-                      "judge every hop in the graph for a fan-out nobody declared"))
-        steps.append(("assay columns --limit 25",
-                      "the same tier over every column: what each one MEANS, adjudicated"))
-    elif judged is False:
-        steps.append(("export OPENROUTER_API_KEY=...",
-                      ("section 4 is what a key buys, and everything above ran without one. "
-                       "openrouter.ai, or TYPESAFE_API_KEY from docs.typesafe.ai. A full judged "
-                       "pass over a 265-model warehouse cost $0.0026.")))
+        console.print(f"   [dim]{_n(len(findings))} finding(s) across {_n(models_with)} "
+                      f"model(s); {_n(ruled)} of those models ruled on so far.[/]")
     from .contracts import user_bank_dir as _ubd
     if _ubd():
         steps.append(("assay banks",
@@ -1346,6 +1312,22 @@ def onboard(
     t = Table(show_header=False, box=None, padding=(0, 2))
     for cmd, why in steps:
         t.add_row(f"[bold cyan]{cmd}[/]", f"[dim]{why}[/]")
+    if steps:
+        console.print("   [dim]first, for this project:[/]")
+        console.print(t)
+    # *** THE SAME PLAN `assay guide start` AND THE MCP `guide` TOOL GIVE. *** One order, from
+    # guide.PLAN, so a person, an agent and this command never disagree about what comes next.
+    from .guide import plan_rows
+    console.print("   [dim]then the plan, in order (`assay guide start`; `assay guide configure` "
+                  "for every setting):[/]")
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    from .config import DEFAULT_FILENAMES as _cfn
+    _have_yml = any((Path(config_path) / x).exists() for x in _cfn)
+    for n, (_ph, cmd, what, cost) in enumerate(plan_rows(str(tdir)), 1):
+        if cmd.startswith("assay onboard") or (cmd == "assay init" and _have_yml):
+            continue                                  # this command, and a file already there
+        t.add_row(f"{n}.", f"[bold cyan]{cmd}[/]", f"[dim]{what[:1].upper() + what[1:]}. "
+                                                   f"{cost}.[/]")
     console.print(t)
 
 
@@ -5339,8 +5321,8 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
     tally["rule"], tally["tail"] = reviewform.CARD_RULE, reviewform.tally_tail(tally)
     from . import evaluator as _ev_mod
     _ev_line = _ev_mod.surface_line(findings)
+    tally["evaluator"] = _ev_mod.surface_counts(findings)
     if _ev_line:
-        tally["tail"] = (tally["tail"] + " " + _ev_line).strip()
         tally["line"] = (tally["line"] + " " + _ev_line).strip()
     reads = {}
     if reads_path:
@@ -5523,8 +5505,11 @@ def _load_verdicts(store, path: str, who: str) -> None:
 
 def _record_one_verdict(store, subject: str, question: str, verdict: str, correction: str,
                         note: str, who: str, row=None, findings: list | None = None,
-                        until: str = "") -> str:
+                        until: str = "", pair: bool = True) -> str:
     """Write ONE human verdict, and return the family it landed in.
+
+    `pair=False` writes only the per-finding rows: one part of a card whose findings were ruled
+    apart, where the pair's own row is written once, after every part.
 
     *** `--verdict` AND `--load` MUST NOT BE TWO SPELLINGS OF THIS. ***
     A verdict is filed under the FAMILY a question prefix names, and that mapping has already
@@ -5556,9 +5541,10 @@ def _record_one_verdict(store, subject: str, question: str, verdict: str, correc
     # it, so the version of record is the assay that was RUNNING when the person read it.
     version = (row[1] if row and row[1] else f"assay.{_pkg_version()}")
     model_version = row[2] if row else ""
-    store.adjudicate(subject, question, fam, row[0] if row else "",
-                     verdict, correction, note, who,
-                     prompt_version=version, model_version=model_version, until=until)
+    if pair:
+        store.adjudicate(subject, question, fam, row[0] if row else "",
+                         verdict, correction, note, who,
+                         prompt_version=version, model_version=model_version, until=until)
     for fid in findings or []:
         store.adjudicate(f"{subject}::finding::{fid}", question, fam, "",
                          verdict, "", note or f"read and called {verdict} in the review form",

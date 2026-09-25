@@ -866,6 +866,23 @@ def judged_readings(store, ev_cards: list) -> int:
     return n
 
 
+def surface_counts(findings) -> dict | None:
+    """{rows, cards, folded} for a surface holding findings, or None without evaluator cards."""
+    rows = cards = folded = 0
+    for f in findings:
+        ev = ((f.get("evidence") if isinstance(f, dict) else f.evidence) or {}).get("evaluator")
+        if not ev:
+            continue
+        if ev.get("rules"):
+            cards += 1
+            rows += int(ev.get("rows") or 0)
+        elif ev.get("also_flagged_by"):
+            folded += int(ev.get("rows") or 0)
+    if not cards and not folded:
+        return None
+    return {"rows": rows + folded, "cards": cards, "folded": folded}
+
+
 def surface_line(findings) -> str:
     """The rows-to-cards sentence for a surface holding findings (the page, the form), computed
     from the cards themselves, so it counts what that surface lists. "" without evaluator cards.

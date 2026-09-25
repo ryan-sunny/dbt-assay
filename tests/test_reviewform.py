@@ -583,13 +583,17 @@ def test_the_page_and_the_form_print_the_same_tally(project_dir, tmp_path):
     assert r2.exit_code == 0, r2.output
     meta = json.loads(next(tmp_path.glob("p*data/meta.json")).read_text())
     line = meta["review"]["line"]
-    assert "Findings" in out.read_text() and "fact tally" in out.read_text()
+    assert "Findings" in out.read_text() and "tallyGrid" in out.read_text()
     assert line and "a person already ruled on" in line
     assert line in r.output, (line, r.output)
-    # the form and the page each say the counts once, their own way, and share what is left out
-    tail = meta["review"]["tail"]
-    assert tail and "a person already ruled on" in tail
-    assert tail in form.read_text() and tail in line
+    # the form and the page draw one grid from one tally: the same numbers, row for row
+    import re as _re
+    blob = _re.search(r'<script[^>]*id="assa[^"]*"[^>]*>(.*?)</script>', form.read_text(),
+                      _re.S).group(1)
+    ft = json.loads(blob)["context"]["tally"]
+    pt = meta["review"]
+    shared = [k for k in ft if k in pt and isinstance(ft[k], (int, float))]
+    assert shared and all(ft[k] == pt[k] for k in shared), {k: (ft[k], pt[k]) for k in shared}
 
 
 # --------------------------------------------------------------- Ryan, on the served form
