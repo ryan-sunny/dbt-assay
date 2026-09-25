@@ -8748,6 +8748,106 @@ def _record_from_labels(store, target, dialect: str) -> None:
                   f"Human verdicts so far: {human}. Add more with `assay review -i`.[/]")
 
 
+@app.command()
+def gate(
+    target: str = typer.Option(None, "--target", "-t"),
+    baseline: str = typer.Option(None, "--baseline", "-b",
+                                 help="a target/ from the base branch, to say which models changed "
+                                      "what they MEAN. Without it the contracts part is skipped"),
+    select: str = typer.Option(None, "--select", "-s",
+                               help="judge only these models (dbt selector syntax)"),
+    allow_contract: list[str] = typer.Option(None, "--allow-contract",  # noqa: B008
+                                             help="a model whose change of meaning is intended; "
+                                                  "repeat for several"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    dialect: str = typer.Option(None, "--dialect"),
+    json_out: bool = typer.Option(False, "--json"),
+    markdown_out: bool = typer.Option(False, "--markdown", help="the table, for a PR comment"),
+):
+    """One verdict for a change: new findings above policy, evidence of harm, new
+    dbt-project-evaluator violations, premises newly broken, contracts changed without being
+    named, and failing dbt tests. Exit 1 on fail.
+
+    Compared against the latest full `assay check` in the store, so run that on the base branch
+    first (CI: a check on main writes the baseline; the PR runs gate).
+    """
+    from . import gate as gate_mod
+    from . import ledger as ledger_mod
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
+    cfg = Config.load(config_path)
+    store = Store(store_path) if Path(store_path or "").exists() else None
+    scope = None
+    if select:
+        from . import selector as selector_mod
+        try:
+            scope = selector_mod.resolve(project, select)
+        except selector_mod.SelectorError as e:
+            console.print(f"[red]{e}[/]")
+            raise typer.Exit(2) from e
+        if not scope:
+            console.print(f"[red]--select {select!r} matches no model in this project.[/]")
+            raise typer.Exit(2)
+    entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store)) \
+        if store is not None else None
+    findings = live_mod.all_findings(project, digests, schema, entries, store=store,
+                                     threshold=cfg.row_loss_threshold)
+    led = ledger_mod.last()
+    policed, _waived = judged_mod.apply_policy(findings, cfg, store, project)
+    findings = [f for f, _a, _w in policed]
+    actions = {(f.check, f.subject): a for f, a, _w in policed}
+    if scope is not None:
+        findings = [f for f in findings if f.subject in scope]
+    new = None
+    before: dict = {}
+    if store is not None:
+        base, rows = store.baseline_findings(project.project_name)
+        if base is not None:
+            new = live_mod.new_findings(findings, rows)
+        before = {pid: (st, "") for pid, (st, _since) in ledger_mod.stored(store).items()}
+    now = ({pid: (p.status, p.statement()) for pid, p in led.premises.items()
+            if scope is None or p.relation in scope} if led is not None else {})
+    changes = None
+    if baseline:
+        bdir = _find_target(baseline)
+        proj_b, dig_b, _f2, sch_b, _s2 = _load(bdir, dialect)
+        obs = probe_mod.read(store) if store is not None else {}
+        after_e = inv_mod.build(project, digests, schema, store, obs)
+        before_e = inv_mod.build(proj_b, dig_b, sch_b, store, obs)
+        changes = diff_mod.compare(before_e, after_e, project, digests)
+        if scope is not None:
+            names = {project.models[u].name for u in scope if u in project.models}
+            changes = [c for c in changes if c.model in names]
+    tests = ledger_mod.run_results_status(tdir)
+    if scope is not None and tests:
+        mine = {t.unique_id for t in project.tests if t.tests_model in scope}
+        tests = {k: v for k, v in tests.items() if k in mine}
+    if store is not None:
+        store.close()
+    got = gate_mod.evaluate(new=new, actions=actions, premises_now=now, premises_before=before,
+                            contract_changes=changes, allowed=set(allow_contract or []),
+                            test_results=tests)
+    if json_out:
+        print(_json.dumps(got, indent=2))
+    elif markdown_out:
+        print(gate_mod.markdown(got))
+    else:
+        colour = "red" if got["verdict"] == "fail" else "green"
+        console.print(f"[bold {colour}]{got['line']}[/]")
+        t = Table(show_header=False, box=None, padding=(0, 2))
+        for part in got["parts"]:
+            c = {"pass": "green", "fail": "red", "skipped": "dim"}[part["status"]]
+            t.add_row(part["part"], f"[{c}]{part['status']}[/]", f"[dim]{part['why']}[/]")
+        console.print(t)
+        for part in got["parts"]:
+            if part["status"] == "fail":
+                for x in part["items"][:12]:
+                    console.print(f"  [red]{part['part']}[/] {x}")
+    if got["verdict"] == "fail":
+        raise typer.Exit(1)
+
+
 @app.command("run")
 def run_steps(
     steps: list[str] = typer.Argument(..., help="each a command and its own flags, quoted: "  # noqa: B008

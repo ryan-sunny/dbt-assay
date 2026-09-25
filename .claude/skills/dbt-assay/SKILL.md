@@ -552,6 +552,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay evidence` | `assay_evidence` | The exact state a judged answer was computed from, as it was sent. | `--key` `--question/-q` `--subject/-s` `--store` `--limit/-n` `--json` |
 | `assay export <directory>` | `assay_export` | Put assay's tables in your warehouse, as data your own models can join to. | `--store` `--format` `--no-docs` |
 | `assay feeds` | `assay_feeds` | Has a feed changed its mind while its schema held still? | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--sample` `--limit/-n` `--store` `--config` |
+| `assay gate` | `assay_gate` | One verdict for a change: new findings above policy, evidence of harm, new dbt-project-evaluator violations, premises newly broken, contracts changed without being named, and failing dbt tests. | `--target/-t` `--baseline/-b` `--select/-s` `--allow-contract` `--store` `--config` `--dialect` `--json` `--markdown` |
 | `assay guide <topic>` | `assay_guide` | How to SET ASSAY UP, for somebody who has never used it. | — |
 | `assay history` | `assay_history` | When each open finding was first seen, and which commit it was seen at. | `--target/-t` `--store` `--config` `--since` `--limit/-n` `--json` `--dialect` |
 | `assay hook <action>` | `assay_hook` | The edit gate. | `--target/-t` `--store` `--config` `--project-dir` `--dbt/--dbt-bin` `--profiles-dir` `--compile` `--dialect` `--settings` `--assay-cmd` |

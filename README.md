@@ -243,6 +243,19 @@ Posts what changed about what your models mean, who consumes it, and how many of
 over it. It does **not** gate by default: nothing should fail a build until its question has
 recorded verdicts, and assay refuses to anyway.
 
+To gate, `assay gate` gives one verdict for the change, with a line per part:
+
+```bash
+assay check -t base/target --store assay.duckdb          # on the base branch: the baseline
+assay gate -t target -b base/target --store assay.duckdb --markdown
+```
+
+It fails on a new finding configured to `fail`, on new evidence of harm (a failing test, a lost
+guarantee, a key that stopped holding), on a new dbt-project-evaluator violation, on a premise that
+newly broke, on a model whose meaning changed without `--allow-contract <model>` naming it, and on a
+failing dbt test in `run_results.json`. A part it could not look at says `skipped`, never pass.
+`--select` judges only the models an edit touched.
+
 There is no `dialect:` line because the manifest names its own adapter. Pass one only to override.
 An earlier version of this action defaulted it to `duckdb`, which silently misparsed every other
 warehouse: on a BigQuery project that turned 12 parse failures into 128 and lost two real findings,
