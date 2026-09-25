@@ -130,6 +130,20 @@ was intended and it needs a version bump. Do not hand back work where the grain 
    construct: the partition and sort keys of the window, the predicate, the columns. Use it to
    find the code rather than re-deriving it, and use `marts` to decide how carefully to tread.
 
+## Fixing the warehouse: fixes, not findings
+
+`plan_items()` is where to start once a project has been checked: the findings grouped into the
+fixes that resolve them, ranked customer-facing and happening now first, then staging before marts,
+then by findings resolved per decision. A fix is one change with its files: drafted descriptions
+in the model's own yml, key tests assay counted unique, a pass-through staging model with its
+readers repointed, a premise declared as a test.
+
+**You apply only a fix a person approved.** They approve it on the Fix cards in the review form or
+with `assay fix <id> --approve`. Then, in a branch: `apply_plan_item(id)`, `dbt parse` (or
+`compile` when SQL moved), `verify_plan_item(id)`, one pull request per batch. `plan_item(id)`
+shows the diff first. Never approve one yourself, and never hand-edit what a fix would write
+instead of applying it: the fix carries the recipe that proves it safe.
+
 ## If the project has not been set up yet
 
 `guide(topic)`, or `assay guide <topic>`. **Read it before you write anything into their
@@ -375,7 +389,11 @@ and nothing is lost:
 | `rule(finding, …)` | `assay review --subject <s> --question <q> --verdict <v> --note <why>` |
 | `review_queue()` | `assay review` |
 | `load_handback(path?)` | `assay review --load latest` or `--load <path>` (add `--apply` to write audit.yml) |
-| `plan()` | `assay plan -t target/` (writes `assay_plan.jsonl`) |
+| `plan_items(limit, kind)` | `assay plan -t target/` (writes `assay_fixes.json`) |
+| `plan_item(fix_id)` | `assay fix <fix_id> -t target/` |
+| `apply_plan_item(fix_id)` | write the files from `assay_fixes.json` for that fix, once approved |
+| `verify_plan_item(fix_id)` | `dbt parse`, then `assay fix <fix_id> -t target/` (the diff is empty once applied) |
+| `plan()` | `assay plan --agreed -t target/` (writes `assay_plan.jsonl`) |
 | `suggestions()` | `assay suggest -t target/`, or `--section vocab` |
 | `evidence()` | `assay evidence -q <question> -s <model>` |
 | `guide(topic)` | `assay guide <topic>` |

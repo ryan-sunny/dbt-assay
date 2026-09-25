@@ -1080,10 +1080,32 @@ question and one editing what gets sent. States are stored by hash, so one reuse
 answers is stored once. An answer from before state storage says so, in those words; its absence is
 never rendered as an empty state.
 
+## Fixing the warehouse, a fix at a time
+
+```bash
+assay plan -t target/                 # the findings grouped into the fixes that resolve them
+assay plan -t target/ --measure 10    # apply the top ten to a copy and count what each resolves
+assay fix <id> -t target/             # one fix: its diff and how it is verified
+assay fix <id> --approve --by you     # a person's decision; --defer, or --reject with --note
+```
+
+Nobody rules on two thousand findings, and most of them are not judgment calls. `plan` attributes
+every finding to the change that would resolve it and ranks the changes: customer-facing and
+happening now first, then staging before marts, then findings resolved per decision. A fix carries
+its files: descriptions drafted from what assay already knows (a parent's description where the
+value passes through, else the judged role and what a NULL means), key tests on grains assay counted
+unique, a pass-through staging model with the readers of a raw source repointed to it, a premise many
+things rest on declared as a test. Everything else is a proposal with its fix shape.
+
+`--measure` writes a fix into a scratch copy of the project, runs `dbt parse` there (no warehouse),
+and checks the copy: "resolves 212 (measured)" is a count, not an estimate. assay never writes into
+your project. A person approves a fix; an agent applies it in a branch (`apply_plan_item`, refused
+until approved), parses, and verifies it (`verify_plan_item`), one pull request per batch.
+
 ## Fixing what you agreed with, and knowing whether it worked
 
 ```bash
-assay plan -t target/            # what to DO about the findings a person agreed with
+assay plan --agreed -t target/   # what to DO about the findings a person agreed with
 ```
 
 `check` finds it, `review` settles whether it is real, and then there was nothing. The fix **shape**

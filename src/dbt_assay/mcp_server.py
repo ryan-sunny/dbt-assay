@@ -902,6 +902,96 @@ class Backend:
         self.baseline = live.Snapshot.of(self.state().entries)
         return {"ok": True, "models": len(self.baseline.entries)}
 
+    def _fixes(self):
+        """(fixes, findings, store) for the current manifest."""
+        from . import fixes as fixes_mod
+        from . import groups as groups_mod
+        from . import ledger as ledger_mod
+        st = self.state()
+        store, _why = self._store_or_why()
+        fs = live.findings_for(st, None, store=store)
+        fx = fixes_mod.build(st.project, fs, entries=st.entries, digests=st.digests,
+                             schema=st.schema, store=store, led=ledger_mod.last(),
+                             groups=groups_mod.build(st.project, fs),
+                             root=st.project.project_root)
+        return fx, fs, store
+
+    def plan_items(self, limit: int = 25, kind: str = "") -> dict:
+        """The fixes, ranked: what to change next and how much each resolves."""
+        from . import fixes as fixes_mod
+        fx, fs, store = self._fixes()
+        st = fixes_mod.statuses(store)
+        rows = [{**f.as_dict(), "status": st.get(f.id, {}).get("status", "proposed")}
+                for f in fx if not kind or f.kind == kind]
+        for r in rows:
+            r.pop("findings", None)
+        return {"open_findings": len(fs), "fixes": rows[:limit], "total": len(rows),
+                "rule": ("A person approves a fix (the Fix cards in the review form, or `assay "
+                         "fix <id> --approve`). You apply only an approved one, in a branch, "
+                         "with apply_plan_item, then run dbt parse/compile and "
+                         "verify_plan_item.")}
+
+    def plan_item(self, fix_id: str) -> dict:
+        """One fix in full: its diff, its recipe, the findings it resolves, where it stands."""
+        from . import fixes as fixes_mod
+        fx, _fs, store = self._fixes()
+        f = next((x for x in fx if x.id == fix_id), None)
+        if f is None:
+            return {"error": f"no fix {fix_id} in the current plan (plan_items lists them)"}
+        root = self.state().project.project_root
+        return {**f.as_dict(), "diff": fixes_mod.diff(f, root),
+                "status": fixes_mod.statuses(store).get(f.id, {}).get("status", "proposed"),
+                "pending_files": fixes_mod.applied(f, root)}
+
+    def apply_plan_item(self, fix_id: str) -> dict:
+        """Write an APPROVED fix's files into the working tree (your branch). Refused otherwise."""
+        from . import fixes as fixes_mod
+        fx, _fs, store = self._fixes()
+        f = next((x for x in fx if x.id == fix_id), None)
+        if f is None:
+            return {"error": f"no fix {fix_id} in the current plan"}
+        status = fixes_mod.statuses(store).get(f.id, {}).get("status")
+        if status not in ("approved", "applied"):
+            return {"refused": (f"fix {fix_id} is {status or 'proposed'}, not approved. A person "
+                                f"approves it on the Fix card in the review form or with "
+                                f"`assay fix {fix_id} --approve`; then apply it.")}
+        if f.refused:
+            return {"refused": "parts of this fix could not be placed: " + "; ".join(f.refused)}
+        root = Path(self.state().project.project_root)
+        wrote = []
+        for path, text in sorted(f.files.items()):
+            p = root / path
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text)
+            wrote.append(path)
+        wstore, _why = self._store_or_why()
+        if wstore is not None:
+            fixes_mod.record(wstore, f.id, "applied", kind=f.kind, key=f.key, title=f.title,
+                             by="agent")
+        return {"wrote": wrote, "then": f.recipe + ["verify_plan_item(" + fix_id + ") after "
+                                                    "dbt parse or compile"]}
+
+    def verify_plan_item(self, fix_id: str) -> dict:
+        """Is the fix in the working tree, and are the findings it resolves gone from the manifest
+        as it is now? Run dbt parse (or compile, for SQL) first."""
+        from . import fixes as fixes_mod
+        fx, fs, store = self._fixes()
+        f = next((x for x in fx if x.id == fix_id), None)
+        if f is None:
+            # once applied, a fix that worked has nothing left to resolve and leaves the plan
+            return {"fix": fix_id, "verified": True,
+                    "note": "no longer in the plan: nothing it resolves is still open"}
+        root = self.state().project.project_root
+        pending = fixes_mod.applied(f, root)
+        live_ids = {x.id for x in fs}
+        still = [x for x in f.findings if x in live_ids]
+        ok = not pending and not still
+        if ok and store is not None:
+            fixes_mod.record(store, f.id, "verified", kind=f.kind, key=f.key, title=f.title,
+                             by="agent")
+        return {"fix": fix_id, "verified": ok, "files_not_yet_as_the_fix_writes": pending,
+                "findings_still_open": len(still), "recipe": f.recipe}
+
     def plan(self, limit: int = 25) -> dict:
         """What to DO about the findings a PERSON agreed with.
 
@@ -1282,6 +1372,17 @@ TOOLS = [
                      "`means:` and `implies:` EMPTY, and you must leave them empty: a "
                      "definition you write from a model name looks exactly like one they chose "
                      "and then rides along with every judged question forever.")),
+    ("plan_items", ("WHAT TO CHANGE NEXT: the findings grouped into the fixes that resolve "
+                    "them, ranked (customer-facing and happening now first, then staging before "
+                    "marts, then findings resolved per decision). Each has a kind, a title, how "
+                    "many it resolves and its status. Call it before findings.")),
+    ("plan_item", ("One fix in full: the diff it would make, the recipe that verifies it, and "
+                   "whether a person approved it.")),
+    ("apply_plan_item", ("Write an APPROVED fix's files into the working tree (your branch). "
+                         "Refused unless a person approved it. Then dbt parse/compile and "
+                         "verify_plan_item.")),
+    ("verify_plan_item", ("After applying and parsing: are the fix's files in place, and are "
+                          "the findings it resolves gone? Records it verified when both hold.")),
     ("plan", ("WHAT TO CHANGE, for the findings a person has agreed with. Call it after "
               "they have reviewed and before you edit. Each row carries `fix_shape` -- "
               "the KIND of change, looked up from the check name, so it is exact -- plus "
@@ -1514,6 +1615,22 @@ def build_app(target: str, store_path: str | None = None, handbacks: str | None 
     @tool()
     def plan(limit: int = 25) -> str:
         return _out(be.plan(limit))
+
+    @tool()
+    def plan_items(limit: int = 25, kind: str = "") -> str:
+        return _out(be.plan_items(limit, kind))
+
+    @tool()
+    def plan_item(fix_id: str) -> str:
+        return _out(be.plan_item(fix_id))
+
+    @tool()
+    def apply_plan_item(fix_id: str) -> str:
+        return _out(be.apply_plan_item(fix_id))
+
+    @tool()
+    def verify_plan_item(fix_id: str) -> str:
+        return _out(be.verify_plan_item(fix_id))
 
     @tool()
     def suggestions(section: str = "", limit: int = 15) -> str:

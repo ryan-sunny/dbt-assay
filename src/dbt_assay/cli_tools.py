@@ -33,6 +33,8 @@ from pathlib import Path
 
 # A command that waits for a person at a keyboard has nothing to wait for over MCP.
 INTERACTIVE = {"review": ("-i", "--interactive")}
+# A decision only a person makes. An agent applies an approved fix; it never approves one.
+HUMAN_ONLY = {"fix": ("--approve", "--defer", "--reject")}
 MAX_OUTPUT = 60_000
 # A JSON result larger than this comes back with its long lists shortened -- every total kept --
 # and the path of the whole document.
@@ -166,6 +168,11 @@ def run(command: str, args: str = "", target: str | None = None, store: str | No
         return {"error": (f"`assay {command} {INTERACTIVE[command][0]}` waits for "
                           f"keypresses, and a tool has no keyboard. Use `review --emit` for a "
                           f"form a person fills in, or the `rule` tool to record one verdict.")}
+    if any(a in HUMAN_ONLY.get(command, ()) for a in argv):
+        return {"error": ("approving, deferring or rejecting a fix is a person's decision: the "
+                          "Fix cards in the review form, or `assay fix <id> --approve` at their "
+                          "own terminal. An agent applies a fix once it is approved "
+                          "(`apply_plan_item`).")}
     have = {a.split("=")[0] for a in argv if a.startswith("-")}
     accepts = accepts or set()
     if target and "--target" in accepts and not have & {"--target", "-t"}:

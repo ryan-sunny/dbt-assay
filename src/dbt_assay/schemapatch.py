@@ -38,6 +38,14 @@ def _block_end(lines: list, start: int, indent: int) -> int:
     return i
 
 
+def _before_blanks(lines: list, end: int, start: int) -> int:
+    """Where to insert at the end of a block: before the blank lines that separate it from the
+    next one, so a new item sits with its siblings."""
+    while end - 1 > start and not lines[end - 1].strip():
+        end -= 1
+    return end
+
+
 def _find_item(lines, name, start, end, indent=None) -> tuple[int, int] | None:
     """(line, indent) of `- name: <name>` between start and end."""
     for i in range(start, end):
@@ -71,20 +79,22 @@ def apply(text: str, model: str, edits: list[Edit]) -> tuple[str, list[str]]:
     key_ind = ind + 2
     for e in edits:
         if not e.column:
-            if not any(re.match(rf"^\s{{{key_ind}}}description:", lines[j])
-                       for j in range(at + 1, item_end)):
-                if e.description:
-                    lines.insert(at + 1, " " * key_ind + f"description: {_yaml_str(e.description)}")
-                    item_end += 1
+            has = any(re.match(rf"^\s{{{key_ind}}}description:", lines[j])
+                      for j in range(at + 1, item_end))
+            if e.description and not has:
+                lines.insert(at + 1, " " * key_ind + f"description: {_yaml_str(e.description)}")
+                item_end += 1
             continue
         cols = next((j for j in range(at + 1, item_end)
                      if re.match(rf"^\s{{{key_ind}}}columns:\s*(#.*)?$", lines[j])), None)
         if cols is None:
-            lines.insert(item_end, " " * key_ind + "columns:")
-            cols = item_end
+            at_end = _before_blanks(lines, item_end, at)
+            lines.insert(at_end, " " * key_ind + "columns:")
+            cols = at_end
             item_end += 1
         cols_end = _block_end(lines, cols, key_ind)
         c = _find_item(lines, e.column, cols + 1, cols_end)
+        cols_end = _before_blanks(lines, cols_end, cols)
         if c is None:
             new = [" " * (key_ind + 2) + f"- name: {e.column}"]
             if e.description:
@@ -96,7 +106,7 @@ def apply(text: str, model: str, edits: list[Edit]) -> tuple[str, list[str]]:
             item_end += len(new)
             continue
         c_at, c_ind = c
-        c_end = _block_end(lines, c_at, c_ind)
+        c_end = _before_blanks(lines, _block_end(lines, c_at, c_ind), c_at)
         body = range(c_at + 1, c_end)
         if e.description and not any(re.match(rf"^\s{{{c_ind + 2}}}description:", lines[j])
                                      for j in body):
@@ -112,7 +122,7 @@ def apply(text: str, model: str, edits: list[Edit]) -> tuple[str, list[str]]:
                 lines[c_end:c_end] = block
                 item_end += len(block)
             else:
-                t_end = _block_end(lines, tk, c_ind + 2)
+                t_end = _before_blanks(lines, _block_end(lines, tk, c_ind + 2), tk)
                 have = {re.sub(r"^\s*-\s*", "", lines[j]).split(":")[0].strip()
                         for j in range(tk + 1, t_end) if lines[j].strip().startswith("-")}
                 add = [t for t in e.tests if t.split(":")[0].strip() not in have]

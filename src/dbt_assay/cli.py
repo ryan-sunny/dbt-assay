@@ -4556,8 +4556,25 @@ def plan(
     out: str = typer.Option("assay_plan.jsonl", "--out"),
     dialect: str = typer.Option(None, "--dialect"),
     json_out: bool = typer.Option(False, "--json"),
+    agreed: bool = typer.Option(False, "--agreed",
+                                help="the older plan: only the findings a person agreed with, "
+                                     "one row each, as JSONL"),
+    measure: int = typer.Option(0, "--measure",
+                                help="measure the top N fixes on a patched copy (dbt parse, no "
+                                     "warehouse): how many findings each actually resolves"),
+    fixes_out: str = typer.Option("assay_fixes.json", "--fixes-out",
+                                  help="where the fixes, with their files, are written"),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    limit: int = typer.Option(20, "--limit", "-n"),
 ) -> None:
-    """What to DO about the findings a person agreed with.
+    """What to change next: the findings grouped into the fixes that resolve them, ranked.
+
+    Customer-facing and happening now first, then by layer (staging before marts), then by
+    findings resolved per decision. Each fix carries its files (a drafted description, a counted
+    key test, a staging model and its readers repointed); `--measure` applies the top ones to a
+    copy and counts what they resolve. assay never writes them into the project: an agent applies
+    an approved fix in a branch.
 
     *** THE LOOP HAD A GAP BETWEEN "THIS IS REAL" AND "IT IS FIXED". ***
     `check` finds it, `review` settles whether it is real, and then nothing. Somebody holding
@@ -4581,6 +4598,10 @@ def plan(
     findings = live_mod.all_findings(project, digests, schema, entries, store=store,
                                      threshold=cfg.row_loss_threshold)
     from . import groups as groups_mod
+    if not agreed:
+        _fix_plan(project, digests, schema, entries, findings, store, tdir, dialect, measure,
+                  fixes_out, dbt_bin, profiles_dir, json_out, limit)
+        return
     rows = plan_mod.build(findings, store, groups_mod.build(project, findings), project=project)
 
     if json_out:
@@ -4614,6 +4635,130 @@ def plan(
                   f"agent, so it is JSONL rather than a report: `fix_shape` is the lookup, `how` "
                   f"is what it means, and the words are still yours.[/]")
     console.print("\n[dim]by shape: " + ", ".join(f"{k} x{v}" for k, v in by.most_common()) + "[/]")
+
+
+def _fix_plan(project, digests, schema, entries, findings, store, tdir, dialect, measure: int,
+              fixes_out: str, dbt_bin: str, profiles_dir, json_out: bool, limit: int) -> None:
+    from . import fixes as fixes_mod
+    from . import groups as groups_mod
+    from . import ledger as ledger_mod
+    fx = fixes_mod.build(project, findings, entries=entries, digests=digests, schema=schema,
+                         store=store, led=ledger_mod.last(),
+                         groups=groups_mod.build(project, findings), root=project.project_root)
+    if measure:
+        from . import fixmeasure
+        fixmeasure.measure_top(fx, project, findings, n=measure, target_dir=Path(tdir),
+                               dbt_bin=dbt_bin, profiles_dir=profiles_dir, dialect=dialect)
+        fx = fixes_mod.rank(fx)
+    st = fixes_mod.statuses(store)
+    doc = {"open": len(findings), "fixes": [{**f.as_dict(), "status": st.get(f.id, {}),
+                                             "diff": fixes_mod.diff(f, project.project_root)}
+                                            for f in fx]}
+    resolved = sum(len(f.findings) for f in fx if f.kind != "review")
+    doc["line"] = (f"{sum(1 for f in fx if f.kind != 'review')} fix(es) would resolve "
+                   f"~{resolved:,} of {len(findings):,} open finding(s); "
+                   f"{sum(1 for f in fx if f.kind == 'review')} need(s) reading")
+    Path(fixes_out).write_text(_json.dumps(doc, indent=2, default=str))
+    if json_out:
+        print(_json.dumps({k: v for k, v in doc.items()}, indent=2, default=str))
+        return
+    console.print(f"[bold]{doc['line']}[/]\n")
+    t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    t.add_column("fix"); t.add_column("resolves", justify="right")
+    t.add_column("decide", justify="right"); t.add_column("why"); t.add_column("")
+    for f in fx[:limit]:
+        n = (f"{f.measured} measured" if f.measured is not None else f"~{len(f.findings)}")
+        stat = st.get(f.id, {}).get("status", "")
+        t.add_row(f"{fixes_mod.KIND_TITLE[f.kind]}: {f.title}", n, str(f.decisions),
+                  f"[dim]{'; '.join(f.why[:2])}[/]", f"[dim]{stat}[/]")
+    console.print(t)
+    if len(fx) > limit:
+        console.print(f"[dim]...and {len(fx) - limit} more.[/]")
+    console.print(f"\n[green]{fixes_out}[/] [dim]has every fix with its files and diff. An agent "
+                  f"applies an approved one in a branch; `assay plan --measure 10` counts what "
+                  f"the top ten resolve on a patched copy.[/]")
+
+
+@app.command("fix")
+def fix_cmd(
+    fix_id: str = typer.Argument(..., help="a fix id, from `assay plan`"),
+    approve: bool = typer.Option(False, "--approve"),
+    defer: bool = typer.Option(False, "--defer"),
+    reject: bool = typer.Option(False, "--reject"),
+    note: str = typer.Option("", "--note", help="why, for a defer or a reject"),
+    by: str = typer.Option("", "--by"),
+    target: str = typer.Option("", "--target", "-t"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config"),
+    dialect: str = typer.Option(None, "--dialect"),
+):
+    """One fix: its diff, its recipe and where it stands; or a person's decision on it.
+
+    A person approves, defers or rejects (here, or on the Fix cards in the review form). An agent
+    then applies an approved fix in a branch (`apply_plan_item`) and verifies it
+    (`verify_plan_item`)."""
+    from . import fixes as fixes_mod
+    got = sum(map(bool, (approve, defer, reject)))
+    if got > 1:
+        console.print("[red]one of --approve, --defer, --reject[/]")
+        raise typer.Exit(2)
+    fx = _one_fix(fix_id, target, store_path, config_path, dialect)
+    if fx is None:
+        console.print(f"[red]no fix {fix_id} in the current plan.[/] [dim]`assay plan -t "
+                      f"<target>` lists them; an id changes only when what it fixes does.[/]")
+        raise typer.Exit(2)
+    st = Store(store_path)
+    try:
+        if got:
+            status = "approved" if approve else "deferred" if defer else "rejected"
+            if status == "rejected" and not note.strip():
+                console.print("[red]a reject needs --note: why this change is wrong here is "
+                              "what stops it being proposed again for the same reason.[/]")
+                raise typer.Exit(2)
+            fixes_mod.record(st, fx.id, status, kind=fx.kind, key=fx.key, title=fx.title,
+                             note=note, by=by or "unknown")
+            console.print(f"[green]{status}[/] {fx.id} {fx.title}")
+            return
+        now = fixes_mod.statuses(st).get(fx.id, {})
+    finally:
+        st.close()
+    console.print(f"[bold]{fixes_mod.KIND_TITLE[fx.kind]}: {fx.title}[/] [dim]{fx.id}[/]")
+    console.print(f"[dim]{now.get('status') or 'proposed'} · resolves ~{len(fx.findings)} · "
+                  f"{fx.decisions} decision(s)[/]")
+    console.print(fx.how)
+    for r in fx.recipe:
+        console.print(f"  [dim]verify:[/] {r}")
+    d = fixes_mod.diff(fx, _project_root_of(target))
+    if d:
+        console.print(d, markup=False, highlight=False)
+
+
+def _project_root_of(target: str) -> Path:
+    from .manifest import Project
+    return Path(Project.load(_find_target(target)).project_root)
+
+
+def _one_fix(fix_id: str, target: str, store_path: str, config_path: str, dialect):
+    from . import fixes as fixes_mod
+    from . import groups as groups_mod
+    from . import ledger as ledger_mod
+    tdir = _find_target(target)
+    project, digests, _f, schema, _s = _load(tdir, dialect)
+    cfg = Config.load(config_path)
+    store = Store(store_path) if Path(store_path).exists() else None
+    try:
+        entries = inv_mod.build(project, digests, schema, store,
+                                probe_mod.read(store) if store else {})
+        findings = live_mod.all_findings(project, digests, schema, entries, store=store,
+                                         threshold=cfg.row_loss_threshold)
+        fx = fixes_mod.build(project, findings, entries=entries, digests=digests, schema=schema,
+                             store=store, led=ledger_mod.last(),
+                             groups=groups_mod.build(project, findings),
+                             root=project.project_root)
+    finally:
+        if store is not None:
+            store.close()
+    return next((f for f in fx if f.id == fix_id), None)
 
 
 @app.command(name="guide")

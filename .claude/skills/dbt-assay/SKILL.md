@@ -122,6 +122,20 @@ was intended and it needs a version bump. Do not hand back work where the grain 
    construct: the partition and sort keys of the window, the predicate, the columns. Use it to
    find the code rather than re-deriving it, and use `marts` to decide how carefully to tread.
 
+## Fixing the warehouse: fixes, not findings
+
+`plan_items()` is where to start once a project has been checked: the findings grouped into the
+fixes that resolve them, ranked customer-facing and happening now first, then staging before marts,
+then by findings resolved per decision. A fix is one change with its files: drafted descriptions
+in the model's own yml, key tests assay counted unique, a pass-through staging model with its
+readers repointed, a premise declared as a test.
+
+**You apply only a fix a person approved.** They approve it on the Fix cards in the review form or
+with `assay fix <id> --approve`. Then, in a branch: `apply_plan_item(id)`, `dbt parse` (or
+`compile` when SQL moved), `verify_plan_item(id)`, one pull request per batch. `plan_item(id)`
+shows the diff first. Never approve one yourself, and never hand-edit what a fix would write
+instead of applying it: the fix carries the recipe that proves it safe.
+
 ## If the project has not been set up yet
 
 `guide(topic)`, or `assay guide <topic>`. **Read it before you write anything into their
@@ -367,7 +381,11 @@ and nothing is lost:
 | `rule(finding, …)` | `assay review --subject <s> --question <q> --verdict <v> --note <why>` |
 | `review_queue()` | `assay review` |
 | `load_handback(path?)` | `assay review --load latest` or `--load <path>` (add `--apply` to write audit.yml) |
-| `plan()` | `assay plan -t target/` (writes `assay_plan.jsonl`) |
+| `plan_items(limit, kind)` | `assay plan -t target/` (writes `assay_fixes.json`) |
+| `plan_item(fix_id)` | `assay fix <fix_id> -t target/` |
+| `apply_plan_item(fix_id)` | write the files from `assay_fixes.json` for that fix, once approved |
+| `verify_plan_item(fix_id)` | `dbt parse`, then `assay fix <fix_id> -t target/` (the diff is empty once applied) |
+| `plan()` | `assay plan --agreed -t target/` (writes `assay_plan.jsonl`) |
 | `suggestions()` | `assay suggest -t target/`, or `--section vocab` |
 | `evidence()` | `assay evidence -q <question> -s <model>` |
 | `guide(topic)` | `assay guide <topic>` |
@@ -553,6 +571,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay evidence` | `assay_evidence` | The exact state a judged answer was computed from, as it was sent. | `--key` `--question/-q` `--subject/-s` `--store` `--limit/-n` `--json` |
 | `assay export <directory>` | `assay_export` | Put assay's tables in your warehouse, as data your own models can join to. | `--store` `--format` `--no-docs` |
 | `assay feeds` | `assay_feeds` | Has a feed changed its mind while its schema held still? | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--sample` `--limit/-n` `--store` `--config` |
+| `assay fix <fix_id>` | `assay_fix` | One fix: its diff, its recipe and where it stands; or a person's decision on it. | `--approve` `--defer` `--reject` `--note` `--by` `--target/-t` `--store` `--config` `--dialect` |
 | `assay gate` | `assay_gate` | One verdict for a change: new findings above policy, evidence of harm, new dbt-project-evaluator violations, premises newly broken, contracts changed without being named, and failing dbt tests. | `--target/-t` `--baseline/-b` `--select/-s` `--allow-contract` `--store` `--config` `--dialect` `--json` `--markdown` |
 | `assay guide <topic>` | `assay_guide` | How to SET ASSAY UP, for somebody who has never used it. | — |
 | `assay history` | `assay_history` | When each open finding was first seen, and which commit it was seen at. | `--target/-t` `--store` `--config` `--since` `--limit/-n` `--json` `--dialect` |
@@ -565,7 +584,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay onboard` | `assay_onboard` | One command for a project assay has never seen. | `--target/-t` `--store` `--config` `--agent` `--compile` `--dbt/--dbt-bin` `--profiles-dir` `--judge` `--judge-limit` `--dialect` `--check-warehouse` |
 | `assay page <out>` | `assay_page` | Everything assay knows about this warehouse, as one file you can open. | `--target/-t` `--store` `--config` `--dialect` `--plain` `--data` `--from` `--form` `--monitoring` |
 | `assay patch <out_dir>` | `assay_patch` | Write the uniqueness tests assay can prove will pass. | `--target/-t` `--store` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--dry-run` `--dialect` `--worth-testing` `--limit/-n` `--json` |
-| `assay plan` | `assay_plan` | What to DO about the findings a person agreed with. | `--target/-t` `--config` `--store` `--out` `--dialect` `--json` |
+| `assay plan` | `assay_plan` | What to change next: the findings grouped into the fixes that resolve them, ranked. | `--target/-t` `--config` `--store` `--out` `--dialect` `--json` `--agreed` `--measure` `--fixes-out` `--dbt/--dbt-bin` `--profiles-dir` `--limit/-n` |
 | `assay practices` | `assay_practices` | Standard dbt practice: deferred to where it exists, adjudicated where it is noisy. | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--evaluator-schema` `--dialect` `--verify` `--keys-only` `--model/-m` `--store` `--config` `--dry-run` |
 | `assay premises` | `assay_premises` | What the findings rest on: every key a declared grain or a held-back finding assumes is unique, with its evidence, its status, and what rests on it. | `--model/-m` `--status` `--include-packages` `--target/-t` `--store` `--dialect` `--json` |
 | `assay probe` | `assay_probe` | Count what the SQL cannot settle. | `--target/-t` `--project-dir` `--profiles-dir` `--dialect` `--dbt/--dbt-bin` `--dry-run` `--emit` `--load` `--limit/-n` `--store` `--config` `--sample` `--lateness` `--json` |

@@ -1274,15 +1274,19 @@ a column is, what the grain is, and what would break before it writes a line. Th
 it the **obligation** — without it an agent checks when it remembers, and with it, checking is the
 procedure.
 
-Twenty-eight tools, and beside them every command as a tool of its own: `assay_<command>` takes the
+Thirty-two tools, and beside them every command as a tool of its own: `assay_<command>` takes the
 command's flags as one string and runs the real command, so an agent with no shell can run all of
 assay. A run longer than its wait comes back as a job, which `job_status`, `job_stop` and `jobs`
-follow. Of the twenty-eight, most report; nine do something else:
+follow. Of the thirty-two, most report; thirteen do something else:
 
 | tool | what it is for |
 |---|---|
 | `guide(topic)` | how to SET assay up — vocabulary, questions, waivers, policy. Read before writing anything into someone's `audit.yml` |
-| `plan(limit)` | **what to change**, for the findings a person agreed with. `fix_shape` is the KIND of change, looked up from the check name; the words are not in it |
+| `plan_items(limit, kind)` | **what to change next**: the findings grouped into the fixes that resolve them, ranked, each with how many it resolves and whether a person approved it |
+| `plan_item(fix_id)` | one fix in full: the diff it makes and the recipe that verifies it |
+| `apply_plan_item(fix_id)` | write an **approved** fix's files into the working tree (a branch); refused until a person approves it |
+| `verify_plan_item(fix_id)` | after `dbt parse`: are the files in place, and are the findings it resolves gone |
+| `plan(limit)` | the older list: what to change for the findings a person agreed with. `fix_shape` is the KIND of change, looked up from the check name; the words are not in it |
 | `suggestions(section)` | **what to put in their `audit.yml`**, derived from what the checks found, each row carrying its measurement. Every `means:` and `implies:` comes back empty and must stay empty |
 | `evidence(question, subject)` | the exact **state** a judged answer was computed from. Call it before disagreeing with one: if the answer is wrong and the state is wrong, what gets sent needs fixing; if the state is right, the question does |
 | `vocabulary()` | their words, **where each one is true**, and everything wrong with the list. A term goes into every judged question's state, so one asserted outside where it holds is wrong in every answer about that part of the project at once — measured at 25% of one real warehouse's answers. Call it before writing or editing a term |
