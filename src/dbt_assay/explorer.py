@@ -119,6 +119,36 @@ nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink)}
 nav button b{font-weight:400;color:var(--faint);margin-left:6px;font-size:12px;
 letter-spacing:0;text-transform:none}
 
+.spark{display:flex;align-items:flex-end;gap:2px;height:44px;max-width:600px;margin:12px 0 0}
+.spark span{flex:1 1 0;min-width:2px;background:var(--ash)}
+.spark span:last-child{background:var(--ink)}
+/* the sections: the same running head, one size up, and Settings set apart at the right */
+.secbtns{display:flex;flex-wrap:nowrap}
+nav .secbtns button,nav .setbtn{font-size:17px;letter-spacing:0;text-transform:none;
+padding:5px 14px 7px}
+nav .setbtn{margin-left:auto;font-size:15px;color:var(--faint)}
+/* the row under them: the views of the section you are in */
+.subnav{display:flex;flex-wrap:wrap;gap:0;border-top:1px solid var(--rule);margin-top:3px}
+.subnav[hidden]{display:none}
+.subnav button{appearance:none;border:0;border-bottom:2px solid transparent;background:none;
+font-family:Fell,Georgia,serif;font-size:14.5px;color:var(--ash);padding:5px 11px 5px;
+cursor:pointer;margin-bottom:-3px}
+.subnav button:hover{color:var(--ink)}
+.subnav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink)}
+.subnav button b{font-weight:400;color:var(--faint);margin-left:5px;font-size:12px}
+.formpanel{overflow:hidden;margin:-20px -26px -22px;height:calc(100% + 42px)}
+.formframe{display:block;width:100%;height:100%;border:0;background:var(--paper)}
+.formnone{padding:26px}
+@media (max-width:940px){
+  /* the page scrolls as a whole here, so the embedded form needs a height of its own */
+  #p-form{height:auto;margin:0}
+  #p-form .formframe{height:88vh}
+  .secbtns{flex-direction:column;width:100%}
+  nav .secbtns button,nav .setbtn{width:100%;text-align:left;border-bottom:0;
+  border-left:3px solid transparent;padding:7px 14px;margin:0}
+  nav .secbtns button[aria-selected=true],nav .setbtn[aria-selected=true]{
+  border-left-color:var(--ink)}
+}
 main{padding:20px 26px 22px;max-width:1560px;width:100%;flex:1 1 auto;min-height:0}
 .panel{height:100%;overflow:auto}
 .panel[hidden]{display:none}
@@ -1031,26 +1061,43 @@ def explorer_html(data: dict, record_html: str) -> str:
     if cf.get("run"):
         tips["guarantees"] = (f"{tips.get('guarantees', '')}\nCounted from "
                               f"{cf.get('store') or 'the store'}, run {cf['run']} at {cf.get('at')}.")
-    nav_groups = [("start here", ["understood"]),
-                  ("what is wrong", ["findings", "areas", "guarantees", "monitoring"]),
-                  ("your project", ["models", "chain", "claims"]),
-                  ("what assay asked", ["answers", "questions"]),
-                  ("setup", ["suggest", "config", "spend"])]
-    button = {t: (i, label, n) for i, (t, label, n) in enumerate(tabs)}
-    nav = "".join(
-        f'<span class="navgroup"><span class="navlab">{e(glabel)}</span><span class="navbtns">'
-        + "".join(
-            f'<button role="tab" data-tab="{t}" '
-            f'aria-selected="{"true" if button[t][0] == 0 else "false"}" '
-            f'data-tip="{e(tips.get(t, ""))}">'
-            f'{e(button[t][1])}{_badge(button[t][2])}'
-            f'</button>' for t in members if t in button)
-        + '</span></span>'
-        for glabel, members in nav_groups)
-    grouped = {t for _g, ms in nav_groups for t in ms}
-    assert grouped == {t for t, _l, _n in tabs}, "a tab is in no nav group"
+    # *** FOUR SECTIONS BY THE JOB, NOT THIRTEEN TABS BY THE KIND OF DATA. *** (Ryan) Overview:
+    # is it healthy and getting better. Fix: what to change next. Decide: only the calls a person
+    # has to make. Explore: one thing at a time, with every list the tabs used to be. Settings
+    # hold what is configured. Fix and Decide are the review form, embedded.
+    labels = {t: label for t, label, _n in tabs}
+    fixes_n = sum(1 for f in (data.get("fixes") or []) if f.get("kind") != "review")
+    cards_n = ((data.get("meta") or {}).get("review") or {}).get("cards")
+    sections = [("overview", "Overview", None,
+                 "Whether this warehouse is healthy and getting better, and what to change next."),
+                ("fix", "Fix", fixes_n or None,
+                 ("The findings grouped into the changes that resolve them, most important "
+                  "first. One decision per change.")),
+                ("decide", "Decide", cards_n or None,
+                 "Only the calls a person has to make: judgment calls, the failing rows, the words."),
+                ("explore", "Explore", None,
+                 "Every model, hop, claim and answer, and every finding by kind.")]
+    nav = ('<span class="secbtns">' + "".join(
+        f'<button role="tab" data-section="{k}" aria-selected="{"true" if k == "overview" else "false"}" '
+        f'data-tip="{e(tip)}">{e(label)}{_badge(n)}</button>' for k, label, n, tip in sections)
+        + '</span><button class="setbtn" data-section="settings" aria-selected="false" '
+          'data-tip="What assay is configured with, what to configure next, every question it '
+          'asks, and what it has cost.">Settings</button>')
+    subviews = {
+        "explore": ["findings", "areas", "guarantees", "monitoring", "models", "chain", "claims",
+                    "answers"],
+        "settings": ["suggest", "config", "questions", "spend"],
+    }
+    grouped = {"understood"} | {v for vs in subviews.values() for v in vs}
+    assert grouped == {t for t, _l, _n in tabs}, "a view is in no section"
+    sub_json = json.dumps({"subviews": subviews, "labels": labels,
+                           "counts": {t: n for t, _l, n in tabs},
+                           "tips": tips}, default=str)
+    sub_blob = sub_json.replace("</", "<\\/").replace("<!--", "<\\!--")
     panels = "".join(f'<div class="panel" id="p-{t}"{"" if i == 0 else " hidden"}></div>'
-                     for i, (t, _l, _n) in enumerate(tabs))
+                     for i, (t, _l, _n) in enumerate(tabs)) + \
+        '<div class="panel formpanel" id="p-form" hidden></div>'
+
 
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1065,12 +1112,14 @@ manifest generated {e(str(meta['generated_at']))} &middot;
 <span class="hint" data-tip="The build is a hash of the code that rendered this page: two pages claiming one version and differing here came from two different installs.&#10;&#10;The page is deterministic. It carries the manifest's own generated_at and never a wall clock, and every list arrives sorted, so a rerun against an unchanged store writes an identical file.">assay {e(meta['version'])} &middot; build {e(build_fingerprint())}</span>{form_link}</div>
 <button class="navmenu" id="navmenu" aria-expanded="false"><span id="navcur">Overview</span> ▾</button>
 <nav role="tablist">{nav}</nav>
+<div class="subnav" id="subnav"></div>
 </header>
 <main>{panels}</main>
 
 <!-- THE ONE SWAPPABLE LINE. Embedded here; a server would make this a fetch and nothing
      below would change. -->
 <script id="assay-data" type="application/json">{blob}</script>
+<script id="assay-sections" type="application/json">{sub_blob}</script>
 <script>
 const DATA = JSON.parse(document.getElementById('assay-data').textContent);
 {JS}
@@ -2274,9 +2323,16 @@ function findingsTab(host) {
                     cell: f => link(f.model)};
   /* Every finding at once carries its check, so it drops what the pane already says (marts and
      exposures): five columns did not fit the middle column at 1100px. */
+  /* *** THE ONE ORDER. *** (priority.py) Findings arrive most urgent first, customer-facing and
+     happening now before reach; the first reason says why it is where it is. */
+  const RANK = new Map(DATA.findings.map((f, i) => [f.id, i]));
+  const whyCol = {key: 'p', label: 'why first', n: 1, val: f => RANK.get(f.id),
+    tip: 'Most important first: what customers see, then what is wrong now (a failing test, a '
+      + 'lost guarantee, a broken key), then how far it reaches, then how sure assay is.',
+    cell: f => el('span', {class: 'tot', text: (f.why || [])[0] || ''})};
   const withCheck = [{key: 'check', label: 'check', mono: 1, val: f => f.check},
-                     modelCol, weightCol];
-  const perCheck = [modelCol, weightCol, ...rest];
+                     modelCol, whyCol];
+  const perCheck = [modelCol, whyCol, weightCol, ...rest];
 
   const d = drill({
     noun: 'findings', groups: groups, chip: g => g.title, groupFilter: 'find a check...',
@@ -2289,7 +2345,7 @@ function findingsTab(host) {
     },
     rowsOf: g => g.rows, rowCols: withCheck,
     colsFor: g => (g && g.__all) ? withCheck : perCheck,
-    rowSort: 'w', rowDir: -1, rowFilter: 'filter by model or text...',
+    rowSort: 'p', rowDir: 1, rowFilter: 'filter by model or text...',
     rowText: f => [f.check, f.model, f.summary].join(' '),
     detailOf: f => findingPane(f),
   });
@@ -2861,6 +2917,16 @@ function rankedBars(rows) {
   return host;
 }
 
+/* Open findings per run, as a row of thin bars: HTML like the other Overview charts, and each
+   run its own mark with its numbers on hover. */
+function sparkline(trend) {
+  const max = Math.max(...trend.map(t => t.open), 1);
+  return el('div', {class: 'spark'}, trend.map(t => el('span', {
+    style: 'height:' + Math.max(2, Math.round(100 * t.open / max)) + '%',
+    title: t.at + ': ' + num(t.open) + ' open' + (t.harm ? ', ' + num(t.harm) + ' happening now'
+                                                            : '')})));
+}
+
 function tile(big, label, note, cls) {
   return el('div', {class: 'tile'}, [
     el('div', {class: 'tilebig ' + (cls || ''), text: big}),
@@ -3068,6 +3134,54 @@ function understoodTab(host) {
     ticket,
     cut ? el('img', {class: 'cut ticketcut', src: cut, alt: ''}) : el('div'),
   ]));
+
+  // ---- what to change next: the few kinds of change most findings come down to (the Fix section)
+  const FX = DATA.fixes || [];
+  if (FX.length) {
+    const kinds = {};
+    for (const f of FX) {
+      if (f.kind === 'review') continue;
+      const k = kinds[f.kind] = kinds[f.kind] || {title: f.kind_title, n: 0, resolves: 0,
+                                                   decided: 0, rank: f.kind_rank};
+      k.n += 1; k.resolves += f.resolves || 0;
+      if (f.status && f.status !== 'proposed') k.decided += 1;
+    }
+    const top = Object.values(kinds).sort((a, b) => b.resolves - a.resolves || a.rank - b.rank)
+      .slice(0, 4);
+    const resolved = FX.filter(f => f.kind !== 'review').reduce((n, f) => n + (f.resolves || 0), 0);
+    const toFix = el('button', {class: 'back', text: 'every change, ranked →'});
+    toFix.onclick = () => open('fix');
+    bits.push(block('What to change next',
+      'The findings grouped into the changes that resolve them. Each change is one decision; '
+      + 'an agent applies an approved one in a branch.',
+      el('div', {}, [el('div', {class: 'tiles'}, top.map(k => tile(
+        k.resolves ? num(k.resolves) : num(k.n), k.title,
+        k.resolves ? num(k.n) + (k.n === 1 ? ' change' : ' changes')
+                     + (k.decided ? ', ' + num(k.decided) + ' decided' : '')
+                   : num(k.n) + ' changes to how the project is built'))),
+        el('p', {class: 'fact', text: num(resolved) + ' of ' + num(F.length)
+          + ' open findings come down to these; '
+          + num(FX.filter(f => f.kind === 'review').length) + ' more need reading.'}),
+        toFix])));
+  }
+
+  // ---- whether it is getting better: open findings over the full runs in the store
+  const TR = DATA.trend || [];
+  if (TR.length > 1) {
+    const last = TR[TR.length - 1], prev = TR[TR.length - 2];
+    const d = last.open - prev.open;
+    bits.push(block('Is it getting better',
+      'Open findings at each full run in the store, oldest first. A fix batch shows as the drop '
+      + 'after it.',
+      el('div', {}, [el('div', {class: 'tiles'}, [
+        tile(num(last.open), 'open at the last full run', last.at),
+        tile((d > 0 ? '+' : d < 0 ? '\u2212' : '') + num(Math.abs(d)), 'since the run before',
+             prev.at, d > 0 ? 'bad' : ''),
+        tile(num(last.harm), 'happening now', 'a failing test, a lost guarantee, a broken key, '
+             + 'a stopped monitor', last.harm ? 'bad' : ''),
+        tile(num(TR.length), 'full runs', 'since ' + TR[0].at),
+      ]), sparkline(TR)])));
+  }
 
   // ---- the loop number. It moves only when a person reads SQL, which is why it is not the hero.
   const unread = meta.models - (meta.coverage || {}).readable;
@@ -4075,21 +4189,87 @@ const VIEWS = {models: modelsTab, chain: chainTab, claims: claimsTab, findings: 
                answers: answersTab, spend: spendTab, questions: questionsTab, config: configTab,
                understood: understoodTab};
 const built = {};
+/* *** FOUR SECTIONS, AND A ROW UNDER THEM FOR THE ONE YOU ARE IN. ***
+   Explore holds every list the tabs used to be; Settings what is configured; Fix and Decide are
+   the review form, embedded once and pointed at a pane. Each section remembers the view you were
+   on, so going back to it lands where you left. */
+const SEC = JSON.parse(document.getElementById('assay-sections').textContent);
+const FORM = String((DATA.meta || {}).form || '');
+const DECIDE = [['findings', 'Judgment calls', 'Every call only a person can make, grouped by check.'],
+                ['explanations', 'Explanations', 'The kinds of failing row each mart has, in your words.'],
+                ['words', 'Words', 'What the words in this warehouse mean here.'],
+                ['waivers', 'Waivers', 'Findings accepted on purpose, with the reason.']];
+const LAST = {overview: 'understood', explore: 'findings', settings: 'suggest',
+              decide: 'decide:findings', fix: 'fix'};
+const isFormView = v => v === 'fix' || v.startsWith('decide:') || v === 'form:settings';
+function sectionOf(v) {
+  if (v === 'understood') return 'overview';
+  if (v === 'fix') return 'fix';
+  if (v.startsWith('decide:')) return 'decide';
+  if (v === 'form:settings') return 'settings';
+  for (const [k, vs] of Object.entries(SEC.subviews)) if (vs.includes(v)) return k;
+  return 'overview';
+}
+function paintSub(sec, cur) {
+  const host = document.getElementById('subnav');
+  let items = [];
+  if (sec === 'explore' || sec === 'settings')
+    items = SEC.subviews[sec].map(v => [v, SEC.labels[v], SEC.counts[v], SEC.tips[v]]);
+  if (sec === 'settings' && FORM)
+    items.push(['form:settings', 'Numbers', null,
+                'The thresholds this project is judged by. A change goes to audit.yml through the '
+                + 'handback, shown as a diff first.']);
+  if (sec === 'decide') items = DECIDE.map(([p, l, t]) => ['decide:' + p, l, null, t]);
+  host.replaceChildren(...items.map(([v, l, n, tip]) => {
+    const b = el('button', {'data-view': v, 'aria-selected': String(v === cur),
+                            'data-tip': tip || ''},
+                 [document.createTextNode(l),
+                  ...(n != null && n !== '' ? [el('b', {text: typeof n === 'number' ? num(n)
+                                                                                      : String(n)})]
+                                             : [])]);
+    b.onclick = () => { dismissCards(); open(v); };
+    return b;
+  }));
+  host.hidden = !items.length;
+}
+function formView(pane) {
+  const host = document.getElementById('p-form');
+  if (!FORM) {
+    if (!host.firstChild) host.append(el('div', {class: 'formnone'}, [
+      el('p', {text: 'Fix and Decide are the review form, and there is none beside this page.'}),
+      el('p', {text: '`assay review --emit review.html` writes it; `assay page --form '
+                     + 'review.html` links the two.'})]));
+    return;
+  }
+  const src = FORM + '#embed&pane=' + pane;
+  let f = host.querySelector('iframe');
+  if (!f) { f = el('iframe', {class: 'formframe', src: src, 'aria-label': 'the review form'});
+            host.append(f); }
+  else if (!f.getAttribute('src').endsWith('pane=' + pane)) f.setAttribute('src', src);
+}
 function open(name) {
-  document.querySelectorAll('nav button').forEach(b =>
-    b.setAttribute('aria-selected', String(b.dataset.tab === name)));
-  const cur = document.querySelector('nav button[data-tab="' + name + '"]');
+  const sec = sectionOf(name);
+  LAST[sec] = name;
+  document.querySelectorAll('nav button[data-section]').forEach(b =>
+    b.setAttribute('aria-selected', String(b.dataset.section === sec)));
+  const cur = document.querySelector('nav button[data-section="' + sec + '"]');
   if (cur) document.getElementById('navcur').textContent = cur.firstChild.textContent;
-  document.querySelectorAll('.panel').forEach(p => { p.hidden = p.id !== 'p-' + name; });
-  const host = document.getElementById('p-' + name);
-  /* Built once, on first open. A 358-model warehouse renders eight tabs' worth of tables in well
-     under a second, but there is no reason to render seven of them nobody has looked at. */
-  if (!built[name]) { built[name] = 1; VIEWS[name](host); }
-  /* *** replaceState THROWS ON file:// IN SOME BROWSERS, AND file:// IS THE POINT. ***
-     A SecurityError here would abort `open` after the panels were swapped but before anything
-     was built, so a tab would go blank. The hash is a convenience; the tab is not. */
-  try { if (location.hash.slice(1) !== name) history.replaceState(null, '', '#' + name); }
-  catch (e) { /* no deep link, and every tab still works */ }
+  paintSub(sec, name);
+  const form = isFormView(name);
+  document.querySelectorAll('.panel').forEach(p => {
+    p.hidden = form ? p.id !== 'p-form' : p.id !== 'p-' + name; });
+  if (form) formView(name === 'fix' ? 'fixes' : name === 'form:settings' ? 'settings'
+                                                                         : name.slice(7));
+  else {
+    const host = document.getElementById('p-' + name);
+    /* Built once, on first open: a 358-model warehouse renders a view in well under a second,
+       and there is no reason to render the ones nobody has looked at. */
+    if (!built[name]) { built[name] = 1; VIEWS[name](host); }
+  }
+  /* *** replaceState THROWS ON file:// IN SOME BROWSERS, AND file:// IS THE POINT. *** */
+  try { const h = name.replace(':', '/');
+        if (location.hash.slice(1) !== h) history.replaceState(null, '', '#' + h); }
+  catch (e) { /* no deep link, and every view still works */ }
 }
 /* *** A FIXED CARD MUST NOT OUTLIVE THE THING IT POINTS AT. ***
    It sits on the body, so nothing removes it when the panel under it changes. Scrolling moves
@@ -4103,8 +4283,8 @@ document.addEventListener('click', ev => {
 document.addEventListener('scroll', () => dismissCards(), true);
 window.addEventListener('resize', () => dismissCards());
 
-document.querySelectorAll('nav button').forEach(b => {
-  b.onclick = () => { dismissCards(); open(b.dataset.tab); closeMenu(); }; });
+document.querySelectorAll('nav button[data-section]').forEach(b => {
+  b.onclick = () => { dismissCards(); open(LAST[b.dataset.section]); closeMenu(); }; });
 /* *** ON A PHONE THE STRIP IS A MENU, NOT ROWS OF TABS. *** One button names the tab you are on,
    and opens the grouped list; picking a tab closes it. */
 const NAVM = document.getElementById('navmenu'), NAVEL = document.querySelector('nav');
@@ -4113,5 +4293,6 @@ NAVM.onclick = ev => { ev.stopPropagation(); const on = !NAVEL.classList.contain
   NAVEL.classList.toggle('open', on); NAVM.setAttribute('aria-expanded', String(on)); };
 document.addEventListener('click', ev => {
   if (!ev.target.closest('nav') && !ev.target.closest('#navmenu')) closeMenu(); });
-open(VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'understood');
+{ const h = location.hash.slice(1).replace('/', ':');
+  open(VIEWS[h] || isFormView(h) ? h : 'understood'); }
 """

@@ -272,7 +272,37 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         "proofs": _proofs(ledger, store, project),
         # *** THE LOOP: OF THE FINDINGS A PERSON AGREED WITH, HOW MANY WENT, AND CAME BACK. ***
         "loop": _loop(store, findings, project),
+        # What to change next, and whether it is getting better: the Overview leads with both.
+        "fixes": _fixes(project, digests, schema, entries, findings, store, ledger),
+        "trend": _trend(store, project),
     }
+
+
+def _fixes(project, digests, schema, entries, findings, store, ledger) -> list:
+    """The ranked fixes, in short: what the Overview names and the Fix section opens."""
+    try:
+        from . import fixes as fixes_mod
+        from . import groups as groups_mod
+        fx = fixes_mod.build(project, findings, entries=entries, digests=digests, schema=schema,
+                             store=store, led=ledger, groups=groups_mod.build(project, findings),
+                             root=project.project_root)
+        st = fixes_mod.statuses(store)
+    except Exception:                                            # noqa: BLE001
+        return []
+    keep = ("id", "kind", "kind_title", "kind_rank", "title", "resolves", "measured", "effect",
+            "why", "tier", "decisions")
+    return [{**{k: v for k, v in f.as_dict().items() if k in keep},
+             "status": st.get(f.id, {}).get("status", "proposed")} for f in fx]
+
+
+def _trend(store, project) -> list:
+    if store is None:
+        return []
+    try:
+        from . import digest
+        return digest.trend(store, project.project_name or None)
+    except Exception:                                            # noqa: BLE001
+        return []
 
 
 def _counted(store) -> dict:
@@ -851,7 +881,7 @@ def _unreadable(store, project) -> list:
 # Reading the artifact is a build step, not a runtime load.
 _LINES = ("models", "edges", "claims", "findings", "waived", "decisions", "questions",
           "adjudications", "unreadable", "runs", "effectiveness", "suggestions", "premises",
-          "premise_moves", "proofs")
+          "premise_moves", "proofs", "fixes", "trend")
 # *** AND ITS EMPTY VALUE, BECAUSE A LIST DEFAULTING TO `{}` IS THE SAME BUG AS `[]` -> `{}`. ***
 # Caught by the round-trip guard: an artifact with no `unconfigured.json` handed back a dict where
 # a list belongs, and `.length` on a dict is `undefined` rather than an error -- so the page would

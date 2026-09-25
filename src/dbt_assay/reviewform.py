@@ -976,7 +976,8 @@ pre.diff span{display:block}
 ul.plain{margin:2px 0 6px;padding-left:18px}
 ul.plain li{margin:1px 0}
 /* embedded in the report: its masthead and section tabs replace these */
-body.embed header h1 > svg,body.embed header .hname,body.embed header .hmeta,
+body.embed header h1 > svg,body.embed header .mark,body.embed header .hname,
+body.embed header .hmeta,
 body.embed nav.tabs{display:none}
 body.embed header h1{justify-content:flex-end;padding-top:6px}
 body.embed header{border-bottom:1px solid var(--rule);padding:4px 26px 8px}

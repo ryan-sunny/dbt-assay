@@ -175,13 +175,25 @@ def test_every_tab_declared_in_the_nav_has_a_panel_and_a_view():
             "questions": [], "adjudications": [], "config": {}, "runs": [], "unreadable": []}
     doc = explorer.explorer_html(data, "<html></html>")
 
-    nav = set(re.findall(r'<button role="tab" data-tab="([a-z]+)"', doc))
+    _secs, sec = _sections(doc)
+    nav = {"understood"} | {v for vs in sec["subviews"].values() for v in vs}
     panels = set(re.findall(r'<div class="panel" id="p-([a-z]+)"', doc))
     block = explorer._VIEWS[explorer._VIEWS.index("const VIEWS = {"):]
     views = set(re.findall(r"([a-z]+): \w+Tab", block[:block.index("}")]))
     assert nav == panels, (nav, panels)
-    assert nav <= views | {"understood"}, f"a tab with no view: {nav - views}"
+    assert nav <= views | {"understood"}, f"a view with no builder: {nav - views}"
     assert len(nav) >= 8, nav
+    assert '<div class="panel formpanel" id="p-form" hidden>' in doc, "no host for the form"
+
+
+def _sections(doc):
+    """The section buttons, and the views each section holds, as the page declares them."""
+    import json
+    import re
+    secs = re.findall(r'data-section="([a-z]+)"', doc)
+    blob = re.search(r'<script id="assay-sections" type="application/json">(.*?)</script>', doc,
+                     re.DOTALL).group(1)
+    return secs, json.loads(blob)
 
 
 def test_the_record_is_carried_as_data_and_never_as_markup():
@@ -346,6 +358,15 @@ def _tiny():
                                              "skipped_results": 3},
                            "stale_failures": [], "unwatched": [], "monitoring": []},
             "waived": [],
+            # What to change next and whether it is getting better, as the Overview reads them.
+            "fixes": [{"id": "x1", "kind": "document", "kind_title": "Document columns",
+                       "kind_rank": 4, "title": "Document 2 column(s) of a", "resolves": 1,
+                       "measured": None, "effect": "", "why": ["2 marts downstream"],
+                       "tier": "wide reach", "decisions": 1, "status": "proposed"}],
+            "trend": [{"run": "r1", "at": "2026-09-24 06:00", "open": 12, "harm": 1,
+                       "premises_broken": 0},
+                      {"run": "r2", "at": "2026-09-25 06:00", "open": 9, "harm": 0,
+                       "premises_broken": 0}],
             "areas": {"predicate_clusters": [{"size": 3, "shape": "<col> <> ''",
                                               "models": ["a", "b", "c"]}],
                       "odd_ones_out": [], "same_claim": [],
@@ -547,15 +568,14 @@ def test_the_overview_is_the_first_tab():
     the only surface here with an argument to make rather than a table to show, so it is the way
     in rather than the last tab.
     """
-    import re
     data = {"meta": {"project": "p", "models": 0, "sources": 0, "version": "0",
                      "generated_at": "x", "coverage": {}},
             "models": [], "edges": [], "claims": [], "findings": [], "decisions": [],
             "questions": [], "adjudications": [], "config": {}, "runs": [], "unreadable": []}
     doc = explorer.explorer_html(data, "<html></html>")
-    order = re.findall(r'<button role="tab" data-tab="([a-z]+)"', doc)
-    assert order[0] == "understood", f"the overview is not first: {order}"
-    assert 'data-tab="understood" aria-selected="true"' in doc, "it is not the selected tab"
+    secs, _sec = _sections(doc)
+    assert secs[0] == "overview", f"the overview is not first: {secs}"
+    assert 'data-section="overview" aria-selected="true"' in doc, "it is not the selected one"
     assert "'understood');" in explorer._VIEWS, "the default hash target did not move"
 
 
@@ -1157,7 +1177,6 @@ def test_the_areas_tab_counts_all_three_lists_and_shows_one_at_a_time():
     gets lost". The three lists are the groups of the one navigator every high-volume tab uses,
     and the tab's number is all of them.
     """
-    import re
     data = {"meta": {"project": "p", "models": 0, "sources": 0, "version": "0",
                      "generated_at": "x", "coverage": {}},
             "models": [], "edges": [], "claims": [], "findings": [], "decisions": [],
@@ -1165,8 +1184,8 @@ def test_the_areas_tab_counts_all_three_lists_and_shows_one_at_a_time():
             "areas": {"predicate_clusters": [{}] * 16, "odd_ones_out": [{}] * 6,
                       "same_claim": [[{}]] * 39}}
     doc = explorer.explorer_html(data, "<html></html>")
-    n = re.search(r'data-tab="areas"[^>]*>Areas<b>([\d,]+)</b>', doc)
-    assert n and n.group(1) == "61", f"Areas says {n and n.group(1)}, not 16 + 6 + 39"
+    n = _sections(doc)[1]["counts"]["areas"]
+    assert n == 61, f"Areas says {n}, not 16 + 6 + 39"
 
     v = explorer._VIEWS
     ab = v[v.index("function areasTab"):v.index("function findingsTab")]
@@ -1251,8 +1270,10 @@ def test_no_tab_opens_on_a_grey_sentence():
     doc = explorer.explorer_html(data, "<html></html>")
     assert "<footer" not in doc, "the footer is back"
     import re
-    tabs = re.findall(r'<button role="tab" data-tab="([a-z]+)"[^>]*data-tip="([^"]+)"', doc)
-    assert len(tabs) >= 10, f"tabs without a tip saying what they are: {tabs}"
+    secs = re.findall(r'data-section="([a-z]+)"[^>]*data-tip="([^"]+)"', doc)
+    assert len(secs) == 5, f"a section without a tip saying what it is: {secs}"
+    tips = _sections(doc)[1]["tips"]
+    assert all(tips.get(v) for vs in _sections(doc)[1]["subviews"].values() for v in vs), tips
 
 
 def test_monitoring_is_a_navigator_and_no_list_is_capped():
@@ -1329,16 +1350,15 @@ def test_feedback_p5_a_question_is_a_question_and_the_bank_is_the_family():
 
 
 def test_feedback_p7_the_tabs_are_grouped_in_reading_order():
-    import re
     data = {"meta": {"project": "p", "models": 0, "sources": 0, "version": "0",
                      "generated_at": "x", "coverage": {}},
             "models": [], "edges": [], "claims": [], "findings": [], "decisions": [],
             "questions": [], "adjudications": [], "config": {}, "runs": [], "unreadable": []}
     doc = explorer.explorer_html(data, "<html></html>")
-    labels = re.findall(r'<span class="navlab">([^<]+)</span>', doc)
-    assert labels == ["start here", "what is wrong", "your project", "what assay asked", "setup"]
-    order = re.findall(r'<button role="tab" data-tab="([a-z]+)"', doc)
-    assert order[:5] == ["understood", "findings", "areas", "guarantees", "monitoring"], order
+    # (Ryan) four sections by the job, and Settings apart; Explore starts with what is wrong
+    secs, sec = _sections(doc)
+    assert secs == ["overview", "fix", "decide", "explore", "settings"], secs
+    assert sec["subviews"]["explore"][:4] == ["findings", "areas", "guarantees", "monitoring"]
 
 
 def test_feedback_p8_the_page_counts_what_check_counts():

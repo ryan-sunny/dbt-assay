@@ -47,6 +47,14 @@ TABS = ["models", "chain", "claims", "findings", "areas", "monitoring", "suggest
         "spend", "questions", "config", "understood"]
 
 
+def _open_view(page, view: str) -> None:
+    """Open a view the way a person does: its section, then the view in the row under it."""
+    sec = page.evaluate(f"sectionOf({view!r})")
+    page.click(f'nav button[data-section="{sec}"]')
+    if view != "understood":
+        page.click(f'#subnav button[data-view="{view}"]')
+
+
 @pytest.fixture
 def page_file(tmp_path, project_dir):
     """The real page, written by the real commands, against the fixture project.
@@ -87,9 +95,7 @@ def test_the_page_loads_without_raising_and_every_tab_fills(page_file):
             assert not errors, "the page threw on load:\n" + "\n".join(errors[:5])
 
             for tab in TABS:
-                button = page.query_selector(f'nav button[data-tab="{tab}"]')
-                assert button is not None, f"the page has no `{tab}` tab any more"
-                button.click()
+                _open_view(page, tab)
                 page.wait_for_timeout(60)
                 panel = page.query_selector(f"#p-{tab}")
                 assert panel is not None, f"`{tab}` has no panel"
@@ -119,7 +125,7 @@ def test_clicking_a_node_on_the_chain_opens_its_card(page_file):
             errors: list[str] = []
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(page_file.as_uri())
-            page.click('nav button[data-tab="chain"]')
+            _open_view(page, 'chain')
             page.wait_for_timeout(120)
             # The tab opens on the model list; the drawing is one click in.
             row = page.query_selector("#p-chain tbody tr")
@@ -207,7 +213,7 @@ def test_markdown_in_a_description_renders_instead_of_showing_its_syntax(tmp_pat
             errors: list[str] = []
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(out.as_uri())
-            page.click('nav button[data-tab="models"]')
+            _open_view(page, 'models')
             page.wait_for_timeout(100)
             page.fill('#p-models input[type=search]', name)
             page.wait_for_timeout(100)
@@ -255,7 +261,7 @@ def test_a_description_cannot_inject_anything(tmp_path, project_dir):
             fired = []
             page.on("dialog", lambda d: (fired.append(d.message), d.dismiss()))
             page.goto(out.as_uri())
-            page.click('nav button[data-tab="models"]')
+            _open_view(page, 'models')
             page.fill('#p-models input[type=search]', name)
             page.wait_for_timeout(100)
             page.query_selector("#p-models tbody tr").click()
@@ -329,7 +335,7 @@ def test_no_tab_scrolls_the_document(page_file):
                 page.goto(page_file.as_uri())
                 page.wait_for_timeout(120)
                 for tab in TABS:
-                    page.click(f'nav button[data-tab="{tab}"]')
+                    _open_view(page, tab)
                     page.wait_for_timeout(50)
                     over = page.evaluate(
                         "() => document.documentElement.scrollHeight - window.innerHeight")
@@ -475,7 +481,7 @@ def test_no_table_scrolls_sideways_and_every_group_is_a_click(page_file):
                 page.goto(page_file.as_uri())
                 page.wait_for_timeout(120)
                 for tab in TABS:
-                    page.click(f'nav button[data-tab="{tab}"]')
+                    _open_view(page, tab)
                     page.wait_for_timeout(50)
                     wide = page.evaluate(f"""() => [...document.querySelectorAll('#p-{tab} .list')]
                         .filter(e => e.offsetParent && e.scrollWidth > e.clientWidth + 1)
@@ -490,7 +496,7 @@ def test_no_table_scrolls_sideways_and_every_group_is_a_click(page_file):
             page.goto(page_file.as_uri())
             clicked = 0
             for tab in ("claims", "answers", "suggest"):
-                page.click(f'nav button[data-tab="{tab}"]')
+                _open_view(page, tab)
                 page.wait_for_timeout(80)
                 items = page.query_selector_all(f"#p-{tab} .gnav .gitem")
                 assert items, f"`{tab}` has no group column"
@@ -582,9 +588,9 @@ def test_a_tip_shows_at_once_and_no_tab_starts_with_a_note(page_file):
             page = browser.new_page(viewport={"width": 1200, "height": 800})
             page.goto(page_file.as_uri())
             page.wait_for_timeout(100)
-            page.hover('nav button[data-tab="models"]')
+            page.hover('nav button[data-section="explore"]')
             box = page.query_selector(".tipbox")
-            assert box and box.is_visible(), "hovering a tab showed no tip"
+            assert box and box.is_visible(), "hovering a section showed no tip"
             assert "model" in box.inner_text()
             b = box.bounding_box()
             assert b["x"] >= 0 and b["x"] + b["width"] <= 1200, "the tip is outside the window"
@@ -592,7 +598,7 @@ def test_a_tip_shows_at_once_and_no_tab_starts_with_a_note(page_file):
             page.mouse.up()
             assert not box.is_visible(), "a click did not put the tip away"
             for tab in TABS:
-                page.click(f'nav button[data-tab="{tab}"]')
+                _open_view(page, tab)
                 page.wait_for_timeout(50)
                 first = page.evaluate(f"""() => {{
                     const p = document.querySelector('#p-{tab}');
@@ -618,13 +624,16 @@ def test_the_tab_strip_is_one_row_and_a_menu_on_a_phone(page_file):
                 page = browser.new_page(viewport={"width": w, "height": 800})
                 page.goto(page_file.as_uri())
                 page.wait_for_timeout(100)
-                rows = page.evaluate("""() => new Set([...document.querySelectorAll(
-                    'nav .navbtns button')].filter(b => b.offsetParent)
-                    .map(b => Math.round(b.getBoundingClientRect().top))).size""")
-                right = page.evaluate("""() => Math.max(...[...document.querySelectorAll(
-                    'nav .navbtns button')].map(b => b.getBoundingClientRect().right))""")
-                assert rows == 1, f"the tabs take {rows} rows at {w}px"
-                assert right <= w, f"the tabs run off the screen at {w}px"
+                # the sections, and the longest row under them (Explore's views)
+                page.click('nav button[data-section="explore"]')
+                for sel in ("nav button[data-section]", "#subnav button"):
+                    rows = page.evaluate("""(sel) => new Set([...document.querySelectorAll(sel)]
+                        .filter(b => b.offsetParent)
+                        .map(b => Math.round(b.getBoundingClientRect().bottom))).size""", sel)
+                    right = page.evaluate("""(sel) => Math.max(...[...document.querySelectorAll(
+                        sel)].map(b => b.getBoundingClientRect().right))""", sel)
+                    assert rows == 1, f"{sel} takes {rows} rows at {w}px"
+                    assert right <= w, f"{sel} runs off the screen at {w}px"
                 page.close()
             page = browser.new_page(viewport={"width": 420, "height": 800})
             page.goto(page_file.as_uri())
@@ -632,9 +641,11 @@ def test_the_tab_strip_is_one_row_and_a_menu_on_a_phone(page_file):
             assert page.locator("#navmenu").is_visible(), "a phone gets rows of tabs again"
             assert not page.locator("nav").is_visible()
             page.click("#navmenu")
-            page.click('nav button[data-tab="findings"]')
-            assert page.locator("#navcur").inner_text() == "Findings"
-            assert not page.locator("nav").is_visible(), "picking a tab did not close the menu"
+            page.click('nav button[data-section="explore"]')
+            assert page.locator("#navcur").inner_text() == "Explore"
+            assert not page.locator("nav").is_visible(), "picking a section did not close the menu"
+            page.click('#subnav button[data-view="findings"]')
+            assert page.locator("#p-findings").is_visible()
         finally:
             browser.close()
 
@@ -700,8 +711,8 @@ def test_guarantees_shows_a_broken_premise_with_its_evidence_and_dependents(brok
                 page.goto(broken_page.as_uri() + "#guarantees")
                 page.wait_for_timeout(300)
                 if w < 940:
-                    assert page.locator("#navcur").inner_text() == "Guarantees"
-                tab = page.locator('nav button[data-tab="guarantees"]').inner_text()
+                    assert page.locator("#navcur").inner_text() == "Explore"
+                tab = page.locator('#subnav button[data-view="guarantees"]').inner_text()
                 assert "Guarantees" in tab
                 page.locator(".gitem", has_text="broken").first.click()
                 page.locator("tbody tr", has_text="section_id").first.click()
@@ -835,7 +846,7 @@ def test_the_page_shows_what_is_proven_and_what_lean_refuted(tmp_path):
             assert "proven (1 of 1)" in text.lower() and "as long as" in text
             # in its own pane a certificate says "its rows", not the model's name again
             assert "cannot multiply its rows" in text and "covered's rows" not in text, text
-            page.click('nav button[data-tab="guarantees"]')
+            _open_view(page, 'guarantees')
             page.wait_for_timeout(200)
             page.locator(".gitem", has_text="not proven").first.click()
             pane = page.locator(".detail").first.inner_text()
@@ -941,3 +952,53 @@ def test_a_fix_is_approved_on_its_card_and_loads_back(tmp_path):
     got = handback.record(s, {"fixes": [{"fix": "abc123", "verdict": "reject"}]})
     assert fixes.statuses(s)["abc123"]["status"] == "approved" and got["recorded_nothing"]
     s.close()
+
+
+def test_fix_and_decide_are_the_form_embedded_on_its_panes(tmp_path, project_dir):
+    """(Ryan) Four sections in one app. Fix and Decide are the review form, embedded once and
+    pointed at a pane; without a form beside the page, the section says how to write one."""
+    from playwright.sync_api import sync_playwright
+    store = str(tmp_path / "s.duckdb")
+    CliRunner().invoke(app, ["check", "--target", str(project_dir), "--store", store])
+    page_html = tmp_path / "assay.html"
+    CliRunner().invoke(app, ["review", "--emit", str(tmp_path / "review.html"), "--target",
+                             str(project_dir), "--store", store])
+    r = CliRunner().invoke(app, ["page", str(page_html), "--target", str(project_dir),
+                                 "--store", store, "--form", "review.html"])
+    assert r.exit_code == 0, r.output
+    errors: list[str] = []
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(viewport={"width": 1400, "height": 900})
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(page_html.as_uri())
+            page.click('nav button[data-section="fix"]')
+            page.wait_for_timeout(800)
+            src = page.locator("#p-form iframe").get_attribute("src")
+            assert src == "review.html#embed&pane=fixes", src
+            page.click('nav button[data-section="decide"]')
+            page.click('#subnav button[data-view="decide:words"]')
+            page.wait_for_timeout(500)
+            assert page.locator("#p-form iframe").count() == 1        # one form, re-pointed
+            assert page.locator("#p-form iframe").get_attribute("src").endswith("pane=words")
+            frame = page.frames[1]
+            assert frame.evaluate("document.body.classList.contains('embed')")
+            assert not frame.locator("#p-words").is_hidden()
+            assert page.evaluate("location.hash") == "#decide/words"
+            assert not errors, errors
+        finally:
+            browser.close()
+    # a page with no form beside it says so, in the section, rather than opening a broken frame
+    bare = tmp_path / "bare.html"
+    CliRunner().invoke(app, ["page", str(bare), "--target", str(project_dir), "--store", store])
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.goto(bare.as_uri() + "#fix")
+            page.wait_for_timeout(300)
+            assert "assay review --emit" in page.locator("#p-form").inner_text()
+            assert page.locator("#p-form iframe").count() == 0
+        finally:
+            browser.close()
