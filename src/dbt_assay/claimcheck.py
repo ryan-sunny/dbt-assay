@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import re
 from datetime import datetime, timezone
 
 import sqlglot
@@ -146,19 +147,78 @@ def _join_counts(sql: str, index: int, dialect: str) -> tuple[str, str]:
 
 
 def check_model(project, schema, uid: str, sql: str, dialect: str, certs: list,
-                seed: int = 13) -> dict:
-    """{property: (status, detail)} for one model's proven certificates."""
+                seed: int = 13, plugins: tuple = ((), None)) -> dict:
+    """{property: (status, detail)} for one model's proven certificates. `plugins`: (the
+    profile's plugin modules, the project directory to import them from)."""
     from .parse import deep
     with deep():
-        return _check_model(project, schema, uid, sql, dialect, certs, seed)
+        return _check_model(project, schema, uid, sql, dialect, certs, seed, plugins)
+
+
+_TYPE_MISS = re.compile(r"VARCHAR and type (INTEGER|DECIMAL|DOUBLE|BIGINT)|Could not convert "
+                        r"string|Cannot compare values of type VARCHAR|No function matches the "
+                        r"given name and argument types '[^']*VARCHAR[^']*"
+                        r"(INTEGER|DECIMAL|DOUBLE|BIGINT)")
+
+
+def _numeric(ins):
+    """The inputs with every column of unknown type as a number, or None when there is none."""
+    if not any(not raw and k == "text" for *_x, cols in ins for _c, k, raw in cols):
+        return None
+    return [(f, c, db, n, [(col, "int" if not raw and k == "text" else k, raw)
+                           for col, k, raw in cols]) for f, c, db, n, cols in ins]
+
+
+def _run_claim(con_for, ins, sql, dialect, claim, c, rel_of, uid, seed):
+    """(status, detail, notes) over the generated datasets."""
+    from . import parsecheck
+    notes: list = []
+    for n in range(N_DATASETS):
+        rng = random.Random(f"{seed}:{uid}:{c['property']}:{n}")
+        con, used = con_for()
+        for u in used:
+            if u not in notes:
+                notes.append(u)
+        try:
+            parsecheck.fill(con, ins, sql, _rows_for(c["premises"], rel_of, rng))
+            if claim["kind"] == "unique":
+                bad, why = _unique_violations(con, sql, claim["cols"])
+                if bad:
+                    return CONTRADICTED, f"dataset {n + 1}: {why}", notes
+            else:
+                with_j, without = _join_counts(sql, claim["index"], dialect)
+                a = con.execute(with_j).fetchone()[0]
+                b = con.execute(without).fetchone()[0]
+                if (a != b) if claim.get("left") else (a > b):
+                    return (CONTRADICTED, (f"dataset {n + 1}: {a} row(s) through the join against "
+                                          f"{b} before it"), notes)
+        except _Unmet as e:
+            return UNCHECKED, f"inputs cannot meet the premises: {e}", notes
+        except Exception as e:                                   # noqa: BLE001
+            return (UNCHECKED, "the SQL could not run on generated inputs: "
+                    + str(e).splitlines()[0][:200], notes)
+        finally:
+            con.close()
+    return HOLDS, f"held on {N_DATASETS} generated datasets that meet its premises", notes
 
 
 def _check_model(project, schema, uid: str, sql: str, dialect: str, certs: list,
-                 seed: int = 13) -> dict:
+                 seed: int = 13, plugins: tuple = ((), None)) -> dict:
     import duckdb
 
-    from . import parsecheck
+    from . import parsecheck, udfs
     out: dict = {}
+    modules, pdir = plugins
+
+    def con_for():
+        """A connection with the project's plugins, and a stand-in for any function still
+        missing; [what was used, in words]."""
+        con = duckdb.connect(":memory:")
+        parsecheck.load_spatial(con, sql)        # real functions first, so none is stood in for
+        used = [f"plugin {m} loaded" for m in udfs.load_plugins(con, list(modules), pdir)]
+        used += [f"`{f}` stood in for by its first argument" for f in udfs.stand_ins(con, sql,
+                                                                                     dialect)]
+        return con, used
     if (dialect or "duckdb") != "duckdb":
         return {c["property"]: (UNCHECKED, f"runs DuckDB SQL only; this project is {dialect}")
                 for c in certs}
@@ -178,38 +238,20 @@ def _check_model(project, schema, uid: str, sql: str, dialect: str, certs: list,
         if claim.get("kind") not in ("unique", "join"):
             out[c["property"]] = (UNCHECKED, "no run check for this kind of claim yet")
             continue
-        status, detail = HOLDS, ""
-        for n in range(N_DATASETS):
-            rng = random.Random(f"{seed}:{uid}:{c['property']}:{n}")
-            con = duckdb.connect(":memory:")
-            try:
-                parsecheck.fill(con, ins, sql, _rows_for(c["premises"], rel_of, rng))
-                if claim["kind"] == "unique":
-                    bad, why = _unique_violations(con, sql, claim["cols"])
-                    if bad:
-                        status, detail = CONTRADICTED, f"dataset {n + 1}: {why}"
-                        break
-                else:
-                    with_j, without = _join_counts(sql, claim["index"], dialect)
-                    a = con.execute(with_j).fetchone()[0]
-                    b = con.execute(without).fetchone()[0]
-                    if (a != b) if claim.get("left") else (a > b):
-                        status = CONTRADICTED
-                        detail = (f"dataset {n + 1}: {a} row(s) through the join against {b} "
-                                  f"before it")
-                        break
-            except _Unmet as e:
-                status, detail = UNCHECKED, f"inputs cannot meet the premises: {e}"
+        status, detail, notes = UNCHECKED, "", []
+        # A column with no known type is text first; if the SQL cannot run because it compares
+        # or converts one to a number, the same datasets again with those columns as numbers.
+        for variant in (ins, _numeric(ins)):
+            if variant is None:
+                continue
+            status, detail, notes = _run_claim(con_for, variant, sql, dialect, claim, c,
+                                               rel_of, uid, seed)
+            if not (status == UNCHECKED and _TYPE_MISS.search(detail)):
+                if variant is not ins and status != UNCHECKED:
+                    notes.append("columns of unknown type filled with numbers")
                 break
-            except Exception as e:                               # noqa: BLE001
-                status = UNCHECKED
-                detail = "the SQL could not run on generated inputs: " + \
-                         str(e).splitlines()[0][:200]
-                break
-            finally:
-                con.close()
-        if status == HOLDS:
-            detail = f"held on {N_DATASETS} generated datasets that meet its premises"
+        if notes and status != UNCHECKED:
+            detail += " (" + "; ".join(notes) + ")"
         out[c["property"]] = (status, detail)
     return out
 
@@ -220,7 +262,7 @@ def _premises_key(certs: list) -> str:
 
 
 def run(project, schema, store, obligations: list, proven: set, *, force: bool = False,
-        say=print) -> dict:
+        plugins: tuple = ((), None), say=print) -> dict:
     """Check every proven certificate whose model file or premises changed since last time.
     `proven`: the (model, property) pairs Lean proved."""
     store.con.execute(DDL)
@@ -250,7 +292,7 @@ def run(project, schema, store, obligations: list, proven: set, *, force: bool =
             continue
         n += len(todo)
         got = check_model(project, schema, uid, m.compiled, dialect,
-                          [{**c, "premises": allp} for c in todo])
+                          [{**c, "premises": allp} for c in todo], plugins=plugins)
         for c in todo:
             st, detail = got[c["property"]]
             rows.append((uid, c["property"], c["checksum"], key, st, detail, now))

@@ -769,7 +769,7 @@ def register(led: L.Ledger, rows: list[dict]) -> None:
 # ------------------------------------------------------------------------ one call
 
 def run(project, digests, schema, entries, store, target_dir, *, force: bool = False,
-        select: set | None = None, say=print) -> dict:
+        select: set | None = None, plugins: tuple = ((), None), say=print) -> dict:
     """Write, check and record every certificate. Models whose checksum has a stored result are
     not re-proved unless `force`; their premises are re-read from the ledger regardless."""
     from . import toolchain
@@ -815,7 +815,8 @@ def run(project, digests, schema, entries, store, target_dir, *, force: bool = F
         # (a claim a run contradicted before is run again: the model may have changed since)
         proven = {(r["model"], r["property"]) for r in now
                   if r["status"] in (PROVEN, "contradicted")}
-        claimcheck.run(project, schema, store, obls, proven, force=force, say=say)
+        claimcheck.run(project, schema, store, obls, proven, force=force, plugins=plugins,
+                       say=say)
     rows = with_guarantees(stored(store), led, project, store) if store is not None else []
     return {"certificates": len(obls), "checked_now": len(fresh), "reused": skipped,
             "rows": rows, "written_to": str(workdir(target_dir))}

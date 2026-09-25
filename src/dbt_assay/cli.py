@@ -5643,8 +5643,12 @@ def prove(
         # L4: each model's parse, proven by the kernel where it is in the fragment.
         from . import parseproof
         proved = parseproof.run(project, store, tdir, select=scope, force=force, say=say)
+        # functions the project registers through its dbt-duckdb plugins, for the run check
+        from . import udfs
+        pdir = udfs.project_dir_for(tdir, project_dir)
         rep = prove_mod.run(project, digests, schema, entries, store, tdir, force=force,
-                            select=scope, say=say)
+                            select=scope, plugins=(udfs.plugin_modules(pdir, profiles_dir), pdir),
+                            say=say)
         rep["parse"] = parsed
         rep["parse_proof"] = proved
     except RuntimeError as e:

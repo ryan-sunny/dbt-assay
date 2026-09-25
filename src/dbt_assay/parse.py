@@ -490,6 +490,15 @@ def trace(tree, sel, col: str, _depth: int = 0) -> list:
         if (x.alias_or_name or "").lower() == col and not isinstance(x, exp.Star):
             hit = x
             break
+    # *** AN UNQUALIFIED NAME CAN BE AN ALIAS FROM THE SAME SELECT. *** (found by the run check)
+    # DuckDB resolves `rno_name as business_name, business_name as contact_name` to rno_name when
+    # the table has no `business_name`, and to the table's column when it has one. Which, this
+    # reader cannot see, so a name that is also another item's alias is not followed at all.
+    aliases = {(x.alias or "").lower() for x in sel.expressions
+               if isinstance(x, exp.Alias) and x.alias and x is not hit}
+    inner0 = hit.this if isinstance(hit, exp.Alias) else hit
+    if isinstance(inner0, exp.Column) and not inner0.table and inner0.name.lower() in aliases:
+        return []
     if hit is not None:
         inner = hit.this if isinstance(hit, exp.Alias) else hit
         # a cast to text keeps distinct values distinct (and NULL NULL): the same key

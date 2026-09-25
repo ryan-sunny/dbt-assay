@@ -205,22 +205,26 @@ def _default_rows(full: str, cols: list) -> list:
     return [[v[r] for v in vals] for r in range(N_ROWS)]
 
 
+def load_spatial(con, sql: str) -> bool:
+    """Geometry functions live in DuckDB's spatial extension; a project using them had it
+    loaded when it built. Loaded when it is installed; absent, those models read unchecked."""
+    if not re.search(r"\bst_\w+\s*\(", sql, re.IGNORECASE):
+        return False
+    for stmt in (["load spatial"], ["install spatial", "load spatial"]):
+        try:
+            for x in stmt:
+                con.execute(x)
+            return True
+        except Exception:                                        # noqa: BLE001, S112
+            continue
+    return False
+
+
 def fill(con, ins, sql: str, rows_for=None) -> None:
     """Create and fill every relation the model reads. `rows_for(full, cols)` gives each one's
     rows; the default is the adversarial five (a key, the same key, another, NULL, a tie)."""
     rows_for = rows_for or _default_rows
-    # Geometry functions live in DuckDB's spatial extension; a project using them had it
-    # loaded when it built. Loaded when it is installed; absent, those models read unchecked.
-    spatial = False
-    if re.search(r"\bst_\w+\s*\(", sql, re.IGNORECASE):
-        for stmt in (["load spatial"], ["install spatial", "load spatial"]):
-            try:
-                for x in stmt:
-                    con.execute(x)
-                spatial = True
-                break
-            except Exception:                                    # noqa: BLE001, S112
-                continue
+    spatial = load_spatial(con, sql)
     cats = set()
     for full, cat, db, name, cols in ins:
         if cat and cat.lower() not in cats and cat.lower() != "memory":

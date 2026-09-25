@@ -154,3 +154,60 @@ def test_random_n_runs_n_cases_for_each_rule_operation(tmp_path):
     s = Store(str(tmp_path / "s.duckdb"))
     rep = conformance.run(s, n_random=12, say=lambda *_: None)
     assert "all 12 random cases agree" in rep["constructs"]["rule_op:pick"]["detail"], rep
+
+
+# --- sunny-data feedback M4: functions the project registers, and columns of unknown type ------
+
+UNIQUE_ID = [{"id": "x", "relation": "model.p.stg_parent", "columns": ["id"],
+              "property": "unique"}]
+
+
+def test_a_name_that_is_also_an_alias_in_the_same_select_is_not_followed():
+    """`rno_name as business_name, business_name as contact_name`: DuckDB reads the second as the
+    alias when the table has no such column, and as the column when it has one. A certificate
+    took it for the column and a run contradicted it."""
+    from dbt_assay.parse import trace_output
+    assert trace_output("select rno_name as business_name, business_name as contact_name "
+                        "from raw.d", "contact_name") == []
+    assert trace_output("select id as id, name from raw.t", "id") == [("t", "id")]
+
+
+def test_the_profiles_plugins_are_loaded_when_they_import(tmp_path):
+    import duckdb
+
+    from dbt_assay import udfs
+    (tmp_path / "dbt_project.yml").write_text("name: p\nprofile: p\n")
+    (tmp_path / "profiles.yml").write_text(
+        "p:\n  target: dev\n  outputs:\n    dev:\n      type: duckdb\n      path: x.duckdb\n"
+        "      plugins:\n        - module: assay_test_plugin\n")
+    (tmp_path / "assay_test_plugin.py").write_text(
+        "class Plugin:\n    def __init__(self, name, config):\n        pass\n"
+        "    def configure_connection(self, conn):\n"
+        "        conn.execute('create macro twice(x) as x * 2')\n")
+    assert udfs.plugin_modules(tmp_path) == ["assay_test_plugin"]
+    con = duckdb.connect()
+    assert udfs.load_plugins(con, ["assay_test_plugin"], tmp_path) == ["assay_test_plugin"]
+    assert con.execute("select twice(21)").fetchone()[0] == 42
+    # one that does not import is skipped, and a stand-in covers what it would have registered
+    assert udfs.load_plugins(con, ["no_such_plugin"], tmp_path) == []
+    assert udfs.stand_ins(con, "select mystery(a, b) as m, twice(a) from t") == ["mystery"]
+    assert con.execute("select mystery(7, 8)").fetchone()[0] == 7
+
+
+def test_a_function_duckdb_lacks_is_stood_in_for_and_the_result_says_so(tmp_path):
+    target = build(tmp_path, {**MODELS, "f": "select mystery(p.id) as m, p.id as rid "
+                                              "from main.stg_parent p"})
+    p, _d, sch = _load(target)
+    got = claimcheck.check_model(p, sch, "model.p.f", p.models["model.p.f"].compiled, "duckdb",
+                                 [_cert("g", {"kind": "unique", "cols": ["rid"]}, UNIQUE_ID)])
+    assert got["g"][0] == claimcheck.HOLDS and "`mystery` stood in for" in got["g"][1], got
+
+
+def test_columns_of_unknown_type_are_tried_as_numbers_when_text_cannot_run(tmp_path):
+    target = build(tmp_path, {**MODELS, "n": "select p.id as rid from main.stg_parent p "
+                                              "where p.name + 1 > 1"})
+    p, _d, sch = _load(target)
+    got = claimcheck.check_model(p, sch, "model.p.n", p.models["model.p.n"].compiled, "duckdb",
+                                 [_cert("g", {"kind": "unique", "cols": ["rid"]}, UNIQUE_ID)])
+    assert got["g"][0] == claimcheck.HOLDS, got
+    assert "filled with numbers" in got["g"][1], got
