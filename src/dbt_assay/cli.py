@@ -5564,7 +5564,8 @@ def prove(
                                help="with --conformance: duckdb (in memory) or warehouse (your "
                                     "dbt connection, priced)"),
     n_random: int = typer.Option(200, "--random",
-                                 help="with --conformance: random differential cases"),
+                                 help="with --conformance: random differential cases for the "
+                                      "evaluator, and as many for each rule operation"),
     verbose: bool = typer.Option(False, "--verbose", "-v",
                                  help="every model and every property, not only the summary"),
     export_proofs: str = typer.Option(None, "--export-proofs",

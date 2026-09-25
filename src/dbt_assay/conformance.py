@@ -250,7 +250,8 @@ def run(store, engine: str = "duckdb", runner=None, n_random: int = 0, seed: int
         if got.failed:
             raise RuntimeError(got.why)
         return [tuple(r.values()) for r in got.rows]
-    for name, (st, detail) in run_ops(max(50, n_random // 2), engine_rows=engine_rows).items():
+    # `--random N` is N cases for EACH rule operation too, as asked (M2); 50 when it is 0
+    for name, (st, detail) in run_ops(n_random or 50, engine_rows=engine_rows).items():
         out[name] = (st, detail)
         rows.append((name, engine, version, st, detail, now))
     rnd = {k: v for k, v in out.items() if k.startswith("random:")}

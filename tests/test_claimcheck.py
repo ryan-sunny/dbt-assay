@@ -105,3 +105,52 @@ def test_prove_runs_every_proven_claim_and_reads_contradicted_over_proven(tmp_pa
     rows = prove.with_guarantees(prove.stored(s), None, p, s)
     r1 = next(r for r in rows if (r["model"], r["property"]) == (r0["model"], r0["property"]))
     assert r1["guarantee"] == r1["status"] == "contradicted" and r1["lean_checked"]
+
+
+# --- sunny-data feedback M1-M3 ------------------------------------------------------------------
+
+def test_a_model_nested_past_pythons_limit_is_still_run(tmp_path):
+    """M3: the digest raised the recursion limit and the run check's own parse did not."""
+    deep = "(" * 400 + "p.id" + ")" * 400
+    target = build(tmp_path, {**MODELS, "deep": f"select {deep} as rid from main.stg_parent p"})
+    p, _d, sch = _load(target)
+    got = claimcheck.check_model(p, sch, "model.p.deep", p.models["model.p.deep"].compiled,
+                                 "duckdb", [_cert("g", {"kind": "unique", "cols": ["rid"]},
+                                                  [{"id": "x", "relation": "model.p.stg_parent",
+                                                    "columns": ["id"], "property": "unique"}])])
+    assert got["g"][0] == claimcheck.HOLDS, got
+
+
+def test_a_certificate_whose_premise_is_broken_is_not_run_or_counted():
+    """M1: the run check confirmed "no fan-out as long as account_no is unique" on inputs built
+    to make it unique, while the real table repeats it; that was counted as held."""
+    base = {"model": "m", "model_name": "m", "model_checksum": "c", "property": "no_fanout:p",
+            "premises": [], "rule": "inner_join_no_fanout", "status": "proven", "detail": ""}
+    for g in ("refuted", "lost"):
+        rows = [dict(base)]
+        # a broken premise: with_guarantees reads it from the ledger
+        from types import SimpleNamespace
+        broke = SimpleNamespace(status="broken", statement=lambda: "`k` unique in `p`",
+                                evidence=[SimpleNamespace(kind="declared" if g == "lost"
+                                                          else "observed")])
+        rows[0]["premises"] = [{"id": "b", "relation": "p", "columns": ["k"],
+                                "property": "unique"}]
+        led = SimpleNamespace(premises={"b": broke})
+        import dbt_assay.ledger as L
+        orig = (L.why, L.label)
+        L.why, L.label = (lambda _p: "counted"), (lambda _p: "broken")
+        try:
+            got = prove.with_guarantees(rows, led, None)[0]
+        finally:
+            L.why, L.label = orig
+        assert got["guarantee"] == g and got["run_check"]["status"] == "premise_broken", got
+        assert got["status"] != "proven"
+
+
+@needs_lean
+def test_random_n_runs_n_cases_for_each_rule_operation(tmp_path):
+    """M2: `--random 300` ran 150 per operation."""
+    toolchain.build_library(say=lambda *_: None)
+    s = Store(str(tmp_path / "s.duckdb"))
+    rep = conformance.run(s, n_random=12, say=lambda *_: None)
+    assert "all 12 random cases agree" in rep["constructs"]["rule_op:pick"]["detail"], rep

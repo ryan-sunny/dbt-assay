@@ -13,6 +13,7 @@ sort on an ALIAS, one ran a character window past the clause -- and an AST has n
 """
 from __future__ import annotations
 
+import contextlib
 import sys
 from dataclasses import dataclass, field
 
@@ -23,6 +24,21 @@ from sqlglot import exp
 # UNIONed literal rows. Raising it is cheaper than failing, and the cap keeps a pathological file
 # from taking the process down with it.
 _RECURSION = 20_000
+
+
+@contextlib.contextmanager
+def deep():
+    """The raised recursion limit, for every reader of a model's SQL, not only `digest`.
+
+    *** THE DIGEST HAD IT AND THE RUN CHECK DID NOT. *** (sunny-data feedback M3) One model parsed
+    for its certificates and then crashed the run check's own parse of the same SQL with
+    "maximum recursion depth exceeded", which read as a coverage gap."""
+    old = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(old, _RECURSION))
+    try:
+        yield
+    finally:
+        sys.setrecursionlimit(old)
 
 CLAUSE = (
     (exp.Ordered, "order_key"),
@@ -511,22 +527,24 @@ def trace(tree, sel, col: str, _depth: int = 0) -> list:
 def trace_output(sql: str, col: str, dialect: str = "duckdb") -> list:
     """`trace` from a model's final select."""
     try:
-        tree = sqlglot.parse_one(sql, read=dialect)
+        with deep():
+            tree = sqlglot.parse_one(sql, read=dialect)
+            return trace(tree, tree, col)
     except Exception:                                            # noqa: BLE001
         return []
-    return trace(tree, tree, col)
 
 
 def trace_cte(sql: str, cte: str, col: str, dialect: str = "duckdb") -> list:
     """`trace` from one CTE's select."""
     try:
-        tree = sqlglot.parse_one(sql, read=dialect)
+        with deep():
+            tree = sqlglot.parse_one(sql, read=dialect)
+            w = tree.args.get("with_") or tree.args.get("with")
+            for c in (w.expressions if w is not None else []):
+                if c.alias_or_name.lower() == cte.lower():
+                    return trace(tree, c.this, col)
     except Exception:                                            # noqa: BLE001
         return []
-    w = tree.args.get("with_") or tree.args.get("with")
-    for c in (w.expressions if w is not None else []):
-        if c.alias_or_name.lower() == cte.lower():
-            return trace(tree, c.this, col)
     return []
 
 
@@ -774,16 +792,13 @@ class Digest:
 
 
 def digest(sql: str, name: str = "", dialect: str = "duckdb") -> Digest:
-    old = sys.getrecursionlimit()
-    sys.setrecursionlimit(max(old, _RECURSION))
     try:
-        tree = sqlglot.parse_one(sql, dialect=dialect)
+        with deep():
+            tree = sqlglot.parse_one(sql, dialect=dialect)
     except RecursionError:
         return Digest(name=name, ok=False, error="RecursionError: SQL too deeply nested to parse")
     except Exception as e:                                              # noqa: BLE001
         return Digest(name=name, ok=False, error=f"{type(e).__name__}: {e}"[:200])
-    finally:
-        sys.setrecursionlimit(old)
 
     if tree is None:
         return Digest(name=name, ok=False, error="empty statement")

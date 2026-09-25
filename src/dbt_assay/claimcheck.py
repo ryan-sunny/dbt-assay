@@ -148,6 +148,13 @@ def _join_counts(sql: str, index: int, dialect: str) -> tuple[str, str]:
 def check_model(project, schema, uid: str, sql: str, dialect: str, certs: list,
                 seed: int = 13) -> dict:
     """{property: (status, detail)} for one model's proven certificates."""
+    from .parse import deep
+    with deep():
+        return _check_model(project, schema, uid, sql, dialect, certs, seed)
+
+
+def _check_model(project, schema, uid: str, sql: str, dialect: str, certs: list,
+                 seed: int = 13) -> dict:
     import duckdb
 
     from . import parsecheck
@@ -250,7 +257,7 @@ def run(project, schema, store, obligations: list, proven: set, *, force: bool =
     if rows:
         store.con.executemany("insert or replace into claim_checks values (?,?,?,?,?,?,?)", rows)
     if n:
-        say(f"checked {n} proven claim(s) on runs of their models")
+        say(f"running {n} proven claim(s) against their models")
     return {"checked": n}
 
 

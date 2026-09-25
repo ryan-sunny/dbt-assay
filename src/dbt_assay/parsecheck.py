@@ -181,6 +181,12 @@ def printed(sql: str, dialect: str) -> str:
 
 
 def check_duckdb(project, schema, sql: str, dialect: str) -> tuple[str, str, int]:
+    from .parse import deep
+    with deep():
+        return _check_duckdb_retry(project, schema, sql, dialect)
+
+
+def _check_duckdb_retry(project, schema, sql: str, dialect: str) -> tuple[str, str, int]:
     """(status, detail, rows compared) in an in-memory DuckDB.
 
     A column with no known type is filled with text first; if the SQL cannot run because it
@@ -307,6 +313,12 @@ def warehouse_sql(project, schema, sql: str, dialect: str) -> tuple[str, str]:
 
 
 def check_warehouse(project, schema, sql, dialect, runner) -> tuple[str, str, int]:
+    from .parse import deep
+    with deep():
+        return _check_warehouse(project, schema, sql, dialect, runner)
+
+
+def _check_warehouse(project, schema, sql, dialect, runner) -> tuple[str, str, int]:
     try:
         a_sql, b_sql = warehouse_sql(project, schema, sql, dialect)
     except Exception as e:                                       # noqa: BLE001

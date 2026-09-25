@@ -705,7 +705,11 @@ def with_guarantees(rows: list[dict], led: L.Ledger, project, store=None) -> lis
     runs = claimcheck.stored(store) if store is not None else {}
     for r in rows:
         rc = runs.get((r["model"], r["property"]))
-        if rc and rc["model_checksum"] == r.get("model_checksum"):
+        if r["guarantee"] in ("lost", "refuted"):
+            r["run_check"] = {"status": "premise_broken",
+                              "detail": "not run: a premise it rests on is broken in the data, "
+                                        "so a run on inputs meeting it would say nothing"}
+        elif rc and rc["model_checksum"] == r.get("model_checksum"):
             r["run_check"] = {"status": rc["status"], "detail": rc["detail"]}
             if rc["status"] == claimcheck.CONTRADICTED and r["status"] == PROVEN:
                 r["guarantee"] = "contradicted"
@@ -803,8 +807,14 @@ def run(project, digests, schema, entries, store, target_dir, *, force: bool = F
         write(store, todo, LEAN_VERSION)
         # Lean checked the proofs; now each proven claim is run against its own model (see
         # claimcheck): a certificate that states the wrong theorem shows here.
+        # Only what is PROVEN now, holding or conditional: a certificate whose premise the data
+        # breaks is not run, since inputs built to meet that premise say nothing about the real
+        # table (sunny-data feedback M1).
         from . import claimcheck
-        proven = {(r["model"], r["property"]) for r in stored(store) if r["status"] == PROVEN}
+        now = with_guarantees(stored(store), led, project, store)
+        # (a claim a run contradicted before is run again: the model may have changed since)
+        proven = {(r["model"], r["property"]) for r in now
+                  if r["status"] in (PROVEN, "contradicted")}
         claimcheck.run(project, schema, store, obls, proven, force=force, say=say)
     rows = with_guarantees(stored(store), led, project, store) if store is not None else []
     return {"certificates": len(obls), "checked_now": len(fresh), "reused": skipped,

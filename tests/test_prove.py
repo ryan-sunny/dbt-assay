@@ -308,7 +308,7 @@ def test_prove_prints_the_summary_first_and_every_model_only_when_asked(tmp_path
     assert r.exit_code == 0, r.output
     lines = [ln for ln in r.output.splitlines() if ln.strip()]
     head = next(i for i, ln in enumerate(lines) if "properties proven" in ln)
-    assert all("proving" in ln or "Lean" in ln or "build" in ln or "on runs" in ln
+    assert all("proving" in ln or "Lean" in ln or "build" in ln or "against their models" in ln
                for ln in lines[:head]), lines
     assert "parse: proven by Lean for" in r.output and f"counted from {store}" in r.output
     assert "--verbose lists every model" in r.output and "\ncovered " not in r.output

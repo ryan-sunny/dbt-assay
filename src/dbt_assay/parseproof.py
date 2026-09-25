@@ -82,15 +82,18 @@ def run(project, store, target_dir, *, select=None, force: bool = False, say=pri
     todo = [(u, m) for u, m in sorted(project.models.items())
             if m.readable and not getattr(m, "is_installed_package", False)
             and (select is None or u in select) and (force or (u, m.checksum or "") not in done)]
+    from .parse import deep
     for uid, m in todo:
         now = datetime.now(timezone.utc)
         try:
-            q = sqlfrag.query(m.compiled, dialect)
+            with deep():
+                q = sqlfrag.query(m.compiled, dialect)
+                ours = sqlfrag.s_query(q)
+                theorem = theorem_file(m.name, m.compiled, q)
         except sqlfrag.Outside as e:
             rows.append((uid, m.checksum or "", L.UNCHECKED, (f"parse unproven: outside the "
                          f"fragment ({e})"), 0, VIA, now))
             continue
-        ours = sqlfrag.s_query(q)
         theirs = lean_parse(m.compiled)
         if theirs.startswith("OUTSIDE"):
             rows.append((uid, m.checksum or "", L.UNCHECKED, ("parse unproven: outside Lean's "
@@ -102,7 +105,7 @@ def run(project, store, target_dir, *, select=None, force: bool = False, say=pri
                          0, VIA, now))
             continue
         f = root / "Parse" / f"{re.sub(r'[^A-Za-z0-9_]', '_', m.name)}.lean"
-        f.write_text(theorem_file(m.name, m.compiled, q))
+        f.write_text(theorem)
         attempts.append((uid, m, f))
     if attempts:
         say(f"proving the parse of {len(attempts)} model(s) with Lean's kernel")
