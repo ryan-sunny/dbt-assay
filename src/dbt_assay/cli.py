@@ -5124,11 +5124,17 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
             console.print(f"[yellow]the failing rows were not read:[/] {e}")
     ctx = reviewform.context(store, project, cfg, findings, vol, samples)
     if failing:
-        shown = len((samples or ({}, {}))[0])
-        console.print(f"   [dim]Explanations: {_n(len(failing))} failing test(s)"
-                      + (f", {_n(shown)} with a few of their failing rows" if samples else
+        # the same numbers the tab shows: its badge counts the failing tests it has a card for
+        cards = [t for x in ctx["explanations"] for t in (x.get("failing") or [])]
+        models = sum(1 for x in ctx["explanations"] if x.get("failing"))
+        with_rows = sum(1 for t in cards if t.get("rows"))
+        console.print(f"   [dim]Explanations: {_n(len(cards))} failing test(s) on {_n(models)} "
+                      f"model(s)"
+                      + (f", {_n(with_rows)} with a few of their failing rows" if samples else
                          "; pass --project-dir <your dbt project> to show a few of each one's "
                          "failing rows")
+                      + (f"; {_n(len(failing) - len(cards))} more not shown (8 per model, 40 "
+                         f"models at most)" if len(failing) > len(cards) else "")
                       + ".[/]")
     ctx["tally"] = tally
     p.write_text(reviewform.form_html(

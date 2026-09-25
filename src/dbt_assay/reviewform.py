@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from pathlib import Path
 
 # The one thing a card cannot carry and still be honest.
@@ -672,11 +673,37 @@ def _failing_tests(project, store) -> dict:
     return out
 
 
-def _cell(v) -> str | None:
+# a column named like a date or a time, holding epoch milliseconds (how `dbt show --output json`
+# carries a timestamp): 1127952000000 reads 2005-09-29 (sunny-data feedback, 0.52.3)
+_DATEISH = re.compile(r"(date|time|_at$|_on$|_ts$|approved|issued|created|updated|expir|recorded"
+                      r"|filed|received|closed|opened)", re.IGNORECASE)
+
+
+def _cell(v, col: str = "") -> str | None:
     if v is None:
         return None
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and _DATEISH.search(col or "") \
+            and 1e11 <= v <= 5e12:
+        from datetime import datetime, timezone
+        t = datetime.fromtimestamp(v / 1000, tz=timezone.utc)
+        return t.strftime("%Y-%m-%d") if (t.hour, t.minute, t.second) == (0, 0, 0) \
+            else t.strftime("%Y-%m-%d %H:%M:%S")
     s = str(v)
     return s if len(s) <= 60 else s[:57] + "..."
+
+
+def _distinct_rows(rows: list) -> list:
+    """Identical rows once, with how many there were (`__n`): one relationships test showed the
+    same failing value five times, each with its own buttons."""
+    out, at = [], {}
+    for r in rows:
+        k = tuple(sorted(r.items(), key=lambda kv: kv[0]))
+        if k in at:
+            out[at[k]]["__n"] += 1
+        else:
+            at[k] = len(out)
+            out.append({**r, "__n": 1})
+    return out
 
 
 def _explanation_rows(cfg, findings, project=None, store=None, samples=None) -> list:
@@ -708,8 +735,9 @@ def _explanation_rows(cfg, findings, project=None, store=None, samples=None) -> 
         for t, s, a, uid in failing.get(mart, [])[:8]:
             rs = rows_by.get(uid) or []
             tests.append({"test": t, "status": s, "at": a, "what": plain(project, uid),
-                          "rows": [{k: _cell(v) for k, v in r.items()
-                                    if not str(k).startswith("_dlt_")} for r in rs],
+                          "rows": _distinct_rows([{k: _cell(v, k) for k, v in r.items()
+                                                   if not str(k).startswith("_dlt_")}
+                                                  for r in rs]),
                           "why_no_rows": "" if rs else (why_by.get(uid) or "")})
         out.append({"mart": mart, "failing": tests,
                     "options": [{"name": k, "means": v} for k, v in sorted(opts.items())]})
@@ -1498,7 +1526,7 @@ function tick() {
   }
 }
 
-const PANE_NOUN = {findings: 'to rule on', words: 'words', explanations: 'marts',
+const PANE_NOUN = {findings: 'to rule on', words: 'words', explanations: 'models',
                    waivers: 'proposed', monitoring: 'findings', settings: 'settings'};
 
 function edits_() { return (typeof edits === 'undefined') ? {} : edits; }
@@ -1835,7 +1863,7 @@ function pickRow(key, info) {
 }
 
 function rowsTable(rows, first) {
-  const cols = Object.keys(rows[0] || {});
+  const cols = Object.keys(rows[0] || {}).filter(c => !c.startsWith('__'));
   const order = [...cols.filter(c => c === first), ...cols.filter(c => c !== first)].slice(0, 10);
   const t = el('table', {class: 'rtab'});
   t.append(el('tr', {}, order.map(c => el('th', {class: 'mono', text: c}))));
@@ -1876,11 +1904,13 @@ function explanationsTab(host) {
         const m = /`([^`]+)`/.exec(t.what || '');
         const {order, table} = rowsTable(t.rows, m ? m[1] : '');
         t.rows.forEach((r, i) => {
-          table.append(el('tr', {}, order.map(c => el('td', {class: 'mono' + (r[c] == null
-            ? ' null' : ''), text: r[c] == null ? 'null' : r[c]}))));
+          table.append(el('tr', {}, order.map((c, j) => el('td', {class: 'mono' + (r[c] == null
+            ? ' null' : ''), text: (r[c] == null ? 'null' : r[c])
+              + (j === order.length - 1 && r.__n > 1 ? '   \u00d7' + r.__n : '')}))));
           const k = [x.mart, t.test, i].join('\u001f');
           table.append(el('tr', {class: 'rpickrow'}, [el('td', {colspan: order.length},
-            [pickRow(k, Object.assign({row: r}, info))])]));
+            [pickRow(k, Object.assign({row: Object.fromEntries(Object.entries(r)
+              .filter(([c]) => !c.startsWith('__')))}, info))])]));
         });
         card.append(table);
       } else {
@@ -2051,7 +2081,8 @@ document.getElementById('clear').onclick = () => {
 };
 pageOf('findings');
 document.getElementById('n-words').textContent = CTX.words.length || '';
-document.getElementById('n-expl').textContent = CTX.explanations.length || '';
+document.getElementById('n-expl').textContent =
+  CTX.explanations.reduce((n, x) => n + (x.failing || []).length, 0) || '';
 document.getElementById('n-waiv').textContent = CTX.waivers.length || '';
 document.getElementById('n-mon').textContent = ((CTX.monitoring || {}).findings || []).length || '';
 /* The count is how many THIS project has set, not how many exist: a tab reading `7` when

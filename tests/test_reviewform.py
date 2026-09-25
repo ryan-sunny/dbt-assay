@@ -698,3 +698,19 @@ def test_normal_here_with_a_name_becomes_a_kind_in_audit_yml(tmp_path):
     changes, bad = reviewform.load_config({"config": got["c"]})
     assert not bad and [c.dotted for c in changes] == ["explanations.orders.back_order"]
     assert sorted(r["pick"] for r in got["r"]) == ["normal", "problem"]
+
+
+# --------------------------------------------------------------- sunny-data box pass on 0.52.2
+
+def test_explanation_rows_show_dates_and_say_identical_rows_once():
+    """Epoch milliseconds read 1127952000000; one failing value came five times, five buttons."""
+    assert reviewform._cell(1127952000000, "application_date") == "2005-09-29"
+    assert reviewform._cell(1127952000000, "approved") == "2005-09-29"
+    assert reviewform._cell(1127952000000, "parcel_id") == "1127952000000"   # an id stays an id
+    assert reviewform._cell(12, "created_at") == "12"
+    rows = reviewform._distinct_rows([{"f": "B1"}] * 5 + [{"f": "B2"}])
+    assert rows == [{"f": "B1", "__n": 5}, {"f": "B2", "__n": 1}]
+    js = reviewform._JS
+    assert "!c.startsWith('__')" in js and "r.__n > 1" in js
+    # the tab counts the failing tests it shows, as `review --emit` does
+    assert "(x.failing || []).length" in js
