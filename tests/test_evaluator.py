@@ -210,11 +210,38 @@ def test_the_page_and_the_form_get_the_cards_from_the_last_verify_run(tmp_path):
     offline = Finding(check="grain_unresolved", subject="model.p.mart_two",
                       subject_name="mart_two", file="", summary="nobody knows what one row is",
                       detail="d", evidence={"k": 1})
-    got = live.with_stored_evaluator([offline], st, p)
+    got = live.with_stored_warehouse([offline], st, p)
     assert offline.evidence["evaluator"]["also_flagged_by"] == ["fct_missing_primary_key_tests"]
     assert {f.check for f in got} >= {"reads_raw_source_outside_staging",
                                      "evaluator_config_does_not_fit"}
     assert len(got) == 1 + len(kept)
     line = ev.surface_line(got)
     assert f"on {len(kept)} card(s) of its own and 1 on assay's own" in line
+    st.close()
+
+
+def test_monitoring_and_counted_findings_reach_the_page_and_the_form(tmp_path):
+    """*** THE PAGE AND THE FORM NEVER SAW WHAT ONLY THE WAREHOUSE KNOWS. *** `check --verify`
+    wrote monitoring findings and `hop_drops_most_rows`; the offline surfaces rebuilt findings
+    without them. They come back from the latest full run, once, and only what offline lacks."""
+    from dbt_assay import live
+    from dbt_assay.store import Store
+    p = _project(tmp_path)
+    mon = Finding(check="volume_is_not_being_watched", subject="", subject_name="", file="",
+                  summary="3 models with a mart downstream have no row-count monitor",
+                  detail="d", base=2, evidence={"unwatched": 3})
+    hop = Finding(check="hop_drops_most_rows", subject="model.p.mart_one",
+                  subject_name="mart_one", file="", summary="keeps 10% of int_x",
+                  detail="d", evidence={"parent": "int_x"})
+    other = Finding(check="grain_unresolved", subject="model.p.lonely", subject_name="lonely",
+                    file="", summary="s", detail="d")
+    st = Store(tmp_path / "s.duckdb")
+    st.con.execute("insert into runs (run_id, started_at, project) values ('r1', now(), 'p')")
+    st.write_findings("r1", [mon, hop, other])
+    got = live.with_stored_warehouse([], st, p)
+    assert sorted(f.check for f in got) == ["hop_drops_most_rows", "volume_is_not_being_watched"]
+    assert {f.id for f in got} == {mon.id, hop.id}
+    # already produced offline: not twice
+    again = live.with_stored_warehouse([hop], st, p)
+    assert [f.check for f in again].count("hop_drops_most_rows") == 1
     st.close()

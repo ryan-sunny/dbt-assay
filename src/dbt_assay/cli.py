@@ -3745,9 +3745,11 @@ def _monitoring_findings(project, cfg, verify: bool, project_dir: str, profiles_
     if not verify:
         src_mod.DEFERRED.append((
             "monitoring",
-            ("whether anything watches this project's volume and freshness was NOT checked: it "
-             "needs your warehouse, the way `probe` does. `assay check --verify` runs it, and "
-             "`assay volume` is the full report. Nothing here says the monitoring is fine.")))
+            ("whether anything watches this project's volume and freshness was NOT checked on "
+             "this run: it needs your warehouse, the way `probe` does. `assay check --verify` "
+             "runs it, and `assay volume` is the full report. Any monitoring findings listed are "
+             "the ones the last `check --verify` found; nothing here says the monitoring is "
+             "fine.")))
         return []
     schema_name = opts.get("schema") or _default_elementary_schema(project)
 

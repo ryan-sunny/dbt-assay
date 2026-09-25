@@ -156,19 +156,28 @@ def all_findings(project, digests, schema, entries=None, *,
     with ledger_mod.collecting(led):
         fs = _all_findings(project, digests, schema, entries, threshold, store)
     if store is not None and stored_evaluator:
-        fs = with_stored_evaluator(fs, store, project)
+        fs = with_stored_warehouse(fs, store, project)
     return fs
 
 
-def with_stored_evaluator(fs: list, store, project) -> list:
-    """The latest full run's dbt-project-evaluator cards, on a surface that computes offline.
+# Findings only `check --verify` can produce: it read them from the warehouse through dbt.
+# (The evaluator's cards are found by their evidence instead: some share assay's own names.)
+WAREHOUSE_CHECKS = ("monitor_declared_but_never_run", "monitor_ran_then_stopped",
+                    "test_declared_but_never_run", "test_skipped_rather_than_passed",
+                    "volume_is_not_being_watched", "hop_drops_most_rows")
+
+
+def with_stored_warehouse(fs: list, store, project) -> list:
+    """The latest full run's warehouse findings, on a surface that computes offline.
 
     *** THE PAGE AND THE FORM NEVER SAW WHAT ONLY THE WAREHOUSE KNOWS. *** They rebuild the
-    findings from the manifest and the store's answers; the evaluator's rows are tables that
-    `check --verify` read. So the cards it wrote are read back from that run: a card assay does
-    not produce itself is rebuilt from its row, and a card of assay's own that the evaluator also
-    flagged gets that evidence back (the id is the same, since the evidence is not in it). `check`
-    reads the evaluator fresh and passes `stored_evaluator=False`.
+    findings from the manifest and the store's answers. The monitoring findings (Elementary's
+    tables), `hop_drops_most_rows` (counted rows) and dbt-project-evaluator's cards are what
+    `check --verify` read through dbt, so on the page and the form they did not exist. They are
+    read back from that run: a finding assay does not produce offline is rebuilt from its row, and
+    a card of assay's own that the evaluator also flagged gets that evidence back (the id is the
+    same, since the evidence is not in it). `check --verify` reads them fresh and passes
+    `stored_evaluator=False`; a `check` without it carries them and says so.
     """
     import json
 
@@ -178,8 +187,9 @@ def with_stored_evaluator(fs: list, store, project) -> list:
         rows = store.con.execute(
             """select check_name, subject, subject_name, file, summary, detail, base,
                       descendants, marts, evidence, exposures, finding_id
-               from findings where run_id = ? and evidence like '%"evaluator"%'""",
-            [run]).fetchall() if run else []
+               from findings where run_id = ? and (evidence like '%"evaluator"%'
+                                                   or check_name in ?)""",
+            [run, list(WAREHOUSE_CHECKS)]).fetchall() if run else []
     except Exception:                                            # noqa: BLE001
         return fs
     by_id = {f.id: f for f in fs}
@@ -191,13 +201,13 @@ def with_stored_evaluator(fs: list, store, project) -> list:
             continue
         mine = by_id.get(fid)
         if mine is not None:
-            if "evaluator" not in (mine.evidence or {}):
+            if "evaluator" in evidence and "evaluator" not in (mine.evidence or {}):
                 mine.evidence = {**(mine.evidence or {}), "evaluator": evidence["evaluator"]}
                 note = detail.split("\n\ndbt-project-evaluator flags this too", 1)
                 if len(note) == 2:
                     mine.detail += "\n\ndbt-project-evaluator flags this too" + note[1]
             continue
-        if "rules" not in (evidence.get("evaluator") or {}):
+        if check not in WAREHOUSE_CHECKS and "rules" not in (evidence.get("evaluator") or {}):
             continue                  # assay's own card, and assay no longer raises it
         f = Finding(check=check, subject=subject or "", subject_name=name or "", file=file or "",
                     summary=summary, detail=detail or "", base=int(base or 1),
