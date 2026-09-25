@@ -358,3 +358,15 @@ def test_a_regrouped_fan_out_is_apart_from_one_that_multiplies_the_output(tmp_pa
     assert grouped["lean_checked"] and fanned["lean_checked"]
     assert all(r["status"] != "proven" or r["guarantee"] in ("holding", "conditional")
                for r in rep["rows"])
+
+
+def test_a_refutation_is_lean_checked_and_a_file_that_never_loaded_is_not():
+    """sunny-data feedback L10: "19 refuted by Lean" were `lean_checked: false`."""
+    base = {"model": "m", "model_name": "m", "model_checksum": "", "property": "no_fanout:p",
+            "premises": [], "rule": "inner_join_no_fanout"}
+    rows = [{**base, "status": "not_proven", "detail": "decide proved that the goal is false"},
+            {**base, "property": "grain", "status": "not_proven",
+             "detail": prove.DID_NOT_CHECK + ": exit 1"}]
+    got = prove.with_guarantees(rows, None, None)
+    assert got[0]["lean_checked"] and got[0]["status"] == "not_proven"
+    assert not got[1]["lean_checked"]

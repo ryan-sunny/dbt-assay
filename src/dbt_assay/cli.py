@@ -5669,7 +5669,10 @@ def prove(
     summary = {"properties": len(rows), "proven": g["holding"] + g["conditional"],
                "holding": g["holding"], "conditional": g["conditional"],
                "lost": g["lost"], "does_not_hold": g["refuted"], "regrouped": g["regrouped"],
-               "not_proven": g["not_proven"],
+               "not_proven": sum(1 for r in rows if r["guarantee"] == "not_proven"
+                                 and r["lean_checked"]),
+               "lean_did_not_check": sum(1 for r in rows if r["guarantee"] == "not_proven"
+                                         and not r["lean_checked"]),
                "no_rule_applies": g["not_attempted"], "stale": g["stale"],
                "parse": dict(ps), "models": len(parse_state)}
     if json_out:
@@ -5687,6 +5690,8 @@ def prove(
                   f"counted repeating), {summary['regrouped']} multiply rows and are grouped "
                   f"back by the model's grain, {summary['not_proven']} refuted by Lean, "
                   f"{summary['no_rule_applies']} with no rule for their shape"
+                  + (f", [red]{summary['lean_did_not_check']} Lean could not check (the file "
+                     f"did not load)[/]" if summary["lean_did_not_check"] else "")
                   + (f", {summary['stale']} whose file changed since" if summary["stale"] else "")
                   + ".")
     console.print(f"parse: proven by Lean for {ps['proven']} of {len(parse_state)} model(s); "
@@ -5720,7 +5725,8 @@ def prove(
         console.print("\n[bold]no rule for their shape, by reason[/]")
         for w, n in why.most_common(8):
             console.print(f"  {n:>4}  {w}")
-    refused = Counter(r["model_name"] for r in rows if r["guarantee"] == "not_proven")
+    refused = Counter(r["model_name"] for r in rows if r["guarantee"] == "not_proven"
+                      and r["lean_checked"])
     if refused:
         console.print("\n[bold]refuted by Lean[/] [dim](--verbose has what each is "
                       "missing)[/]: " + ", ".join(f"{m} ({n})" if n > 1 else m

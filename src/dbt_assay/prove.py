@@ -35,6 +35,7 @@ from pathlib import Path
 from . import ledger as L
 
 PROVEN, NOT_PROVEN, NOT_ATTEMPTED = "proven", "not_proven", "not_attempted"
+DID_NOT_CHECK = "Lean did not check this file"
 
 DDL = """
 create table if not exists proofs (
@@ -533,7 +534,7 @@ def _mark(f: Path, os_: list, out: str, rc: int = 0) -> None:
     for o in os_:
         if whole_file:
             o.status = NOT_PROVEN
-            o.detail = "Lean did not check this file: " + (out.strip()[-800:] or f"exit {rc}")
+            o.detail = f"{DID_NOT_CHECK}: " + (out.strip()[-800:] or f"exit {rc}")
         elif o.theorem in errs:
             o.status = NOT_PROVEN
             o.detail = "\n".join(errs[o.theorem])[:1500]
@@ -658,7 +659,10 @@ def with_guarantees(rows: list[dict], led: L.Ledger, project, store=None) -> lis
     # consumer filtering on it counted seven joins that multiply rows as proven. `lean_checked`
     # keeps what Lean did; `status` says what holds.
     for r in rows:
-        r["lean_checked"] = r["status"] == PROVEN
+        # Lean checked it when it proved it, or when it ran on the file and refused it (L10:
+        # "19 refuted by Lean" were `lean_checked: false`). Not when the file never loaded.
+        r["lean_checked"] = r["status"] == PROVEN or (
+            r["status"] == NOT_PROVEN and DID_NOT_CHECK not in (r.get("detail") or ""))
         r["status"] = VERDICT.get(r["guarantee"], r["guarantee"])
     return rows
 
