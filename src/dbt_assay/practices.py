@@ -187,7 +187,8 @@ def question_for(flag: Flag) -> dict:
 
 
 # Engines whose information_schema lists columns per (schema, table) and answers it cheaply.
-_LISTABLE = ("duckdb", "postgres", "snowflake", "redshift")
+# BigQuery's is per dataset (`project.dataset.INFORMATION_SCHEMA.COLUMNS`), asked per dataset.
+_LISTABLE = ("duckdb", "postgres", "snowflake", "redshift", "mysql", "bigquery")
 
 
 def present_columns(probe_mod, rels, project_dir: str, profiles_dir: str | None, dbt_bin: str,
@@ -214,11 +215,24 @@ def present_columns(probe_mod, rels, project_dir: str, profiles_dir: str | None,
         return {}
     names = ", ".join("'" + t.replace("'", "''") + "'" for t in sorted({t for _s, t in
                                                                            parts.values()}))
-    got = probe_mod.run_sql(
-        "select lower(table_schema) as s, lower(table_name) as t, lower(column_name) as c "
-        f"from information_schema.columns where lower(table_name) in ({names})",
-        project_dir, profiles_dir, dbt_bin, limit=500_000,
-        caller="assay.practices.present_columns", kind="metadata")
+    cols = "select lower(table_schema) as s, lower(table_name) as t, lower(column_name) as c "
+    where = f"where lower(table_name) in ({names})"
+    if dialect == "bigquery":
+        # one listing per dataset, in one statement
+        sets = {}
+        for r in rels:
+            bits = [x.strip("`") for x in str(r).replace("`", "").split(".")]
+            if len(bits) >= 3:
+                sets[(bits[-3], bits[-2])] = True
+            elif len(bits) == 2:
+                sets[("", bits[-2])] = True
+        sql = " union all ".join(
+            f"{cols}from `{(p + '.') if p else ''}{ds}`.INFORMATION_SCHEMA.COLUMNS {where}"
+            for p, ds in sorted(sets))
+    else:
+        sql = f"{cols}from information_schema.columns {where}"
+    got = probe_mod.run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=500_000,
+                            caller="assay.practices.present_columns", kind="metadata")
     if got.failed:
         return None
     if any(not {"s", "t", "c"} <= set(row) for row in got.rows):

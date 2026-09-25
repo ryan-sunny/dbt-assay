@@ -517,6 +517,8 @@ def decide(store, client: Client, recipe, questions: dict, *,
             ", ctx, key=..., inputs=...)`, so that `assay stale --exact` can build it again. "
             f"Got {type(recipe).__name__}.")
     state, decision_key = recipe.state, recipe.key
+    from .governance import guard
+    guard(recipe.builder)                # row values never leave in metadata-only mode
     check_question_ids(questions)
     store.con.execute(DDL)
     sh = state_hash(state)
@@ -653,9 +655,11 @@ def prefetch(store, client: Client, asks: list, *, caller: str = "assay",
     if pre is None:
         pre = store._prefetched = {}
     todo, seen = [], set()
+    from .governance import guard
     for recipe, questions, prompt_version, contexts in asks:
         if recipe is None:
             continue
+        guard(recipe.builder)
         check_question_ids(questions)
         sh = state_hash(recipe.state)
         _hits, ask_these = cache_split(store, recipe, questions, prompt_version, sh)

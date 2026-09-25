@@ -84,8 +84,9 @@ def lexAux : Nat → Str → Option (List Tok)
       match quoted 39 n cs with
       | some (body, rest) => (lexAux n rest).map (Tok.str body :: ·)
       | none => none
-    else if c == 34 then
-      match quoted 34 n cs with
+    else if c == 34 || c == 96 then
+      -- "quoted", or `backquoted` (MySQL, BigQuery): a name exactly as written
+      match quoted c n cs with
       | some (body, rest) => (lexAux n rest).map (Tok.ident body :: ·)
       | none => none
     else if isDigit c then

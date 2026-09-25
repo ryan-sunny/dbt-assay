@@ -166,9 +166,17 @@ def read(project, runner, schema: str | None = None, dialect: str = "duckdb",
     wanted = {k: v for k, v in rels.items()
               if (cats or {}).get(k) != "off" and k not in SUMMARY_RULES and k not in off}
     exists = None
-    if dialect in ("duckdb", "postgres", "snowflake", "redshift") and rep.schema:
-        listing = (f"select lower(table_name) as t from information_schema.tables "
-                   f"where lower(table_schema) = '{rep.schema.lower()}'")
+    if dialect in ("duckdb", "postgres", "snowflake", "redshift", "mysql", "bigquery") \
+            and rep.schema:
+        if dialect == "bigquery":
+            # the dataset's own INFORMATION_SCHEMA; the project from a relation name
+            first = next(iter(rels.values())).replace("`", "").split(".")
+            proj = first[-3] + "." if len(first) >= 3 else ""
+            listing = (f"select lower(table_name) as t from "
+                       f"`{proj}{rep.schema}`.INFORMATION_SCHEMA.TABLES")
+        else:
+            listing = (f"select lower(table_name) as t from information_schema.tables "
+                       f"where lower(table_schema) = '{rep.schema.lower()}'")
         (got,) = ask_many(runner, [(listing, 2000)])
         if not got.failed:
             exists = {str(r.get("t") or next(iter(r.values()), "")).lower() for r in got.rows}

@@ -399,6 +399,8 @@ def _record(sql: str, res: Result, *, caller: str, kind: str, relation: str = ""
              bool(res.failed), (res.why or "")[:300],
              datetime.now(timezone.utc)])
         led.written += 1
+        # what this command has spent by assay's own estimate, for `warehouse.max_spend_usd`
+        _SPENT["usd"] += float(rate.price(measured if measured is not None else est, took) or 0)
     except Exception:                                            # noqa: BLE001
         led.unrecorded += 1
 
@@ -486,6 +488,137 @@ def profiles_args(profiles_dir: str | None) -> list:
 
 SHOW_ROOT: str | None = None        # the tests point this at a folder of their own
 
+# ------------------------------------------------------------------ the warehouse, by consent
+#
+# *** NOTHING RUNS ON SOMEBODY'S WAREHOUSE UNTIL THEY SAID SO. *** (Ryan, 2026-09-25) A local
+# DuckDB file costs nothing and is the project's own; every other adapter bills compute or bytes,
+# so the first statement is refused with what would run, where and as whom, until `warehouse:
+# {allow_queries: true}` in audit.yml (schedules), ASSAY_ALLOW_WAREHOUSE=1, or a yes at a
+# terminal. `warehouse.target` names the profiles.yml output assay's dbt calls use (a read-only
+# role), `max_queries` and `max_spend_usd` stop a command before it goes past them.
+POLICY: dict = {}                    # audit.yml `warehouse:`, set when a config loads
+_SPENT = {"queries": 0, "usd": 0.0}
+_ALLOWED: dict = {}
+
+
+def set_policy(block: dict | None) -> None:
+    POLICY.clear()
+    POLICY.update(block or {})
+
+
+def profile_output(project_dir: str, profiles_dir: str | None = None) -> dict:
+    """The profiles.yml output dbt will use: `warehouse.target` if set, else the profile's own
+    target. Read for what it NAMES (type, account, user, role, database...); secrets are never
+    returned."""
+    from pathlib import Path as _P
+
+    import yaml
+    pdir = _P(project_dir or ".")
+    try:
+        profile = (yaml.safe_load((pdir / "dbt_project.yml").read_text()) or {}).get("profile")
+    except Exception:                                            # noqa: BLE001
+        return {}
+    for d in ([_P(profiles_dir)] if profiles_dir else
+              [pdir, _P(os.environ.get("DBT_PROFILES_DIR") or pdir), _P.home() / ".dbt"]):
+        try:
+            prof = (yaml.safe_load((d / "profiles.yml").read_text()) or {}).get(profile) or {}
+        except Exception:                                        # noqa: BLE001, S112
+            continue
+        if not prof:
+            continue
+        outs = prof.get("outputs") or {}
+        name = POLICY.get("target") or prof.get("target")
+        out = dict(outs.get(name) or {})
+        secret = ("password", "pass", "token", "private_key", "private_key_passphrase",
+                  "keyfile", "keyfile_json", "client_secret", "refresh_token", "access_token")
+        return {"target": name, **{k: v for k, v in out.items()
+                                   if k not in secret and not isinstance(v, dict)}}
+    return {}
+
+
+def is_local(out: dict) -> bool:
+    """A DuckDB file on this machine: free, and the project's own. MotherDuck is not local."""
+    path = str(out.get("path") or "")
+    return (str(out.get("type") or "").lower() == "duckdb"
+            and not path.startswith(("md:", "motherduck:")))
+
+
+def where_line(out: dict) -> str:
+    """"snowflake account xy123 as ASSAY_RO (role ASSAY_READER, warehouse ASSAY_XS)"."""
+    t = str(out.get("type") or "unknown adapter")
+    place = (out.get("account") or out.get("project") or out.get("host")
+             or out.get("server") or out.get("path") or "")
+    who = out.get("user") or out.get("username") or out.get("client_id") or ""
+    bits = [f"{k} {out[k]}" for k in ("role", "warehouse", "database", "dataset", "schema",
+                                        "catalog", "http_path") if out.get(k)]
+    return (f"{t} {place}".strip() + (f" as {who}" if who else "")
+            + (f" ({', '.join(bits)})" if bits else "")
+            + (f", target {out['target']}" if out.get("target") else ""))
+
+
+def consent(project_dir: str, profiles_dir: str | None) -> None:
+    """Raise WarehouseNotAllowed unless this warehouse may be queried. Asked once per process."""
+    key = (os.path.abspath(project_dir or "."), profiles_dir or "")
+    if key in _ALLOWED:
+        if not _ALLOWED[key]:
+            raise WarehouseNotAllowed(_refusal(profile_output(project_dir, profiles_dir)))
+        return
+    if not os.path.isfile(os.path.join(project_dir or ".", "dbt_project.yml")):
+        # Not a dbt project: dbt fails on its own, with the message that says why, and nothing
+        # can reach a warehouse. This gate would only hide that message behind its own.
+        _ALLOWED[key] = True
+        return
+    out = profile_output(project_dir, profiles_dir)
+    ok = (is_local(out) or bool(POLICY.get("allow_queries"))
+          or str(os.environ.get("ASSAY_ALLOW_WAREHOUSE") or "").lower() in ("1", "true", "yes"))
+    if not ok:
+        import sys
+        if sys.stdin is not None and sys.stdin.isatty() and sys.stderr.isatty():
+            print(_preview(out), file=sys.stderr)
+            try:
+                ok = input("Run them? [y/N] ").strip().lower() in ("y", "yes")
+            except EOFError:
+                ok = False
+    _ALLOWED[key] = ok
+    if not ok:
+        raise WarehouseNotAllowed(_refusal(out))
+
+
+def _preview(out: dict) -> str:
+    cap = []
+    if POLICY.get("max_queries"):
+        cap.append(f"at most {int(POLICY['max_queries'])} queries")
+    if POLICY.get("max_spend_usd") is not None:
+        cap.append(f"at most ~${float(POLICY['max_spend_usd']):.2f} estimated")
+    return (f"assay would run read-only queries against {where_line(out)}: counts, distinct "
+            f"counts and small samples of the tables your models build, through your own dbt. "
+            + (f"This command stops at {' and '.join(cap)}. " if cap else
+               "No query or spend limit is set (`warehouse.max_queries`, "
+               "`warehouse.max_spend_usd` in audit.yml). ")
+            + "`assay onboard` lists what runs and what leaves your network.")
+
+
+def _refusal(out: dict) -> str:
+    return ("nothing was sent to the warehouse: " + _preview(out)
+            + " Allow it with `warehouse: {allow_queries: true}` in audit.yml (a schedule), "
+              "ASSAY_ALLOW_WAREHOUSE=1, or answer yes at a terminal.")
+
+
+def budget(estimated_usd: float | None = None) -> None:
+    """Count one statement about to go; refuse past the command's limits, BEFORE it is sent."""
+    mq = POLICY.get("max_queries")
+    if mq and _SPENT["queries"] + 1 > int(mq):
+        raise WarehouseBudget(
+            f"stopped before query {_SPENT['queries'] + 1}: `warehouse.max_queries` is {int(mq)} "
+            f"for one command. Nothing past it was sent; raise it in audit.yml, or narrow the "
+            f"command (--select, --limit).")
+    ms = POLICY.get("max_spend_usd")
+    if ms is not None and _SPENT["usd"] + float(estimated_usd or 0.0) > float(ms):
+        raise WarehouseBudget(
+            f"stopped: the estimated warehouse spend would pass `warehouse.max_spend_usd` "
+            f"(${float(ms):.2f}; ${_SPENT['usd']:.4f} so far). Nothing past it was sent.")
+    _SPENT["queries"] += 1
+
 
 def show_args(project_dir: str) -> list:
     """`--target-path <assay's own folder> --no-write-json`, for every `dbt show` assay sends.
@@ -504,15 +637,25 @@ def show_args(project_dir: str) -> list:
     root = SHOW_ROOT or os.path.join(base or os.path.expanduser("~/.cache"), "assay", "dbt-target")
     key = hashlib.sha256(os.path.abspath(project_dir or ".").encode()).hexdigest()[:12]
     where = os.path.join(root, key)
+    tgt = ["--target", str(POLICY["target"])] if POLICY.get("target") else []
     try:
         os.makedirs(where, exist_ok=True)
     except OSError:
-        return []
-    return ["--target-path", where, "--no-write-json"]
+        return tgt
+    return ["--target-path", where, "--no-write-json", *tgt]
 
 
 class WarehouseUnreachable(RuntimeError):
     """dbt could not answer `select 1` here, so nothing this command counts would be real."""
+
+
+class WarehouseNotAllowed(WarehouseUnreachable):
+    """Not an unreachable warehouse: one nobody has agreed assay may query. A subclass, so every
+    command that stops on an unreachable warehouse stops on this, with this message."""
+
+
+class WarehouseBudget(WarehouseUnreachable):
+    """This command reached `warehouse.max_queries` or `warehouse.max_spend_usd`."""
 
 
 # *** A COMMAND THAT CANNOT REACH THE WAREHOUSE MUST SAY SO, NOT REPORT WHAT IT DID NOT SEE. ***
@@ -525,6 +668,7 @@ _REACHED: dict = {}
 
 
 def _reach(project_dir: str, profiles_dir: str | None, dbt_bin: str) -> None:
+    consent(project_dir, profiles_dir)
     key = (os.path.abspath(project_dir or "."), profiles_dir or "", dbt_bin)
     if key in _REACHED:
         if _REACHED[key]:
@@ -578,6 +722,7 @@ def _execute(sql: str, project_dir: str, profiles_dir: str | None = None,
     slow, and enormous, so it is off unless `cost.measure_bytes` is set.
     """
     _reach(project_dir, profiles_dir, dbt_bin)
+    budget()
     cmd = [*dbt_bin.split(), "show", "--inline", sql, "--output", "json", "--limit", str(limit),
            *profiles_args(profiles_dir), *show_args(project_dir)]
     if measure:

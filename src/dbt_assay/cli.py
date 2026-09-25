@@ -1086,6 +1086,10 @@ def onboard(
                                     help="how many models the first judged pass covers"),
     dialect: str = typer.Option(None, "--dialect",
                                 help="override; read from the manifest by default"),
+    check_warehouse: bool = typer.Option(False, "--check-warehouse",
+                                         help="also connect once (after you allow it) and say "
+                                              "who assay is on the warehouse: user, role, "
+                                              "compute"),
 ):
     """One command for a project assay has never seen. Reads, reports, writes nothing that gates.
 
@@ -1261,7 +1265,10 @@ def onboard(
         except Exception:                                        # noqa: BLE001,S110
             pass
 
-    console.print("\n[bold]7. next[/]")
+    console.print("\n[bold]7. your warehouse, and what leaves your network[/]")
+    _warehouse_panel(str(_project_dir_for(tdir) or "."), profiles_dir, check_warehouse, dbt_bin)
+
+    console.print("\n[bold]8. next[/]")
     steps = []
     if cov["unreadable"] or cov.get("from_stripped"):
         n_raw = cov["unreadable"] + cov.get("from_stripped", 0)
@@ -1340,6 +1347,88 @@ def onboard(
     for cmd, why in steps:
         t.add_row(f"[bold cyan]{cmd}[/]", f"[dim]{why}[/]")
     console.print(t)
+
+
+# The adapter's own caps, as profiles.yml settings dbt applies to every query assay sends, and
+# what to set where the profile cannot (a user's or a role's own limit).
+_NATIVE_CAPS = {
+    "snowflake": ([("query_tag", "every assay query shows under this tag in QUERY_HISTORY")],
+                  ("a statement timeout is the user's or the warehouse's: "
+                   "ALTER USER <assay user> SET STATEMENT_TIMEOUT_IN_SECONDS = 300; a read-only "
+                   "role and its own XS warehouse keep the spend visible and small")),
+    "bigquery": ([("maximum_bytes_billed", "BigQuery refuses any query that would bill more"),
+                  ("job_execution_timeout_seconds", "a query running longer is cancelled")],
+                 "a service account with BigQuery Data Viewer and Job User only"),
+    "databricks": ([("http_path", "a SQL warehouse of its own for assay, sized small")],
+                   "a service principal with SELECT only; the SQL warehouse's own query timeout"),
+    "postgres": ([], "a read-only role: ALTER ROLE <assay role> SET statement_timeout = '60s'"),
+    "redshift": ([], "a read-only user in a small WLM queue with a query timeout"),
+    "mysql": ([], "a read-only user: SET GLOBAL max_execution_time, or per user"),
+}
+
+
+def _warehouse_panel(project_dir: str, profiles_dir: str | None, check: bool,
+                     dbt_bin: str) -> None:
+    """Where assay's queries would go, whether they may, their limits, the adapter's own caps,
+    and everything that leaves this machine."""
+    from . import governance as gov_mod
+    out = probe_mod.profile_output(project_dir, profiles_dir)
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    if not out:
+        t.add_row("warehouse", "[yellow]no profile found[/] [dim]for this project; pass "
+                               "--profiles-dir. Nothing will be sent until one is found.[/]")
+    else:
+        t.add_row("warehouse", probe_mod.where_line(out))
+        local = probe_mod.is_local(out)
+        import os as _os
+        allowed = (local or bool(probe_mod.POLICY.get("allow_queries"))
+                   or str(_os.environ.get("ASSAY_ALLOW_WAREHOUSE") or "").lower()
+                   in ("1", "true", "yes"))
+        t.add_row("queries", "[green]a local DuckDB file: free, queried as needed[/]" if local
+                  else "[green]allowed[/] [dim](audit.yml or ASSAY_ALLOW_WAREHOUSE)[/]" if allowed
+                  else "[yellow]not until you allow it[/] [dim]a terminal asks once; a schedule "
+                       "needs `warehouse: {allow_queries: true}` in audit.yml[/]")
+        mq, ms = probe_mod.POLICY.get("max_queries"), probe_mod.POLICY.get("max_spend_usd")
+        t.add_row("limits", (f"{int(mq)} queries" if mq else "[yellow]no query limit[/]")
+                  + " · " + (f"~${float(ms):.2f} estimated" if ms is not None
+                             else "[yellow]no spend limit[/]")
+                  + " [dim]per command (warehouse.max_queries, warehouse.max_spend_usd)[/]")
+        kind = str(out.get("type") or "").lower()
+        caps, advice = _NATIVE_CAPS.get(kind, ([], ""))
+        for key, why in caps:
+            have = out.get(key)
+            t.add_row(f"  {key}", (f"[green]{have}[/] [dim]{why}[/]" if have else
+                                   f"[yellow]not set[/] [dim]in the {out.get('target')} output: "
+                                   f"{why}[/]"))
+        if advice and not local:
+            t.add_row("  also", f"[dim]{advice}[/]")
+        if not local and not probe_mod.POLICY.get("target"):
+            t.add_row("  target", "[dim]assay uses your default target. A read-only `assay` "
+                                  "output in profiles.yml and `warehouse: {target: assay}` keep "
+                                  "it off your build role.[/]")
+    console.print(t)
+    if check and out:
+        try:
+            probe_mod._reach(project_dir, profiles_dir, dbt_bin)
+            who = {"snowflake": "select current_user() as u, current_role() as r, "
+                                "current_warehouse() as w",
+                   "postgres": "select current_user as u", "redshift": "select current_user as u",
+                   "bigquery": "select session_user() as u", "databricks": "select current_user() as u",
+                   "mysql": "select current_user() as u"}.get(str(out.get("type")).lower())
+            if who:
+                got = probe_mod.run_sql(who, project_dir, profiles_dir, dbt_bin, limit=1,
+                                        caller="assay.onboard", kind="metadata")
+                if not got.failed and got.rows:
+                    console.print("  [green]connected[/] as " + ", ".join(
+                        f"{k} {v}" for k, v in got.rows[0].items()))
+            else:
+                console.print("  [green]connected[/]")
+        except probe_mod.WarehouseUnreachable as e:
+            console.print(f"  {e}", style="yellow", markup=False, highlight=False)
+    w = Table(show_header=False, box=None, padding=(0, 2))
+    for what, how in gov_mod.what_leaves():
+        w.add_row(what, f"[dim]{how}[/]")
+    console.print(w)
 
 
 def _lint_vocab(cfg, target: str | None, strict: bool) -> int:
@@ -3910,11 +3999,22 @@ def _clip(text: str, n: int) -> str:
 
 
 def _default_elementary_schema(project) -> str:
-    """Elementary builds into `<your schema>_elementary` unless told otherwise.
+    """Where Elementary's tables are, as the manifest names them.
 
-    A guess, and it is named as one: `--elementary-schema` and `elementary.schema` both override,
-    and a schema that is not there reports as ABSENT rather than as nothing to report.
+    *** THE ADAPTER QUOTES AND CASES A NAME; assay DOES NOT GUESS IT. *** Elementary's own models
+    carry a `relation_name` (`"db"."main_elementary"."x"` on DuckDB, `` `proj`.`ds`.`x` `` on
+    BigQuery, upper-cased on Snowflake), so the prefix before the table is where its tables are,
+    database or project included. Only a project whose manifest has none of them falls back to
+    `<your schema>_elementary`, named as a guess; `--elementary-schema` and `elementary.schema`
+    override either, and a schema that is not there reports as ABSENT, not as nothing to report.
     """
+    raw = project.raw or {}
+    nodes = list((raw.get("nodes") or {}).values()) + [
+        n for g in (raw.get("disabled") or {}).values() for n in g or []]
+    for n in nodes:
+        if n.get("package_name") == "elementary" and n.get("resource_type") == "model" \
+                and n.get("relation_name") and "." in n["relation_name"]:
+            return n["relation_name"].rsplit(".", 1)[0]
     base = ""
     for m in (project.models or {}).values():
         if not getattr(m, "is_installed_package", False) and m.schema:
@@ -7337,6 +7437,10 @@ def feeds(
         raise typer.Exit(0)
 
     client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    from . import governance as gov_mod
+    if gov_mod.metadata_only():
+        console.print("[dim]governance.metadata_only is on: sources are profiled and checked for "
+                      "placeholder values, and no sample is sent to the model provider.[/]")
     if store is None:
         store = Store(store_path)
     ctx = _state_ctx(project, digests, schema, store, cfg)
@@ -7368,8 +7472,8 @@ def feeds(
             continue
         subj = feeds_mod.FeedSubject(relation=t.relation, uid=t.uid, columns=cols,
                                      sample=rows, profile=profile, sentinels=sent)
-        if not client.available:
-            continue
+        if not client.available or gov_mod.metadata_only():
+            continue                    # the sample is row values; the profile above is not
         for chunk in feeds_mod.chunks(cols):
             rec = states.make("feed", ctx, key=f"{t.uid}::feed",
                               inputs={"uid": t.uid, "columns": list(chunk)},
@@ -7736,6 +7840,11 @@ def adjudicate(
     store = Store(store_path) if Path(store_path).exists() else None
     project, _digests, _schema, entries = _entries(tdir, store)
 
+    from . import governance as gov_mod
+    if gov_mod.metadata_only():
+        console.print("[yellow]not run:[/] adjudicating a failing row sends that row's values to "
+                      "the model provider, and `governance.metadata_only` is on in audit.yml.")
+        raise typer.Exit(0)
     rows, skipped = rows_mod.collect(project, entries, probe_mod, project_dir, profiles_dir,
                                      dbt_bin, per_test)
     console.print(f"[bold]{len(rows)}[/] failing row(s) to adjudicate · "

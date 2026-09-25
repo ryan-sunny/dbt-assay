@@ -681,6 +681,23 @@ def default_share_sql(rows: list, dialect: str = "duckdb") -> str:
 
 # ------------------------------------------------- the mirror of test_cannot_fail
 
+def _outer_joined_side(d, column: str) -> tuple | None:
+    """(what, LEFT|FULL) when the model's output `column` is read from the nullable side of an
+    outer join in the select that writes it; else None."""
+    if d is None or not getattr(d, "ok", False):
+        return None
+    text = (d.output_exprs or {}).get(str(column).lower(), "")
+    m = re.fullmatch(r'"?([A-Za-z_][\w$]*)"?\."?([A-Za-z_][\w$]*)"?', text.strip())
+    if not m:
+        return None
+    alias = m.group(1).lower()
+    for j in d.joins or []:
+        if (j.kind or "").upper() in ("LEFT", "FULL") and (j.target_alias or "").lower() == alias:
+            return (j.target_cte or j.target_relation or j.target_alias or alias,
+                    (j.kind or "").upper())
+    return None
+
+
 def test_outruns_its_source(project, digests, schema=None, entries=None) -> list[Finding]:
     """A test asserting something the column it tests has no right to promise.
 
@@ -770,9 +787,18 @@ def test_outruns_its_source(project, digests, schema=None, entries=None) -> list
         origin = str(getattr(ce.provenance, "origin", "") or "")
         note = str(ce.provenance.note or "")
 
-        # *** ONLY THE TWO CASES WHERE THE COLUMN CAN BE NULL BY CONSTRUCTION. ***
+        # *** ONLY THE CASES WHERE THE COLUMN CAN BE NULL BY CONSTRUCTION. ***
         parent_name, why = "", ""
-        if ce.provenance.value == "null_placeholder":
+        joined = _outer_joined_side(digests.get(e.uid), t.column)
+        if joined:
+            # (jaffle_shop) `orders.coupon_amount` is `order_payments.coupon_amount`, a CTE LEFT
+            # JOINed in `final`: NULL for every order with no payment, whatever `sum()` does
+            # inside the CTE. The join is the reason, and it is the one to name.
+            parent_name, kind = joined
+            why = (f"read from `{parent_name}`, which is {kind} JOINed here -- so it is NULL for "
+                   f"every driving row that join does not match. This test asserts the join "
+                   f"always matches, which the join itself does not claim.")
+        elif ce.provenance.value == "null_placeholder":
             parent_name = "a union arm"
             why = ("this column is padded with `CAST(NULL AS ...)` in a UNION arm, so it is NULL "
                    "for every row that arm contributes. The test cannot pass while that arm "

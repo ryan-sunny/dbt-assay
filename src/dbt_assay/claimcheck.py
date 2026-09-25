@@ -155,7 +155,25 @@ def check_model(project, schema, uid: str, sql: str, dialect: str, certs: list,
                 seed: int = 13, plugins: tuple = ((), None), worker=None) -> dict:
     """{property: (status, detail)} for one model's proven certificates. `plugins`: (the
     profile's plugin modules, the project directory to import them from)."""
+    from . import translate
     from .parse import deep
+    d = (dialect or "duckdb").lower()
+    if d != "duckdb":
+        duck, why = translate.to_duckdb(sql, d)
+        if duck is None:
+            return {c["property"]: (UNCHECKED, f"not run: {why}") for c in certs}
+        with deep():
+            got = _check_model(project, schema, uid, duck, "duckdb", certs, seed, plugins, worker)
+        out = {}
+        for prop, (st, detail) in got.items():
+            if st == CONTRADICTED:
+                # Not reported as contradicted: the translation is not proven to mean the same.
+                out[prop] = (UNCHECKED, (f"contradicted only on the DuckDB translation, which "
+                                         f"is not proven to mean what {d} means by it: {detail}"))
+            else:
+                out[prop] = (st, f"{detail}; {translate.note(d)}" if detail else
+                             translate.note(d))
+        return out
     with deep():
         return _check_model(project, schema, uid, sql, dialect, certs, seed, plugins, worker)
 

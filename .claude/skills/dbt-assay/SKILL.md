@@ -549,7 +549,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay init` | `assay_init` | Write an audit. | `--force` |
 | `assay inventory` | `assay_inventory` | What every model in this project actually IS. | `--target/-t` `--model/-m` `--store` `--json` `--config` `--html` `--write` `--include-unadjudicated` `--limit/-n` `--dialect` |
 | `assay mcp` | `assay_mcp` | Serve assay as tools an agent can call instead of reading your SQL. | `--target/-t` `--store` `--handbacks` `--verdicts-only` |
-| `assay onboard` | `assay_onboard` | One command for a project assay has never seen. | `--target/-t` `--store` `--config` `--agent` `--compile` `--dbt/--dbt-bin` `--profiles-dir` `--judge` `--judge-limit` `--dialect` |
+| `assay onboard` | `assay_onboard` | One command for a project assay has never seen. | `--target/-t` `--store` `--config` `--agent` `--compile` `--dbt/--dbt-bin` `--profiles-dir` `--judge` `--judge-limit` `--dialect` `--check-warehouse` |
 | `assay page <out>` | `assay_page` | Everything assay knows about this warehouse, as one file you can open. | `--target/-t` `--store` `--config` `--dialect` `--plain` `--data` `--from` `--form` `--monitoring` |
 | `assay patch <out_dir>` | `assay_patch` | Write the uniqueness tests assay can prove will pass. | `--target/-t` `--store` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--dry-run` `--dialect` `--worth-testing` `--limit/-n` `--json` |
 | `assay plan` | `assay_plan` | What to DO about the findings a person agreed with. | `--target/-t` `--config` `--store` `--out` `--dialect` `--json` |

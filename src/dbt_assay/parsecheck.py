@@ -365,6 +365,49 @@ def _check_warehouse(project, schema, sql, dialect, runner) -> tuple[str, str, i
     return L.BROKEN, "the SQL and its printed parse return different rows", len(ra)
 
 
+# How each engine plans a statement without running it. BigQuery has no EXPLAIN statement (its
+# dry run is an API flag dbt does not expose), so it goes straight to the round trip.
+EXPLAIN = {"duckdb": "explain", "snowflake": "explain using text", "postgres": "explain",
+           "redshift": "explain", "databricks": "explain", "spark": "explain",
+           "mysql": "explain", "trino": "explain", "athena": "explain"}
+
+
+def _explain_stmt(items: list, dialect: str) -> str:
+    """One `dbt show --inline` that has the engine plan every statement, then says it did.
+
+    *** SQL INSIDE JINJA, WITH NOTHING IN IT READ AS JINJA. *** A `{% raw %}` block inside a
+    block `set` carries any text, braces included; `run_query` runs it while the inline node
+    compiles, and an engine that refuses one fails the call with its own error."""
+    kw = EXPLAIN[dialect]
+    parts = [("{% set q %}{% raw %}" + f"{kw} {sql.strip().rstrip(';')}" + "{% endraw %}"
+              "{% endset %}{% do run_query(q) %}") for _u, sql in items]
+    return "".join(parts) + f"select {len(items)} as assay_explained"
+
+
+def explain_all(items: list, dialect: str, runner) -> dict:
+    """{uid: why} for the models the engine refuses to plan; the rest it accepts. Planning is
+    free on every engine here, and nothing runs. Many in one call, split in halves on a refusal."""
+    refused: dict = {}
+
+    def walk(chunk):
+        if not chunk:
+            return
+        got = runner(_explain_stmt(chunk, dialect))
+        if not got.failed:
+            return
+        if len(chunk) == 1:
+            why = got.why or "refused"
+            why = why.split("Encountered an error:", 1)[-1]
+            refused[chunk[0][0]] = " ".join(why.split())
+            return
+        mid = len(chunk) // 2
+        walk(chunk[:mid])
+        walk(chunk[mid:])
+    for i in range(0, len(items), 50):
+        walk(items[i:i + 50])
+    return refused
+
+
 def run(project, digests, schema, store, *, via: str = "duckdb", select=None, force=False,
         project_dir: str = ".", profiles_dir: str | None = None, dbt_bin: str = "dbt",
         runner=None, say=print) -> dict:
@@ -386,6 +429,21 @@ def run(project, digests, schema, store, *, via: str = "duckdb", select=None, fo
             and (force or (u, m.checksum or "") not in done)]
     if todo:
         say(f"checking the parse of {len(todo)} model(s) against their SQL ({via})")
+    refused: dict = {}
+    explained: set = set()
+    if via == "warehouse" and todo and dialect in EXPLAIN:
+        refused = explain_all([(u, m.compiled) for u, m in todo], dialect, runner)
+        explained = {u for u, _m in todo if u not in refused}
+        todo_now = []
+        for uid, m in todo:
+            if uid in refused:
+                rows.append((uid, m.checksum or "", L.UNCHECKED,
+                             f"the engine refused it (EXPLAIN): {refused[uid][:240]}", 0, via,
+                             datetime.now(timezone.utc)))
+                by_model[m.name] = L.UNCHECKED
+            else:
+                todo_now.append((uid, m))
+        todo = todo_now
     from .sandbox import Worker, default_slots
     # In DuckDB each model runs in a sandbox process, several at once; through the warehouse it
     # is a dbt call, and those share one DuckDB writer, so they go one at a time.
@@ -396,6 +454,8 @@ def run(project, digests, schema, store, *, via: str = "duckdb", select=None, fo
                 return check_warehouse(project, schema, m.compiled, dialect, runner)
             return check_duckdb(project, schema, m.compiled, dialect, worker)
         for (uid, m), (st, detail, n) in zip(todo, worker.map(one, todo)):
+            if uid in explained:
+                detail = f"the engine accepts it (EXPLAIN); {detail}"
             rows.append((uid, m.checksum or "", st, detail, n, via, datetime.now(timezone.utc)))
             by_model[m.name] = st
     if rows:

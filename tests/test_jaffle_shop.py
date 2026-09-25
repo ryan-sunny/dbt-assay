@@ -10,7 +10,7 @@ TARGET = Path(__file__).parent / "fixtures" / "jaffle_shop" / "target"
 def test_every_test_on_a_select_star_model_can_be_evaluated():
     """J2: 20 of 20 tests read "unevaluable ... it ends in `select *`" while the columns were
     known: `select * from final` over the model's own CTE is that CTE's projection."""
-    project, digests, _f, schema, _s = _load(TARGET)
+    project, digests, _f, _schema, _s = _load(TARGET)
     assert len(project.tests) == 20
     assert unevaluable_tests(project, digests) == []
     d = digests["model.jaffle_shop.orders"]

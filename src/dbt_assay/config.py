@@ -402,6 +402,10 @@ class Config:
         cfg.provider = j.get("provider", "auto")
         cfg.model = j.get("model", "jev-latest")
         cfg.max_spend_usd = float(j.get("max_spend_usd", 1.0))
+        from . import governance as _gov
+        from . import probe as _probe
+        _probe.set_policy(data.get("warehouse") or {})
+        _gov.set_policy(data.get("governance") or {})
         if j.get("concurrency") is not None:
             from . import jev as _jev
             _jev.CONCURRENCY = max(1, int(j["concurrency"]))
@@ -638,6 +642,22 @@ jev:
   model: jev-latest
   max_spend_usd: 1.0      # hard cap per invocation. ~80 full sweeps of a 300-model project.
   concurrency: 8          # judged requests in flight at once; 1 sends them one at a time
+
+# THE WAREHOUSE, BY CONSENT. A local DuckDB file is queried freely. Any other warehouse (Snowflake,
+# BigQuery, Databricks, Postgres, MotherDuck...) gets nothing until allowed: a yes at a terminal,
+# ASSAY_ALLOW_WAREHOUSE=1, or allow_queries here for a schedule. Point `target` at a read-only
+# output in profiles.yml, with the adapter's own caps set there (Snowflake query_tag, BigQuery
+# maximum_bytes_billed and job_execution_timeout_seconds); `assay onboard` checks them.
+# WHAT LEAVES YOUR NETWORK. Judged questions send SQL, names, your own prose and counts to the
+# model provider; `feeds` and `adjudicate` also send row values. metadata_only refuses those two.
+governance:
+  metadata_only: false
+
+warehouse:
+  # target: assay
+  allow_queries: false
+  max_queries: 200        # per command; stopped before the next one, never after
+  max_spend_usd: 1.00     # per command, by assay's estimate; stopped before, never after
 
   # WHO MAY SEE YOUR SQL, when the provider is a router. A judged call sends a digest of compiled
   # SQL and the prose your project wrote about itself; this is the request that they not keep it.
