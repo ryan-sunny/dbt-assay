@@ -41,12 +41,16 @@ def _commands() -> list:
                   for c in app.registered_commands)
 
 
-def test_every_command_can_be_entered(project_dir, tmp_path):
+def test_every_command_can_be_entered(project_dir, tmp_path, monkeypatch):
     """*** THE GUARD THAT WOULD HAVE CAUGHT IT. ***
 
     Each command, invoked against a real fixture project and an empty store. A command that dies
     on a name that does not exist fails here, whatever it would have printed.
+
+    From a folder of its own: a command writing its default output (`plan` writes
+    assay_fixes.json) must not leave it in the repository.
     """
+    monkeypatch.chdir(tmp_path)
     store = str(tmp_path / "s.duckdb")
     broke = []
     for name in _commands():
