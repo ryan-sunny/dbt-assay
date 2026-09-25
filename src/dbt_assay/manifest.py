@@ -134,10 +134,18 @@ class Exposure:
     maturity: str
     depends_on: list[str]
     path: str
+    # `meta: {paid: true}` (or customer_facing) marks what customers pay for: the priority puts
+    # a finding reaching one ahead of everything else.
+    meta: dict = field(default_factory=dict)
 
     @property
     def title(self) -> str:
         return self.label or self.name
+
+    @property
+    def customer_facing(self) -> bool:
+        m = self.meta or {}
+        return bool(m.get("paid") or m.get("customer_facing") or m.get("customer"))
 
 
 class Project:
@@ -251,7 +259,8 @@ class Project:
                 else str(owner or ""),
                 url=e.get("url", "") or "", maturity=e.get("maturity", "") or "",
                 depends_on=list((e.get("depends_on") or {}).get("nodes") or []),
-                path=e.get("original_file_path", "") or "")
+                path=e.get("original_file_path", "") or "",
+                meta=dict(e.get("meta") or (e.get("config") or {}).get("meta") or {}))
         for uid, e in self.exposures.items():
             stack, seen = [d for d in e.depends_on if d in self.models or d in self.sources], set()
             while stack:

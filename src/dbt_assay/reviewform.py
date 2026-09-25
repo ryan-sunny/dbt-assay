@@ -126,7 +126,7 @@ def tally_line(t: dict) -> str:
 
 
 def cards(findings, store, project_root, reads: dict | None = None,
-          groups: list | None = None) -> tuple[list, dict]:
+          groups: list | None = None, project=None) -> tuple[list, dict]:
     """`([card], {path: sql})`, ordered so the ones where a wrong verdict costs most come first.
 
     *** THE SQL IS STORED ONCE PER FILE, NOT ONCE PER CARD. ***
@@ -171,6 +171,8 @@ def cards(findings, store, project_root, reads: dict | None = None,
             human, human_f = set(), set()
 
     root = Path(project_root)
+    from . import priority as _prio
+    pctx = _prio.Context.of(project) if project is not None else _prio.Context()
     from .groups import membership
     _member = membership(groups or [])
     by_pair: dict = {}
@@ -184,6 +186,10 @@ def cards(findings, store, project_root, reads: dict | None = None,
             "file": f.file or "", "marts": 0, "descendants": 0,
             "exposures": [], "findings": [], "agent": None, "read": None})
         c["marts"] = max(c["marts"], int(f.marts or 0))
+        # *** THE ONE ORDER. *** (priority.py) The card is as urgent as its most urgent finding.
+        pr = _prio.of(f, pctx)
+        if "_pk" not in c or pr["key"] < c["_pk"]:
+            c["_pk"], c["tier"], c["why"] = pr["key"], pr["tier"], pr["why"]
         # The same construct in other models: the card says so, and still asks about THIS one.
         g = _member.get(f.id)
         if g is not None and "group" not in c:
@@ -255,10 +261,11 @@ def cards(findings, store, project_root, reads: dict | None = None,
             fd["detail"] = fd["detail"][:1200]
         c["findings"].sort(key=lambda d: d["id"])
 
-    # A wrong verdict costs the most where it reaches a product, then where the most marts are
-    # downstream. Ties break on the key, so two runs over one store produce one order.
-    out = sorted(by_pair.values(), key=lambda c: (-len(c["exposures"]), -c["marts"],
-                                                  -c["descendants"], c["key"]))
+    # Customer-facing, then happening now, then reach, then how sure (priority.py). Ties break on
+    # the key, so two runs over one store produce one order.
+    out = sorted(by_pair.values(), key=lambda c: (c.get("_pk") or (9,), c["key"]))
+    for c in out:
+        c.pop("_pk", None)
     return out, sql
 
 

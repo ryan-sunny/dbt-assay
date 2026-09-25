@@ -918,7 +918,8 @@ class Backend:
         store, why = self._store_or_why()
         from . import groups as groups_mod
         _fs = live.findings_for(self.state(), None)
-        rows = plan_mod.build(_fs, store, groups_mod.build(self.state().project, _fs))
+        rows = plan_mod.build(_fs, store, groups_mod.build(self.state().project, _fs),
+                              project=self.state().project)
         out = {
             "to_fix": rows[:limit], "total": len(rows),
             "rule": ("`fix_shape` is what KIND of change this is, and it is exact. It does not "

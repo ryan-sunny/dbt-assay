@@ -117,7 +117,8 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
 
     from . import groups as groups_mod
     find_rows = _findings(findings, store, acted,
-                          groups_mod.membership(groups_mod.build(project, findings)))
+                          groups_mod.membership(groups_mod.build(project, findings)),
+                          project=project)
     # When each was first SEEN, and at which commit -- never "introduced", which is backtest's.
     from . import history as history_mod
     seen = history_mod.first_seen(store) if store is not None else {}
@@ -514,9 +515,12 @@ def _claims(store, entries) -> list:
     return sorted(out, key=lambda c: (c["subject_name"], c["id"]))
 
 
-def _findings(findings, store, acted: dict | None = None, member: dict | None = None) -> list:
+def _findings(findings, store, acted: dict | None = None, member: dict | None = None,
+              project=None) -> list:
     acted = acted or {}
     member = member or {}
+    from . import priority as _prio
+    pctx = _prio.Context.of(project) if project is not None else _prio.Context()
     ruled = store.ruled_subjects() if store is not None else set()
     # A finding whose id moved keeps the ruling made on its earlier id. (N5)
     if store is not None:
@@ -528,7 +532,9 @@ def _findings(findings, store, acted: dict | None = None, member: dict | None = 
     out = []
     for f in findings:
         fid = f.id
+        pr = _prio.of(f, pctx)
         out.append({
+            "_pk": pr["key"], "tier": pr["tier"], "why": pr["why"],
             "id": fid, "check": f.check, "title": _title(f.check), "subject": f.subject,
             "model": f.subject_name,
             "file": f.file, "summary": f.summary, "detail": f.detail,
@@ -547,7 +553,11 @@ def _findings(findings, store, acted: dict | None = None, member: dict | None = 
             "action": acted.get(fid, ("", ""))[0],
             "action_why": acted.get(fid, ("", ""))[1],
         })
-    return sorted(out, key=lambda f: (-f["weight"], f["check"], f["model"], f["id"]))
+    # The one order (priority.py); ties on the id so the page is the same file twice.
+    out.sort(key=lambda f: (f["_pk"], f["id"]))
+    for f in out:
+        f.pop("_pk", None)
+    return out
 
 
 def _with_findings(decisions: list, find_rows: list) -> list:

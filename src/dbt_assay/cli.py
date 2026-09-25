@@ -4569,7 +4569,7 @@ def plan(
     findings = live_mod.all_findings(project, digests, schema, entries, store=store,
                                      threshold=cfg.row_loss_threshold)
     from . import groups as groups_mod
-    rows = plan_mod.build(findings, store, groups_mod.build(project, findings))
+    rows = plan_mod.build(findings, store, groups_mod.build(project, findings), project=project)
 
     if json_out:
         console.print_json(data={"plan": rows, "n": len(rows)})
@@ -5366,7 +5366,7 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
 
     from . import groups as groups_mod
     cards, sql = reviewform.cards(findings, store, Path(tdir).parent, reads,
-                                  groups=groups_mod.build(project, findings))
+                                  groups=groups_mod.build(project, findings), project=project)
     if not cards:
         console.print("[green]nothing to rule on.[/] [dim]Either there are no findings, or every "
                       "(model, check) pair already has a human verdict. Those are different "
@@ -6568,7 +6568,7 @@ def read(
     entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store))
     findings = live_mod.all_findings(project, digests, schema, entries, store=store,
                                      threshold=cfg.row_loss_threshold)
-    cards, _sql = reviewform.cards(findings, store, Path(tdir).parent)
+    cards, _sql = reviewform.cards(findings, store, Path(tdir).parent, project=project)
     keys = {c["key"] for c in cards}
     have: dict = {}
     if Path(out).exists():

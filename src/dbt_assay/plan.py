@@ -365,7 +365,7 @@ SHAPES: dict[str, tuple[str, str]] = {
 }
 
 
-def build(findings, store, groups: list | None = None) -> list[dict]:
+def build(findings, store, groups: list | None = None, project=None) -> list[dict]:
     """One row per THING TO DO: a finding a person agreed with that is still here, or several of
     them that are one construct written in several models.
 
@@ -382,14 +382,18 @@ def build(findings, store, groups: list | None = None) -> list[dict]:
             agreed.pop(fid, None)
     if not agreed:
         return []
+    from . import priority as _prio
+    pctx = _prio.Context.of(project) if project is not None else _prio.Context()
     out = []
     for f in findings:
         if f.id not in agreed:
             continue
         who, when, note = agreed[f.id]
         shape, how = SHAPES.get(f.check, ("", ""))
+        pr = _prio.of(f, pctx)
         row = {
             "finding": f.id, "check": f.check, "model": f.subject_name, "file": f.file,
+            "subject": f.subject, "tier": pr["tier"], "why": pr["why"], "_pk": pr["key"],
             "summary": f.summary, "marts": f.marts, "descendants": f.descendants,
             "exposures": list(getattr(f, "exposures", None) or []),
             "agreed_by": who, "agreed_at": str(when)[:10] if when else "",
@@ -406,9 +410,11 @@ def build(findings, store, groups: list | None = None) -> list[dict]:
                           f"reading. That is a gap in the tool, not a judgment about the model.")
         out.append(row)
     out = _collapse(out, groups or [])
-    # What reaches a product first, then the widest blast radius, ties on the id so two runs agree.
-    return sorted(out, key=lambda r: (-len(r["exposures"]), -r["marts"], -r["descendants"],
-                                      r["finding"]))
+    # The one order (priority.py), ties on the id so two runs agree.
+    out = sorted(out, key=lambda r: (r["_pk"], r["finding"]))
+    for r in out:
+        r.pop("_pk", None)
+    return out
 
 
 def _collapse(rows: list[dict], groups: list) -> list[dict]:
@@ -444,6 +450,8 @@ def _collapse(rows: list[dict], groups: list) -> list[dict]:
         head["marts"] = max(head["marts"], r["marts"])
         head["descendants"] = max(head["descendants"], r["descendants"])
         head["exposures"] = sorted(set(head["exposures"]) | set(r["exposures"]))
+        if r["_pk"] < head["_pk"]:
+            head["_pk"], head["tier"], head["why"] = r["_pk"], r["tier"], r["why"]
     return out
 
 
