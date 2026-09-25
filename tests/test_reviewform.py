@@ -460,9 +460,10 @@ def test_feedback_r2_the_tabs_follow_the_work():
     from dbt_assay import reviewform
     html = reviewform.form_html([], {}, "p", "x", "0")
     order = re.findall(r'data-pane="([a-z]+)"', html)
-    assert order[:2] == ["findings", "waivers"], order
-    assert order.index("waivers") > order.index("findings")
-    assert "SAVED_PANE : 'findings'" in reviewform._JS, "the form does not open on Findings"
+    # the changes, then the judgment calls, then what follows from them
+    assert order[:3] == ["fixes", "findings", "waivers"], order
+    assert "SAVED_PANE : FIRST" in reviewform._JS
+    assert "(CTX.fixes || []).length ? 'fixes' : 'findings'" in reviewform._JS
 
 
 def test_feedback_r3_each_verdict_says_what_it_means():

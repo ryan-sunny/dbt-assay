@@ -371,7 +371,7 @@ def test_accept_on_a_card_and_a_waiver_from_the_tab_reach_the_handback(tmp_path,
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(out.as_uri())
             page.click('button[data-pane="findings"]')
-            card = page.locator(".card").first
+            card = page.locator("#p-findings .card").first
             until = card.locator("input.until")
             note = card.locator("textarea.note")
             # R3: nothing past the four verdicts shows until one is picked
@@ -381,7 +381,7 @@ def test_accept_on_a_card_and_a_waiver_from_the_tab_reach_the_handback(tmp_path,
             assert "why it stays" in card.locator(".vmore .vlab").first.inner_text().lower(), \
                 "the reason box does not say what it is for"
             # and the list in the middle shows the verdict on its row
-            assert page.locator(".frow.on .fstate").first.inner_text() == "accept"
+            assert page.locator("#p-findings .frow.on .fstate").first.inner_text() == "accept"
             until.fill("2027-06-01")
             note.fill("intended: the model is a lookup")
 
@@ -435,7 +435,7 @@ def test_a_waiver_is_written_from_the_card_it_was_decided_on(tmp_path, project_d
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(out.as_uri())
             page.click('button[data-pane="findings"]')
-            card = page.locator(".card").first
+            card = page.locator("#p-findings .card").first
             card.locator('input[value="accept"]').check()
             box = card.locator("label.write input[type=checkbox]")
             assert box.is_visible() and box.is_checked()
@@ -872,7 +872,7 @@ def test_a_card_can_be_ruled_finding_by_finding_and_loads_back(tmp_path):
             page.goto(out.as_uri())
             page.click('button[data-pane="findings"]')
             page.locator(".frow").first.click()
-            c = page.locator(".card").first
+            c = page.locator("#p-findings .card").first
             c.locator('input[value="agree"]').check()
             each = c.locator("details.each")
             each.locator("summary").click()

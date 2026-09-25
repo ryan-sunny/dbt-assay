@@ -2355,7 +2355,9 @@ function paneFromHash() {
 }
 window.addEventListener('hashchange', () => { embedded(); const p = paneFromHash();
                                               if (p) openPane(p); });
-openPane(paneFromHash() || (SAVED_PANE && (SAVED_PANE in PANES) ? SAVED_PANE : 'findings'));
+/* the changes first, when there are any: they are what most findings come down to */
+const FIRST = (CTX.fixes || []).length ? 'fixes' : 'findings';
+openPane(paneFromHash() || (SAVED_PANE && (SAVED_PANE in PANES) ? SAVED_PANE : FIRST));
 """
 
 
@@ -2410,7 +2412,7 @@ def form_html(card_list: list, sql: dict, project: str, generated_at: str, versi
      switching tabs". They belong to the form, so they hold position on the form's own row. -->
 <nav class="tabs">
   <button data-pane="fixes" data-tip="The findings grouped into the changes that resolve them, most important first. One decision per change.">Fixes<b id="n-fix"></b></button>
-  <button data-pane="findings" class="on" data-tip="Every finding to rule on, grouped by check. The models with the most marts downstream come first: that is where a wrong verdict costs something.">Findings<b id="n-find"></b></button>
+  <button data-pane="findings" data-tip="Every finding to rule on, grouped by check. The models with the most marts downstream come first: that is where a wrong verdict costs something.">Findings<b id="n-find"></b></button>
   <button data-pane="waivers" data-tip="Findings you accepted, proposed as waivers with the reason you gave. Fills as you accept findings.">Waivers<b id="n-waiv"></b></button>
   <button data-pane="words" data-tip="Words your warehouse uses that assay has no definition for, and the ones already in your vocabulary.">Words<b id="n-words"></b></button>
   <button data-pane="explanations" data-tip="The kinds of failing row each mart actually has, in your words.">Explanations<b id="n-expl"></b></button>
