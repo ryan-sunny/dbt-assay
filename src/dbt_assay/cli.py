@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import json as _json
+import os
 import sys
 import time
 import uuid
@@ -160,7 +161,18 @@ def _find_target(given: str | None) -> Path:
         "could not find target/manifest.json. Pass --target, or run `dbt parse` in your project.")
 
 
-def _load(target: Path, dialect: str | None = None):
+# *** 0 OF 358 PARSED, AND EVERY STEP SAID SUCCESS. *** (RC 06c18da on the box: an incompatible
+# sqlglot failed every parse; check, ask, prove and volume ran on nothing, and `ask` spent $0.10
+# on it.) Below this share of the readable models parsing, a command stops before it counts or
+# sends anything, and says why. `scan` and `onboard` exist to report exactly this and still run.
+PARSE_FLOOR = 0.5
+
+
+class TooLittleParsed(typer.Exit):
+    pass
+
+
+def _load(target: Path, dialect: str | None = None, strict: bool = True):
     project = Project.load(target)
     # An explicit --dialect always wins; otherwise the project says what it speaks. Recording it on
     # the project means every downstream default follows, rather than each call site remembering.
@@ -179,6 +191,18 @@ def _load(target: Path, dialect: str | None = None):
     # Columns are derived parents-first so a `select *` can be expanded with what the parents were
     # found to offer. Without this a starred model reports zero columns, which reads exactly like a
     # model that genuinely offers none.
+    readable = len(digests)
+    if strict and readable and (readable - len(failures)) / readable < PARSE_FLOOR \
+            and not os.environ.get("ASSAY_ALLOW_LOW_PARSE"):
+        common = Counter(str(e).split(":")[0] for _u, _n, _p, e in failures).most_common(1)
+        err_console.print(
+            f"[red]assay parsed {readable - len(failures)} of {readable} readable model(s)[/], "
+            f"below the floor of {PARSE_FLOOR:.0%}, so nothing it would say about this project is "
+            f"complete. Stopping before anything is counted or sent. Most common error: "
+            f"{common[0][0] if common else 'unknown'} ({common[0][1] if common else 0} models). "
+            f"`assay scan` shows every failure; an incompatible sqlglot is the usual cause "
+            f"(`pip show sqlglot`). ASSAY_ALLOW_LOW_PARSE=1 runs anyway.")
+        raise TooLittleParsed(3)
     schema = Schema.load(project, target)
     schema_stats = derive_columns(project, digests, schema, memo=kept)
     kept.save()
@@ -435,7 +459,7 @@ def scan(
     """Read the project and report what can and cannot be audited."""
     tdir = _find_target(target)
     t0 = time.time()
-    project, digests, failures, schema, sstats = _load(tdir, dialect)
+    project, digests, failures, schema, sstats = _load(tdir, dialect, strict=False)
     _coverage_panel(project, digests, failures)
     _schema_panel(schema, sstats)
 
@@ -1122,7 +1146,7 @@ def onboard(
     passing tests, false prose, and a lead product selling residential roofing jobs as commercial.
     """
     tdir = _find_target(target)
-    project, digests, failures, schema, sstats = _load(tdir, dialect)
+    project, digests, failures, schema, sstats = _load(tdir, dialect, strict=False)
     cov = project.coverage()
 
     # *** COMPILED SQL IS THE SINGLE BIGGEST THING HOLDING assay BACK ON MOST PROJECTS. ***
@@ -1141,7 +1165,7 @@ def onboard(
                           f"everything below is the thinner answer.[/]\n")
         else:
             before = missing
-            project, digests, failures, schema, sstats = _load(tdir, dialect)
+            project, digests, failures, schema, sstats = _load(tdir, dialect, strict=False)
             cov = project.coverage()
             now = cov["unreadable"] + cov.get("from_stripped", 0)
             console.print(f"   [green]compiled in {why}[/] "

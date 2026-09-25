@@ -18,8 +18,11 @@ CLOCK_NAMES = {"now", "getdate", "getutcdate", "sysdate", "systimestamp", "sysda
                "today", "current_date", "current_timestamp", "localtimestamp", "localtime",
                "transaction_timestamp", "statement_timestamp", "clock_timestamp", "utc_timestamp",
                "utc_date", "curdate", "curtime"}
-CLOCK_NODES = (exp.CurrentDate, exp.CurrentTimestamp, exp.CurrentTime, exp.CurrentDatetime,
-               exp.Localtimestamp)
+# *** ONLY THE NODES THIS sqlglot HAS. *** (RC 06c18da on the box: sqlglot 28.0.0 has no
+# `Localtimestamp`, which arrived in 28.1, and naming it here failed every parse, 358 of 358.)
+CLOCK_NODES = tuple(getattr(exp, n) for n in ("CurrentDate", "CurrentTimestamp", "CurrentTime",
+                                               "CurrentDatetime", "Localtimestamp")
+                    if hasattr(exp, n))
 # Aggregates whose result depends on the order rows arrive in, unless an ORDER BY is given.
 ORDERED_AGGS = (exp.GroupConcat, exp.ArrayAgg, exp.First, exp.Last, exp.AnyValue,
                 exp.ArrayUniqueAgg)

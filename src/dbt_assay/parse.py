@@ -1139,8 +1139,12 @@ def _extract(tree, name: str, dialect: str) -> Digest:
         ))
 
     d.has_qualify = bool(list(tree.find_all(exp.Qualify)))
-    from .sqlpatterns import facts as _pattern_facts
-    d.patterns = _pattern_facts(tree, dialect)
+    # The counted shapes are extra: a failure reading them costs the shapes, never the parse.
+    try:
+        from .sqlpatterns import facts as _pattern_facts
+        d.patterns = _pattern_facts(tree, dialect)
+    except Exception:                                            # noqa: BLE001
+        d.patterns = []
 
     seen = set()
     for f in tree.find_all(exp.Func):
