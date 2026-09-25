@@ -508,20 +508,20 @@ def test_one_plan_and_every_surface_reads_it():
     """Ryan: "it all needs to be coming from assay". `guide start`, `onboard` and the MCP guide
     tool give one order, from guide.PLAN, and every command in it exists with the flags it names.
     `guide configure` covers every top-level section audit.yml is read for."""
-    import re
-
-    from typer.testing import CliRunner
+    import typer.main
 
     from dbt_assay import guide
     from dbt_assay.cli import app
+    group = typer.main.get_command(app)
     for _ph, cmd, _what, _cost in guide.plan_rows():
         assert cmd in guide.START, cmd
         words = cmd.split()
-        sub = words[1]
-        r = CliRunner().invoke(app, [sub, "--help"])
-        assert r.exit_code == 0, f"`{cmd}` names a command that does not exist"
+        c = group.get_command(None, words[1])
+        assert c is not None, f"`{cmd}` names a command that does not exist"
+        # the command's own parameters, not its --help: help wraps at the terminal's width
+        opts = {o for p in c.params for o in getattr(p, "opts", [])}
         for flag in (w for w in words if w.startswith("--")):
-            assert flag in re.sub(r"\s+", " ", r.output), f"`{cmd}`: {flag} is not a flag"
+            assert flag in opts, f"`{cmd}`: {flag} is not a flag"
     for k in guide._config_keys():
         assert f"`{k}" in guide.CONFIGURE, f"guide configure never mentions `{k}`"
 
