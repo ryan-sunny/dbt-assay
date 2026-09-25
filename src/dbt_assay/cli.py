@@ -8714,7 +8714,7 @@ def _record_from_labels(store, target, dialect: str) -> None:
 
 @app.command("run")
 def run_steps(
-    steps: list[str] = typer.Argument(..., help="each a command and its own flags, quoted: "
+    steps: list[str] = typer.Argument(..., help="each a command and its own flags, quoted: "  # noqa: B008
                                                 "\"check --verify -n 10\" ask verify. "
                                                 "`>path` at the end sends that step's stdout "
                                                 "to a file"),

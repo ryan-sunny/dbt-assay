@@ -589,7 +589,7 @@ def test_the_page_and_the_form_print_the_same_tally(project_dir, tmp_path):
     # the form and the page draw one grid from one tally: the same numbers, row for row
     import re as _re
     blob = _re.search(r'<script[^>]*id="assa[^"]*"[^>]*>(.*?)</script>', form.read_text(),
-                      _re.S).group(1)
+                      _re.DOTALL).group(1)
     ft = json.loads(blob)["context"]["tally"]
     pt = meta["review"]
     shared = [k for k in ft if k in pt and isinstance(ft[k], (int, float))]

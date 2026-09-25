@@ -68,16 +68,17 @@ def _config_keys() -> list[str]:
 # Each step: (phase, command, what it gives you, what it costs). `{t}` is the dbt target dir.
 PLAN: list[tuple[str, str, str, str]] = [
     ("set up", "assay onboard -t {t}",
-     "reads the project and says what assay cannot see here (no compiled SQL, no catalog, the "
-     "dialect), where its warehouse queries would go, and what leaves your network",
+     ("reads the project and says what assay cannot see here (no compiled SQL, no catalog, the "
+      "dialect), where its warehouse queries would go, and what leaves your network"),
      "Costs nothing and writes nothing that gates"),
     ("set up", "assay init",
-     "writes audit.yml with the defaults. Then set the limits before anything is sent: "
-     "`assay guide configure`, the section on cost and safety",
+     ("writes audit.yml with the defaults. Then set the limits before anything is sent: `assay "
+      "guide configure`, the section on cost and safety"),
      "Costs nothing and turns on no spending"),
     ("free findings", "assay check -t {t}",
-     "every structural finding. A parser reads the compiled SQL, so each one is a fact about "
-     "the code", "Costs nothing and needs no key or network"),
+     ("every structural finding. A parser reads the compiled SQL, so each one is a fact about "
+      "the code"),
+     "Costs nothing and needs no key or network"),
     ("free findings", "assay tests --gaps-only -t {t}",
      "what should be tested and is not, and tests that cannot fail",
      "Costs nothing"),
@@ -85,39 +86,40 @@ PLAN: list[tuple[str, str, str, str]] = [
      "Lean certificates for what each model cannot do (`--setup` once, to download Lean)",
      "Costs nothing after the one download"),
     ("warehouse", "assay check --verify -t {t}",
-     "counts rows through your own dbt, to find a hop that loses most of its rows, a key "
-     "that stopped holding, and a monitor that stopped running",
-     "Sends read-only queries to your warehouse, only after you allow it, under "
-     "warehouse.max_queries"),
+     ("counts rows through your own dbt, to find a hop that loses most of its rows, a key that "
+      "stopped holding, and a monitor that stopped running"),
+     ("Sends read-only queries to your warehouse, only after you allow it, under "
+      "warehouse.max_queries")),
     ("warehouse", "assay practices -t {t}",
-     "dbt-project-evaluator's pipeline rules (staging, layers, fan-out, hard-coded references) "
-     "with what each one reaches downstream. Needs the package installed and built",
+     ("dbt-project-evaluator's pipeline rules (staging, layers, fan-out, hard-coded references) "
+      "with what each one reaches downstream. Needs the package installed and built"),
      "Reads the warehouse. Its judged reading asks only about rules that have real exceptions"),
     ("your knowledge", "assay suggest -t {t}",
-     "drafts vocab terms, waivers and explanations from measurements on this project. A person "
-     "writes what each word MEANS; `assay guide configure` says where each piece goes",
+     ("drafts vocab terms, waivers and explanations from measurements on this project. A person "
+      "writes what each word MEANS; `assay guide configure` says where each piece goes"),
      "Costs nothing"),
     ("judged", "assay ask --dry-run -t {t}",
-     "how many questions and what they would cost, before anything is sent. Then `assay ask`, "
-     "`assay claims --extract` and `assay verify`, `assay traverse`",
-     "Sends questions to the model provider, capped by jev.max_spend_usd per command. Answers are cached, so a rerun costs nothing"),
+     ("how many questions and what they would cost, before anything is sent. Then `assay ask`, "
+      "`assay claims --extract` and `assay verify`, `assay traverse`"),
+     ("Sends questions to the model provider, capped by jev.max_spend_usd per command. Answers "
+      "are cached, so a rerun costs nothing")),
     ("people", "assay page -t {t}",
      "one file with the findings, the chain, the claims, monitoring and spend",
      "Costs nothing"),
     ("people", "assay review --emit review.html -t {t}",
-     "the review form: one card per model and check, the SQL on it, a verdict per card or per "
-     "finding, and their words and settings as proposed audit.yml changes",
+     ("the review form: one card per model and check, the SQL on it, a verdict per card or per "
+      "finding, and their words and settings as proposed audit.yml changes"),
      "Costs nothing and works offline"),
     ("people", "assay review --load latest --apply",
      "records the verdicts, shows the audit.yml diff, and writes it",
      "Costs nothing"),
     ("act", "assay plan -t {t}",
-     "what to change for each finding a person agreed with; `assay patch --dry-run` for the "
-     "uniqueness tests assay can prove will pass",
+     ("what to change for each finding a person agreed with; `assay patch --dry-run` for the "
+      "uniqueness tests assay can prove will pass"),
      "Costs nothing"),
     ("act", "assay effectiveness",
-     "agreement per question, from the verdicts. Only now choose what fails a build: "
-     "`assay guide policy`",
+     ("agreement per question, from the verdicts. Only now choose what fails a build: `assay "
+      "guide policy`"),
      "Costs nothing"),
 ]
 
@@ -128,11 +130,11 @@ def plan_rows(target: str = "target/") -> list[tuple[str, str, str, str]]:
 
 def _start() -> str:
     out = ["# Setting assay up on a project that has never run it\n",
-           "Follow these in order; each answers something the next one needs. Nothing costs "
+           ("Follow these in order; each answers something the next one needs. Nothing costs "
            "anything until the warehouse phase, and nothing is sent to a model provider until "
            "the judged phase. An agent follows this list and does not invent steps: "
            "`assay onboard` prints it for the project in front of you, with the fixes that "
-           "project needs first.\n"]
+           "project needs first.\n")]
     phase = ""
     for n, (ph, cmd, what, cost) in enumerate(plan_rows(), 1):
         if ph != phase:

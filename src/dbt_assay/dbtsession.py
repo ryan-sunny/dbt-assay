@@ -98,7 +98,9 @@ def interpreter(dbt_bin: str) -> list[str] | None:
             first = fh.readline().decode(errors="replace").strip()
     except OSError:
         return None
-    py = lambda p: os.path.basename(p).startswith("python")         # noqa: E731
+    def py(p: str) -> bool:
+        return os.path.basename(p).startswith("python")
+
     if first.startswith("#!"):
         parts = first[2:].split()
         if parts and os.path.basename(parts[0]) == "env" and len(parts) > 1 and py(parts[1]):
@@ -115,7 +117,8 @@ def interpreter(dbt_bin: str) -> list[str] | None:
 class Session:
     def __init__(self, cmd: list[str], common: list[str], cwd: str):
         import tempfile
-        self.err = tempfile.TemporaryFile(mode="w+")
+        # open for the worker's whole life, closed in close()
+        self.err = tempfile.TemporaryFile(mode="w+")  # noqa: SIM115
         self.proc = subprocess.Popen([*cmd, "-c", WORKER, json.dumps(common)], cwd=cwd,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=self.err, text=True, bufsize=1)

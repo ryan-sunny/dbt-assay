@@ -21,7 +21,7 @@ def _project(tmp_path):
     if not shutil.which("uv"):
         pytest.skip("no uv")
     ok = subprocess.run([*dbtsession.interpreter(DBT), "-c", "import dbt.adapters.duckdb"],
-                        capture_output=True, cwd=tmp_path)
+                        capture_output=True, cwd=tmp_path, check=False)
     if ok.returncode != 0:
         pytest.skip("dbt-duckdb is not installed here")
     (tmp_path / "models").mkdir()
