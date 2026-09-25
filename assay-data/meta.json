@@ -1,7 +1,7 @@
 {
   "counted": {
-    "at": "2026-09-25 13:20",
-    "run": "ab57abc7cb1e",
+    "at": "2026-09-25 20:07",
+    "run": "ef612addd0d4",
     "store": "s.duckdb"
   },
   "coverage": {
@@ -27,6 +27,7 @@
   "review": {
     "card_findings": 26,
     "cards": 26,
+    "evaluator": null,
     "findings": 26,
     "line": "26 card(s) covering 26 of 26 open finding(s). A card is one (model, check): one answer covers every finding of that check on that model.",
     "pairs": 26,
@@ -41,6 +42,6 @@
     "tail": ""
   },
   "sources": 0,
-  "version": "0.52.4",
+  "version": "0.53.0",
   "yours": 11
 }
