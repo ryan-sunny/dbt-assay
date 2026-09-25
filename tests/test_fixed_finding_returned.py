@@ -110,8 +110,8 @@ def _git(root, *args):
 
 
 def test_the_page_shows_both_commits_of_a_returned_finding(project_dir, tmp_path):
-    import pytest
-    pytest.importorskip("playwright.sync_api")
+    from conftest import require_chromium
+    require_chromium()
     from playwright.sync_api import sync_playwright
     root = project_dir.parent
     store = tmp_path / "store" / "s.duckdb"

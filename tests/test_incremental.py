@@ -194,6 +194,8 @@ def test_a_judged_arrival_column_is_used(snow):
 
 
 def test_the_model_pane_shows_the_incremental_section_with_its_flags(snow, tmp_path):
+    from conftest import require_chromium
+    require_chromium()
     from playwright.sync_api import sync_playwright
     from typer.testing import CliRunner
 

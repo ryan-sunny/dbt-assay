@@ -108,3 +108,17 @@ def project_dir(tmp_path: Path) -> Path:
     }
     (tmp_path / "target" / "manifest.json").write_text(json.dumps(manifest))
     return tmp_path / "target"
+
+
+def require_chromium():
+    """Skip, saying why, where playwright is installed and its browser is not (the release
+    workflow). The same rule as test_the_page_runs_in_a_browser's fixture, for a test elsewhere
+    that opens the page: 0.52.0's publish failed on two that launched chromium directly."""
+    pytest.importorskip("playwright.sync_api")
+    from playwright.sync_api import sync_playwright
+    try:
+        with sync_playwright() as pw:
+            pw.chromium.launch().close()
+    except Exception as e:                                       # noqa: BLE001
+        pytest.skip(f"chromium is not installed here: `uv run playwright install chromium` "
+                    f"({str(e)[:120]})")
