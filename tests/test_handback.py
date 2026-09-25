@@ -36,6 +36,8 @@ def test_s3_verdicts_only_records_and_leaves_audit_yml_byte_identical(tmp_path, 
     assert r.exit_code == 0, r.output
     assert yml.read_bytes() == before, "a verdicts-only load edited audit.yml"
     assert "refused 1 config edit" in r.output and "vocab.wdid.means" in r.output
+    # ...and says the one command that applies it from a checkout
+    assert f"assay review --load {hb.name} --apply" in r.output, r.output
     assert "recorded 1 verdict" in r.output
 
 

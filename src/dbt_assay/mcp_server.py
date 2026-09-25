@@ -693,8 +693,9 @@ class Backend:
             if verdicts_only:
                 # (S3) A server's audit.yml comes from git: refuse the edits, and name them.
                 out["config_refused"] = edits
-                out["config_note"] = ("verdicts only: audit.yml was not touched. Make these "
-                                      "edits in the repository.")
+                out["config_note"] = ("verdicts only: audit.yml was not touched. Apply these "
+                                      "from a checkout of the repository with `assay review "
+                                      f"--load {src.name} --apply`, then commit audit.yml.")
             elif apply or edits:
                 out["config_changes"] = len(edits)
                 out["config_edits"] = edits[:12]

@@ -281,7 +281,8 @@ function row(h) {
   if (p.config_edits.length) {
     box.append(el('div', 'detail', p.config_edits.length + ' config edit(s) '
       + (h.state === 'applied' ? 'were refused' : 'will be refused')
-      + '. audit.yml on this server comes from git, so make these in the repository:'));
+      + '. audit.yml on this server comes from git: apply them from a checkout of the repository '
+      + 'with `assay review --load ' + h.name + ' --apply`, then commit audit.yml:'));
     for (const e of p.config_edits) box.append(el('div', 'refused', e));
   }
   return box;

@@ -1526,7 +1526,9 @@ function download() {
         saved.replaceChildren(...(ok
           ? [el('b', {text: 'Sent to the server'}),
              el('span', {text: ' with ' + n + ' verdict(s)' + (e ? ' and ' + e + ' config '
-               + 'change(s), which the server will refuse (audit.yml there comes from git)' : '')
+               + 'change(s), which the server will not apply (audit.yml there comes from git): '
+               + 'apply them from a checkout with `assay review --load ' + d.saved + ' --apply` '
+               + 'and commit audit.yml' : '')
                + '. It is saved as ' + d.saved + ' and nothing is recorded until it is applied: '}),
              el('a', {href: new URL(d.view || 'handbacks', location.href).href,
                       text: 'review and apply it'})]
@@ -2026,8 +2028,9 @@ if (SERVED) {
   const b = document.getElementById('dl');
   b.textContent = 'send to the server';
   b.setAttribute('data-tip', 'Sends your verdicts to the server that served this form. It keeps '
-    + 'them on its handbacks page, where they are applied. Config edits are listed there and not '
-    + 'applied, because audit.yml on the server comes from git.');
+    + 'them on its handbacks page, where they are applied. Config edits (words, kinds of failing '
+    + 'row, settings) are listed there and not applied, because audit.yml on the server comes '
+    + 'from git: apply them from a checkout with `assay review --load <the saved file> --apply`.');
 }
 document.getElementById('clear').onclick = () => {
   if (!confirm('Clear every answer on this form? This cannot be undone.')) return;

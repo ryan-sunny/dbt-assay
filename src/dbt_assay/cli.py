@@ -4966,8 +4966,10 @@ def review(
             refused = hb.refused_config(_json.loads(Path(load).read_text()))
             if refused:
                 console.print(f"\n[yellow]refused {len(refused)} config edit(s)[/] [dim]"
-                              f"(--verdicts-only: audit.yml is not touched). Make them in the "
-                              f"repository:[/]")
+                              f"(--verdicts-only: audit.yml here is not touched). Apply them "
+                              f"from a checkout of the repository, then commit audit.yml:[/]")
+                console.print(f"   assay review --load {Path(load).name} --apply",
+                              markup=False, highlight=False)
                 for r in refused:
                     console.print(f"   {r}", markup=False, highlight=False)
         else:
