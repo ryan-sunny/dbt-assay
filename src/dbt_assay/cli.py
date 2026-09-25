@@ -5114,14 +5114,15 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
                           f"emitted without the monitoring numbers rather than with wrong "
                           f"ones.[/]")
     # a few of each failing test's stored failing rows, for the Explanations tab
-    samples = None
+    samples, rows_error = None, ""
     failing = reviewform.failing_test_uids(project, store)
     if rows_from and failing:
         from . import rows as rows_mod
         try:
             samples = rows_mod.samples(project, failing, probe_mod, *rows_from)
-        except probe_mod.WarehouseUnreachable as e:
-            console.print(f"[yellow]the failing rows were not read:[/] {e}")
+        except Exception as e:                                   # noqa: BLE001
+            # asked for and not read: say why, never "pass --project-dir" (it was passed)
+            rows_error = str(e).splitlines()[0][:300] if str(e) else type(e).__name__
     ctx = reviewform.context(store, project, cfg, findings, vol, samples)
     if failing:
         # the same numbers the tab shows: its badge counts the failing tests it has a card for
@@ -5134,8 +5135,9 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
                       f"{_n(models)} "
                       f"model(s)"
                       + (f", {_n(with_rows)} with a few of their failing rows" if samples else
-                         "; pass --project-dir <your dbt project> to show a few of each one's "
-                         "failing rows")
+                         f"; their failing rows could not be read: {rows_error}" if rows_error
+                         else "; pass --project-dir <your dbt project> to show a few of each "
+                              "one's failing rows")
                       + (f"; {_n(len(failing) - len(expl_tests))} more not shown (8 per "
                          f"model, 40 models at most)" if len(failing) > len(expl_tests) else "")
                       + ".[/]")

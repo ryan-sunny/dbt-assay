@@ -745,3 +745,53 @@ def test_a_failing_test_does_not_empty_the_form(project_dir, tmp_path):
                       .split("</script>")[0].replace("<\\/", "</"))
     assert len(data["cards"]) == int(m.group(1).replace(",", "")) > 0
     assert sum(len(c["findings"]) for c in data["cards"]) == int(m.group(2).replace(",", ""))
+
+
+def test_a_failing_test_with_project_dir_shows_its_rows_or_says_why_not(project_dir, tmp_path,
+                                                                         monkeypatch):
+    """606015e: with --project-dir given, the line said "pass --project-dir" and no rows showed.
+    With a warehouse that answers, the rows are on the form; when the read fails, the line says
+    why, never to pass the flag that was passed."""
+    import json
+    from types import SimpleNamespace
+
+    from typer.testing import CliRunner
+
+    from dbt_assay import ledger, practices
+    from dbt_assay.cli import app
+    from dbt_assay.manifest import Project
+    t = next(t for t in Project.load(project_dir).tests if t.tests_model)
+    mpath = project_dir / "manifest.json"
+    m = json.loads(mpath.read_text())
+    node = m["nodes"][t.unique_id]
+    node.setdefault("config", {})["store_failures"] = True
+    node["relation_name"] = '"db"."audit"."failing"'
+    mpath.write_text(json.dumps(m))
+    store = str(tmp_path / "s.duckdb")
+    CliRunner().invoke(app, ["check", "--target", str(project_dir), "--store", store])
+    s = Store(store)
+    ledger.record_test_status(s, {t.unique_id: ("fail", "2026-09-25 06:00:00")}, "t")
+    s.close()
+    base = ["review", "--target", str(project_dir), "--store", store, "--project-dir",
+            str(project_dir), "--dbt", "dbt"]
+
+    def rows(*_a, **_k):
+        return [SimpleNamespace(failed=False, why="", rows=[{"k": 1}, {"k": 1}, {"k": 2}])]
+    monkeypatch.setattr(practices, "_read_all", rows)
+    form = tmp_path / "a.html"
+    r = CliRunner().invoke(app, [*base, "--emit", str(form)], env={"COLUMNS": "400"})
+    assert r.exit_code == 0, r.output
+    assert "1 with a few of their failing rows" in r.output, r.output
+    data = json.loads(form.read_text().split('<script id="assay-form" type="application/json">')[1]
+                      .split("</script>")[0].replace("<\\/", "</"))
+    shown = [x for e in data["context"]["explanations"] for x in e.get("failing") or []]
+    assert shown and shown[0]["rows"] == [{"k": "1", "__n": 2}, {"k": "2", "__n": 1}]
+    assert data["cards"], "the review cards are still there"
+
+    def down(*_a, **_k):
+        raise RuntimeError("could not reach the warehouse: dbt show failed")
+    monkeypatch.setattr(practices, "_read_all", down)
+    r = CliRunner().invoke(app, [*base, "--emit", str(tmp_path / "b.html")],
+                           env={"COLUMNS": "400"})
+    assert "their failing rows could not be read: could not reach the warehouse" in r.output
+    assert "pass --project-dir" not in r.output, r.output
