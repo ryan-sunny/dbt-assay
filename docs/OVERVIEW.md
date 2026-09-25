@@ -639,6 +639,14 @@ a join key), `not_in_over_a_nullable_subquery` (quiet when a not_null test cover
 `left_join_undone_by_where` (a WHERE on the right side that drops the unmatched rows) and
 `limit_in_a_model`. Each is a fact about the text; whether it is meant is the person's call.
 
+**And values a source holds that the model never sees**, under `check --verify`:
+`values_lost_at_hop`. For every column a model takes from one source column through an expression,
+assay counts the source values that are non-null before the expression and NULL after it, with a
+sample of them: text a `try_cast` cannot parse, a pattern that does not match. It also catches a
+loader's type split, where a mixed-type column became `x` and `x__v_double` and the model reads
+only `x`. Every row still arrives, so nothing counting rows notices. One statement per source
+relation, through your dbt.
+
 The ten tables, what each answers, and how they join are in **[SCHEMA.md](SCHEMA.md)**, with an ER diagram.
 
 **What it has cost, and what has gone stale**

@@ -172,7 +172,7 @@ def all_findings(project, digests, schema, entries=None, *,
 # (The evaluator's cards are found by their evidence instead: some share assay's own names.)
 WAREHOUSE_CHECKS = ("monitor_declared_but_never_run", "monitor_ran_then_stopped",
                     "test_declared_but_never_run", "test_skipped_rather_than_passed",
-                    "volume_is_not_being_watched", "hop_drops_most_rows")
+                    "volume_is_not_being_watched", "hop_drops_most_rows", "values_lost_at_hop")
 
 
 def with_stored_warehouse(fs: list, store, project) -> list:

@@ -63,6 +63,7 @@ TITLES: dict[str, str] = {
     "guarantee_does_not_hold": "A property the model relies on does not hold",
     "test_is_failing": "A dbt test is failing",
     "output_depends_on_the_clock": "Output changes with today's date",
+    "values_lost_at_hop": "Source values the model never sees",
     "order_sensitive_aggregate": "An aggregate that depends on row order",
     "join_key_normalised_on_one_side": "A join key cleaned on one side only",
     "not_in_over_a_nullable_subquery": "NOT IN over a column that can be NULL",

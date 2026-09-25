@@ -553,6 +553,18 @@ def check(
     # deferral nobody is told about is a check that stopped looking, which is the 0.38.1 rule.
     findings += _monitoring_findings(project, _cfg_pre, verify, project_dir, profiles_dir,
                                      dbt_bin, json_out)
+    # *** VALUES A SOURCE HOLDS THAT THE MODEL NEVER SEES. *** Counted through dbt, so --verify.
+    if verify:
+        from . import valueloss
+        try:
+            findings += valueloss.measure(valueloss.candidates(project, digests, schema),
+                                          project, probe_mod, project_dir, profiles_dir, dbt_bin)
+        except probe_mod.WarehouseUnreachable:
+            raise
+        except Exception as e:                                   # noqa: BLE001
+            if not json_out:
+                console.print(f"[yellow]--verify: values lost at a hop were not counted:[/] "
+                              f"[dim]{str(e)[:200]}[/]")
     # *** AND dbt-project-evaluator's ROWS, AS CARDS, FOLDED INTO WHAT assay ALREADY SAYS. ***
     findings += _evaluator_findings(project, _cfg_pre, verify, project_dir, profiles_dir,
                                     dbt_bin, findings, _entries, store_path)

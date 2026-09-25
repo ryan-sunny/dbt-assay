@@ -731,6 +731,9 @@ questions:
   test_is_failing:             {action: queue}
   # Counted SQL shapes: true on the text, and each needs a person to say whether it is meant.
   output_depends_on_the_clock:        {action: queue}
+  # Counted under --verify: source values a model turns into NULL (a failed cast, a loader's
+  # type split nothing reads).
+  values_lost_at_hop:                 {action: queue}
   order_sensitive_aggregate:          {action: annotate}
   join_key_normalised_on_one_side:    {action: queue}
   not_in_over_a_nullable_subquery:    {action: queue}

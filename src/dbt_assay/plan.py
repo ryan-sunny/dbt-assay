@@ -38,6 +38,12 @@ SHAPES: dict[str, tuple[str, str]] = {
         ("A comment in audit.yml states a count the store no longer holds. Write the number the "
          "store holds now, or say when the old one was true -- \"38 of 38 agreed at 0.37\" is "
          "history and is not checked. Nothing in the warehouse changes.")),
+    "values_lost_at_hop": (
+        "keep the values the expression drops",
+        ("The source holds values the model turns into NULL. For a loader's type split, declare "
+         "the column's type in the loader and reload, or read both columns in staging with "
+         "coalesce(x, x__v_<type>). For a cast or a pattern, fix the source values or widen the "
+         "expression, and keep the raw value beside the parsed one so any loss stays visible.")),
     "output_depends_on_the_clock": (
         "pass the date in",
         ("Add one project macro, `as_of()`, returning `var('as_of')` cast to a date when it is set "
