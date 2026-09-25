@@ -2301,6 +2301,7 @@ def completeness(
             ("source_only_a_test_reads", "sources only a test reads"),
             ("source_freshness_undeclared", "sources declaring no freshness"),
             ("source_freshness_stale", "sources behind their own freshness"),
+            ("source_volume_not_monitored", "sources whose row count nothing watches"),
             ("hop_drops_most_rows", "hops that lose most of the parent"),
             ("exposure_undeclared", "models nothing reads and no exposure covers")):
         n = len(buckets.get(check, []))
@@ -2341,6 +2342,8 @@ _COMPLETENESS_MEANING = {
     "source_freshness_undeclared": "nothing says how current it should be "
                                    "(silent when dbt_project_evaluator is installed)",
     "source_freshness_stale": "the project states how current it should be and it is not",
+    "source_volume_not_monitored": "it reaches a mart and no volume monitor watches it or "
+                                   "anything on the way (silent without Elementary)",
     "hop_drops_most_rows": "no filter, no group by, no collapse -- a join that is not matching",
     "exposure_undeclared": "dead, or read from outside: an exposure is where the project says which",
 }
@@ -2456,7 +2459,7 @@ def page(
 
     counts = {c: sum(1 for f in fs if f.check == c) for c in (
         "source_reaches_nothing", "seed_reaches_nothing", "source_only_a_test_reads",
-        "source_freshness_undeclared",
+        "source_freshness_undeclared", "source_volume_not_monitored",
         "source_freshness_stale", "hop_drops_most_rows")}
     cov = project.coverage()
     completeness = [
@@ -2470,6 +2473,8 @@ def page(
          "silent when dbt_project_evaluator is installed"),
         ("sources behind their own freshness", counts["source_freshness_stale"],
          "the project states how current it should be and it is not"),
+        ("sources whose row count nothing watches", counts["source_volume_not_monitored"],
+         "reaches a mart, no volume monitor on it or on the way"),
         ("hops that lose most of the parent", counts["hop_drops_most_rows"],
          "needs --verify; no filter, no group by, no collapse"),
     ]
@@ -3593,8 +3598,9 @@ def volume(
     # *** COVERAGE, BECAUSE 311 OF 358 MODELS BEING UNWATCHED IS NOT "NO VOLUME PROBLEMS". ***
     unwatched = elem.unwatched(rep, project)
     say(f"\n[dim]{elem._plural(len(rep.volumes), 'relation')} have a row-count history; "
-        f"{elem._plural(len(unwatched), 'model')} with a mart downstream have none. "
-        f"Nothing here covers those.[/]")
+        f"{elem._plural(len(unwatched), 'model')} with a mart downstream have no monitor on them "
+        f"or on what they are built from. `assay check` names the sources to watch "
+        f"(`source_volume_not_monitored`).[/]")
 
     if as_json:
         console.print_json(_json.dumps({

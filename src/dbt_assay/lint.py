@@ -438,7 +438,7 @@ CALLERS: dict[str, tuple[str, str, str]] = {
     "movement_is_expected_for_this_kind_of_table": ("monitoring_bank", "assay volume --judge",
                                                     "one moved table + what kind it is"),
     "monitor_covers_what_matters":      ("monitoring_bank", "assay volume --judge",
-                                         "one unwatched model + its reach"),
+                                         "one unmonitored source + the marts it reaches"),
     "stale_monitor_still_matters":      ("monitoring_bank", "assay volume --judge",
                                          "one stale failed monitor + its model"),
     "test_never_ran_is_a_gap_or_a_leftover": ("monitoring_bank", "assay volume --judge",

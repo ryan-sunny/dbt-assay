@@ -596,6 +596,102 @@ def claim_state(project, uid: str, vol: Volume, claim: dict, entry=None,
     return {k: v for k, v in state.items() if v not in (None, "", [], {})}
 
 
+# *** WHETHER A MODEL IS WATCHED IS A LOOKUP, NOT A QUESTION. *** (sunny-data feedback U2)
+# `monitor_covers_what_matters` asked a person, per model, about 222 models, and some of them read
+# a source that carried `elementary.volume_anomalies`: "no volume monitor" was wrong as stated.
+# The manifest says which relations carry a volume monitor, and lineage says what each covers. A
+# source's tests have no `attached_node`, so the relation a test is on is read from `depends_on`.
+VOLUME_TESTS = ("volume_anomalies",)
+
+
+def _counts_rows(meta: dict) -> bool:
+    name = str(meta.get("name") or "")
+    if name in VOLUME_TESTS:
+        return True
+    if name == "table_anomalies":
+        which = (meta.get("kwargs") or {}).get("table_anomalies")
+        return not which or "row_count" in [str(w) for w in which]
+    return False
+
+
+def volume_monitored(project) -> set:
+    """Every model, snapshot and source that carries a row-count monitor in the manifest."""
+    out = set()
+    for n in ((getattr(project, "raw", None) or {}).get("nodes") or {}).values():
+        if n.get("resource_type") != "test" or not _counts_rows(n.get("test_metadata") or {}):
+            continue
+        on = [n["attached_node"]] if n.get("attached_node") else \
+            ((n.get("depends_on") or {}).get("nodes") or [])
+        out.update(u for u in on if u.startswith(("model.", "source.", "snapshot.")))
+    return out
+
+
+def _history_names(rep) -> set:
+    return {v.table for v in (rep.volumes if rep is not None else [])}
+
+
+def _watched(project, uid: str, monitored: set, history: set) -> bool:
+    if uid in monitored:
+        return True
+    sources = getattr(project, "sources", None) or {}
+    name = (project.models[uid].name if uid in project.models else
+            sources[uid].name if uid in sources else "").lower()
+    return bool(name) and name in history
+
+
+def volume_coverage(project, rep=None):
+    """`covered(uid)`: is a row-count change here caught by some monitor? A relation is covered
+    when it carries a monitor (or Elementary has its history), when it is a seed (a file in the
+    repository does not move on its own), or when everything it is built from is covered."""
+    monitored, history = volume_monitored(project), _history_names(rep)
+    parents = (getattr(project, "raw", None) or {}).get("parent_map") or {}
+    memo: dict = {}
+
+    def covered(uid: str, stack: frozenset = frozenset()) -> bool:
+        if uid in memo:
+            return memo[uid]
+        if uid.startswith("seed."):
+            return True
+        if _watched(project, uid, monitored, history):
+            memo[uid] = True
+            return True
+        if uid.startswith("source.") or uid in stack:
+            memo[uid] = False
+            return False
+        ps = [p for p in parents.get(uid, [])
+              if p.startswith(("model.", "source.", "seed.", "snapshot."))]
+        memo[uid] = bool(ps) and all(covered(p, stack | {uid}) for p in ps)
+        return memo[uid]
+    return covered
+
+
+def unmonitored_sources(project, rep=None) -> list:
+    """[(source uid, "src.table", [marts reached], [models on the way])] for each source with no
+    row-count monitor whose change would reach a mart with nothing watching on the way: the
+    search stops at a monitored model, since that model catches it. Ranked by marts reached."""
+    monitored, history = volume_monitored(project), _history_names(rep)
+    out = []
+    for uid, s in project.sources.items():
+        if _watched(project, uid, monitored, history):
+            continue
+        marts, via, seen = [], [], set()
+        stack = list(s.children)
+        while stack:
+            c = stack.pop()
+            if c in seen or c not in project.models:
+                continue
+            seen.add(c)
+            m = project.models[c]
+            if m.is_installed_package or _watched(project, c, monitored, history):
+                continue
+            (marts if m.layer == "marts" else via).append(m.name)
+            stack.extend(m.children)
+        if marts:
+            out.append((uid, f"{s.source_name}.{s.name}", sorted(marts), sorted(via)))
+    out.sort(key=lambda r: (-len(r[2]), r[1]))
+    return out
+
+
 def unwatched(rep: Report, project, min_marts: int = 1) -> list:
     """Models with real reach that no volume history covers.
 
@@ -607,10 +703,12 @@ def unwatched(rep: Report, project, min_marts: int = 1) -> list:
     """
     if project is None:
         return []
-    watched = {v.table for v in rep.volumes}
+    # Watched through lineage too: a model built only from monitored relations is covered by
+    # them, which is what the question's own note always said. (U2)
+    covered = volume_coverage(project, rep)
     out = []
     for uid, m in project.models.items():
-        if m.name.lower() in watched or getattr(m, "is_installed_package", False):
+        if getattr(m, "is_installed_package", False) or covered(uid):
             continue
         radius = project.blast_radius(uid)
         if radius["marts"] < min_marts:
@@ -906,10 +1004,12 @@ def monitoring_findings(rep: Report, project, cad: Cadence | None = None,
         out.append(Finding(
             check="volume_is_not_being_watched", subject="", subject_name="", file="",
             summary=f"{_plural(len(gaps), 'model')} with a mart downstream have no row-count "
-                    f"history",
+                    f"monitor on them or on anything they are built from",
             detail=(f"{watched:,} relation(s) are watched. assay does not measure volume and does "
                     f"not intend to -- this says only that nobody else is either, which is a "
-                    f"coverage fact and not a data one. Worst by reach: "
+                    f"coverage fact and not a data one. A model built only from monitored "
+                    f"relations is covered and not counted; `source_volume_not_monitored` names "
+                    f"each source to add a monitor to. Worst by reach: "
                     + ", ".join(f"{t['model']} ({t['marts']} marts)" for t in top[:5]) + "."),
             base=2, descendants=max((d for _u, _n, d, _m in gaps), default=0),
             marts=max((m for _u, _n, _d, m in gaps), default=0),

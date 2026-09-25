@@ -698,6 +698,9 @@ questions:
   # warehouse, and nothing about a stale comment should fail a build.
   config_comment_contradicts_the_store: {action: queue}
   source_freshness_undeclared: {action: annotate}
+  # One per source with no row-count monitor whose change reaches a mart (U2). Coverage, so it
+  # only annotates; `assay volume --judge` asks whether each is worth watching.
+  source_volume_not_monitored: {action: annotate}
   source_freshness_stale:      {action: annotate}
   # Needs `--verify`: it counts parent and child rows through your own dbt. An uncounted hop
   # produces nothing at all, which is correct -- an absent measurement is not a pass.

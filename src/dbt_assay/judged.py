@@ -386,6 +386,11 @@ def declared_findings(project, entries) -> list[Finding]:
         if not want:
             continue
         want = [want] if isinstance(want, str) else list(want)
+        # A family asked about a SOURCE files its answer on that source's structural finding,
+        # as the reading, not as a second finding on a model (U2). Answers still stored under a
+        # model from before are superseded by it.
+        if (q or {}).get("asked_about") == "source":
+            continue
         prefix = (q or {}).get("id_prefix", "")
         for e in entries:
             for qid, v in sorted((getattr(e, "judged", None) or {}).items()):

@@ -485,8 +485,10 @@ than repeating what you have already said.
 
 ## Completeness findings are coverage, never a judgment about the business
 
-`source_reaches_nothing`, `source_only_a_test_reads`, `source_freshness_stale` and
-`hop_drops_most_rows` are all coverage of what **this project itself declares**: it declared a
+`source_reaches_nothing`, `source_only_a_test_reads`, `source_freshness_stale`,
+`source_volume_not_monitored` (one per source whose row count nothing watches before a mart; it
+carries the yml to add) and `hop_drops_most_rows` are all coverage of what **this project itself
+declares**: it declared a
 source, so something should read it; it declared a freshness, so something should meet it.
 
 assay can say a column is 99% its default. **It cannot say whether that is bad.** Do not treat one

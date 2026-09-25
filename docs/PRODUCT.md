@@ -165,6 +165,7 @@ Anything that needs the warehouse goes **through your own dbt**, so assay never 
 | `source_only_a_test_reads` | you are paying to test data nothing consumes |
 | `source_freshness_undeclared` | nothing says how current it should be. Silent when `dbt_project_evaluator` is installed, because it already answers this |
 | `source_freshness_stale` | the project states how current it should be and the last load does not meet it |
+| `source_volume_not_monitored` | a source with no row-count monitor whose change reaches a mart with nothing watching on the way. One per source, never per model: a model built only from monitored relations is covered. Carries the marts it reaches and the yml to add; `assay volume --judge` asks once per source whether it is worth watching, and the answer is the reading on this finding. Silent without Elementary |
 | `hop_drops_most_rows` | a child with no filter, no group by and no collapse that still emits a fraction of the parent. A join that is not matching |
 | `seed_reaches_nothing` | a file you maintain, loaded on every build, that no model and no test reads |
 | `exposure_undeclared` | a model of yours that no model reads and no dbt exposure covers: dead, or read by a dashboard, app or report the project never named. assay proposes the candidate; the exposure's name, owner and URL are yours to write |

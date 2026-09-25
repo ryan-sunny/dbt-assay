@@ -52,9 +52,10 @@ SHAPES: dict[str, tuple[str, str]] = {
          "on purpose.")),
     "volume_is_not_being_watched": (
         "extend the monitor's coverage",
-        ("Models that feed marts have no row-count history. assay does not measure volume and "
-         "does not intend to -- add the tables to `elementary-data`'s monitoring, or decide "
-         "deliberately that they do not need it and raise `monitoring.min_marts`.")),
+        ("Models that feed marts have no row-count monitor on them or upstream. assay does not "
+         "measure volume and does not intend to -- add the tables to `elementary-data`'s "
+         "monitoring, or decide deliberately that they do not need it and raise "
+         "`monitoring.min_marts`.")),
     "test_declared_but_never_run": (
         "find out why the test never fires",
         ("A test that never ran and a test that passed are indistinguishable in a summary. Either "
@@ -123,6 +124,10 @@ SHAPES: dict[str, tuple[str, str]] = {
     "source_reaches_nothing": (
         "delete the source, or wire it up",
         (        "Declared and unread. The same choice as a dead seed.")),
+    "source_volume_not_monitored": (
+        "add a volume monitor on the source, or say it does not move",
+        (        "Nothing counts how many rows this source delivers, and a change in that count "
+        "reaches a mart with nothing watching on the way. The finding carries the yml to add.")),
     "source_only_a_test_reads": (
         "wire it up, or drop the test",
         (        "The only thing reading this source is a test on it, which tests that a thing nobody "

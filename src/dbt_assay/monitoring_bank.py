@@ -42,7 +42,7 @@ def subjects(rep, project, ran_test_ids: set | None, threshold: float = 0.10,
              limit: int = 0) -> dict:
     """{family: [(uid, key, name, state)]}. Only what maps to a model in this project is asked:
     a finding has to be filed under something, and an unmapped table is counted, not guessed at."""
-    from .elementary import unwatched
+    from .elementary import unmonitored_sources
     names = _by_name(project)
     out: dict = {f: [] for f in FAMILIES}
 
@@ -58,11 +58,23 @@ def subjects(rep, project, ran_test_ids: set | None, threshold: float = 0.10,
                                         "what_this_counts": "rows that ARRIVED in one bucket, "
                                                             "not the size of the table"}})))
 
-    for uid, name, desc, marts in unwatched(rep, project):
+    # *** ONCE PER SOURCE, NEVER PER MODEL. *** (sunny-data feedback U2) Whether a model is
+    # watched is a lookup (it, or everything it is built from, carries a monitor), so only an
+    # unmonitored source reaching a mart is asked about. The answer is the reading on that
+    # source's `source_volume_not_monitored` card.
+    raw = (project.raw or {}).get("sources") or {}
+    for uid, name, marts, via in unmonitored_sources(project, rep):
+        src = project.sources[uid]
+        node = raw.get(uid) or {}
         out["monitor_covers_what_matters"].append((
             uid, f"{uid}::unwatched", name, _prune({
-                **_model_facts(project, uid),
-                "row_count_history": "none: no volume monitor covers this model"})))
+                "source": name, "schema": src.schema,
+                "description": str(src.description or "")[:300],
+                "loader": node.get("loader") or "",
+                "read_by": [project.name_of(c) for c in src.children][:6],
+                "marts_downstream": len(marts), "marts": marts[:8],
+                "row_count_monitor": "none on it, and none on any model between it and "
+                                     "these marts"})))
 
     seen = set()
     for t in rep.stale_failures():

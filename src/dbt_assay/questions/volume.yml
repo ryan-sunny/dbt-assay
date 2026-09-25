@@ -90,26 +90,30 @@ movement_is_expected_for_this_kind_of_table:
 monitor_covers_what_matters:
   id_prefix: "mcov"
   type: choice
-  prompt_version: "coverage.v1"
+  prompt_version: "coverage.v2"
   finding_when: [worth_watching]
+  # Asked once per SOURCE (U2): whether a model is watched is a lookup in the manifest, so only a
+  # source with no row-count monitor that reaches a mart is asked about. The answer is the reading
+  # on that source's `source_volume_not_monitored` finding, never a finding of its own.
+  asked_about: source
   instructions:
     question: >-
-      `model` has `marts_downstream` marts reading it and no volume monitor. Given what it is and
-      what it reads, is it worth watching?
+      `source` feeds `marts_downstream` marts and nothing counts its rows: no volume monitor on
+      it, and none on any model between it and those marts. Given what it is, is it worth
+      watching?
     note: >-
-      Nobody writes a monitor for every model, so the useful answer is which ones. A model loaded
-      from an outside feed, or one whose row count carries meaning for the marts, is worth
-      watching. A model derived deterministically from another watched model, or a fixed
-      reference list, is covered by its parent or does not move.
+      Nobody monitors every source, so the useful answer is which ones. A feed loaded from
+      outside this project, whose row count can move on its own, is worth watching. A fixed
+      reference list that is loaded once, or only changes when somebody edits it, does not move.
   criteria:
     worth_watching:
       what: >-
-        Its row count can change for reasons outside this project, and the marts would be wrong
-        without anything failing.
-    covered_upstream_or_static:
+        Its row count can change for reasons outside this project. If it stopped arriving or
+        doubled, the marts would be wrong and nothing would fail to say so.
+    static:
       what: >-
-        It follows deterministically from a model that is watched, or it is a fixed list that
-        does not move.
+        It is a fixed list or a one-time load: its row count does not change unless somebody
+        changes it on purpose.
     cannot_tell:
       what: "The state does not settle it. Choose this rather than guess."
 

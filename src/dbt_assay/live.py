@@ -14,6 +14,7 @@ Mid-edit SQL is mid-edit, not broken. It is reported as "still typing" and never
 """
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -156,8 +157,35 @@ def all_findings(project, digests, schema, entries=None, *,
         return _all_findings(project, digests, schema, entries, threshold, store)
 
 
+def _with_source_readings(fs: list, store) -> None:
+    """A source's `source_volume_not_monitored` carries the answer `volume --judge` gave about
+    it, the way a judged finding carries its own: asked, answered, how sure. (U2)"""
+    from .contracts import QUESTIONS
+    q = QUESTIONS.get("monitor_covers_what_matters") or {}
+    prefix = q.get("id_prefix", "mcov")
+    for f in fs:
+        if f.check != "source_volume_not_monitored":
+            continue
+        try:
+            rows = store.live_decisions("decision_key = ? and question = ?",
+                                        [f"{f.subject}::unwatched", prefix])
+        except Exception:                                        # noqa: BLE001
+            return
+        if not rows:
+            continue
+        _q, answer, conf, probs, ctx = rows[0][:5]
+        try:
+            p_ = float((json.loads(probs or "{}") or {}).get(answer, conf or 0) or 0)
+        except (TypeError, ValueError):
+            p_ = float(conf or 0)
+        f.evidence = {**(f.evidence or {}), "asked": "monitor_covers_what_matters",
+                      "answer": answer, "probability": round(p_, 3), "context": ctx or ""}
+
+
 def _all_findings(project, digests, schema, entries, threshold, store) -> list:
     fs = structural_checks(project, digests, schema)
+    if store is not None:
+        _with_source_readings(fs, store)
     fs += relate.run_all(project, digests, schema)[1]
     # *** THE BRANCH `dbt compile` NEVER RENDERS. *** (G-D) Incremental models, read from their raw
     # code and config; the lateness and per-batch premises land in the ledger in force.

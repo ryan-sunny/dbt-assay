@@ -270,8 +270,55 @@ def exposure_undeclared(project, _digests=None) -> list[Finding]:
     return out
 
 
+def _tests_key(project) -> str:
+    """`data_tests` from dbt 1.8, `tests` before it."""
+    v = str(((project.raw or {}).get("metadata") or {}).get("dbt_version") or "")
+    try:
+        major, minor = (int(x) for x in v.split(".")[:2])
+    except ValueError:
+        return "data_tests"
+    return "data_tests" if (major, minor) >= (1, 8) else "tests"
+
+
+def source_volume_not_monitored(project, _digests=None) -> list[Finding]:
+    """A source with no row-count monitor, whose change reaches a mart with nothing watching.
+
+    *** ONE PER SOURCE, NEVER ONE PER MODEL. *** (sunny-data feedback U2) The judged question
+    asked about 222 models, several of them built from a source that WAS monitored. Whether
+    something is watched is in the manifest, and a gap is a source: add the monitor there and
+    every model it feeds is covered. The marts it reaches and the yml to add come with it; the
+    judgment left to a person is only whether this source is worth watching at all (a fixed list
+    is not), and `assay volume --judge` asks that once per source and shows the reading here.
+
+    Elementary's monitor, so silent where Elementary is not installed.
+    """
+    if not installed(project, "elementary"):
+        return []
+    from ..elementary import unmonitored_sources
+    raw = (project.raw or {}).get("sources") or {}
+    key = _tests_key(project)
+    out = []
+    for uid, name, marts, via in unmonitored_sources(project):
+        s = project.sources[uid]
+        yml = (f"sources:\n  - name: {s.source_name}\n    tables:\n      - name: {s.name}\n"
+               f"        {key}:\n          - elementary.volume_anomalies")
+        out.append(Finding(
+            check="source_volume_not_monitored", subject=uid, subject_name=name,
+            file=(raw.get(uid) or {}).get("original_file_path", "") or "",
+            summary=(f"`{name}` reaches {len(marts)} mart(s) and no volume monitor watches it "
+                     f"or any model between it and them"),
+            detail=("If this feed stopped arriving or doubled, nothing would fail: every test "
+                    "downstream checks each row, and none checks how many arrived. Worth "
+                    "watching when it is loaded from outside this project; not when it is a "
+                    "fixed list.\n\nTo watch it, in the source's yml:\n\n" + yml),
+            base=1, evidence={"source": s.source_name, "table": s.name, "marts": marts[:25],
+                              "marts_reached": len(marts), "models_on_the_way": len(via),
+                              "yml": yml}))
+    return out
+
+
 SOURCE_CHECKS = (source_reaches_nothing, source_only_a_test_reads, source_freshness_undeclared,
-                 seed_reaches_nothing, exposure_undeclared)
+                 seed_reaches_nothing, exposure_undeclared, source_volume_not_monitored)
 
 # *** THE COMPLETENESS REPORT SELECTED ITS MEMBERS BY NAME PREFIX. ***
 # `f.check.startswith("source_")`, which is a hand-written membership rule standing in for the
