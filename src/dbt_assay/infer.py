@@ -20,6 +20,7 @@ A caller that cannot tell which one it got cannot judge how much to trust it, so
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 from dataclasses import dataclass, field
@@ -125,8 +126,6 @@ def _resolve_roots(d, schema, uid, project) -> dict:
     parent published `first_year` as `min(year)`. One lookup against the already-derived parent
     settles what no amount of judgment about this model's own text could.
     """
-    import sqlglot
-    from sqlglot import exp as _exp
 
     roots = dict(d.resolved_roots or d.output_roots)
     by_rel = {}
@@ -138,22 +137,37 @@ def _resolve_roots(d, schema, uid, project) -> dict:
     for name, root in list(roots.items()):
         if root != "column":
             continue
-        try:
-            e = sqlglot.parse_one(d.output_exprs.get(name, ""), dialect="duckdb")
-        except Exception:                                    # noqa: BLE001,S112
+        ref = _plain_ref(d.output_exprs.get(name, ""))
+        if ref is None:
             continue
-        if not isinstance(e, _exp.Column) or not e.table:
-            continue
-        rel = (d.alias_relation.get(e.table.lower()) or "").lower()
+        table, col = ref
+        rel = (d.alias_relation.get(table.lower()) or "").lower()
         parent_roots = by_rel.get(rel)
         if parent_roots:
-            roots[name] = parent_roots.get(e.name.lower(), root)
+            roots[name] = parent_roots.get(col.lower(), root)
     return roots
 
 
+@functools.lru_cache(maxsize=16384)
+def _plain_ref(text: str):
+    """(table, column) when `text` is a qualified column reference, else None."""
+    import sqlglot
+    from sqlglot import exp as _exp
+    try:
+        e = sqlglot.parse_one(text, dialect="duckdb")
+    except Exception:                                        # noqa: BLE001
+        return None
+    if not isinstance(e, _exp.Column) or not e.table:
+        return None
+    return (e.table, e.name)
+
+
 def derive_columns(project, digests: dict[str, Digest], schema: Schema,
-                   dialect: str | None = None) -> dict:
-    """Walk the DAG parents-first, expanding stars with what the parents were found to offer."""
+                   dialect: str | None = None, memo=None) -> dict:
+    """Walk the DAG parents-first, expanding stars with what the parents were found to offer.
+
+    `memo` (a DigestCache) keeps each expansion keyed by the SQL, the dialect and the parents'
+    columns it was expanded against: everything it reads."""
     dialect = dialect or getattr(project, "dialect", "duckdb")
     stats = {"expanded": 0, "qualify_failed": 0, "from_sql": 0, "from_catalog": 0,
              "from_declared": 0, "unknown": 0}
@@ -173,22 +187,28 @@ def derive_columns(project, digests: dict[str, Digest], schema: Schema,
                 # meant 38 of 38 tests were unevaluable and the check reported "no findings",
                 # which is the same shape as a pass.
                 parent_schema = schema.for_parents(uid)
-                if True:
+
+                def expand(sql=m.compiled, parent_schema=parent_schema):
                     try:
-                        tree = sqlglot.parse_one(m.compiled, dialect=dialect)
+                        tree = sqlglot.parse_one(sql, dialect=dialect)
                         q = qualify(tree, schema=parent_schema, dialect=dialect,
                                     validate_qualify_columns=False, infer_schema=True)
                         sel = q if isinstance(q, exp.Select) else q.find(exp.Select)
-                        if sel is not None:
-                            expanded = [e.alias_or_name for e in sel.expressions
-                                        if e.alias_or_name and e.alias_or_name != "*"]
-                            if len(expanded) > len(d.output_columns):
-                                cols = expanded
-                                stats["expanded"] += 1
+                        return (True, None if sel is None else
+                                [e.alias_or_name for e in sel.expressions
+                                 if e.alias_or_name and e.alias_or_name != "*"])
                     except Exception:                                   # noqa: BLE001
-                        # A qualify failure is not fatal: the un-expanded column list is still true,
-                        # just incomplete, and the count is reported rather than buried.
-                        stats["qualify_failed"] += 1
+                        return (False, None)
+                ok, expanded = (memo.memo("star", json.dumps([dialect, m.compiled, parent_schema],
+                                                             sort_keys=True), expand)
+                                if memo is not None else expand())
+                if not ok:
+                    # A qualify failure is not fatal: the un-expanded column list is still true,
+                    # just incomplete, and the count is reported rather than buried.
+                    stats["qualify_failed"] += 1
+                elif expanded is not None and len(expanded) > len(d.output_columns):
+                    cols = expanded
+                    stats["expanded"] += 1
             if not cols:
                 cols = list(d.output_columns)
 

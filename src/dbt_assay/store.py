@@ -45,13 +45,27 @@ def _valid_date(s: str) -> str:
     return str(s)
 
 
+_SHIPPING: dict = {}
+
+
 def _shipping_versions() -> set:
     """Every prompt_version any loaded bank currently ships. A SET, so nothing has to guess which
-    family a question id belongs to -- the mapping that broke was never needed for this."""
+    family a question id belongs to -- the mapping that broke was never needed for this.
+
+    Remembered per set of bank files as they stand (path, mtime, size): `inventory` asks once per
+    model, and each ask re-read and deep-copied all fourteen banks (358 asks, a tenth of `check`).
+    """
     try:
-        from .contracts import load_all_banks
-        return {str(q["prompt_version"]).split("+")[0]
-                for q in load_all_banks().values() if q.get("prompt_version")}
+        from .contracts import load_all_banks, user_bank_dir
+        dirs = [Path(__file__).parent / "questions", user_bank_dir()]
+        sig = tuple((str(f), f.stat().st_mtime_ns, f.stat().st_size)
+                    for d in dirs if d is not None for f in sorted(d.glob("*.yml")))
+        if sig not in _SHIPPING:
+            _SHIPPING.clear()
+            _SHIPPING[sig] = frozenset(str(q["prompt_version"]).split("+")[0]
+                                       for q in load_all_banks().values()
+                                       if q.get("prompt_version"))
+        return set(_SHIPPING[sig])
     except Exception:                                            # noqa: BLE001
         return set()
 
@@ -349,8 +363,16 @@ class Store:
         # decision written now records NO checksum, which reports as "cannot be checked".
         self.checksums: dict = {}
         self._migrate()
+        self._ddl_ok = True
         self.superseded_decisions = 0
         self.stale_decisions = 0
+
+    def _ddl(self) -> None:
+        """The DDL, once per connection. Opening ran it, and the migrations leave every table in
+        place; `decisions` ran all of it again for each of 358 models (a third of `inventory`)."""
+        if not getattr(self, "_ddl_ok", False):
+            self.con.execute(DDL)
+            self._ddl_ok = True
 
     # *** `create table if not exists` IS NOT A MIGRATION. ***
     # A store written by an older assay keeps its old shape forever, and the next insert fails with
@@ -960,7 +982,7 @@ class Store:
 
     def save_claims(self, rows: list) -> None:
         """Named columns, never positional. Positional inserts broke twice after a migration."""
-        self.con.execute(DDL)
+        self._ddl()
         bulk.many(self.con,
             """insert or replace into claims
                (claim_id, subject, subject_name, text, source_kind, source_ref,
@@ -969,7 +991,7 @@ class Store:
 
     def claims(self, subject: str | None = None, checkable_only: bool = False,
                min_conf: float = 0.0) -> list[dict]:
-        self.con.execute(DDL)
+        self._ddl()
         q = ("select claim_id, subject, subject_name, text, source_kind, source_ref, "
              "kind, kind_conf, citation, status from claims where status = 'active'")
         args: list = []
@@ -1000,7 +1022,7 @@ class Store:
         six the agent believes are real is a place to start, and the person's ruling is still the
         one that counts.
         """
-        self.con.execute(DDL)
+        self._ddl()
         q = ("select subject, question, family, answered, verdict, note, decided_at "
              "from adjudications where source = 'agent'")
         args: list = []
@@ -1024,7 +1046,7 @@ class Store:
         This returned every ruling ever made, so a finding agreed and later accepted sat in
         "agreed and still here" forever, and one dismissed and later agreed with stayed dismissed.
         """
-        self.con.execute(DDL)
+        self._ddl()
         today = datetime.now(timezone.utc).date().isoformat()
         out = {}
         for subj, v, who, when, note, until in self.con.execute(
@@ -1044,7 +1066,7 @@ class Store:
 
     def accepted(self) -> dict:
         """`{finding_id: (who, when, why, until)}` a PERSON called correct and chose to leave."""
-        self.con.execute(DDL)
+        self._ddl()
         live = self.ruled_findings("accept")
         out = {}
         for subj, until in self.con.execute(
@@ -1089,7 +1111,7 @@ class Store:
         Both callers wanted this. Neither had it, so both wrote the subject-level one and got a
         quiet over-skip -- so it lives here once rather than as a query in each.
         """
-        self.con.execute(DDL)
+        self._ddl()
         return {(str(a), str(b)) for a, b in self.con.execute(
             "select distinct subject, question from adjudications "
             "where source = 'human'").fetchall()}
@@ -1104,7 +1126,7 @@ class Store:
         rather than scanned. It is also the number a good release makes look worse, because
         finding more raises the denominator and a person raised none of it.
         """
-        self.con.execute(DDL)
+        self._ddl()
         return {r[0] for r in self.con.execute(
             "select distinct subject from adjudications where source = 'human'").fetchall()}
 
@@ -1117,7 +1139,7 @@ class Store:
         side. The regression was invisible in the summary and measurable only because eight
         rulings were on record.
         """
-        self.con.execute(DDL)
+        self._ddl()
         # *** THE LATEST RULING PER PAIR, NOW THAT THE VERSION IS IN THE KEY. ***
         # A subject ruled `agree` at v1 and `disagree` at v2 keeps both rows. Taking them all
         # would anchor `regress` to a verdict the person has since withdrawn, which is worse than
@@ -1136,7 +1158,7 @@ class Store:
                 for r in self.con.execute(q + " order by family, subject", args).fetchall()]
 
     def suppress_claim(self, claim_id: str) -> None:
-        self.con.execute(DDL)
+        self._ddl()
         self.con.execute("update claims set status = 'suppressed' where claim_id = ?", [claim_id])
 
     def adjudication_counts(self, source: str = "human") -> dict:
@@ -1146,7 +1168,7 @@ class Store:
         build: the label can be the thing that is wrong, and on a real project three of four
         disagreements were exactly that.
         """
-        self.con.execute(DDL)
+        self._ddl()
         # *** DISTINCT PAIRS, NOT ROWS. ***
         # `prompt_version` joined the key so that a re-ruling is kept rather than overwritten.
         # Counting rows would then let ONE subject ruled twice look like two verdicts, and a gate
@@ -1181,7 +1203,7 @@ class Store:
         count falls only when a question changed and a person re-read it. A release cannot lower
         it, which is the same property the ruled-on figure has and the reason it is worth printing.
         """
-        self.con.execute(DDL)
+        self._ddl()
         where, args = "", []
         if source != "all":
             where, args = "where a.source = ?", [source]
@@ -1295,7 +1317,7 @@ class Store:
         answers whose version no bank still ships. NOTHING is silent: being hidden without being
         counted is the failure this whole tool opens by describing.
         """
-        self.con.execute(DDL)
+        self._ddl()
         rows = self.con.execute(
             f"select {columns}, prompt_version, decision_key, question, decided_at "
             f"from model_decisions where {where} order by decided_at desc", args).fetchall()
@@ -1319,7 +1341,7 @@ class Store:
 
     def pending(self, limit: int = 25) -> list:
         """Judgments nobody has ruled on yet."""
-        self.con.execute(DDL)
+        self._ddl()
         return self.con.execute(
             """select d.decision_key, d.question, d.answer, d.confidence, d.prompt_version,
                       coalesce(d.context, ''), coalesce(d.model_version, '')

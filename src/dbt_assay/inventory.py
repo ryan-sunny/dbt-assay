@@ -171,11 +171,31 @@ class ModelEntry:
         return max((f.source for f in present), key=lambda s: order.get(s, 99)) if present else "unknown"
 
 
-def _judgments(store, uid: str) -> dict:
+# The key carries the claim id for the claim families, which is the only way back from a stored
+# answer to the sentence it was about. The context holds a 120-char truncation, and a claim whose
+# literal value sits past character 120 would read as having none.
+_JUDGED_COLUMNS = "question, answer, confidence, probabilities, context, decision_key"
+
+
+def _judged_by_model(store) -> dict:
+    """{model uid: its current answers, newest first}, in ONE read of the store.
+
+    *** 358 QUERIES FOR ONE TABLE. *** Each model read its own answers, and on the box that was
+    most of `inventory`. The same rows, the latest per (decision_key, question), grouped here by
+    the model the key names: the key itself, or the part before its first `::`.
+    """
+    out: dict = {}
+    for r in store.live_decisions("true", [], columns=_JUDGED_COLUMNS):
+        out.setdefault(str(r[5]).split("::", 1)[0], []).append(r)
+    return out
+
+
+def _judgments(store, uid: str, rows: list | None = None) -> dict:
     """Stored answers for one model, keyed by question id.
 
     The key is the MODEL for column and grain questions, and `<uid>::<family>` for the families
     that ask once per model. Both are read here so a caller never has to know which is which.
+    `rows` is this model's share of `_judged_by_model`, when the caller read them all at once.
     """
     if store is None:
         return {}
@@ -183,12 +203,9 @@ def _judgments(store, uid: str) -> dict:
     # This used to read every version and let a later row overwrite an earlier one, so which
     # answer reached a finding depended on the order duckdb returned -- `arbitrary_pick`, the
     # defect this tool checks other people's code for, in its own inventory.
-    rows = store.live_decisions(
-        "decision_key = ? or decision_key like ?", [uid, uid + "::%"],
-        # The key carries the claim id for the claim families, which is the only way back from a
-        # stored answer to the sentence it was about. The context holds a 120-char truncation,
-        # and a claim whose literal value sits past character 120 would read as having none.
-        columns="question, answer, confidence, probabilities, context, decision_key")
+    if rows is None:
+        rows = store.live_decisions("decision_key = ? or decision_key like ?", [uid, uid + "::%"],
+                                    columns=_JUDGED_COLUMNS)
     out: dict = {}
     for i, (q, a, c, probs, ctx, dkey) in enumerate(rows):
         # *** UNIQUIFY ON COLLISION, NOT FROM A LIST OF IDS. ***
@@ -257,6 +274,7 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
     REFUSED_CLAIM_FINDINGS.clear()
     out = []
 
+    judged_rows = None
     for uid in project.topological():
         m = project.models[uid]
         entry = ModelEntry(uid=uid, name=m.name, path=m.path, layer=m.layer,
@@ -306,7 +324,9 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
         entry.description = (m.description or "").strip()
 
         # ---- grain, strongest evidence first ----
-        judged = _judgments(store, uid)
+        if store is not None and judged_rows is None:
+            judged_rows = _judged_by_model(store)
+        judged = _judgments(store, uid, (judged_rows or {}).get(uid, []))
         entry.judged = judged
         for q, v in judged.items():
             if q.startswith("edge") and v.get("answer") == "silently_multiplied":

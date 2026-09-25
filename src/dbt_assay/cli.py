@@ -167,10 +167,12 @@ def _load(target: Path, dialect: str | None = None):
     project.dialect_override = dialect or ""
     dialect = project.dialect
     digests, failures = {}, []
+    from .digestcache import DigestCache
+    kept = DigestCache(project.project_name, dialect)
     for uid, m in project.models.items():
         if not m.readable:
             continue
-        d = digest(m.compiled, m.name, dialect)
+        d = kept.get(m.compiled, m.name, lambda m=m: digest(m.compiled, m.name, dialect))
         digests[uid] = d
         if not d.ok:
             failures.append((uid, m.name, m.path, d.error))
@@ -178,7 +180,8 @@ def _load(target: Path, dialect: str | None = None):
     # found to offer. Without this a starred model reports zero columns, which reads exactly like a
     # model that genuinely offers none.
     schema = Schema.load(project, target)
-    schema_stats = derive_columns(project, digests, schema)
+    schema_stats = derive_columns(project, digests, schema, memo=kept)
+    kept.save()
     return project, digests, failures, schema, schema_stats
 
 

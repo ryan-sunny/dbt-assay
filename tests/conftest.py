@@ -7,6 +7,18 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True, scope="session")
+def _digest_cache_in_a_temp_folder(tmp_path_factory):
+    """The parse cache is exercised by every test that loads a project, in a folder of the run's
+    own, never the person's ~/.cache. (ASSAY_CACHE is not used: it also moves the Lean toolchain.)"""
+    from dbt_assay import digestcache
+    where = tmp_path_factory.mktemp("digests")
+    was = digestcache.cache_dir
+    digestcache.cache_dir = lambda: where
+    yield
+    digestcache.cache_dir = was
+
 # One real description, and one boilerplate applied to three models so the repetition rule has
 # something to catch. A project where every description is unique cannot test it.
 _BOILER = "Staging model: light cleanup of one raw source toward the common lead schema."
