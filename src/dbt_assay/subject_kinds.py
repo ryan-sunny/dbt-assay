@@ -12,13 +12,17 @@ the model and `finding_when` turns a defect answer into a finding on that model.
 """
 from __future__ import annotations
 
+import functools
 import re
 
 import sqlglot
 from sqlglot import exp
 
 
+@functools.lru_cache(maxsize=8192)
 def _parse(sql: str, dialect: str):
+    """Read-only trees, cached: the same expression is parsed for several subject kinds and
+    several questions (32,074 parses on one run of `ask`). No caller here modifies one."""
     try:
         return sqlglot.parse_one(sql, dialect=dialect or None)
     except Exception:                                               # noqa: BLE001

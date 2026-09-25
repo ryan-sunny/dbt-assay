@@ -467,10 +467,16 @@ def _reach(project_dir: str, profiles_dir: str | None, dbt_bin: str) -> None:
         why = "" if ok else failure_text(p, 1200)
     except (OSError, subprocess.TimeoutExpired) as e:
         why = str(e)[:600]
-    _REACHED[key] = (f"could not reach the warehouse: `{dbt_bin} show` in `{project_dir}` "
-                     f"failed, so nothing counted here would be real. Pass --project-dir (the "
-                     f"dbt project) and --dbt (how dbt runs, e.g. \"uv run dbt\")."
-                     f"{DBT_OUTPUT}{why}"
+    # *** A LOCKED WAREHOUSE IS NOT A WRONG FLAG. *** (sunny-data, 0.52.4) Another job held the
+    # DuckDB file, and the advice to pass --project-dir and --dbt was wrong: both were given.
+    locked = bool(re.search(r"Could not set lock on file|Conflicting lock is held", why or ""))
+    _REACHED[key] = ((f"could not reach the warehouse: it is locked by another process (DuckDB "
+                      f"allows one writer; the command that holds it has to finish first)."
+                      f"{DBT_OUTPUT}{why}") if locked else
+                     (f"could not reach the warehouse: `{dbt_bin} show` in `{project_dir}` "
+                      f"failed, so nothing counted here would be real. Pass --project-dir (the "
+                      f"dbt project) and --dbt (how dbt runs, e.g. \"uv run dbt\")."
+                      f"{DBT_OUTPUT}{why}")
                      if why else "")
     if _REACHED[key]:
         raise WarehouseUnreachable(_REACHED[key])

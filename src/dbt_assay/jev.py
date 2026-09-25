@@ -530,6 +530,11 @@ def decide(store, client: Client, recipe, questions: dict, *,
                 prompt_version, model_version, call_id, caller, context, input_tokens,
                 file_checksum, state_builder, state_inputs, decided_at)
                values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, current_timestamp)""", rows)
+        # keep the lookup index current: this is the one writer of model_decisions in a command
+        idx = getattr(store, "_latest_decisions", None)
+        if idx is not None:
+            for r in rows:
+                idx[(r[0], r[1], r[7])] = (r[2], r[3], r[4], r[5], r[6])
     if ON_DECIDE is not None:
         ON_DECIDE(bool(ask_these), client)
     return hits
@@ -548,6 +553,32 @@ def version_of(prompt_version: str | dict, question: str) -> str:
     return prompt_version
 
 
+def _latest_index(store) -> dict:
+    """{(decision_key, question, prompt_version): the latest (kind, answer, confidence,
+    probabilities, state_hash)}, read ONCE per store connection.
+
+    *** A DAY WITH NOTHING TO ASK TOOK 3.5 MINUTES TO SAY SO. *** (sunny-data, 0.52.4) Each
+    subject's cache lookup was its own query, two per subject, and each scanned every answer the
+    store has ever held: 13,718 queries a run, slower every day the store grows. One read, then
+    dictionary lookups; `decide` adds each answer it writes, and it is the only writer of
+    `model_decisions` while a command runs."""
+    idx = getattr(store, "_latest_decisions", None)
+    if idx is None:
+        idx = {}
+        try:
+            for k, q, pv, kind, ans, conf, probs, sh in store.con.execute("""
+                    select decision_key, question, prompt_version, kind, answer, confidence,
+                           probabilities, state_hash
+                    from (select *, row_number() over (partition by decision_key, question,
+                                 prompt_version order by decided_at desc) rn
+                          from model_decisions) where rn = 1""").fetchall():
+                idx[(k, q, pv)] = (kind, ans, conf, probs, sh)
+        except Exception:                                        # noqa: BLE001
+            idx = {}
+        store._latest_decisions = idx
+    return idx
+
+
 def cache_split(store, recipe, questions: dict, prompt_version: str | dict,
                 sh: str | None = None) -> tuple[dict, dict]:
     """(answers the store already holds for this exact state, questions it does not).
@@ -557,13 +588,9 @@ def cache_split(store, recipe, questions: dict, prompt_version: str | dict,
     """
     sh = sh or state_hash(recipe.state)
     hits, ask_these = {}, {}
+    idx = _latest_index(store)
     for q, qdef in questions.items():
-        row = store.con.execute(
-            """select kind, answer, confidence, probabilities, state_hash
-               from model_decisions
-               where decision_key = ? and question = ? and prompt_version = ?
-               order by decided_at desc limit 1""",
-            [recipe.key, q, version_of(prompt_version, q)]).fetchone()
+        row = idx.get((recipe.key, q, version_of(prompt_version, q)))
         # A hit whose state moved is a MISS. The subject changed under a key that did not, and
         # serving the old answer is how a cache starts lying about the present.
         if row and row[4] == sh:

@@ -1664,12 +1664,15 @@ def claims(
         raise typer.Exit(1)
 
     rows, kinds = [], Counter()
+    # ONE context for the loop: it memoizes what every state reads (a fresh one per chunk re-read
+    # the store each time)
+    kind_ctx = _state_ctx(project, digests, schema, store, cfg)
     with _judging("sentences", sum(-(-len(cs) // claims_mod.CHUNK) for cs in todo.values())):
         for uid, cs in todo.items():
             for chunk in [cs[i:i + claims_mod.CHUNK]
                           for i in range(0, len(cs), claims_mod.CHUNK)]:
                 rec = states.make(
-                    "claim_kind", _state_ctx(project, digests, schema, store, cfg),
+                    "claim_kind", kind_ctx,
                     key=f"{uid}::sentence::{chunk[0].claim_id}",
                     inputs={"uid": uid, "claim_ids": [c.claim_id for c in chunk]})
                 if rec is None:
@@ -1768,6 +1771,10 @@ def verify(
 
     console.print(f"[bold]{len(rows)}[/] claim(s) to check")
     out, counts, unanswerable = [], Counter(), []
+    # *** ONE CONTEXT, NOT ONE PER CLAIM. *** (sunny-data, 0.52.4: `verify` took 3m13s to send
+    # nothing) A fresh context per claim threw away its memo, so every claim re-read all 5,820
+    # stored claims from the store.
+    align_ctx = _state_ctx(project, digests, schema, store, cfg)
     with _judging("claims", len(rows)):
         for r in rows:
             ev = claims_mod.evidence_for(r["subject"], project, digests, schema, observed,
@@ -1787,7 +1794,7 @@ def verify(
                 continue
             c = claims_mod.Claim(r["claim_id"], r["subject"], r["subject_name"], r["text"],
                                  r["source_kind"], r["source_ref"], citation=r["citation"] or "")
-            rec = states.make("claim_align", _state_ctx(project, digests, schema, store, cfg),
+            rec = states.make("claim_align", align_ctx,
                               key=f"{c.subject}::claim::{c.claim_id}",
                               inputs={"claim_id": c.claim_id})
             if rec is None:
@@ -5122,7 +5129,7 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
             samples = rows_mod.samples(project, failing, probe_mod, *rows_from)
         except Exception as e:                                   # noqa: BLE001
             # asked for and not read: say why, never "pass --project-dir" (it was passed)
-            rows_error = str(e).splitlines()[0][:300] if str(e) else type(e).__name__
+            rows_error = (str(e).splitlines()[0][:300] if str(e) else type(e).__name__).rstrip(".")
     ctx = reviewform.context(store, project, cfg, findings, vol, samples)
     if failing:
         # the same numbers the tab shows: its badge counts the failing tests it has a card for

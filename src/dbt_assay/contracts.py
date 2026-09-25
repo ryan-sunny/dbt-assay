@@ -453,10 +453,17 @@ def id_prefix_conflicts() -> list[str]:
     return out
 
 
+_CLAIMED: set = set()     # prefixes a bank claimed earlier in this process (6,859 checks a run)
+
+
 def check_question_ids(question_ids) -> None:
     """Raise on any id no bank claims. Called before a request is built, so a mis-prefixed
     question fails on its first run rather than filing verdicts nobody can count."""
-    unknown = sorted({q for q in question_ids if family_of(q) is None})
+    fresh = {q for q in question_ids if q.split("__")[0] not in _CLAIMED}
+    if not fresh:
+        return
+    unknown = sorted({q for q in fresh if family_of(q) is None})
+    _CLAIMED.update(q.split("__")[0] for q in fresh if q not in unknown)
     if unknown:
         known = sorted(q["id_prefix"] for q in load_all_banks().values() if q.get("id_prefix"))
         raise ValueError(
