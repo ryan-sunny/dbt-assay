@@ -643,7 +643,30 @@ def with_guarantees(rows: list[dict], led: L.Ledger, project, store=None) -> lis
                             f"{bad[0]['detail']}" if bad else
                             f"not yet measured on {eng}" if any(e["status"] != CONFORMS
                                                                 for e in r["engine"]) else "")
+    # *** A JOIN THAT MULTIPLIES, THEN GROUPED BACK, IS NOT THE ONE TO ACT ON. *** (sunny-data
+    # feedback L9) Four of seven "do not hold" joined onto readings and grouped by the model's
+    # grain afterwards, on purpose; the three left were a real duplication. Where the model's own
+    # grain is proven by its group by, the fan-out is gone from its output: "regrouped".
+    regrouped = {r["model"] for r in rows if r["property"] == "grain"
+                 and r.get("rule") == "group_by_unique"
+                 and r["guarantee"] in ("holding", "conditional")}
+    for r in rows:
+        if r["guarantee"] == "refuted" and r["property"].startswith("no_fanout") \
+                and r["model"] in regrouped:
+            r["guarantee"] = "regrouped"
+    # *** `status` IS THE VERDICT. *** (L8) It said `proven` beside `guarantee: refuted`, so a
+    # consumer filtering on it counted seven joins that multiply rows as proven. `lean_checked`
+    # keeps what Lean did; `status` says what holds.
+    for r in rows:
+        r["lean_checked"] = r["status"] == PROVEN
+        r["status"] = VERDICT.get(r["guarantee"], r["guarantee"])
     return rows
+
+
+# guarantee -> status. Proven means it holds for every input its premises allow.
+VERDICT = {"holding": PROVEN, "conditional": PROVEN, "refuted": "does_not_hold",
+           "regrouped": "regrouped", "lost": "lost", "stale": "stale",
+           "not_proven": "not_proven", "not_attempted": "not_attempted"}
 
 
 def _rebuild(led: L.Ledger, p: dict):

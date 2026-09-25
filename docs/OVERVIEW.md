@@ -1340,13 +1340,17 @@ through your connection with `--parse-on warehouse`. MCP `proofs(model)` and the
 Guarantees tab and model pane read the same rows.
 
 The terminal prints the summary first: properties proven, split into `holding` (every premise
-holds), `conditional` (a premise is unchecked) and `lost` (a premise it assumed broke); then those
-that do not hold (the join is onto a key that is not unique, often on purpose when the model groups
-afterwards), those Lean refuted, the reasons the rest have no rule, one number for the parse, and
-the store and run it counted from. `--verbose` lists every model and property; `--json` carries it
-all with a `summary`. On a 358-model warehouse: 708 properties, 461 proven (263 holding, 198
-conditional, 0 lost), 7 do not hold, 19 refuted by Lean with the missing premise named, 221 with
-no rule for their shape, in 54 seconds; a rerun with nothing changed takes a few.
+holds) and `conditional` (a premise is unchecked), and those `lost` (a premise they assumed broke);
+then the joins that do not hold (onto a key that repeats, with nothing grouping the rows back),
+those that fan out and are regrouped (the join multiplies, and the model's own group by, proven,
+collapses it to its grain: usually deliberate), those Lean refuted, the reasons the rest have no
+rule, one number for the parse, and the store and run it counted from. `--verbose` lists every
+model and property; `--json` carries it all with a `summary`, and each row's `status` is that
+verdict (`proven`, `lost`, `does_not_hold`, `regrouped`, `stale`, `not_proven`, `not_attempted`)
+with `lean_checked` beside it. On a 358-model warehouse: 708 properties, 461 proven (263 holding,
+198 conditional, 0 lost), 3 do not hold, 4 fan out and are regrouped, 19 refuted by Lean with the
+missing premise named, 221 with no rule for their shape, in 54 seconds; a rerun with nothing
+changed takes a few.
 
 Premises about an installed package's own tables (Elementary's `data_monitoring_metrics`) are left
 out of every count and list, since nothing in the project fixes them: `assay premises

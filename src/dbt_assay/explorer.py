@@ -1747,11 +1747,12 @@ function modelsTab(host) {
     if (pr.length) d.append(section('proven (' + pr.filter(r => r.status === 'proven').length
       + ' of ' + pr.length + ')', el('div', {class: 'ulist'}, pr.map(r => el('div', {class: 'urow'}, [
         el('span', {}, [wbr(r.statement)]), gbadge(r),
-        el('div', {class: 'usub'}, [wbr(r.status === 'proven'
+        el('div', {class: 'usub'}, [wbr(r.lean_checked
           ? ((r.premises || []).length ? 'as long as ' + r.premises.map(p =>
               String(p.statement || '').replace(/`/g, '') + ' (' + p.label + ')').join('; ')
              : 'needs no premise')
-            + (r.lost_because ? '. Lost: ' + r.lost_because.replace(/`/g, '') : '')
+            + (r.lost_because ? (r.guarantee === 'lost' ? '. Lost: ' : '. Not so: ')
+               + r.lost_because.replace(/`/g, '') : '')
           : (r.missing || 'no proven rule covers it'))])]))),
       'Checked by Lean from the parsed structure: each holds for every input its premises allow.'));
 
@@ -3642,10 +3643,10 @@ const USEWORD = {grain: 'the grain of', held_back: 'a finding held back on',
 
 /* ---- certificates (L2): a guarantee's word, badge class and tip. */
 const GWORD = {holding: 'proven', conditional: 'proven, conditional', lost: 'guarantee lost',
-               refuted: 'does not hold',
+               refuted: 'does not hold', regrouped: 'fans out, regrouped',
                stale: 'file changed', not_proven: 'not proven', not_attempted: 'not proven'};
 const GCLASS = {holding: 'proven', conditional: 'unchecked', lost: 'broken', refuted: 'assumed',
-                stale: 'unchecked',
+                regrouped: 'unknown', stale: 'unchecked',
                 not_proven: 'assumed', not_attempted: 'unknown'};
 const GTIP = {
   holding: 'Checked by Lean, and every premise it rests on is holding.',
@@ -3653,7 +3654,10 @@ const GTIP = {
     + 'has not been checked.',
   lost: 'Checked by Lean, and a premise it rests on broke: the guarantee no longer applies.',
   refuted: 'The key it would need was never declared, and a count shows it repeats: this join '
-    + 'can multiply rows here, often on purpose (a join to many readings, then a group by).',
+    + 'can multiply this model’s rows, and nothing groups them back.',
+  regrouped: 'The join multiplies rows, and the model’s own group by collapses them to its grain '
+    + '(proven). Usually deliberate, a join to many readings then grouped; a sum over the joined '
+    + 'rows would still count each several times.',
   stale: 'The model’s file changed since this was proven. `assay prove` proves it again.',
   not_proven: 'Lean could not close the goal. What is missing is shown.',
   not_attempted: 'No proven rule applies to this structure yet, or a premise is missing.'};
@@ -3674,9 +3678,9 @@ function proofBlock(r) {
   const rows = [
     ['guarantee', gbadge(r)],
     ...(r.lost_because ? [['lost because', wbr(r.lost_because)]] : []),
-    ...(r.status === 'proven' ? [['as long as', (r.premises || []).length ? prem
+    ...(r.lean_checked ? [['as long as', (r.premises || []).length ? prem
         : el('span', {class: 'tot', text: 'nothing: it needs no premise'})]] : []),
-    ...(r.status !== 'proven' ? [['what is missing', wbr(r.missing || r.detail || '')]] : []),
+    ...(!r.lean_checked ? [['what is missing', wbr(r.missing || r.detail || '')]] : []),
     ['the rule', el('span', {}, [el('span', {class: 'mono', text: r.rule || ''}),
       el('span', {class: 'tot', text: '  proven once in assay’s Lean library'})])],
     ['the parse', r.parse ? premBadge(r.parse.status, r.parse.label, r.parse.why) : null],
@@ -3791,9 +3795,10 @@ function guaranteesTab(host) {
     const k = r.guarantee === 'not_attempted' ? 'not_proven' : r.guarantee;
     (pby[k] = pby[k] || []).push(r);
   }
-  for (const k of ['lost', 'refuted', 'conditional', 'stale', 'holding', 'not_proven'])
+  for (const k of ['lost', 'refuted', 'regrouped', 'conditional', 'stale', 'holding',
+                   'not_proven'])
     if (pby[k]) groups.push({key: 'proof_' + k, proof: 1, label: {lost: 'proofs: guarantee lost',
-      refuted: 'proofs: does not hold',
+      refuted: 'proofs: does not hold', regrouped: 'proofs: fan out, regrouped',
       conditional: 'proofs: conditional', stale: 'proofs: file changed', holding: 'proven',
       not_proven: 'not proven'}[k], rows: pby[k]});
   const proofCols = [
@@ -3806,7 +3811,7 @@ function guaranteesTab(host) {
     what: r.statement, reading: [proofBlock(r)],
     act: r.guarantee === 'lost' ? el('p', {class: 'prose'}, [wbr('The premise broke: fix the data or '
           + 'the key it names, then `assay check`. Lean need not run again.')])
-      : r.status !== 'proven' ? el('p', {class: 'prose'}, [wbr(r.missing || 'Nothing to do until '
+      : !r.lean_checked ? el('p', {class: 'prose'}, [wbr(r.missing || 'Nothing to do until '
           + 'a proven rule covers this structure.')]) : null});
   const cols = [
     {key: 'statement', label: 'premise', val: p => p.statement,

@@ -319,3 +319,42 @@ def test_prove_prints_the_summary_first_and_every_model_only_when_asked(tmp_path
     assert sm["proven"] == sum(1 for x in doc["rows"] if x["status"] == "proven")
     assert sum(sm["parse"].values()) == sm["models"] == len(doc["parse_state"])
     assert "run" in doc["counted"]
+
+
+# --- sunny-data feedback L8 / L9: status is the verdict; a fan-out grouped back is its own state --
+
+REGROUP = {
+    "stg_parent": "select id, name from raw.parent",
+    "stg_readings": "select id, v from raw.readings",
+    # joins onto readings (many per id), then groups back to the driver's key
+    "per_parent": ("select p.id, count(r.v) as n from main.stg_parent p "
+                   "left join main.stg_readings r on r.id = p.id group by p.id"),
+    # the same join, nothing grouping it back
+    "fanned": ("select p.id, r.v from main.stg_parent p "
+               "left join main.stg_readings r on r.id = p.id"),
+}
+
+
+@needs_lean
+def test_a_regrouped_fan_out_is_apart_from_one_that_multiplies_the_output(tmp_path):
+    target = build(tmp_path, REGROUP)
+    p, d, sch = _load(target)
+    s = Store(str(tmp_path / "s.duckdb"))
+    s.con.execute("insert into observed_keys (relation, column_name, row_count, non_null, "
+                  "distinct_ct, status, detail, observed_at, via, minimality, sampled, "
+                  "sample_pct) values (?, 'id', 10, 10, 4, 'has_duplicates', '', "
+                  "now(), 't', '', false, 0)",
+                  [(sch.relation.get("model.p.stg_readings") or "").replace('"', "").lower()])
+    entries = inventory.build(p, d, sch, store=s)
+    rep = prove.run(p, d, sch, entries, s, target, say=lambda *_: None)
+    got = {(r["model_name"], r["property"]): r for r in rep["rows"]}
+    grouped = next(r for (m, prop), r in got.items()
+                   if m == "per_parent" and prop.startswith("no_fanout"))
+    fanned = next(r for (m, prop), r in got.items()
+                  if m == "fanned" and prop.startswith("no_fanout"))
+    assert grouped["guarantee"] == grouped["status"] == "regrouped", grouped
+    assert fanned["guarantee"] == "refuted" and fanned["status"] == "does_not_hold", fanned
+    # L8: Lean checked both certificates; neither is `proven`
+    assert grouped["lean_checked"] and fanned["lean_checked"]
+    assert all(r["status"] != "proven" or r["guarantee"] in ("holding", "conditional")
+               for r in rep["rows"])

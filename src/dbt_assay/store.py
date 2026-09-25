@@ -335,6 +335,11 @@ class Store:
                     f"cannot open the assay store at {self.path!r}: {e}. "
                     f"Pass --store with a writable path, or run from a writable directory. "
                     f"The structural checks work without a store at all.") from e
+        # *** EVERY TIMESTAMP IN THE STORE IS UTC, WHATEVER MACHINE WROTE IT. *** (sunny-data
+        # feedback L7) The columns are `timestamp`, and DuckDB turns an aware datetime (or `now()`)
+        # into one in the SESSION's zone: the box wrote UTC, the laptop wrote Denver time, and a
+        # laptop run made after the box's sorted before it, so "latest run" was the wrong one.
+        self.con.execute("SET TimeZone = 'UTC'")
         self.con.execute(DDL)
         self.renamed_question_ids: list[tuple[str, str, int]] = []
         self.unrenamable_question_ids: list[tuple[str, str, int]] = []

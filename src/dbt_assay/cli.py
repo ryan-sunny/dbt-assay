@@ -5665,9 +5665,11 @@ def prove(
     from collections import Counter
     g = Counter(r["guarantee"] for r in rows)
     ps = Counter(parse_state.values())
-    summary = {"properties": len(rows), "proven": g["holding"] + g["conditional"] + g["lost"]
-               + g["stale"], "holding": g["holding"], "conditional": g["conditional"],
-               "lost": g["lost"], "does_not_hold": g["refuted"], "not_proven": g["not_proven"],
+    # `proven` counts what holds, the same rows as `status == "proven"` (L8).
+    summary = {"properties": len(rows), "proven": g["holding"] + g["conditional"],
+               "holding": g["holding"], "conditional": g["conditional"],
+               "lost": g["lost"], "does_not_hold": g["refuted"], "regrouped": g["regrouped"],
+               "not_proven": g["not_proven"],
                "no_rule_applies": g["not_attempted"], "stale": g["stale"],
                "parse": dict(ps), "models": len(parse_state)}
     if json_out:
@@ -5681,9 +5683,12 @@ def prove(
                   f"{summary['holding']} holding, {summary['conditional']} resting on an "
                   f"unchecked premise, [{'red' if summary['lost'] else 'dim'}]"
                   f"{summary['lost']} guarantee(s) lost[/].")
-    console.print(f"{summary['does_not_hold']} do not hold (a key never declared, counted "
-                  f"repeating), {summary['not_proven']} refuted by Lean, "
-                  f"{summary['no_rule_applies']} with no rule for their shape.")
+    console.print(f"{summary['does_not_hold']} do not hold (a join onto a key never declared, "
+                  f"counted repeating), {summary['regrouped']} multiply rows and are grouped "
+                  f"back by the model's grain, {summary['not_proven']} refuted by Lean, "
+                  f"{summary['no_rule_applies']} with no rule for their shape"
+                  + (f", {summary['stale']} whose file changed since" if summary["stale"] else "")
+                  + ".")
     console.print(f"parse: proven by Lean for {ps['proven']} of {len(parse_state)} model(s); "
                   f"the round trip agrees for {ps['agrees']} more, differs for {ps['differs']}, "
                   f"{ps['unchecked']} unchecked.")
@@ -5699,10 +5704,16 @@ def prove(
             console.print(f"  {r['model_name']}  {r['statement']}  [red]{r['lost_because']}[/]")
     refuted = [r for r in rows if r["guarantee"] == "refuted"]
     if refuted:
-        console.print("\n[bold]do not hold[/] [dim](the join can multiply rows here; often on "
-                      "purpose, when the model groups afterwards)[/]")
+        console.print("\n[bold]do not hold[/] [dim](the join can multiply this model's rows, and "
+                      "nothing groups them back)[/]")
         for r in refuted:
             console.print(f"  {r['model_name']}  {r['statement']}  [dim]{r['lost_because']}[/]")
+    regrouped = [r for r in rows if r["guarantee"] == "regrouped"]
+    if regrouped:
+        console.print("\n[bold]fan out, regrouped[/] [dim](the join multiplies rows, and the "
+                      "model's group by collapses them to its grain: deliberate, as a rule; "
+                      "a sum over the joined rows would still count each many times)[/]: "
+                      + ", ".join(sorted({r["model_name"] for r in regrouped})))
     why = Counter((r["missing"] or r["detail"] or "").split(":")[0].strip()
                   for r in rows if r["guarantee"] == "not_attempted")
     if why:
@@ -5721,10 +5732,11 @@ def prove(
         for name in sorted(set(by) | set(parse_state)):
             rs = by.get(name, [])
             proven = [r for r in rs if r["status"] == "proven"]
+            # what Lean checked prints its statement and premises; the rest what is missing
             console.print(f"\n[bold]{name}[/]  {len(proven)} of {len(rs)} proven  "
                           f"[dim]parse {parse_state.get(name, 'unchecked')}[/]")
             for r in rs:
-                if r["status"] == "proven":
+                if r.get("lean_checked"):
                     gg = r["guarantee"]
                     console.print(f"  [{colour.get(gg, 'dim')}]{gg}[/]  {r['statement']}"
                                   + (f"  [red]{r['lost_because']}[/]" if r["lost_because"]
