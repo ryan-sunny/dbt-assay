@@ -35,6 +35,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -683,14 +684,19 @@ def _reach(project_dir: str, profiles_dir: str | None, dbt_bin: str) -> None:
                              f"{where}, and there is no profiles.yml there. A relative path is "
                              f"read from the directory assay was run in.")
             raise WarehouseUnreachable(_REACHED[key])
-    try:
-        p = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, timeout=180,
-                           check=False)
-        ok = p.returncode == 0 and parse_dbt_show(p.stdout or "") is not None
-        say_deprecations((p.stdout or "") + "\n" + (p.stderr or ""))
-        why = "" if ok else failure_text(p, 1200)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        why = str(e)[:600]
+    first = _via_session("select 1 as assay_reachable", project_dir, profiles_dir, dbt_bin,
+                         1, 180)
+    if first is not None:
+        why = "" if not first.failed else first.why[:1200]
+    else:
+        try:
+            p = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, timeout=180,
+                               check=False)
+            ok = p.returncode == 0 and parse_dbt_show(p.stdout or "") is not None
+            say_deprecations((p.stdout or "") + "\n" + (p.stderr or ""))
+            why = "" if ok else failure_text(p, 1200)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            why = str(e)[:600]
     # *** A LOCKED WAREHOUSE IS NOT A WRONG FLAG. *** (sunny-data, 0.52.4) Another job held the
     # DuckDB file, and the advice to pass --project-dir and --dbt was wrong: both were given.
     locked = bool(re.search(r"Could not set lock on file|Conflicting lock is held", why or ""))
@@ -710,6 +716,41 @@ def _reach(project_dir: str, profiles_dir: str | None, dbt_bin: str) -> None:
         raise WarehouseUnreachable(_REACHED[key])
 
 
+_SAID_NO_SESSION: set = set()
+
+
+def _via_session(sql: str, project_dir: str, profiles_dir: str | None, dbt_bin: str,
+                 limit: int, timeout: int) -> Result | None:
+    """One statement through the command's held dbt (`dbtsession`), or None to use a subprocess.
+
+    A statement dbt refused is a failed Result, exactly as from a subprocess. A worker that cannot
+    start or dies is not: the statement goes to a subprocess, and from then on so does every
+    statement for this project, said once on stderr."""
+    from . import dbtsession
+    common = [*profiles_args(profiles_dir), *show_args(project_dir)]
+    s = dbtsession.get(project_dir, dbt_bin, common)
+    if s is None:
+        why = dbtsession.why_not(project_dir, dbt_bin, common)
+        if why and why not in _SAID_NO_SESSION:
+            _SAID_NO_SESSION.add(why)
+            print(f"assay: one dbt call per statement here (the held dbt session did not start: "
+                  f"{why.strip().splitlines()[-1][:200] if why.strip() else why})",
+                  file=sys.stderr)
+        return None
+    started = time.monotonic()
+    try:
+        got = s.show(sql, limit, timeout)
+    except RuntimeError as e:
+        dbtsession.forget(project_dir, dbt_bin, common, str(e))
+        return None
+    ms = int((time.monotonic() - started) * 1000)
+    if not got.get("ok"):
+        return Result(failed=True, wall_ms=ms, why=str(got.get("why") or "")[:600])
+    secs = got.get("secs")
+    return Result(rows=list(got.get("show") or []), wall_ms=ms,
+                  engine_ms=None if secs is None else int(float(secs) * 1000))
+
+
 def _execute(sql: str, project_dir: str, profiles_dir: str | None = None,
              dbt_bin: str = "dbt", limit: int = 50, timeout: int = 300,
              measure: bool = False) -> Result:
@@ -723,6 +764,10 @@ def _execute(sql: str, project_dir: str, profiles_dir: str | None = None,
     """
     _reach(project_dir, profiles_dir, dbt_bin)
     budget()
+    if not measure:
+        got = _via_session(sql, project_dir, profiles_dir, dbt_bin, limit, timeout)
+        if got is not None:
+            return got
     cmd = [*dbt_bin.split(), "show", "--inline", sql, "--output", "json", "--limit", str(limit),
            *profiles_args(profiles_dir), *show_args(project_dir)]
     if measure:

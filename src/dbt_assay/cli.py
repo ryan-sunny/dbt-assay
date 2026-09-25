@@ -8712,6 +8712,114 @@ def _record_from_labels(store, target, dialect: str) -> None:
                   f"Human verdicts so far: {human}. Add more with `assay review -i`.[/]")
 
 
+@app.command("run")
+def run_steps(
+    steps: list[str] = typer.Argument(..., help="each a command and its own flags, quoted: "
+                                                "\"check --verify -n 10\" ask verify. "
+                                                "`>path` at the end sends that step's stdout "
+                                                "to a file"),
+    target: str = typer.Option(None, "--target", "-t"),
+    store_path: str = typer.Option(None, "--store"),
+    config_path: str = typer.Option(None, "--config"),
+    project_dir: str = typer.Option(None, "--project-dir"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    dbt_bin: str = typer.Option(None, "--dbt", "--dbt-bin"),
+):
+    """Several commands in one process: one dbt for all of them, and a line per step.
+
+    *** ELEVEN INVOCATIONS, ELEVEN dbt STARTS. *** (sunny-data, RC 62c18a6) The daily run called
+    `assay` once per step, so every step paid Python start, the project load and its own dbt
+    start. Here the steps run in order in one process: the project's dbt is started once
+    (`dbtsession`) and answers every step's queries, and the parse cache is warm after the
+    first. Every step runs even when one before it failed, and the exit code is 1 if any did.
+
+    The shared options go to each step that takes them; a step's own flags win. Each step is
+    still its own command: its own `warehouse.max_queries`, its own `jev.max_spend_usd`.
+    """
+    import contextlib
+    import shlex
+    import time as _time
+
+    import typer.main as _tm
+
+    from . import cost as cost_mod
+    group = _tm.get_command(app)
+    shared = {"--target": target, "--store": store_path, "--config": config_path,
+              "--project-dir": project_dir, "--profiles-dir": profiles_dir, "--dbt": dbt_bin}
+    failed, rows = [], []
+
+    def spent() -> tuple[float, int]:
+        path = store_path or "assay.duckdb"
+        if not Path(path).exists():
+            return 0.0, 0
+        try:
+            st = Store(path)
+            led = cost_mod.ledger(st)
+            st.close()
+            return float(led.get("usd") or 0), int(led.get("calls") or 0)
+        except Exception:                                        # noqa: BLE001
+            return 0.0, 0
+
+    n = len(steps)
+    for i, raw in enumerate(steps, 1):
+        words = shlex.split(raw)
+        to = None
+        if words and words[-1].startswith(">"):
+            to = words.pop()[1:] or None
+        if not words:
+            continue
+        name, args = words[0], words[1:]
+        cmd = group.get_command(None, name) if hasattr(group, "get_command") else None
+        if cmd is None or name == "run":
+            err_console.print(f"[{i}/{n}] {name}: [red]no such step[/]")
+            failed.append(name)
+            rows.append({"step": raw, "ok": False, "seconds": 0})
+            continue
+        takes = {o for p in cmd.params for o in getattr(p, "opts", [])}
+        given = {a.split("=")[0] for a in args if a.startswith("-")}
+        for flag, val in shared.items():
+            if val is None:
+                continue
+            names = [flag] + (["-t"] if flag == "--target" else []) \
+                + (["--dbt-bin"] if flag == "--dbt" else [])
+            if any(x in takes for x in names) and not any(x in given for x in names):
+                args += [next(x for x in names if x in takes), val]
+        probe_mod._SPENT.update(queries=0, usd=0.0)          # per command, as a CLI call has
+        before = spent()
+        err_console.print(f"[{i}/{n}] {name}: starting  ({' '.join(args)})")
+        t0 = _time.monotonic()
+        rc = 0
+        try:
+            with contextlib.ExitStack() as es:
+                if to:
+                    fh = es.enter_context(open(to, "w"))
+                    es.enter_context(contextlib.redirect_stdout(fh))
+                got = cmd.main(args, prog_name=f"assay {name}", standalone_mode=False)
+                rc = got if isinstance(got, int) else 0
+        except SystemExit as e:
+            rc = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
+        except Exception as e:                                   # noqa: BLE001
+            err_console.print(f"[{i}/{n}] {name}: [red]{type(e).__name__}: {e}[/]")
+            rc = 1
+        secs = round(_time.monotonic() - t0, 1)
+        after = spent()
+        calls, usd = after[1] - before[1], after[0] - before[0]
+        wq = probe_mod._SPENT["queries"]
+        row = {"step": raw, "ok": rc == 0, "exit": rc, "seconds": secs, "calls": calls,
+               "usd": round(usd, 4), "warehouse_queries": wq}
+        rows.append(row)
+        what = (f"done in {secs}s" if rc == 0 else f"FAILED, exit {rc}, {secs}s") \
+            + f", {calls} call(s), ${usd:.4f}, {wq} warehouse quer{'y' if wq == 1 else 'ies'}"
+        err_console.print(f"[{i}/{n}] {name}: {what}")
+        if rc != 0:
+            failed.append(name)
+    from . import dbtsession
+    dbtsession.close_all()
+    err_console.print("RUN " + _json.dumps({"steps": rows, "failed": failed}))
+    if failed:
+        raise typer.Exit(1)
+
+
 # *** AT THE END OF THE FILE, BECAUSE EVERYTHING ABOVE IT IS A COMMAND. ***
 # This block sat in the middle, so `python -m dbt_assay.cli` ran the app before 30 of its commands
 # were defined -- `review`, `probe`, `read`, `hook` among them -- and answered "No such command".

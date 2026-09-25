@@ -587,6 +587,23 @@ time starting dbt up again. Measured on a 358-model warehouse: 271 statements be
 relations went from about seven minutes to 46 seconds. A batch that fails is bisected rather than
 discarded, so one bad column cannot throw away the good ones beside it.
 
+**And dbt starts once per command, not once per statement.** Where the `--dbt` command's Python
+can be found (`uv run dbt`, a venv's `dbt`), assay starts a small worker in that Python: it parses
+the project once, holds the manifest, and answers every `dbt show` over a pipe. assay still
+imports no dbt and still sees no credential. On jaffle_shop, `check --verify` went from 22 seconds
+to 6 for the same 17 statements and the same findings. A worker that cannot start falls back to one
+`dbt show` per statement and says so once; `ASSAY_DBT_SESSION=0` turns it off.
+
+A schedule that runs several commands runs them in one process, so they share that worker:
+
+```bash
+assay run check ask verify traverse prove -t target/ --store assay.duckdb --dbt "uv run dbt"
+```
+
+A step with flags of its own is quoted, as `"check --verify"`, and `>volume.json` at the end of
+one sends that step's output to a file. Each step prints `[n/N] step: done in Xs, calls, $, warehouse queries`, every step runs even after
+one fails, and the run exits 1 if any did. The shared options reach each step that takes them.
+
 **And it asks only for columns the warehouse actually has.** The catalog is read first — a
 metadata query that scans nothing — and the target list is intersected with it. Before that, 70 of
 271 statements on that warehouse were asking for columns that do not exist, and every one came

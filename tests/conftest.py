@@ -18,7 +18,16 @@ def _digest_cache_in_a_temp_folder(tmp_path_factory):
     was = digestcache.cache_dir
     digestcache.cache_dir = lambda: where
     probe.SHOW_ROOT = str(tmp_path_factory.mktemp("dbt-target"))
+    # The held dbt session is off here: most tests stand in for dbt with a stubbed subprocess,
+    # and a real worker would bypass the stub. test_dbtsession turns it on against real dbt.
+    import os
+    was_session = os.environ.get("ASSAY_DBT_SESSION")
+    os.environ["ASSAY_DBT_SESSION"] = "0"
     yield
+    if was_session is None:
+        os.environ.pop("ASSAY_DBT_SESSION", None)
+    else:
+        os.environ["ASSAY_DBT_SESSION"] = was_session
     digestcache.cache_dir = was
     probe.SHOW_ROOT = None
 
