@@ -825,6 +825,110 @@ def digest(sql: str, name: str = "", dialect: str = "duckdb") -> Digest:
                       error=f"could not read the parsed SQL: {type(e).__name__}: {e}"[:200])
 
 
+def _cte_selects(tree) -> dict:
+    """{cte name: its select}, for the CTEs that are one select."""
+    out = {}
+    for c in tree.find_all(exp.CTE):
+        if isinstance(c.this, exp.Select):
+            out[c.alias.lower()] = c.this
+    return out
+
+
+def _star_source(sel, star) -> str | None:
+    """The FROM name a star in `sel` reads: its qualifier's relation, or the only FROM."""
+    src = _from_of(sel)
+    tables = ([src.this] if src is not None else []) + [j.this for j in sel.args.get("joins") or []]
+    tables = [t for t in tables if isinstance(t, exp.Table)]
+    qual = (star.table or "").lower() if isinstance(star, exp.Column) else ""
+    if qual:
+        hit = [t for t in tables if (t.alias or t.name).lower() == qual]
+        return hit[0].name.lower() if hit else None
+    if len(tables) == 1 and not sel.args.get("joins"):
+        return tables[0].name.lower()
+    return None
+
+
+def _projection(sel, ctes: dict, depth: int = 0) -> list | None:
+    """[(name, expression)] of a select, a star over a CTE replaced by that CTE's projection.
+    None when a star reads something else (a physical relation, a join), which only the parents
+    can say."""
+    if depth > 20:
+        return None
+    out = []
+    for e in sel.expressions:
+        star = e if isinstance(e, exp.Star) else (e if isinstance(e, exp.Column)
+                                                  and isinstance(e.this, exp.Star) else None)
+        if star is None:
+            nm = e.alias_or_name
+            if nm:
+                out.append((nm, e.this if isinstance(e, exp.Alias) else e))
+            continue
+        inner_star = star if isinstance(star, exp.Star) else star.this
+        if inner_star.args.get("replace") or inner_star.args.get("rename"):
+            return None
+        src = _star_source(sel, star)
+        if src is None or src not in ctes:
+            return None
+        got = _projection(ctes[src], ctes, depth + 1)
+        if got is None:
+            return None
+        drop = {(c.name if isinstance(c, exp.Column) else str(c)).lower()
+                for c in inner_star.args.get("except_") or inner_star.args.get("except") or []}
+        out += [(nm, ex) for nm, ex in got if nm.lower() not in drop]
+    return out
+
+
+# A column whose arms of a UNION say different things: known by name, and nothing is concluded
+# from its expression, because no one arm's expression is the column's.
+MIXED = "union"
+
+
+def _set_arms(tree) -> list | None:
+    """The selects of a top-level UNION / EXCEPT / INTERSECT, left to right; None otherwise."""
+    if not isinstance(tree, (exp.Union, exp.Except, exp.Intersect)):
+        return None
+    out, stack = [], [tree]
+    while stack:
+        n = stack.pop()
+        if isinstance(n, (exp.Union, exp.Except, exp.Intersect)):
+            stack += [n.expression, n.this]
+        elif isinstance(n, exp.Select):
+            out.append(n)
+        else:
+            return []
+    return out
+
+
+def _expand_final(tree, final) -> list:
+    """[(name, expression, None, or MIXED)] for the model's output; `("*", None)` where
+    unknowable.
+
+    *** A UNION'S FIRST ARM IS NOT THE UNION. *** sqlglot hangs the WITH on the first arm, and the
+    first select found was read as the model's output: `'MARICOPA' as county` became the county
+    of a model that unions two counties. Every arm is read; a column keeps its expression only
+    when every arm writes the same one."""
+    ctes = _cte_selects(tree)
+    arms = _set_arms(tree)
+    if arms is not None:
+        projs = [_projection(a, ctes) for a in arms] if arms else [None]
+        if any(p is None for p in projs) or len({len(p) for p in projs}) != 1:
+            first = projs[0] if projs and projs[0] is not None else None
+            return ([(nm, MIXED) for nm, _e in first] if first is not None else [("*", None)])
+        out = []
+        for i, (nm, e) in enumerate(projs[0]):
+            texts = {p[i][1].sql() for p in projs}
+            out.append((nm, e if len(texts) == 1 else MIXED))
+        return out
+    got = _projection(final, ctes)
+    if got is not None:
+        return got
+    return [(e.alias_or_name, e.this if isinstance(e, exp.Alias) else e)
+            if not (isinstance(e, exp.Star) or (isinstance(e, exp.Column)
+                                                and isinstance(e.this, exp.Star)))
+            else ("*", None) for e in final.expressions if e.alias_or_name or
+            isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star))]
+
+
 def _extract(tree, name: str, dialect: str) -> Digest:
     d = Digest(name=name, ok=True)
     cte_names = set()
@@ -842,12 +946,18 @@ def _extract(tree, name: str, dialect: str) -> Digest:
     # The FINAL select's projections are the model's output columns. Selects inside CTEs are not.
     final = tree.find(exp.Select) if not tree.args.get("with") else tree
     if isinstance(final, exp.Select):
-        d.output_columns = [e.alias_or_name for e in final.expressions if e.alias_or_name]
-        for e in final.expressions:
-            nm = e.alias_or_name
-            if not nm:
+        # *** `select * from final` IS dbt's HOUSE STYLE, AND IT HID EVERY COLUMN. *** (jaffle_shop:
+        # 20 of 20 tests "unevaluable") A star over one of the model's own CTEs is that CTE's
+        # projection, followed through further `select *` CTEs; only a star over a physical
+        # relation stays `*`, for derive_columns to expand from the parents.
+        items = _expand_final(tree, final)
+        d.output_columns = [nm for nm, _e in items]
+        for nm, inner in items:
+            if nm == "*" or inner is None:
                 continue
-            inner = e.this if isinstance(e, exp.Alias) else e
+            if inner is MIXED:
+                d.output_roots[nm.lower()] = MIXED
+                continue
             d.output_exprs[nm.lower()] = inner.sql(dialect=dialect)[:300]
             d.output_roots[nm.lower()] = _classify(inner)
             base = _base_column(inner)

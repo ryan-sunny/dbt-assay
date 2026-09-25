@@ -414,6 +414,14 @@ def _schema_panel(schema, stats: dict) -> None:
     if not schema.catalog_present:
         t.add_row("[dim]catalog.json[/]",
                   "[dim]absent. `dbt docs generate` adds real column lists for sources.[/]")
+    else:
+        # *** "catalog 0" READ AS "THE CATALOG WAS NOT READ". *** (jaffle_shop, J1) It was: a
+        # model's columns come from its SQL first, since that also says what each one IS; the
+        # catalog answers where the SQL cannot, and for every source.
+        n_cat = len(schema.catalog.get("nodes") or {}) + len(schema.catalog.get("sources") or {})
+        t.add_row("[dim]catalog.json[/]",
+                  f"[dim]read: {n_cat} node(s). A model's columns come from its SQL where the "
+                  f"SQL says them; the catalog fills in the rest and every source.[/]")
     console.print(t)
 
 
@@ -659,29 +667,10 @@ def check(
         }, indent=2))
         raise typer.Exit(1 if new_only and findings else 0)
 
-    _report_moved_question_ids()
-    _report_refused_claim_findings()
-    _report_unconfigured_checks(cfg, findings)
-
-    if _dropped.get("stale") or _dropped.get("superseded"):
-        bits = []
-        if _dropped["superseded"]:
-            bits.append(f"{_dropped['superseded']:,} older answer(s) superseded by a newer one")
-        if _dropped["stale"]:
-            bits.append(f"{_dropped['stale']:,} answer(s) given against a question that has "
-                        f"since changed, still used")
-        console.print(f"[dim]stored judgments: {'; '.join(bits)}. "
-                      f"Nothing is hidden -- re-ask with the command that owns the family and "
-                      f"the newer answer wins.[/]")
-    _coverage_panel(project, digests, failures)
-    _schema_panel(schema, sstats)
-
+    # *** THE FIRST SCREEN WAS CAVEATS. *** (jaffle_shop, J3) On a new project, what was deferred,
+    # what audit.yml does not name and how the columns were read came before any finding. The
+    # findings come first; the caveats follow them.
     blind = unevaluable_tests(project, digests)
-    if blind:
-        console.print(f"\n[yellow]{len(blind)} test(s) could not be evaluated[/] "
-                      f"[dim]and are NOT a pass. Most common reason: "
-                      f"{Counter(w for _m, _t, _c, w in blind).most_common(1)[0][0]}[/]")
-
     if not findings and new_only:
         pass                                  # said below, against the baseline it was measured on
     elif not findings:
@@ -733,6 +722,29 @@ def check(
                 console.print(f"  {d['size']} models  [dim]{d['check']}[/]  {where}  "
                               f"[dim]{', '.join(d['models'][:4])}"
                               f"{' ...' if d['size'] > 4 else ''}[/]")
+
+
+    _report_moved_question_ids()
+    _report_refused_claim_findings()
+    _report_unconfigured_checks(cfg, findings)
+
+    if _dropped.get("stale") or _dropped.get("superseded"):
+        bits = []
+        if _dropped["superseded"]:
+            bits.append(f"{_dropped['superseded']:,} older answer(s) superseded by a newer one")
+        if _dropped["stale"]:
+            bits.append(f"{_dropped['stale']:,} answer(s) given against a question that has "
+                        f"since changed, still used")
+        console.print(f"[dim]stored judgments: {'; '.join(bits)}. "
+                      f"Nothing is hidden -- re-ask with the command that owns the family and "
+                      f"the newer answer wins.[/]")
+    _coverage_panel(project, digests, failures)
+    _schema_panel(schema, sstats)
+
+    if blind:
+        console.print(f"\n[yellow]{len(blind)} test(s) could not be evaluated[/] "
+                      f"[dim]and are NOT a pass. Most common reason: "
+                      f"{Counter(w for _m, _t, _c, w in blind).most_common(1)[0][0]}[/]")
 
     if waived:
         console.print(f"[dim]{len(waived)} finding(s) suppressed by audit.yml: "
