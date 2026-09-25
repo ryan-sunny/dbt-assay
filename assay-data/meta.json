@@ -1,7 +1,7 @@
 {
   "counted": {
-    "at": "2026-09-25 02:22",
-    "run": "2c5d18fd17ee",
+    "at": "2026-09-25 02:32",
+    "run": "2343589ebcf7",
     "store": "s.duckdb"
   },
   "coverage": {
@@ -40,6 +40,6 @@
     }
   },
   "sources": 0,
-  "version": "0.52.0",
+  "version": "0.52.1",
   "yours": 11
 }
