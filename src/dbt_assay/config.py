@@ -726,6 +726,12 @@ questions:
   # only annotates; `assay volume --judge` asks whether each is worth watching.
   source_volume_not_monitored: {action: annotate}
   source_freshness_stale:      {action: annotate}
+  # Evidence of harm today: the project's own test fails, a proven guarantee broke, or the
+  # freshness rules it declares are not being checked. Queued: a person sees them first.
+  test_is_failing:             {action: queue}
+  guarantee_lost:              {action: queue}
+  guarantee_does_not_hold:     {action: queue}
+  source_freshness_not_run:    {action: queue}
   # Needs `--verify`: it counts parent and child rows through your own dbt. An uncounted hop
   # produces nothing at all, which is correct -- an absent measurement is not a pass.
   hop_drops_most_rows:         {action: annotate}

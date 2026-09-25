@@ -155,6 +155,14 @@ def all_findings(project, digests, schema, entries=None, *,
         prove_mod.register(led, prove_mod.stored(store))
     with ledger_mod.collecting(led):
         fs = _all_findings(project, digests, schema, entries, threshold, store)
+    # *** EVIDENCE OF HARM TODAY, AS FINDINGS. *** A guarantee that stopped holding and a test
+    # that fails reached no decision while they lived only on their own tabs.
+    if store is not None:
+        from . import harm
+        extra = harm.guarantee_findings(project, store, led) + harm.failing_test_findings(
+            project, store)
+        if extra:
+            fs = _distinct(_reach(project, fs + extra))
     if store is not None and stored_evaluator:
         fs = with_stored_warehouse(fs, store, project)
     return fs

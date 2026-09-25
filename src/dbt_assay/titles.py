@@ -59,6 +59,10 @@ TITLES: dict[str, str] = {
     "test_declared_but_never_run": "Tests that have never run",
     "test_skipped_rather_than_passed": "Tests skipped rather than passed",
     "fixed_finding_returned": "A fixed problem came back",
+    "guarantee_lost": "A proven guarantee stopped holding",
+    "guarantee_does_not_hold": "A property the model relies on does not hold",
+    "test_is_failing": "A dbt test is failing",
+    "source_freshness_not_run": "Freshness is declared and nothing checks it",
     "config_comment_contradicts_the_store": "A comment in audit.yml is out of date",
     # pipeline structure (dbt-project-evaluator's rules, merged)
     "reads_raw_source_outside_staging": "Reads raw sources directly, skipping staging",

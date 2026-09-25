@@ -38,6 +38,28 @@ SHAPES: dict[str, tuple[str, str]] = {
         ("A comment in audit.yml states a count the store no longer holds. Write the number the "
          "store holds now, or say when the old one was true -- \"38 of 38 agreed at 0.37\" is "
          "history and is not checked. Nothing in the warehouse changes.")),
+    "test_is_failing": (
+        "make it pass, or explain the rows",
+        ("The project's own test fails on its last run, which is the strongest evidence there is "
+         "that the model is wrong today. Fix the model or its input, or, if the flagged rows are "
+         "acceptable, say why in the review form's Explanations and relax the test's severity "
+         "deliberately.")),
+    "guarantee_lost": (
+        "restore the premise, or retract the guarantee",
+        ("A property assay proved from a premise the project declared, and the premise broke in "
+         "the data (a declared key is duplicated, say). Either the data is wrong and the premise "
+         "should hold again, or the declaration is wrong and should be corrected, which retracts "
+         "the guarantee on purpose.")),
+    "guarantee_does_not_hold": (
+        "deduplicate the input, or group back to the grain",
+        ("The join's key is duplicated in the data, so the property the model's shape suggests "
+         "does not hold: rows multiply. Deduplicate the input first, or group the output back to "
+         "the model's grain, and then declare the key so it is checked from now on.")),
+    "source_freshness_not_run": (
+        "schedule `dbt source freshness`",
+        ("Sources declare how current they must be and the check that reads those declarations "
+         "has not run. Add `dbt source freshness` to the scheduled job, so a feed that stops is "
+         "reported the day it stops.")),
     "monitor_declared_but_never_run": (
         "build the monitor",
         ("The monitor is configured and has never produced a result: installed is not built. Run "

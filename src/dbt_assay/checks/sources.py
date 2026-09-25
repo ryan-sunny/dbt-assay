@@ -237,6 +237,54 @@ def source_freshness_stale(project, target_dir=None) -> list[Finding]:
     return out
 
 
+FRESHNESS_RUN_DAYS = 7
+
+
+def source_freshness_not_run(project, target_dir=None, now=None) -> list[Finding]:
+    """Sources declare freshness and `dbt source freshness` has not run in days, or ever.
+
+    *** A FRESHNESS RULE NOTHING CHECKS READS LIKE ONE THAT PASSES. *** (sunny-data: its freshness
+    job had stopped 78 days before anybody saw.) `source_freshness_stale` reads `sources.json`, so
+    with the job gone it had nothing to read and said nothing, which is what a clean bill says too.
+    The file's own `generated_at` is when the check last ran.
+    """
+    raw = project.raw.get("sources", {}) or {}
+    declared = [uid for uid in project.sources
+                if ((raw.get(uid) or {}).get("freshness") or {}).get("warn_after", {}).get("count")
+                or ((raw.get(uid) or {}).get("freshness") or {}).get("error_after", {}).get("count")]
+    if not declared:
+        return []
+    from datetime import datetime, timezone
+    p = Path(target_dir or project.target_dir) / "sources.json"
+    when = None
+    if p.exists():
+        try:
+            meta = (json.loads(p.read_text()) or {}).get("metadata") or {}
+            when = datetime.fromisoformat(str(meta.get("generated_at")).replace("Z", "+00:00"))
+        except (OSError, ValueError, TypeError):
+            when = None
+    now = now or datetime.now(timezone.utc)
+    if when is not None:
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        days = (now - when).total_seconds() / 86400
+        if days < FRESHNESS_RUN_DAYS:
+            return []
+        said = f"last ran {days:.0f} days ago"
+    else:
+        days, said = None, "has never run here (no sources.json in the target folder)"
+    name = project.project_name or "this project"
+    return [Finding(
+        check="source_freshness_not_run", subject="", subject_name=name, file="sources.json",
+        summary=f"{len(declared)} source(s) declare freshness and `dbt source freshness` {said}",
+        detail=("The project says how current these sources must be, and nothing has checked. "
+                "Until `dbt source freshness` runs on the schedule, a feed that stopped looks the "
+                "same as one that is current."),
+        base=2, evidence={"declared": len(declared),
+                          **({"days_since": round(days, 1)} if days is not None else
+                             {"never_run": True})})]
+
+
 def exposure_undeclared(project, _digests=None) -> list[Finding]:
     """A model of this project that no model reads and no exposure says what does.
 

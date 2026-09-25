@@ -612,7 +612,7 @@ def _aggregate_input_cannot_be_null(uid: str, column: str, project, digests) -> 
 
 
 def run_all(project, digests: dict[str, Digest], schema=None) -> list[Finding]:
-    from .sources import SOURCE_CHECKS, source_freshness_stale
+    from .sources import SOURCE_CHECKS, source_freshness_not_run, source_freshness_stale
     out: list[Finding] = []
     for fn in CHECKS:
         out.extend(fn(project, digests))
@@ -622,6 +622,7 @@ def run_all(project, digests: dict[str, Digest], schema=None) -> list[Finding]:
     for fn in SOURCE_CHECKS:
         out.extend(fn(project))
     out.extend(source_freshness_stale(project))
+    out.extend(source_freshness_not_run(project))
     # What a COLUMN is, according to the person who wrote it down. Pure manifest, free, and in
     # the same stream, so it reaches `check`, MCP, the store and the ruling loop by one path.
     from .columns import COLUMN_CHECKS

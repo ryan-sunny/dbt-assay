@@ -621,6 +621,15 @@ after they were fixed*, and a returned finding is never counted as fixed again u
 again. A finding that went while the file stayed the same was retired by an assay release, so its
 return is not a regression either.
 
+**Evidence that something is wrong today is a finding too**, so it reaches the fix list, the review
+order, the gate and the digest by the same path as everything else. `test_is_failing` is a dbt test
+on one of your models whose last result failed or errored. `guarantee_lost` is a property `assay
+prove` proved from a premise you declared, where the premise has since broken in the data, or where
+a run of the model contradicted it. `guarantee_does_not_hold` is a join whose key is duplicated, so
+rows multiply where the model's shape suggests they cannot. `source_freshness_not_run` says sources
+declare freshness and `dbt source freshness` has not run in a week, or ever: a freshness rule
+nothing checks reads exactly like one that passes. All four are queued by default.
+
 The ten tables, what each answers, and how they join are in **[SCHEMA.md](SCHEMA.md)**, with an ER diagram.
 
 **What it has cost, and what has gone stale**
