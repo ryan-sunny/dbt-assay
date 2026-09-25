@@ -256,8 +256,9 @@ def test_the_page_counts_no_package_premise_and_offers_a_toggle():
             "questions": [], "adjudications": [], "config": {}, "runs": [], "unreadable": [],
             "unconfigured": [], "effectiveness": [], "moved": {},
             "premises": [{"status": "broken", "package": True}, {"status": "unchecked"},
-                         {"status": "holding"}]}
+                         {"status": "holding"}, {"status": "broken"}]}
     doc = explorer.explorer_html(data, "<html></html>")
+    # B4: the badge counts the BROKEN ones (not the package's, not the unchecked)
     assert re.search(r'data-tab="guarantees"[^>]*>Guarantees<b>1</b>', doc)
     assert "showPackagedPrem" in doc and "premise(s) about installed packages" in doc
 

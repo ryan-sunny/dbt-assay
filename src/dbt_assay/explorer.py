@@ -930,8 +930,10 @@ def explorer_html(data: dict, record_html: str) -> str:
         # all three lists, not the first one: the tab said 16 while it held 16 + 39 + the odd ones
         "areas": sum(len((data.get("areas") or {}).get(k) or [])
                      for k in ("predicate_clusters", "odd_ones_out", "same_claim")) or None,
-        # premises about installed packages' models are not this project's to fix (L3)
-        "guarantees": (sum(1 for p in data.get("premises") or [] if p.get("status") != "holding"
+        # premises about installed packages' models are not this project's to fix (L3). The
+        # number is the BROKEN ones: "350 not holding" was read as 350 wrong when 346 were only
+        # not yet checked (sunny-data feedback B4)
+        "guarantees": (sum(1 for p in data.get("premises") or [] if p.get("status") == "broken"
                            and not p.get("package"))
                        if data.get("premises") else None),
     }
@@ -998,8 +1000,8 @@ def explorer_html(data: dict, record_html: str) -> str:
     counted = {"models": "models", "chain": "hops between models", "claims": "sentences",
                "findings": "findings", "areas": "rows across its three lists",
                "monitoring": "findings about the monitoring", "suggest": "candidates",
-               "guarantees": "premises not holding (broken, unchecked, assumed or with no "
-                             "evidence)",
+               "guarantees": "premises measured false (broken): a count or a failed test says "
+                             "otherwise. Unchecked ones are counted inside the tab",
                "answers": "live answers", "questions": "questions"}
     for t, _label, n in tabs:
         if n is not None and t in counted:
@@ -3055,10 +3057,14 @@ function understoodTab(host) {
       'Keys a declared grain or a held-back finding assumes are unique. Broken means a count or '
       + 'a failed test says otherwise; unchecked means nothing has checked it.',
       el('div', {}, [el('div', {class: 'tiles'}, [
-        tile(num(notH.length), 'premises not holding', 'of ' + num(PR.length) + ' in all',
-             notH.length ? 'bad' : ''),
-        tile(num(brk.length), 'broken', brk.length ? 'a finding held back on one is raised again'
-             : 'none measured false', brk.length ? 'bad' : ''),
+        /* B4: broken leads; "not holding" counted not-yet-checked ones as wrong */
+        tile(num(brk.length), 'broken', brk.length ? 'a count or a failed test says otherwise; '
+             + 'a finding held back on one is raised again' : 'none measured false',
+             brk.length ? 'bad' : ''),
+        tile(num(notH.length - brk.length), 'not yet checked',
+             num(PR.filter(p => p.status === 'unchecked').length) + ' unchecked, '
+             + num(PR.filter(p => p.status === 'unknown').length) + ' with no evidence, of '
+             + num(PR.length) + ' in all'),
         tile(num(held), 'findings held back', 'on a premise that is not holding'),
         ...(PROOFS.length ? [tile(num(PROOFS.filter(r => r.status === 'proven').length) + ' of '
             + num(PROOFS.length), 'properties proven',
@@ -3769,10 +3775,12 @@ function guaranteesTab(host) {
     const notHolding = rows.filter(p => p.status !== 'holding');
     const facts = [
       {v: num(rows.length), l: 'premises', tip: 'Distinct statements: one key in one relation.'},
-      {v: num(notHolding.length), l: 'not holding', bad: notHolding.length > 0,
-       tip: 'Broken, unchecked, assumed or with no evidence at all.'},
+      /* B4: broken leads; the rest are not yet checked, not wrong */
       {v: num((by.broken || []).length), l: 'broken', bad: (by.broken || []).length > 0,
        tip: PTIP.broken},
+      {v: num(notHolding.length - (by.broken || []).length), l: 'not yet checked',
+       tip: 'Unchecked (declared, its test has not run or no result was read), assumed, or with '
+         + 'no evidence at all. Not measured false: a count or a test result settles them.'},
       {v: num(heldOn(notHolding)), l: 'findings held back on these',
        tip: 'Findings a check did not raise because a key was unique, where that key is not '
          + 'holding. A broken one raises its finding again.'},

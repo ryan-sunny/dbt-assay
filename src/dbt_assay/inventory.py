@@ -339,12 +339,20 @@ def build(project, digests, schema, store=None, observed=None, facts=None) -> li
                                           confidence=float(d["answer"]))
             except (TypeError, ValueError):
                 pass
-        if uid in proposed:
-            entry.derived_grain = [c.lower() for c in proposed[uid].columns]
+        # *** A GRAIN IS COLUMNS THE MODEL OUTPUTS. *** (sunny-data feedback B5) A key counted
+        # unique in the relation a model reads its rows from was carried to the model even where
+        # the model does not output it: stg_douglas_parcels read "grain account_no · observed",
+        # a column it does not have, beside a join that multiplies on it. A proposal naming a
+        # column the model's output lacks is not its grain.
+        outs = {c.lower() for c in schema.columns(uid).names}
+        cand = proposed.get(uid)
+        if cand is not None and outs and not {c.lower() for c in cand.columns} <= outs:
+            cand = None
+        if cand is not None:
+            entry.derived_grain = [c.lower() for c in cand.columns]
         if uid in declared:
             entry.grain = Fact(declared[uid], "declared", note="a test in this project declares it")
-        elif uid in proposed:
-            cand = proposed[uid]
+        elif cand is not None:
             key_answers = {q: a for q, a in judged.items() if q.startswith("key__")}
             if key_answers:
                 g = contracts.key_from_answers(cand, {k: {"kind": "noul", **v}

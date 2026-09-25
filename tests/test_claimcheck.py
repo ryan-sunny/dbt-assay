@@ -246,3 +246,17 @@ def test_a_text_column_joined_to_a_number_gets_numbers(tmp_path):
          ("main.ids", None, "main", "ids", [("num", "int", "bigint")])],
         p.models["model.p.j"].compiled, "duckdb")
     assert {c: k for c, k, _r in ins[0][4]} == {"id": "text", "name": "numtext"}
+
+
+def test_a_grain_is_never_a_column_the_model_does_not_output(tmp_path):
+    """B5: stg_douglas_parcels read "grain account_no · observed", a key of the relation it reads
+    its rows from and not a column it outputs."""
+    from dbt_assay import contracts, relate
+    target = build(tmp_path, {**MODELS, "names": "select p.name from main.stg_parent p"})
+    p, d, sch = _load(target)
+    prop = contracts.propose_all(p, d, sch, relate.declared_keys(p), None)
+    entries = {e.name: e for e in inventory.build(p, d, sch, store=None)}
+    # the driver's key is proposed (inherited from stg_parent) though the model drops it...
+    assert prop["model.p.names"].columns == ["id"]
+    # ...and it is not the model's grain
+    assert entries["names"].grain is None, entries["names"].grain
