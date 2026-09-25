@@ -477,7 +477,8 @@ def test_feedback_r3_each_verdict_says_what_it_means():
 def test_feedback_r4_a_new_kind_box_says_what_it_is_for():
     from dbt_assay import reviewform
     assert "(new option name)" not in reviewform._JS
-    assert "add kinds of failing row, one per line" in reviewform._JS
+    # the boxes say what goes in them: a name, and what the row is
+    assert "'name it'" in reviewform._JS and "'what it is'" in reviewform._JS
 
 
 def test_feedback_w1_the_newest_handback_is_found(tmp_path):
@@ -610,8 +611,10 @@ def test_explanations_lists_models_whose_tests_are_failing_and_nothing_else(tmp_
     findings = [_f("model.p.fine", "c", "f1"), SimpleNamespace(subject_name="audit.yml")]
     rows = reviewform._explanation_rows(cfg, findings, project, s)
     assert [r["mart"] for r in rows] == ["orders"]
-    assert rows[0]["failing"] == [{"test": "not_null_orders_ship_date", "status": "fail",
-                                   "at": "2026-09-24"}]
+    f = rows[0]["failing"]
+    assert [(t["test"], t["status"], t["at"]) for t in f] == [
+        ("not_null_orders_ship_date", "fail", "2026-09-24")]
+    assert f[0]["rows"] == [] and f[0]["what"]
 
 
 def test_a_card_says_a_shared_reason_once_and_lists_what_it_applies_to(tmp_path):
@@ -636,3 +639,59 @@ def test_a_card_says_a_shared_reason_once_and_lists_what_it_applies_to(tmp_path)
             b.close()
     assert text.count(why) == 1, text
     assert all(k in text for k in ("k1", "k2", "k3")) and "a.k1" not in text
+
+
+def test_a_failing_test_reads_in_plain_words_and_its_rows_are_sampled():
+    from types import SimpleNamespace
+
+    from dbt_assay import rows
+    nodes = {
+        "test.p.nn": {"test_metadata": {"name": "not_null", "kwargs": {"column_name": "ship"}},
+                      "config": {"store_failures": True}, "relation_name": '"db"."audit"."nn"'},
+        "test.p.sql": {"raw_code": "-- INVARIANT: no order ships before it is placed.\n--\n"
+                                   "-- WHY. ...\nselect * from o", "config": {}}}
+    project = SimpleNamespace(raw={"nodes": nodes}, dialect="duckdb")
+    assert rows.plain(project, "test.p.nn") == "`ship` is never empty"
+    assert rows.plain(project, "test.p.sql") == "no order ships before it is placed."
+
+    class Probe:
+        @staticmethod
+        def run_sql(sql, *a, **k):
+            assert "db.audit.nn" in sql
+            return SimpleNamespace(failed=False, why="", rows=[{"id": 1, "ship": None}] * 9)
+    got, why = rows.samples(project, ["test.p.nn", "test.p.sql"], Probe, ".", None, "dbt",
+                            limit=3)
+    assert got == {"test.p.nn": [{"id": 1, "ship": None}] * 3}
+    assert "store_failures" in why["test.p.sql"]
+
+
+def test_normal_here_with_a_name_becomes_a_kind_in_audit_yml(tmp_path):
+    """The old box took `name: meaning` lines and `review --load` refused them as `__new`."""
+    from conftest import require_chromium
+    require_chromium()
+    from playwright.sync_api import sync_playwright
+    ctx = {"words": [], "waivers": [], "settings": [], "explanations": [
+        {"mart": "orders", "options": [], "failing": [
+            {"test": "not_null_orders_ship", "status": "fail", "at": "2026-09-24",
+             "what": "`ship` is never empty", "why_no_rows": "",
+             "rows": [{"id": "1", "ship": None}, {"id": "2", "ship": None}]}]}]}
+    page = tmp_path / "f.html"
+    page.write_text(reviewform.form_html([], {}, "p", "", "0", ctx))
+    with sync_playwright() as pw:
+        b = pw.chromium.launch()
+        try:
+            pg = b.new_page()
+            pg.goto(page.as_uri())
+            pg.click('button[data-pane="explanations"]')
+            pg.locator(".rbtns button:has-text('normal here')").nth(0).click()
+            pg.locator(".rmore:not([hidden]) input").nth(0).fill("Back Order")
+            pg.locator(".rmore:not([hidden]) input").nth(1).fill("stock not in yet")
+            pg.locator(".rbtns button:has-text('a real problem')").nth(1).click()
+            got = pg.evaluate("() => ({c: configChanges(), r: rowVerdicts()})")
+        finally:
+            b.close()
+    assert got["c"] == [{"path": ["explanations", "orders", "back_order"],
+                         "value": "stock not in yet"}]
+    changes, bad = reviewform.load_config({"config": got["c"]})
+    assert not bad and [c.dotted for c in changes] == ["explanations.orders.back_order"]
+    assert sorted(r["pick"] for r in got["r"]) == ["normal", "problem"]

@@ -202,3 +202,80 @@ def collect(project, entries, probe_mod, project_dir: str, profiles_dir: str | N
                 grain=(e.grain.value if e and e.grain else []),
             ))
     return rows, skipped
+
+
+def plain(project, test_uid: str) -> str:
+    """What a test checks, in words a person reads on the form: "`ship_date` is never empty"."""
+    n = ((getattr(project, "raw", None) or {}).get("nodes", {}) or {}).get(test_uid) or {}
+    meta = n.get("test_metadata") or {}
+    kw = meta.get("kwargs") or {}
+    col = n.get("column_name") or kw.get("column_name")
+    kind = (meta.get("name") or "").lower()
+    c = f"`{col}`" if col else "the row"
+    if kind == "not_null":
+        return f"{c} is never empty"
+    if kind == "unique":
+        return f"no two rows share {c}"
+    if kind == "accepted_values":
+        vals = kw.get("values") or []
+        shown = ", ".join(str(v) for v in vals[:6]) + (", ..." if len(vals) > 6 else "")
+        return f"{c} is one of: {shown}" if vals else f"{c} is one of an agreed list"
+    if kind == "relationships":
+        to = str(kw.get("to") or "").replace("ref(", "").replace(")", "").strip("'\" ")
+        return f"every {c} exists in {to or 'the parent'}" + (
+            f" ({kw.get('field')})" if kw.get("field") else "")
+    desc = (n.get("description") or "").strip()
+    if desc:
+        return desc.split("\n")[0][:220]
+    if kind:
+        return f"{kind.replace('_', ' ')}" + (f" on {c}" if col else "")
+    # a SQL test says what it holds in its opening comment, when it has one
+    said = _leading_comment(n.get("raw_code") or "")
+    return said or "a SQL test: it fails on the rows its query returns"
+
+
+def _leading_comment(sql: str) -> str:
+    """The first paragraph of a SQL file's opening `--` comment, without a label like
+    `INVARIANT:`."""
+    import re
+    lines = []
+    for line in sql.strip().splitlines():
+        t = line.strip()
+        if not t.startswith("--"):
+            break
+        t = t.lstrip("-").strip()
+        if not t:
+            if lines:
+                break
+            continue
+        lines.append(t)
+    out = re.sub(r"^[A-Z][A-Z _]{2,20}:\s*", "", " ".join(lines)).strip()
+    return out if len(out) <= 220 else out[:217].rsplit(" ", 1)[0] + "..."
+
+
+def samples(project, test_uids: list[str], probe_mod, project_dir: str,
+            profiles_dir: str | None, dbt_bin: str, limit: int = 5) -> tuple[dict, dict]:
+    """({test uid: [row dicts]}, {test uid: why none}) for the failing tests the form shows: the
+    rows dbt stored (store_failures), a few per test, one batched read."""
+    rels, why = {}, {}
+    for uid in test_uids:
+        rel = audit_relation(project, uid)
+        if rel:
+            rels[uid] = rel
+        else:
+            why[uid] = ("dbt does not store this test's failing rows: set `store_failures: true` "
+                        "on it (or on the project) to see them here")
+    if not rels:
+        return {}, why
+    from .practices import _read_all
+    got = _read_all(probe_mod, list(rels.values()), project_dir, profiles_dir, dbt_bin, limit,
+                    getattr(project, "dialect", "duckdb"), caller="assay.review.rows")
+    out = {}
+    for uid, r in zip(rels, got):
+        if r.failed:
+            why[uid] = f"the stored failures could not be read: {str(r.why)[:160]}"
+        elif not r.rows:
+            why[uid] = "the stored failures table is empty (the last run may have passed)"
+        else:
+            out[uid] = [{k: v for k, v in row.items()} for row in r.rows[:limit]]
+    return out, why

@@ -4922,6 +4922,13 @@ def review(
     repair: bool = typer.Option(False, "--repair",
                                 help="re-point rulings written under a bare model name at the "
                                      "unique_id, so they join to findings again. Needs --target."),
+    rows_project_dir: str = typer.Option(None, "--project-dir",
+                                         help="with --emit: the dbt project, so the "
+                                              "Explanations tab shows a few of each failing "
+                                              "test's stored failing rows (store_failures), read "
+                                              "through your dbt: one batched query"),
+    profiles_dir: str = typer.Option(None, "--profiles-dir"),
+    dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
 ):
     """List judgments nobody has ruled on, or record a verdict.
 
@@ -4936,7 +4943,9 @@ def review(
     # reading batches; the answering does not have to happen in a conversation at all.
     if emit:
         _emit_review_form(store, emit, target, config_path, store_path, dialect, reads,
-                          monitoring_json, report or "")
+                          monitoring_json, report or "",
+                          rows_from=(rows_project_dir, profiles_dir, dbt_bin)
+                          if rows_project_dir else None)
         store.close()
         raise typer.Exit(0)
     if load:
@@ -5056,7 +5065,8 @@ def review(
 
 def _emit_review_form(store, out: str, target: str, config_path: str, store_path: str,
                       dialect: str, reads_path: str | None,
-                      monitoring_json: str | None = None, report: str = "") -> None:
+                      monitoring_json: str | None = None, report: str = "",
+                      rows_from: tuple | None = None) -> None:
     """Write the form. It records nothing -- that is the point of it being a file."""
     from . import reviewform
     if not target:
@@ -5100,7 +5110,23 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
             console.print(f"[yellow]could not read {monitoring_json}: {e}[/] [dim]The form is "
                           f"emitted without the monitoring numbers rather than with wrong "
                           f"ones.[/]")
-    ctx = reviewform.context(store, project, cfg, findings, vol)
+    # a few of each failing test's stored failing rows, for the Explanations tab
+    samples = None
+    failing = reviewform.failing_test_uids(project, store)
+    if rows_from and failing:
+        from . import rows as rows_mod
+        try:
+            samples = rows_mod.samples(project, failing, probe_mod, *rows_from)
+        except probe_mod.WarehouseUnreachable as e:
+            console.print(f"[yellow]the failing rows were not read:[/] {e}")
+    ctx = reviewform.context(store, project, cfg, findings, vol, samples)
+    if failing:
+        shown = len((samples or ({}, {}))[0])
+        console.print(f"   [dim]Explanations: {_n(len(failing))} failing test(s)"
+                      + (f", {_n(shown)} with a few of their failing rows" if samples else
+                         "; pass --project-dir <your dbt project> to show a few of each one's "
+                         "failing rows")
+                      + ".[/]")
     ctx["tally"] = tally
     p.write_text(reviewform.form_html(
         cards, sql, project.project_name or "this project",
@@ -5137,6 +5163,20 @@ def _load_config(path: str, config_path: str, do_write: bool) -> None:
     """
     from . import configpatch, reviewform
     payload = _json.loads(Path(path).read_text())
+    # what the person said the failing rows are (Explanations): the real problems are the ones
+    # to fix; a row named "normal here" arrives below as a kind in audit.yml
+    picks = [r for r in (payload.get("rows") or []) if isinstance(r, dict)]
+    if picks:
+        from collections import Counter
+        by = Counter(r.get("pick") for r in picks)
+        console.print(f"\n[bold]{_n(len(picks))}[/] failing row(s) marked: "
+                      f"{by.get('problem', 0)} a real problem, {by.get('normal', 0)} normal here, "
+                      f"{by.get('unsure', 0)} can't tell")
+        for r in [r for r in picks if r.get("pick") == "problem"][:10]:
+            row = r.get("row") or {}
+            shown = ", ".join(f"{k}={v}" for k, v in list(row.items())[:4])
+            console.print(f"   [red]a real problem[/] {r.get('model')} · {r.get('test')} "
+                          f"[dim]{shown}[/]")
     changes, bad = reviewform.load_config(payload)
     for b in bad:
         console.print(f"   [yellow]{b}[/]")

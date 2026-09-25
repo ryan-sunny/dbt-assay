@@ -501,7 +501,8 @@ def settings_rows(cfg) -> list:
     return out
 
 
-def context(store, project, cfg, findings=None, volume_json: dict | None = None) -> dict:
+def context(store, project, cfg, findings=None, volume_json: dict | None = None,
+            samples: tuple | None = None) -> dict:
     """Everything a person could define here, with what assay measured beside it.
 
     *** ASSAY FILLS WHAT IT MEASURED AND LEAVES THE SENTENCE EMPTY. ***
@@ -549,7 +550,7 @@ def context(store, project, cfg, findings=None, volume_json: dict | None = None)
         "words": words,
         "more_candidates": more,
         "monitoring": monitoring_rows(cfg, volume_json),
-        "explanations": _explanation_rows(cfg, findings or [], project, store),
+        "explanations": _explanation_rows(cfg, findings or [], project, store, samples),
         "waivers": _waiver_rows(store, cfg, findings or [], project),
         "settings": settings_rows(cfg),
     }
@@ -639,8 +640,14 @@ def _suggested_scope(issues: list, project=None) -> str:
     return ""
 
 
+def failing_test_uids(project, store) -> list:
+    """The tests whose LAST result failed or warned, on this project's own models."""
+    return [u for _m, ts in _failing_tests(project, store).items() for _t, _s, _a, u in ts]
+
+
 def _failing_tests(project, store) -> dict:
-    """{model name: [(test name, status, when)]} for tests whose LAST result failed or warned."""
+    """{model name: [(test name, status, when, uid)]} for tests whose LAST result failed or
+    warned."""
     from . import ledger
     last = ledger.test_status(store)
     out: dict = {}
@@ -650,11 +657,18 @@ def _failing_tests(project, store) -> dict:
         if not st or st[0] not in ("fail", "warn", "error") or m is None \
                 or getattr(m, "is_installed_package", False):
             continue
-        out.setdefault(m.name, []).append((t.name, st[0], st[1][:10]))
+        out.setdefault(m.name, []).append((t.name, st[0], st[1][:10], t.unique_id))
     return out
 
 
-def _explanation_rows(cfg, findings, project=None, store=None) -> list:
+def _cell(v) -> str | None:
+    if v is None:
+        return None
+    s = str(v)
+    return s if len(s) <= 60 else s[:57] + "..."
+
+
+def _explanation_rows(cfg, findings, project=None, store=None, samples=None) -> list:
     """One row per named set, then one per model whose tests are failing now, with the failing
     tests and what is configured.
 
@@ -677,8 +691,16 @@ def _explanation_rows(cfg, findings, project=None, store=None) -> list:
     marts = (set(failing) | set(have)) - covered
     for mart in sorted(marts, key=lambda n: (-len(failing.get(n, [])), n)):
         opts = have.get(mart) or {}
-        out.append({"mart": mart, "failing": [{"test": t, "status": s, "at": a}
-                                              for t, s, a in failing.get(mart, [])][:8],
+        rows_by, why_by = samples or ({}, {})
+        from .rows import plain
+        tests = []
+        for t, s, a, uid in failing.get(mart, [])[:8]:
+            rs = rows_by.get(uid) or []
+            tests.append({"test": t, "status": s, "at": a, "what": plain(project, uid),
+                          "rows": [{k: _cell(v) for k, v in r.items()
+                                    if not str(k).startswith("_dlt_")} for r in rs],
+                          "why_no_rows": "" if rs else (why_by.get(uid) or "")})
+        out.append({"mart": mart, "failing": tests,
                     "options": [{"name": k, "means": v} for k, v in sorted(opts.items())]})
     return out[:40]
 
@@ -944,6 +966,21 @@ border-bottom:1px solid var(--rule2);cursor:pointer;align-items:baseline}
 .ctitle{margin:0 0 4px;font-size:19px;font-weight:400;overflow-wrap:anywhere}
 .cwhere{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--ash);margin:0 0 10px}
 .clead{font-size:15.5px;margin:4px 0 8px;line-height:1.5}
+.ftest{border:1px solid var(--rule);padding:10px 12px;margin:10px 0 14px}
+.fthead{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;margin-bottom:8px}
+.rtab{border-collapse:collapse;width:100%;font-size:13px;margin:4px 0}
+.rtab th{text-align:left;font-weight:normal;color:var(--faint);padding:2px 8px 2px 0;
+  border-bottom:1px solid var(--rule)}
+.rtab td{padding:3px 8px 3px 0;vertical-align:top;overflow-wrap:anywhere}
+.rtab td.null{color:var(--faint);font-style:italic}
+.rtab tr.rpickrow td{padding:2px 0 10px;border-bottom:1px solid var(--rule)}
+.rbtns{display:flex;gap:8px;flex-wrap:wrap}
+.rbtns button{font:inherit;font-size:13px;padding:2px 10px;border:1px solid var(--rule);
+  background:transparent;cursor:pointer}
+.rbtns button.on{border-color:var(--ink,#222);background:var(--hl,#efe7d6)}
+.rmore{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;
+  margin-top:6px}
+.rmore[hidden]{display:none}
 .citems{display:flex;flex-wrap:wrap;gap:6px 10px;margin:0 0 14px;padding:0;list-style:none}
 .citems li{font-family:var(--mono,monospace);font-size:13.5px;border:1px solid var(--rule);
   padding:2px 8px}
@@ -1472,7 +1509,7 @@ function download() {
   out.sort((x, y) => (x.subject + x.question < y.subject + y.question ? -1 : 1));
   const body = JSON.stringify(
     {project: D.project, by: document.getElementById('by').value || '', verdicts: out,
-     config: configChanges()}, null, 2);
+     config: configChanges(), rows: rowVerdicts()}, null, 2);
   const n = out.length, e = Object.keys(edits_()).length;
   const saved = document.getElementById('saved');
   const close = () => Object.assign(el('button', {text: 'close'}),
@@ -1712,33 +1749,135 @@ function settingsTab(host) {
   host.replaceChildren(...bits);
 }
 
+/* *** A BOX THAT WANTED `name: meaning` LINES, AND THEN REFUSED THEM. *** (Ryan, on the served
+   form) The tab asked a person to invent kinds of failing row in the abstract, in a syntax, and
+   `review --load` rejected what they typed (it arrived as `__new`). The rows are already there:
+   dbt stores every row a failing test catches. So each failing test is a card with a few of its
+   rows, and each row is a choice: a real problem, normal here (say what it is), or can't tell.
+   "Normal here" is the domain knowledge; its name and sentence become the mart's kind in
+   audit.yml, which is what `assay adjudicate` sorts the next failures by. */
+let rowPicks = answers.__rows || {};
+
+function slugOf(name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function syncRowEdits() {
+  for (const k of (answers.__rowEdits || [])) delete edits[k];
+  const now = [];
+  for (const p of Object.values(rowPicks)) {
+    const name = slugOf(p.name);
+    if (p.pick !== 'normal' || !name || !String(p.what || '').trim()) continue;
+    const key = [...p.base, name].join('\u001f');
+    edits[key] = String(p.what).trim();
+    now.push(key);
+  }
+  answers.__rows = rowPicks; answers.__rowEdits = now; answers.__config = edits;
+  save(); tick();
+}
+
+function rowVerdicts() {
+  return Object.values(rowPicks).filter(p => p.pick).map(p => ({model: p.model, test: p.test,
+    row: p.row, pick: p.pick, name: p.pick === 'normal' ? slugOf(p.name) : ''}));
+}
+
+/* the choice for one failing row (or, with no rows, for the test itself) */
+function pickRow(key, info) {
+  const cur = rowPicks[key] || {};
+  const wrap = el('div', {class: 'rpick'});
+  const opts = [['problem', 'a real problem'], ['normal', 'normal here'],
+                ['unsure', 'can\u2019t tell']];
+  const btns = el('div', {class: 'rbtns'});
+  const more = el('div', {class: 'rmore'});
+  const paint = () => {
+    const p = rowPicks[key] || {};
+    for (const b of btns.children) b.classList.toggle('on', b.dataset.v === p.pick);
+    more.hidden = p.pick !== 'normal';
+  };
+  for (const [v, label] of opts) {
+    const b = el('button', {type: 'button', text: label});
+    b.dataset.v = v;
+    b.onclick = () => {
+      const p = rowPicks[key] || Object.assign({}, info);
+      p.pick = p.pick === v ? '' : v;
+      rowPicks[key] = p; syncRowEdits(); paint();
+    };
+    btns.append(b);
+  }
+  const name = el('input', {type: 'text', placeholder: 'a short name, e.g. pending_application'});
+  const what = el('input', {type: 'text', placeholder: 'what this row is, in a sentence: why it '
+    + 'looks like this and is still right'});
+  name.value = cur.name || ''; what.value = cur.what || '';
+  const upd = () => {
+    const p = rowPicks[key] || Object.assign({pick: 'normal'}, info);
+    p.name = name.value; p.what = what.value; rowPicks[key] = p; syncRowEdits();
+  };
+  name.oninput = upd; what.oninput = upd;
+  more.append(el('label', {text: 'name it'}), name, el('label', {text: 'what it is'}), what);
+  wrap.append(btns, more);
+  paint();
+  return wrap;
+}
+
+function rowsTable(rows, first) {
+  const cols = Object.keys(rows[0] || {});
+  const order = [...cols.filter(c => c === first), ...cols.filter(c => c !== first)].slice(0, 10);
+  const t = el('table', {class: 'rtab'});
+  t.append(el('tr', {}, order.map(c => el('th', {class: 'mono', text: c}))));
+  return {order, table: t};
+}
+
 function explanationsTab(host) {
   const bits = [explainer(
-    'Name the kinds of failing row this mart actually has.',
-    'When a test fails, assay asks what KIND of row that is. The generic answers are always '
-    + 'available; these are yours, added to them. One line each.',
-    'orders_fct\n'
-    + '  backorder:  the stock had not arrived, so the ship date is legitimately null\n'
-    + '  test_order: a row our own QA writes nightly and deletes the next morning',
-    'These are the domain knowledge. A failing row somebody can name is a decision; one nobody '
-    + 'can name gets ruled `unclear` and measures nothing.', 'assayer')];
+    'Say what the rows your failing tests catch really are.',
+    'Each card is a test failing now, with a few of the rows it caught. Mark each row: a real '
+    + 'problem, normal here, or can\u2019t tell. "Normal here" asks for a short name and one '
+    + 'sentence; that becomes a kind for this model in audit.yml, and the next time the test '
+    + 'fails, assay sorts its rows by it.',
+    'orders \u00b7 `ship_date` is never empty\n'
+    + '  row  order_id 1042  status backordered  ship_date null\n'
+    + '  \u2192 normal here: back_order\n'
+    + '    "the stock had not arrived, so there is no ship date yet"',
+    'A failing row somebody can name is a decision; one nobody can name gets ruled `unclear` and '
+    + 'measures nothing.', 'assayer')];
   const _p = pageOf('explanations');
   for (const x of CTX.explanations.slice(_p.from, _p.to)) {
     const row = el('div', {class: 'wrow'});
     row.append(el('h3', {text: x.mart}));
-    /* A named set covers every model its selector selects, so its options sit one level down,
-       under `options`, and the card says what it covers. */
     const base = x.named ? ['explanations', x.mart, 'options'] : ['explanations', x.mart];
     if (x.named) row.append(el('div', {class: 'measured', text: 'covers ' + x.applies_to}));
-    /* what is failing now, so the kinds are named against real failures, not in the abstract */
-    if ((x.failing || []).length) row.append(el('div', {class: 'measured', text: 'failing now: '
-      + x.failing.map(t => t.test + ' (' + t.status + (t.at ? ', ' + t.at : '') + ')').join('; ')}));
-    for (const o of (x.options || []))
-      row.append(field(o.name, [...base, o.name], o.means, '', 1));
-    /* *** EVERY ENTRY WAS LABELLED "(NEW OPTION NAME)". *** (R4) with an unrelated example as its
-       placeholder. The box says what goes in it, about this mart. */
-    row.append(field('add kinds of failing row, one per line', [...base, '__new'], '',
-                     'name: what that row is, one per line', 1));
+    if ((x.options || []).length) {
+      row.append(el('div', {class: 'lbl', text: 'kinds already named'}));
+      for (const o of x.options) row.append(field(o.name, [...base, o.name], o.means, '', 1));
+    }
+    for (const t of (x.failing || [])) {
+      const card = el('div', {class: 'ftest'});
+      card.append(el('div', {class: 'fthead'}, [
+        el('span', {class: 'mono', text: t.test}),
+        el('span', {text: t.what}),
+        el('span', {class: 'measured', text: t.status + (t.at ? ', ' + t.at : '')})]));
+      const info = {model: x.mart, test: t.test, base};
+      if ((t.rows || []).length) {
+        const m = /`([^`]+)`/.exec(t.what || '');
+        const {order, table} = rowsTable(t.rows, m ? m[1] : '');
+        t.rows.forEach((r, i) => {
+          table.append(el('tr', {}, order.map(c => el('td', {class: 'mono' + (r[c] == null
+            ? ' null' : ''), text: r[c] == null ? 'null' : r[c]}))));
+          const k = [x.mart, t.test, i].join('\u001f');
+          table.append(el('tr', {class: 'rpickrow'}, [el('td', {colspan: order.length},
+            [pickRow(k, Object.assign({row: r}, info))])]));
+        });
+        card.append(table);
+      } else {
+        card.append(el('div', {class: 'measured', text: t.why_no_rows || 'No failing rows were '
+          + 'read. Build the form with `assay review --emit ... --project-dir <your dbt project>` '
+          + 'to see a few of them here.'}));
+        card.append(el('div', {class: 'lbl', text: 'what does this test catch?'}));
+        card.append(pickRow([x.mart, t.test, 'test'].join('\u001f'),
+                            Object.assign({row: null}, info)));
+      }
+      row.append(card);
+    }
     bits.push(row);
   }
   if (!CTX.explanations.length)
