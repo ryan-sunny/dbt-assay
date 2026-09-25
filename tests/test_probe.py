@@ -132,7 +132,17 @@ def test_a_warehouse_that_cannot_answer_select_1_stops_the_command(tmp_path, mon
 
 
 def test_the_practices_command_exits_2_without_a_connection(project_dir, tmp_path, monkeypatch):
+    """With the evaluator installed there is something to read, so no connection is a fault."""
+    import json as _json
+
     from dbt_assay.cli import main
+    mf = project_dir / "manifest.json"
+    m = _json.loads(mf.read_text())
+    m["disabled"] = {"model.dbt_project_evaluator.fct_root_models": [{
+        "resource_type": "model", "name": "fct_root_models",
+        "package_name": "dbt_project_evaluator", "schema": "main_evaluator",
+        "relation_name": "main_evaluator.fct_root_models"}]}
+    mf.write_text(_json.dumps(m))
     monkeypatch.setattr(probe, "_REACHED", {})
     monkeypatch.setattr("sys.argv", ["assay", "practices", "-t", str(project_dir),
                                      "--dbt", "definitely-not-a-real-binary",

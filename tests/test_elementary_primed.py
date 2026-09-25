@@ -35,7 +35,7 @@ def _runner(con, calls):
         except Exception as e:                                   # noqa: BLE001
             return Result(failed=True, why=str(e)[:200])
 
-    def many(pairs, max_rows=None):
+    def many(pairs, max_rows=None, max_statements=None):
         if pairs:
             calls.append(f"batch of {len(pairs)}")
         return [run(s, n, _single=False) for s, n in pairs]
@@ -71,7 +71,7 @@ def test_an_absent_package_never_shares_a_batch_with_the_rest():
     base = _runner(con, [])
     inner = base.many
 
-    def many(pairs, max_rows=None):
+    def many(pairs, max_rows=None, max_statements=None):
         sent.append([s for s, _n in pairs])
         return inner(pairs)
     base.many = many

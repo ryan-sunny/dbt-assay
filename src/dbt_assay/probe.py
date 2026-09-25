@@ -1301,15 +1301,18 @@ def unwrap_many(rows: list[dict], n: int) -> list[list[dict]]:
     return [[row for _o, row in sorted(part, key=lambda x: x[0])] for part in out]
 
 
-def plan_statements(stmts: list[Statement], max_rows: int | None = None) -> list[list[int]]:
-    """Indexes of `stmts`, grouped into batches no engine should refuse. `max_rows` replaces
-    BATCH_ROWS for a caller whose limits are safety nets over results collapsed in SQL."""
+def plan_statements(stmts: list[Statement], max_rows: int | None = None,
+                    max_statements: int | None = None) -> list[list[int]]:
+    """Indexes of `stmts`, grouped into batches no engine should refuse. `max_rows` and
+    `max_statements` replace BATCH_ROWS and BATCH_STATEMENTS for a caller that knows its
+    statements are small (limits that are safety nets, tables of a few hundred rows)."""
     max_rows = max_rows or BATCH_ROWS
+    max_statements = max_statements or BATCH_STATEMENTS
     out: list[list[int]] = []
     cur: list[int] = []
     rows = chars = 0
     for i, s in enumerate(stmts):
-        if cur and (len(cur) >= BATCH_STATEMENTS or rows + s.limit > max_rows
+        if cur and (len(cur) >= max_statements or rows + s.limit > max_rows
                     or chars + len(s.sql) > BATCH_CHARS):
             out.append(cur)
             cur, rows, chars = [], 0, 0
@@ -1323,7 +1326,7 @@ def plan_statements(stmts: list[Statement], max_rows: int | None = None) -> list
 
 def run_many(stmts: list[Statement], project_dir: str, profiles_dir: str | None = None,
              dbt_bin: str = "dbt", dialect: str = "duckdb",
-             max_rows: int | None = None) -> list[Result]:
+             max_rows: int | None = None, max_statements: int | None = None) -> list[Result]:
     """One `Result` per statement, in order, from as few dbt invocations as the bounds allow.
 
     Every `Result` is exactly what `run_sql` would have returned for that statement alone: its
@@ -1338,7 +1341,7 @@ def run_many(stmts: list[Statement], project_dir: str, profiles_dir: str | None 
                         columns=s.columns, sampled=s.sampled, sample_rows=s.sample_rows)
                 for s in stmts]
     out: list[Result | None] = [None] * len(stmts)
-    for idx in plan_statements(stmts, max_rows):
+    for idx in plan_statements(stmts, max_rows, max_statements):
         _run_group([stmts[i] for i in idx], idx, out, project_dir, profiles_dir, dbt_bin,
                    dialect)
     return [r if r is not None else Result(failed=True, why="not run") for r in out]
@@ -1395,18 +1398,23 @@ def many_runner(project_dir: str, profiles_dir: str | None, dbt_bin: str, dialec
         return run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=n, caller=caller,
                        kind=kind)
 
-    def many(pairs: list[tuple[str, int]], max_rows: int | None = None) -> list[Result]:
+    def many(pairs: list[tuple[str, int]], max_rows: int | None = None,
+             max_statements: int | None = None) -> list[Result]:
         return run_many([Statement(sql, caller=caller, kind=kind, limit=n) for sql, n in pairs],
-                        project_dir, profiles_dir, dbt_bin, dialect, max_rows=max_rows)
+                        project_dir, profiles_dir, dbt_bin, dialect, max_rows=max_rows,
+                        max_statements=max_statements)
     runner.many = many
     return runner
 
 
-def ask_many(runner, pairs: list[tuple[str, int]], max_rows: int | None = None) -> list[Result]:
+def ask_many(runner, pairs: list[tuple[str, int]], max_rows: int | None = None,
+             max_statements: int | None = None) -> list[Result]:
     """`runner.many` when the runner has it, else one at a time. Test doubles need not batch."""
     many = getattr(runner, "many", None)
     if many is not None:
-        return many(pairs, max_rows=max_rows) if max_rows else many(pairs)
+        bounds = {k: v for k, v in (("max_rows", max_rows), ("max_statements", max_statements))
+                  if v}
+        return many(pairs, **bounds) if bounds else many(pairs)
     return [runner(sql, n) for sql, n in pairs]
 
 

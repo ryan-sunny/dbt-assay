@@ -232,6 +232,98 @@ SHAPES: dict[str, tuple[str, str]] = {
         "declare freshness",
         ("Nothing says how current this source should be, so nothing can notice it going quiet. "
          "A source going silent is invisible to every check that describes the present.")),
+    # *** dbt-project-evaluator's CARDS: ITS RULE, assay's MERGE. *** One shape per card; the
+    # evaluator's own docs say the rule, these say the edit.
+    "reads_raw_source_outside_staging": (
+        "read the source through its staging model",
+        ("Point the model at the staging model for each raw source it reads (create one where "
+         "none exists), so a fix made in staging reaches this path. A deliberate one-off read of "
+         "a small seed-like source is an accept in the form, not an edit.")),
+    "source_read_directly_by_many_models": (
+        "give the source one staging model",
+        ("Several models read this source directly and each repeats what it needs. One staging "
+         "model says it once; the readers ref that instead.")),
+    "no_primary_key_test": (
+        "add the uniqueness test on the grain",
+        ("Add a `unique` (one column) or `unique_combination_of_columns` test on the columns "
+         "that make one row. Where assay read a grain from the SQL the card names it; `assay "
+         "practices --keys-only` counts it against the warehouse before you commit it.")),
+    "model_has_no_description": (
+        "write the model's description",
+        ("Say what the model is and what one row of it means, in its yml. That sentence is what "
+         "assay sends with every judged question about the model.")),
+    "model_has_many_leaf_children": (
+        "look for work the leaves repeat",
+        ("Several leaf models read this one directly. If they each finish the same work, that "
+         "work is a missing intermediate model; if not, accept it in the form.")),
+    "too_many_joins": (
+        "split the model where the joins group",
+        ("Move a cluster of joins that belongs together into an intermediate model. Each join is "
+         "a place a row can multiply or drop, and assay's join checks name which ones do.")),
+    "model_refs_nothing": (
+        "declare what it reads",
+        ("Replace the hard-coded or missing input with ref() or source(), so the model has "
+         "lineage and every check that follows lineage can see it.")),
+    "model_name_breaks_convention": (
+        "rename, or set the convention",
+        ("Rename the model with its layer's prefix, or, if the project names this layer "
+         "differently on purpose, set the evaluator's prefix var to match.")),
+    "staging_reads_staging": (
+        "move it to intermediate",
+        ("A model built from staging models is intermediate work. Move it (and its name) to that "
+         "layer, or accept it in the form if it is a deliberate split of one source.")),
+    "staging_reads_downstream": (
+        "break the cycle in layers",
+        ("A staging model must read sources, never the layers built on it. Move the logic that "
+         "needs the downstream model out of staging.")),
+    "rejoins_an_upstream_concept": (
+        "join it once",
+        ("Take the relation from the model in between instead of joining it again directly, or "
+         "fold the extra columns into that model.")),
+    "hard_coded_reference": (
+        "use ref() or source()",
+        ("Replace the literal table name with ref() or source() so dbt can see the dependency "
+         "and build in the right order.")),
+    "long_chain_of_views": (
+        "materialize a link in the chain",
+        ("Make one model in the chain a table (or incremental), so a read stops re-computing "
+         "every view above it.")),
+    "public_model_without_contract": (
+        "enforce a contract",
+        ("Add `contract: {enforced: true}` and the column list, so a change that breaks the "
+         "consumers fails the build instead of reaching them.")),
+    "source_is_never_used": (
+        "remove the declaration or add the model",
+        ("Nothing reads this source. Either the model that should is missing, or the declaration "
+         "is left over and can go.")),
+    "source_has_no_description": (
+        "describe the source",
+        ("Say what the source is and who loads it, in its yml. It is the only place the meaning "
+         "of raw data is written down.")),
+    "source_declared_twice": (
+        "keep one declaration",
+        ("Two source entries point at one table. Keep one and move the other's refs to it, so a "
+         "test or a fix lands on the only name there is.")),
+    "exposure_rests_on_private_models": (
+        "mark them public, or accept it",
+        ("One decision for the exposure: set `access: public` on the models it rests on, or "
+         "accept that it depends on models not meant to be depended on.")),
+    "exposure_rests_on_views": (
+        "materialize what the exposure reads",
+        ("Make the models the exposure reads tables, so each read of it does not re-compute "
+         "them, or accept it where the view is cheap.")),
+    "evaluator_config_does_not_fit": (
+        "change the evaluator's setting",
+        ("The card names the var in dbt_project.yml (exclude_packages, a prefix or folder var, "
+         "or disabling a rule). Nothing in the models changes; the rows it covers go away.")),
+    "file_in_unexpected_directory": (
+        "move the file, or set the layout",
+        ("Move the file where the evaluator's layout expects it, or, where the project is laid "
+         "out differently on purpose, disable the directory rule.")),
+    "evaluator_rule": (
+        "read the evaluator's rule",
+        ("A rule this version of assay has no card of its own for. The card carries the row as "
+         "the evaluator wrote it; the package's docs say what the rule asks.")),
     "column_has_no_description": (
         "write the sentence",
         ("A column's description is where the meaning of its values is written down, and assay "

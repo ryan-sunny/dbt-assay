@@ -113,7 +113,7 @@ def changes_since(baseline: Snapshot, state: LiveState) -> list:
 
 
 def all_findings(project, digests, schema, entries=None, *,
-                 threshold: float = 0.8, store=None) -> list:
+                 threshold: float = 0.8, store=None, stored_evaluator: bool = True) -> list:
     """Every finding, structural and judged, from ONE place.
 
     *** THE CLI SAW SEVEN FAMILIES AND MCP SAW TWO. ***
@@ -154,7 +154,62 @@ def all_findings(project, digests, schema, entries=None, *,
         from . import prove as prove_mod
         prove_mod.register(led, prove_mod.stored(store))
     with ledger_mod.collecting(led):
-        return _all_findings(project, digests, schema, entries, threshold, store)
+        fs = _all_findings(project, digests, schema, entries, threshold, store)
+    if store is not None and stored_evaluator:
+        fs = with_stored_evaluator(fs, store, project)
+    return fs
+
+
+def with_stored_evaluator(fs: list, store, project) -> list:
+    """The latest full run's dbt-project-evaluator cards, on a surface that computes offline.
+
+    *** THE PAGE AND THE FORM NEVER SAW WHAT ONLY THE WAREHOUSE KNOWS. *** They rebuild the
+    findings from the manifest and the store's answers; the evaluator's rows are tables that
+    `check --verify` read. So the cards it wrote are read back from that run: a card assay does
+    not produce itself is rebuilt from its row, and a card of assay's own that the evaluator also
+    flagged gets that evidence back (the id is the same, since the evidence is not in it). `check`
+    reads the evaluator fresh and passes `stored_evaluator=False`.
+    """
+    import json
+
+    from .checks.structural import Finding
+    try:
+        run = store.latest_run(getattr(project, "project_name", None) or None)
+        rows = store.con.execute(
+            """select check_name, subject, subject_name, file, summary, detail, base,
+                      descendants, marts, evidence, exposures, finding_id
+               from findings where run_id = ? and evidence like '%"evaluator"%'""",
+            [run]).fetchall() if run else []
+    except Exception:                                            # noqa: BLE001
+        return fs
+    by_id = {f.id: f for f in fs}
+    for (check, subject, name, file, summary, detail, base, desc, marts, ev, exp,
+         fid) in rows:
+        try:
+            evidence = json.loads(ev or "{}")
+        except ValueError:
+            continue
+        mine = by_id.get(fid)
+        if mine is not None:
+            if "evaluator" not in (mine.evidence or {}):
+                mine.evidence = {**(mine.evidence or {}), "evaluator": evidence["evaluator"]}
+                note = detail.split("\n\ndbt-project-evaluator flags this too", 1)
+                if len(note) == 2:
+                    mine.detail += "\n\ndbt-project-evaluator flags this too" + note[1]
+            continue
+        if "rules" not in (evidence.get("evaluator") or {}):
+            continue                  # assay's own card, and assay no longer raises it
+        f = Finding(check=check, subject=subject or "", subject_name=name or "", file=file or "",
+                    summary=summary, detail=detail or "", base=int(base or 1),
+                    evidence=evidence)
+        f.descendants, f.marts = int(desc or 0), int(marts or 0)
+        try:
+            f.exposures = json.loads(exp or "[]")
+        except ValueError:
+            f.exposures = []
+        fs.append(f)
+        by_id[f.id] = f
+    return fs
 
 
 def _with_source_readings(fs: list, store) -> None:

@@ -155,6 +155,44 @@ Anything that needs the warehouse goes **through your own dbt**, so assay never 
 |---|---|
 | `config_comment_contradicts_the_store` | a comment in `audit.yml` that states a count -- "38 of 38 agreed", "which none do" -- and the store no longer bears it out. A claim dated to a version is history and is left alone |
 
+### Standard practice: dbt-project-evaluator's rows, as cards
+
+When `dbt_project_evaluator` is installed and built, `assay check --verify` reads its `fct_` tables
+(the schema comes from the manifest; `practices: {evaluator_schema: ...}` overrides it) and turns
+its rows into cards: one per (subject, fact), with the evaluator's rule names on the card. One fact
+often arrives as several rows: on one project 1,033 rows became 303 cards. Where assay already
+says the same thing about the same subject, the rule is named on assay's card instead
+(`evidence.evaluator.also_flagged_by`), so one ruling covers both. The page and the form say how
+many rows became how many cards. Exceptions are an accept or a waiver in the form; nothing is
+written to the evaluator's exceptions seed. `assay practices` adds the judged reading for the rules
+with real exceptions, and `--dry-run` says what that will cost first.
+
+| check | from | what it says |
+|---|---|---|
+| `reads_raw_source_outside_staging` | direct_join_to_source, marts_or_intermediate_dependent_on_source, multiple_sources_joined, source_fanout | one card per model reading raw sources itself, naming them and the rules |
+| `source_read_directly_by_many_models` | source_fanout | a source whose readers carry no card above: one card per source, listing them |
+| `no_primary_key_test` | missing_primary_key_tests | no uniqueness test; where assay read a grain from the SQL, the card names the columns |
+| `model_has_no_description` | undocumented_models, undocumented_public_models | folded into `column_has_no_description` when that model has one |
+| `source_freshness_undeclared` | sources_without_freshness | the same card assay writes itself when the evaluator is absent |
+| `source_is_never_used` | unused_sources | folded into `source_reaches_nothing` when assay says it too |
+| `source_has_no_description` | undocumented_sources, undocumented_source_tables | nothing says what the source is |
+| `source_declared_twice` | duplicate_sources | two source entries for one table |
+| `model_has_many_leaf_children` | model_fanout | several leaves read it directly |
+| `too_many_joins` | too_many_joins | the join count |
+| `model_refs_nothing` | root_models | no ref() and no source() |
+| `model_name_breaks_convention` | model_naming_conventions | the prefix its layer expects |
+| `staging_reads_staging` | staging_dependent_on_staging | a staging model built from staging |
+| `staging_reads_downstream` | staging_dependent_on_marts_or_intermediate | a cycle in layers |
+| `rejoins_an_upstream_concept` | rejoining_of_upstream_concepts | one card per model, naming each relation joined twice |
+| `hard_coded_reference` | hard_coded_references | a literal table name dbt cannot see |
+| `long_chain_of_views` | chained_views_dependencies | every read re-computes the chain |
+| `public_model_without_contract` | public_models_without_contract | public, no enforced contract |
+| `exposure_rests_on_private_models` | exposures_dependent_on_private_models | one card per exposure, not per model |
+| `exposure_rests_on_views` | exposure_parents_materializations | one card per exposure |
+| `file_in_unexpected_directory` | model/source/test_directories | where the layout expects the file |
+| `evaluator_config_does_not_fit` | any | rows about installed packages' models, or a convention rule failing most of a layer: the setting to change, and those rows are not listed as cards |
+| `evaluator_rule` | a rule this assay has no card for | carried as the evaluator wrote it, never dropped |
+
 ### Completeness: do we have all of it?
 
 `assay completeness`. Coverage of what the project itself declares, and nothing more.
@@ -163,7 +201,7 @@ Anything that needs the warehouse goes **through your own dbt**, so assay never 
 |---|---|
 | `source_reaches_nothing` | declared, loaded on every run, and no model or test refers to it |
 | `source_only_a_test_reads` | you are paying to test data nothing consumes |
-| `source_freshness_undeclared` | nothing says how current it should be. Silent when `dbt_project_evaluator` is installed, because it already answers this |
+| `source_freshness_undeclared` | nothing says how current it should be. When `dbt_project_evaluator` is installed, the card comes from its `fct_sources_without_freshness` instead, under the same name |
 | `source_freshness_stale` | the project states how current it should be and the last load does not meet it |
 | `source_volume_not_monitored` | a source with no row-count monitor whose change reaches a mart with nothing watching on the way. One per source, never per model: a model built only from monitored relations is covered. Carries the marts it reaches and the yml to add; `assay volume --judge` asks once per source whether it is worth watching, and the answer is the reading on this finding. Silent without Elementary |
 | `hop_drops_most_rows` | a child with no filter, no group by and no collapse that still emits a fraction of the parent. A join that is not matching |

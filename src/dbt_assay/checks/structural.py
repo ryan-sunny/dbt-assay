@@ -62,7 +62,10 @@ _MEASURED = frozenset({"downstream", "marts", "probability", "confidence", "one_
                        "store", "partition_as_written", "models", "sharing",
                        # A finding raised because the premise that held it back broke is the SAME
                        # finding it was before the premise held: a ruling on it still applies.
-                       "why_it_is_back", "proven_rule", "timeline"})
+                       "why_it_is_back", "proven_rule", "timeline",
+                       # dbt-project-evaluator's rules, rows and judged reading on a card: which
+                       # rules say it can change without the finding becoming another one.
+                       "evaluator"})
 
 
 def _identity(evidence: dict) -> str:

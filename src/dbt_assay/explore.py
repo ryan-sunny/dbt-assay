@@ -140,6 +140,10 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
                                     [r.get("action_why") or "" for r in waived_rows])
     review_tally["line"] = reviewform.tally_line(review_tally)
     review_tally["tail"] = reviewform.tally_tail(review_tally)
+    from . import evaluator as _ev_mod
+    _ev_line = _ev_mod.surface_line(find_rows)
+    if _ev_line:
+        review_tally["tail"] = (review_tally["tail"] + " " + _ev_line).strip()
     for r in find_rows:
         r["pair_ruled"] = (str(r["subject"]), str(r["check"])) in _ruled
     find_by_subject: dict = {}

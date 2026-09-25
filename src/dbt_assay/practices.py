@@ -102,6 +102,8 @@ def categories(config_overrides: dict | None = None) -> dict:
     """The shipped split, overridable per check in audit.yml."""
     out = dict(ALL)
     for check, cat in (config_overrides or {}).items():
+        if not str(check).startswith("fct_"):
+            continue                     # `evaluator_schema`, `evaluator: off`: settings, not rules
         if cat not in ("enforce", "recommend", "adjudicate", "off"):
             raise ValueError(f"unknown practice category {cat!r} for {check}")
         out[check] = cat

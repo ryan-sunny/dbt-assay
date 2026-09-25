@@ -533,7 +533,8 @@ def check(
     _cfg_pre = Config.load(config_path)
     _st_pre = Store(store_path) if Path(store_path).exists() else None
     findings = live.all_findings(project, digests, schema, _entries,
-                                 threshold=_cfg_pre.row_loss_threshold, store=_st_pre)
+                                 threshold=_cfg_pre.row_loss_threshold, store=_st_pre,
+                                 stored_evaluator=not verify)
     from . import ledger as ledger_mod
     _ledger = ledger_mod.last()
     if _st_pre is not None:
@@ -544,6 +545,9 @@ def check(
     # deferral nobody is told about is a check that stopped looking, which is the 0.38.1 rule.
     findings += _monitoring_findings(project, _cfg_pre, verify, project_dir, profiles_dir,
                                      dbt_bin, json_out)
+    # *** AND dbt-project-evaluator's ROWS, AS CARDS, FOLDED INTO WHAT assay ALREADY SAYS. ***
+    findings += _evaluator_findings(project, _cfg_pre, verify, project_dir, profiles_dir,
+                                    dbt_bin, findings, _entries, store_path)
     # *** AND THE CONFIG'S OWN PROSE, READ AGAINST THE STORE IT DESCRIBES. ***
     if Path(store_path or "").exists():
         from . import selfaudit
@@ -3784,6 +3788,69 @@ def _monitoring_findings(project, cfg, verify: bool, project_dir: str, profiles_
                                     min_marts=int(mon.get("min_marts") or 1))
 
 
+EVALUATOR_TALLY: list = []        # the last `check`'s rows-to-cards line, for its own output
+
+
+def _evaluator_findings(project, cfg, verify: bool, project_dir: str, profiles_dir: str | None,
+                        dbt_bin: str, findings: list, entries, store_path: str | None) -> list:
+    """dbt-project-evaluator's rows as cards: one per (subject, fact), folded into assay's own.
+
+    Read through dbt like the monitoring checks, so it runs under `--verify` and says so when it
+    does not. A project without the package gets nothing and no line: the evaluator is optional.
+    """
+    from . import evaluator as ev_mod
+    from .checks import sources as src_mod
+    EVALUATOR_TALLY.clear()
+    if not ev_mod.installed(project):
+        return []
+    opts = getattr(cfg, "practices", None) or {}
+    if opts.get("evaluator") == "off":
+        return []
+    cats = {k: v for k, v in opts.items() if str(k).startswith("fct_") and isinstance(v, str)}
+    if not verify:
+        src_mod.DEFERRED.append((
+            "evaluator",
+            ("dbt-project-evaluator's tables were NOT read on this run (they are in the "
+             "warehouse; `--verify` reads them). Any evaluator cards listed are the ones the "
+             "last `check --verify` read.")))
+        return []
+    runner = probe_mod.many_runner(project_dir, profiles_dir, dbt_bin, project.dialect,
+                                   caller="assay.evaluator")
+    try:
+        rep = ev_mod.read(project, runner, schema=opts.get("evaluator_schema") or None,
+                          dialect=project.dialect, cats=cats)
+    except Exception as e:                                       # noqa: BLE001
+        src_mod.DEFERRED.append(("evaluator", f"dbt-project-evaluator could not be read: {e}"))
+        return []
+    if not rep.rows:
+        if rep.unread:
+            src_mod.DEFERRED.append((
+                "evaluator",
+                (f"dbt-project-evaluator is installed and none of its tables in "
+                 f"`{rep.schema}` could be read ({len(rep.unread)} not built or unreadable). "
+                 f"`dbt build --select package:dbt_project_evaluator` builds them. Not a pass.")))
+        return []
+    if "fct_sources_without_freshness" in rep.rows or \
+            "fct_sources_without_freshness" not in rep.unread:
+        # assay stays quiet on freshness when the evaluator is installed; it has now been read.
+        src_mod.DEFERRED[:] = [d for d in src_mod.DEFERRED
+                               if d[0] != "source_freshness_undeclared"]
+    grains = {}
+    if entries:
+        grains = {p[0]: list(p[1]) for p in prac_mod.primary_key_patches(project, entries)
+                  if p[1]}
+    cards, tally = ev_mod.cards(project, rep, grains)
+    kept = ev_mod.fold(findings, cards, tally)
+    store = Store(store_path) if store_path and Path(store_path).exists() else None
+    try:
+        ev_mod.judged_readings(store, kept)
+    finally:
+        if store is not None:
+            store.close()
+    EVALUATOR_TALLY.append(tally.line())
+    return kept
+
+
 def _clip(text: str, n: int) -> str:
     """Cut at a word, not mid-word. `and a stopped monitor re` is a slice, not a sentence."""
     if len(text) <= n:
@@ -5103,6 +5170,11 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
                              [w for _f, w in _waived])
     tally["line"] = reviewform.tally_line(tally)
     tally["rule"], tally["tail"] = reviewform.CARD_RULE, reviewform.tally_tail(tally)
+    from . import evaluator as _ev_mod
+    _ev_line = _ev_mod.surface_line(findings)
+    if _ev_line:
+        tally["tail"] = (tally["tail"] + " " + _ev_line).strip()
+        tally["line"] = (tally["line"] + " " + _ev_line).strip()
     reads = {}
     if reads_path:
         reads = _json.loads(Path(reads_path).read_text())
@@ -7641,7 +7713,8 @@ def practices(
     profiles_dir: str = typer.Option(None, "--profiles-dir"),
     dbt_bin: str = typer.Option("dbt", "--dbt", "--dbt-bin"),
     schema_name: str = typer.Option(None, "--evaluator-schema",
-                                    help="where dbt-project-evaluator built its fct_ tables"),
+                                    help="where dbt-project-evaluator built its fct_ tables. "
+                                         "Read from the manifest when not given."),
     dialect: str = typer.Option(None, "--dialect",
                                 help="override; read from the manifest by default"),
     verify: bool = typer.Option(True, "--verify/--no-verify",
@@ -7655,6 +7728,9 @@ def practices(
     model: str = typer.Option(None, "--model", "-m", help="only this model"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     config_path: str = typer.Option(".", "--config"),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="what the judged reading would ask and cost. Sends "
+                                      "nothing."),
 ):
     """Standard dbt practice: deferred to where it exists, adjudicated where it is noisy.
 
@@ -7751,95 +7827,133 @@ def practices(
             store.close()
         raise typer.Exit(0)
 
-    cats = prac_mod.categories(cfg.practices)
-    flags, not_checked = prac_mod.collect(project, entries, probe_mod, project_dir, profiles_dir,
-                                          dbt_bin, cats, schema_name)
+    # *** dbt-project-evaluator's ROWS, AS THE CARDS `check --verify` WRITES. *** (sunny-data,
+    # 2026-09-25) One card per (subject, fact), the rules named on it; what is a config problem
+    # says so once. This command adds the judged reading for the rules with real exceptions, and
+    # never gates: it exits 0 whatever it finds.
+    from . import evaluator as ev_mod
+    if not ev_mod.installed(project):
+        console.print("\n[yellow]dbt-project-evaluator is not installed[/] [dim]-- the standard-"
+                      "practice half needs it. The primary-key half above does not.[/]")
+        if store:
+            store.close()
+        raise typer.Exit(0)
+    opts = cfg.practices or {}
+    cats = {k: v for k, v in opts.items() if str(k).startswith("fct_") and isinstance(v, str)}
+    runner = probe_mod.many_runner(project_dir, profiles_dir, dbt_bin, project.dialect,
+                                   caller="assay.practices")
+    # An unreachable warehouse is a fault, not a finding: it stops the command (exit 2) with
+    # dbt's own words, like every counted command. "Never gates" is about what it finds.
+    rep = ev_mod.read(project, runner, schema=schema_name or opts.get("evaluator_schema"),
+                      dialect=project.dialect, cats=cats)
     # *** A CHECK WHOSE TABLE IS NOT THERE IS NOT A CHECK THAT PASSED. ***
     # Reported from the field: a partially built evaluator -- five fct_ models of many -- reported
     # one category and said nothing about the rest, so a partial build read as a clean project.
-    # This is the same defect as a guard that scans nothing, and it is now impossible to miss.
+    not_checked = sorted(rep.unread)
     if not_checked:
-        console.print(f"\n[yellow]{len(not_checked)} of {len(cats)} standard check(s) were NOT "
-                      f"LOOKED AT[/] [dim]-- their table is absent or empty, and assay cannot "
-                      f"tell those apart from here. This is not a pass.[/]")
-        console.print(f"  [dim]{', '.join(sorted(not_checked)[:8])}"
+        console.print(f"\n[yellow]{len(not_checked)} evaluator table(s) were NOT read[/] [dim]-- "
+                      f"not built or unreadable: "
+                      + ", ".join(not_checked[:8])
                       + (f" and {len(not_checked) - 8} more" if len(not_checked) > 8 else "")
-                      + "[/]")
-        console.print("  [dim]`dbt build --select package:dbt_project_evaluator` builds them "
-                      "all.[/]")
-    if not flags:
-        console.print("\n[yellow]no dbt-project-evaluator findings.[/] [dim]"
-                      + ("Given the above, that is because most of it was not built, not because "
-                         "the project is clean." if not_checked else
-                         "Every check assay could reach came back empty.") + "[/]")
+                      + ". This is not a pass. `dbt build --select package:dbt_project_evaluator` "
+                        "builds them.[/]")
+    if not rep.rows:
+        console.print("\n[yellow]no dbt-project-evaluator rows.[/] [dim]"
+                      + ("Given the above, that is because it was not built, not because the "
+                         "project is clean." if not_checked else
+                         "Every table assay could read came back empty.") + "[/]")
         if store:
             store.close()
         raise typer.Exit(0)
-
-    by_cat = {}
-    for f in flags:
-        by_cat.setdefault(f.category, []).append(f)
-    t = Table(title="\nstandard practice", header_style="bold")
-    t.add_column("category"); t.add_column("n", justify="right"); t.add_column("checks")
-    for cat in ("enforce", "adjudicate", "recommend"):
-        fs = by_cat.get(cat) or []
-        if fs:
-            t.add_row(cat, str(len(fs)),
-                      ", ".join(sorted({x.check.replace("fct_", "") for x in fs}))[:52])
+    grains = {p_[0]: list(p_[1]) for p_ in patches if p_[1]}
+    cards, tally = ev_mod.cards(project, rep, grains)
+    mine = live.all_findings(project, _d, _sch, entries, store=store, stored_evaluator=False)
+    cards = ev_mod.fold(mine, cards, tally)
+    console.print(f"\n[bold]standard practice[/] [dim]{tally.line()}[/]")
+    if rep.truncated:
+        console.print(f"[yellow]read in part:[/] [dim]{', '.join(rep.truncated)} reached "
+                      f"{ev_mod.ROW_LIMIT:,} rows[/]")
+    for f in [c for c in cards if c.check == "evaluator_config_does_not_fit"]:
+        console.print(f"  [yellow]config[/] {f.summary} [dim]{_clip(f.detail, 160)}[/]")
+    by_check = Counter(c.check for c in cards if c.check != "evaluator_config_does_not_fit")
+    t = Table(header_style="bold", box=None, padding=(0, 2))
+    t.add_column("card"); t.add_column("n", justify="right"); t.add_column("worst by reach")
+    for chk, n in by_check.most_common():
+        worst = max((c for c in cards if c.check == chk), key=lambda c: c.weight)
+        t.add_row(chk, str(n), f"{worst.subject_name} [dim]({worst.marts} marts)[/]")
     console.print(t)
 
-    for f in sorted(by_cat.get("enforce", []), key=lambda f: -f.marts)[:10]:
-        console.print(f"  [red]enforce[/] [bold]{f.model}[/] {f.check.replace('fct_','')}  "
-                      f"[dim]{f.why} · {f.marts} marts[/]")
-
-    todo = by_cat.get("adjudicate", [])
+    todo = [c for c in cards if c.check in ev_mod.ADJUDICATED]
+    if model:
+        todo = [c for c in todo if c.subject_name == model]
     if not todo:
-        if store:
-            store.close()
-        raise typer.Exit(0)
-
-    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
-    if not client.available:
-        console.print(f"\n[dim]{len(todo)} flag(s) need a judgment; no API key, so they are "
-                      f"listed unadjudicated.[/]")
         if store:
             store.close()
         raise typer.Exit(0)
     if store is None:
         store = Store(store_path)
-
-    verdicts = {}
+    by_name = {e.name: e for e in entries}
     ctx = _state_ctx(project, {}, None, store, cfg, entries=entries)
-    for f in todo:
-        rec = states.make("practice", ctx, key=f"practice::{f.check}::{f.model}",
-                          inputs={"check": f.check, "model": f.model},
-                          state=prac_mod.build_state(f, cfg.vocab))
-        if rec is None:
-            continue
-        try:
-            # so the answer records the checksum of the SQL it was computed from
-            store.use_project(project)
-            ans = decide(store, client, rec, prac_mod.question_for(f),
-                         prompt_version=prac_mod.PRACTICE_VERSION, caller="assay.practices")
-        except BudgetExceeded as e:
-            console.print(f"[yellow]stopped: {e}[/]")
-            break
-        a = ans.get("exception")
-        if a:
-            verdicts.setdefault(a["answer"], []).append((f, a.get("confidence")))
-
-    t2 = Table(title="\nadjudicated", header_style="bold")
-    t2.add_column("verdict"); t2.add_column("n", justify="right"); t2.add_column("example")
+    work = []
+    for c in todo:
+        e = by_name.get(c.subject_name)
+        flag = prac_mod.Flag(
+            check=c.check, category="adjudicate", model=c.subject_name,
+            row={k: v for k, v in ((c.evidence or {}).get("evaluator") or {}).items()
+                 if k != "judged"},
+            why=c.summary, marts=c.marts, descendants=c.descendants,
+            contract={"grain": e.grain.value if e and e.grain else None,
+                      "reads": e.reads[:8] if e else []})
+        rec = states.make("practice", ctx, key=f"practice::{c.check}::{c.subject_name}",
+                          inputs={"check": c.check, "model": c.subject_name},
+                          state=prac_mod.build_state(flag, cfg.vocab))
+        if rec is not None:
+            work.append((c, flag, rec))
+    console.print(f"\n[bold]judged reading[/] [dim]for the {len(work)} card(s) whose rules have "
+                  f"real exceptions. It annotates a card; the exception itself is an accept or a "
+                  f"waiver in the form.[/]")
+    plan_ = _plan_line(store, [(rec, prac_mod.question_for(f), prac_mod.PRACTICE_VERSION)
+                               for _c, f, rec in work], "assay.practices")
+    if dry_run:
+        if work:
+            console.print(f"  [dim]{_json.dumps(work[0][2].state, default=str)[:400]}...[/]")
+        store.close()
+        raise typer.Exit(0)
+    if plan_.usd > cfg.max_spend_usd:
+        console.print(f"  [red]refused before spending anything:[/] ~${plan_.usd:.2f} exceeds the "
+                      f"${cfg.max_spend_usd:.2f} cap in audit.yml. `--model` narrows it; "
+                      f"`--dry-run` costs nothing.")
+        store.close()
+        raise typer.Exit(0)
+    client = Client(provider=cfg.provider, model=cfg.model, max_spend_usd=cfg.max_spend_usd)
+    if plan_.calls and not client.available:
+        console.print(f"[dim]{plan_.calls} card(s) need a judgment; no API key, so they are "
+                      f"listed unadjudicated.[/]")
+        store.close()
+        raise typer.Exit(0)
+    verdicts: dict = {}
+    with _judging("practices", len(work), plan_):
+        for c, flag, rec in work:
+            try:
+                # so the answer records the checksum of the SQL it was computed from
+                store.use_project(project)
+                ans = decide(store, client, rec, prac_mod.question_for(flag),
+                             prompt_version=prac_mod.PRACTICE_VERSION, caller="assay.practices")
+            except BudgetExceeded as e:
+                console.print(f"[yellow]stopped at the cap: {e}[/]")
+                break
+            a = ans.get("exception")
+            if a:
+                verdicts.setdefault(a["answer"], []).append((c, a.get("confidence")))
+    t2 = Table(header_style="bold", box=None, padding=(0, 2))
+    t2.add_column("reading"); t2.add_column("n", justify="right"); t2.add_column("example")
     for k in sorted(verdicts, key=lambda k: -len(verdicts[k])):
-        f, _c = verdicts[k][0]
-        t2.add_row(k, str(len(verdicts[k])), f"{f.model}: {f.check.replace('fct_','')}")
+        c0, _conf = verdicts[k][0]
+        t2.add_row(k.replace("_", " "), str(len(verdicts[k])), f"{c0.subject_name}: {c0.check}")
     console.print(t2)
-    for kind in ("a_real_problem", "a_missing_layer"):
-        for f, conf in sorted(verdicts.get(kind, []), key=lambda x: -(x[1] or 0))[:6]:
-            console.print(f"  [yellow]{kind}[/] [bold]{f.model}[/] "
-                          f"{f.check.replace('fct_','')} [dim]@{conf:.2f} · {f.marts} marts[/]")
-    console.print(f"[dim]{_n(client.calls)} calls, {client.input_tokens:,} tokens, "
-                  f"${client.spent_usd:.4f}[/]")
+    console.print(f"[dim]{_n(client.calls)} call(s), {client.input_tokens:,} tokens, "
+                  f"${client.spent_usd:.4f}. The readings reach the cards on the next "
+                  f"`check --verify`.[/]")
     _report_vocab_drops()
     store.close()
 
@@ -7955,6 +8069,9 @@ def _report_refused_claim_findings() -> None:
     from .checks.floats import UNREAD as _float_unread
     for why, _n in _float_unread:
         console.print(f"[yellow]not read:[/] [dim]{why}[/]")
+    if EVALUATOR_TALLY:
+        console.print(f"[dim]{EVALUATOR_TALLY[0]}[/]")
+        EVALUATOR_TALLY.clear()
     from .checks.sources import DEFERRED
     if DEFERRED:
         console.print(f"[yellow]{len(DEFERRED)} check(s) deferred to another package.[/] "
