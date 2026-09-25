@@ -787,6 +787,9 @@ class Digest:
     # First-element picks out of a delimited or array value. Taking [1] of a multi-valued field is
     # a silent CHOICE, and which value you get depends on the source's ordering.
     first_element_picks: list = field(default_factory=list)   # (column_expr, how)
+    # Counted shapes (sqlpatterns.py): the clock, order-sensitive aggregates, one-sided keys,
+    # NOT IN (subquery), a LEFT JOIN undone by the WHERE, LIMIT. Facts, read in the one parse.
+    patterns: list = field(default_factory=list)
 
     def functions_at(self, position: str) -> set[str]:
         return {n for n, p in self.functions if p == position}
@@ -1136,6 +1139,8 @@ def _extract(tree, name: str, dialect: str) -> Digest:
         ))
 
     d.has_qualify = bool(list(tree.find_all(exp.Qualify)))
+    from .sqlpatterns import facts as _pattern_facts
+    d.patterns = _pattern_facts(tree, dialect)
 
     seen = set()
     for f in tree.find_all(exp.Func):

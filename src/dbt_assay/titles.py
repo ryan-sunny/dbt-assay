@@ -62,6 +62,12 @@ TITLES: dict[str, str] = {
     "guarantee_lost": "A proven guarantee stopped holding",
     "guarantee_does_not_hold": "A property the model relies on does not hold",
     "test_is_failing": "A dbt test is failing",
+    "output_depends_on_the_clock": "Output changes with today's date",
+    "order_sensitive_aggregate": "An aggregate that depends on row order",
+    "join_key_normalised_on_one_side": "A join key cleaned on one side only",
+    "not_in_over_a_nullable_subquery": "NOT IN over a column that can be NULL",
+    "left_join_undone_by_where": "A LEFT JOIN a WHERE turns into an inner join",
+    "limit_in_a_model": "A LIMIT inside a model",
     "source_freshness_not_run": "Freshness is declared and nothing checks it",
     "config_comment_contradicts_the_store": "A comment in audit.yml is out of date",
     # pipeline structure (dbt-project-evaluator's rules, merged)

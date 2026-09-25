@@ -630,6 +630,15 @@ rows multiply where the model's shape suggests they cannot. `source_freshness_no
 declare freshness and `dbt source freshness` has not run in a week, or ever: a freshness rule
 nothing checks reads exactly like one that passes. All four are queued by default.
 
+**Six SQL shapes are counted on every model**, from the one parse: `output_depends_on_the_clock`
+(a model reading `current_date`, `now()` and the like, heavier for a view or an ephemeral model,
+whose rows change every day with nothing rebuilt, and lighter when every use is a guard against
+future-dated rows), `order_sensitive_aggregate` (string_agg, array_agg, list, first, last or
+any_value with no ORDER BY), `join_key_normalised_on_one_side` (lower, upper or trim on one side of
+a join key), `not_in_over_a_nullable_subquery` (quiet when a not_null test covers the column),
+`left_join_undone_by_where` (a WHERE on the right side that drops the unmatched rows) and
+`limit_in_a_model`. Each is a fact about the text; whether it is meant is the person's call.
+
 The ten tables, what each answers, and how they join are in **[SCHEMA.md](SCHEMA.md)**, with an ER diagram.
 
 **What it has cost, and what has gone stale**

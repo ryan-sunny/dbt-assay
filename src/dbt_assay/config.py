@@ -729,6 +729,13 @@ questions:
   # Evidence of harm today: the project's own test fails, a proven guarantee broke, or the
   # freshness rules it declares are not being checked. Queued: a person sees them first.
   test_is_failing:             {action: queue}
+  # Counted SQL shapes: true on the text, and each needs a person to say whether it is meant.
+  output_depends_on_the_clock:        {action: queue}
+  order_sensitive_aggregate:          {action: annotate}
+  join_key_normalised_on_one_side:    {action: queue}
+  not_in_over_a_nullable_subquery:    {action: queue}
+  left_join_undone_by_where:          {action: queue}
+  limit_in_a_model:                   {action: annotate}
   guarantee_lost:              {action: queue}
   guarantee_does_not_hold:     {action: queue}
   source_freshness_not_run:    {action: queue}

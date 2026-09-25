@@ -38,6 +38,34 @@ SHAPES: dict[str, tuple[str, str]] = {
         ("A comment in audit.yml states a count the store no longer holds. Write the number the "
          "store holds now, or say when the old one was true -- \"38 of 38 agreed at 0.37\" is "
          "history and is not checked. Nothing in the warehouse changes.")),
+    "output_depends_on_the_clock": (
+        "pass the date in",
+        ("Add one project macro, `as_of()`, returning `var('as_of')` cast to a date when it is set "
+         "and the current date otherwise, and use it wherever the model reads the clock. A build, "
+         "a test and a golden can then name the day they represent, and a rebuild of the same "
+         "code on the same data gives the same rows.")),
+    "order_sensitive_aggregate": (
+        "order the aggregate",
+        ("Put `order by` on a total key inside the call (`string_agg(x, ',' order by x)`), or "
+         "replace first/last/any_value with a pick on a stated tie-break.")),
+    "join_key_normalised_on_one_side": (
+        "clean both sides the same way",
+        ("Apply the same lower/upper/trim to both sides of the join, ideally once in the staging "
+         "model of each source, so every join downstream compares like with like.")),
+    "not_in_over_a_nullable_subquery": (
+        "use NOT EXISTS",
+        ("Rewrite `x not in (select y ...)` as `not exists (select 1 ... where y = x)`, or add "
+         "`where y is not null` inside the subquery, and add a not_null test on the column if it "
+         "is meant never to be NULL.")),
+    "left_join_undone_by_where": (
+        "move the condition into ON, or make it an inner join",
+        ("A WHERE on a right-side column drops the unmatched rows the LEFT JOIN kept. If only "
+         "matches are wanted, say so with an inner join; if unmatched rows should stay, move the "
+         "condition into the ON clause.")),
+    "limit_in_a_model": (
+        "remove the LIMIT, or order it on a total key",
+        ("A development sample belongs behind `{% if target.name == 'dev' %}`. A top-N pick needs "
+         "an ORDER BY on a unique key so the same rows survive every build.")),
     "test_is_failing": (
         "make it pass, or explain the rows",
         ("The project's own test fails on its last run, which is the strongest evidence there is "
