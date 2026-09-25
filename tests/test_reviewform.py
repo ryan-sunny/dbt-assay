@@ -586,3 +586,53 @@ def test_the_page_and_the_form_print_the_same_tally(project_dir, tmp_path):
     assert line and "a person already ruled on" in line
     assert line in r.output, (line, r.output)
     assert line in form.read_text()
+
+
+# --------------------------------------------------------------- Ryan, on the served form
+
+def test_explanations_lists_models_whose_tests_are_failing_and_nothing_else(tmp_path):
+    """It listed every model with a finding, and `audit.yml` (a config finding's subject)."""
+    from types import SimpleNamespace
+
+    from dbt_assay import ledger
+    s = Store(str(tmp_path / "s.duckdb"))
+    ledger.record_test_status(s, {"test.p.t1": ("fail", "2026-09-24 06:00:00"),
+                                  "test.p.t2": ("pass", "2026-09-24 06:00:00")}, "t")
+    m = SimpleNamespace(name="orders", is_installed_package=False)
+    project = SimpleNamespace(
+        models={"model.p.orders": m, "model.p.fine": SimpleNamespace(
+            name="fine", is_installed_package=False)},
+        tests=[SimpleNamespace(unique_id="test.p.t1", name="not_null_orders_ship_date",
+                               tests_model="model.p.orders"),
+               SimpleNamespace(unique_id="test.p.t2", name="unique_fine_id",
+                               tests_model="model.p.fine")])
+    cfg = SimpleNamespace(explanations={}, explanation_sets=[])
+    findings = [_f("model.p.fine", "c", "f1"), SimpleNamespace(subject_name="audit.yml")]
+    rows = reviewform._explanation_rows(cfg, findings, project, s)
+    assert [r["mart"] for r in rows] == ["orders"]
+    assert rows[0]["failing"] == [{"test": "not_null_orders_ship_date", "status": "fail",
+                                   "at": "2026-09-24"}]
+
+
+def test_a_card_says_a_shared_reason_once_and_lists_what_it_applies_to(tmp_path):
+    """"stg_x.ymin: A mart sums it ...", then the same sentence for ymax, nine times over."""
+    from conftest import require_chromium
+    require_chromium()
+    from playwright.sync_api import sync_playwright
+    why = "A child joins on it, so a duplicate multiplies rows downstream."
+    fs = [_f("model.p.a", "what_would_break_silently", f"f{i}", summary=f"a.{c}: {why}",
+             detail=why) for i, c in enumerate(("k1", "k2", "k3"))]
+    cards, sql = reviewform.cards(fs, store=None, project_root=tmp_path)
+    page = tmp_path / "f.html"
+    page.write_text(reviewform.form_html(cards, sql, "p", "", "0"))
+    with sync_playwright() as pw:
+        b = pw.chromium.launch()
+        try:
+            pg = b.new_page()
+            pg.goto(page.as_uri())
+            pg.wait_for_timeout(300)
+            text = pg.locator(".card").first.inner_text()
+        finally:
+            b.close()
+    assert text.count(why) == 1, text
+    assert all(k in text for k in ("k1", "k2", "k3")) and "a.k1" not in text

@@ -34,16 +34,23 @@ def test_an_explanation_set_refuses_what_it_cannot_honour(body, needle):
         Config.from_dict({"explanations": body})
 
 
-def test_the_form_shows_a_set_once_instead_of_a_card_per_mart(project_dir):
+def test_the_form_shows_a_set_once_instead_of_a_card_per_mart(project_dir, tmp_path):
+    from dbt_assay import ledger
+    from dbt_assay.store import Store
     project = Project.load(project_dir)
     cfg = Config.from_dict({"explanations": {"tildes": {
         "applies_to": "stg_bad_tilde stg_ok_tilde", "options": {"a": "x"}}}})
+    # a model appears when one of its tests is failing (a set covers its own members)
+    s = Store(str(tmp_path / "s.duckdb"))
+    ledger.record_test_status(s, {t.unique_id: ("fail", "2026-09-24") for t in project.tests
+                                  if t.tests_model and t.tests_model.split(".")[-1] in
+                                  ("stg_bad_tilde", "stg_ok_tilde", "int_bad_unique")}, "t")
 
     class F:
         def __init__(self, n):
             self.subject_name = n
     rows = reviewform._explanation_rows(
-        cfg, [F("stg_bad_tilde"), F("stg_ok_tilde"), F("int_bad_unique")], project)
+        cfg, [F("stg_bad_tilde"), F("stg_ok_tilde"), F("int_bad_unique")], project, s)
     names = [r["mart"] for r in rows]
     assert names == ["tildes", "int_bad_unique"], names
     assert rows[0]["named"] and "stg_bad_tilde" in rows[0]["applies_to"]

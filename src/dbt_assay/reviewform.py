@@ -549,7 +549,7 @@ def context(store, project, cfg, findings=None, volume_json: dict | None = None)
         "words": words,
         "more_candidates": more,
         "monitoring": monitoring_rows(cfg, volume_json),
-        "explanations": _explanation_rows(cfg, findings or [], project),
+        "explanations": _explanation_rows(cfg, findings or [], project, store),
         "waivers": _waiver_rows(store, cfg, findings or [], project),
         "settings": settings_rows(cfg),
     }
@@ -639,14 +639,34 @@ def _suggested_scope(issues: list, project=None) -> str:
     return ""
 
 
-def _explanation_rows(cfg, findings, project=None) -> list:
-    """One row per named set, then one per mart no set covers, with what is configured now.
+def _failing_tests(project, store) -> dict:
+    """{model name: [(test name, status, when)]} for tests whose LAST result failed or warned."""
+    from . import ledger
+    last = ledger.test_status(store)
+    out: dict = {}
+    for t in (project.tests if project is not None else []):
+        st = last.get(t.unique_id)
+        m = project.models.get(t.tests_model or "")
+        if not st or st[0] not in ("fail", "warn", "error") or m is None \
+                or getattr(m, "is_installed_package", False):
+            continue
+        out.setdefault(m.name, []).append((t.name, st[0], st[1][:10]))
+    return out
 
-    A mart a named set already covers gets no card of its own: forty cards saying the same thing
-    is the repetition a set exists to remove.
+
+def _explanation_rows(cfg, findings, project=None, store=None) -> list:
+    """One row per named set, then one per model whose tests are failing now, with the failing
+    tests and what is configured.
+
+    *** IT LISTED EVERY MODEL WITH A FINDING, AND `audit.yml` WITH THEM. *** (Ryan, on the served
+    form) Kinds of failing row are about rows a TEST failed on: a model none of whose tests fails
+    has nothing to name, and a config finding's subject is not a model at all. A mart a named set
+    already covers gets no card of its own: forty cards saying the same thing is the repetition
+    a set exists to remove.
     """
     have = getattr(cfg, "explanations", None) or {}
     sets = getattr(cfg, "explanation_sets", None) or []
+    failing = _failing_tests(project, store)
     out, covered = [], set()
     for name, sel, opts in sets:
         out.append({"mart": name, "named": True, "applies_to": _scope_text(sel),
@@ -654,10 +674,12 @@ def _explanation_rows(cfg, findings, project=None) -> list:
         if project is not None:
             from .selector import scope_of
             covered |= {project.name_of(u) for u in (scope_of(project, sel) or set())}
-    for mart in sorted(({f.subject_name for f in findings} | set(have)) - covered):
+    marts = (set(failing) | set(have)) - covered
+    for mart in sorted(marts, key=lambda n: (-len(failing.get(n, [])), n)):
         opts = have.get(mart) or {}
-        out.append({"mart": mart, "options": [{"name": k, "means": v} for k, v in
-                                              sorted(opts.items())]})
+        out.append({"mart": mart, "failing": [{"test": t, "status": s, "at": a}
+                                              for t, s, a in failing.get(mart, [])][:8],
+                    "options": [{"name": k, "means": v} for k, v in sorted(opts.items())]})
     return out[:40]
 
 
@@ -922,6 +944,10 @@ border-bottom:1px solid var(--rule2);cursor:pointer;align-items:baseline}
 .ctitle{margin:0 0 4px;font-size:19px;font-weight:400;overflow-wrap:anywhere}
 .cwhere{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--ash);margin:0 0 10px}
 .clead{font-size:15.5px;margin:4px 0 8px;line-height:1.5}
+.citems{display:flex;flex-wrap:wrap;gap:6px 10px;margin:0 0 14px;padding:0;list-style:none}
+.citems li{font-family:var(--mono,monospace);font-size:13.5px;border:1px solid var(--rule);
+  padding:2px 8px}
+.citems li .sure{font-family:inherit;color:var(--faint);margin-left:6px}
 .fdetail .card{border-left:0;padding:0;margin:0}
 /* R3. Four verdicts, each with what it means; the rest appears once one is picked. */
 .verdicts{display:flex;flex-direction:column;gap:2px;margin:4px 0 8px}
@@ -1109,11 +1135,39 @@ function card(c) {
     el('span', {text: num(c.marts) + ' marts downstream'}),
     ...((c.exposures || []).length ? [el('span', {text: 'reaches ' + c.exposures.join(', ')})] : []),
   ]));
+  /* *** THE SAME SENTENCE NINE TIMES, ONE PER COLUMN. *** A card is one (model, check), so its
+     findings mostly share their reason and differ in the column or test they are about. Each
+     reason reads once, and what it applies to is listed under it, with how sure the reading was
+     of each. */
   const seenDetail = new Set();
+  const groups = [], byReason = {};
   for (const f of c.findings) {
-    box.append(el('p', {class: 'clead', text: f.summary}));
-    if (f.claim) box.append(el('div', {class: 'q claim', text: '"' + f.claim + '"'}));
-    if (f.detail) seenDetail.add(f.detail);
+    const s = f.summary || '';
+    const cut = s.indexOf(': ');
+    let who = cut > 0 ? s.slice(0, cut) : '';
+    const reason = cut > 0 ? s.slice(cut + 2) : s;
+    if (who.startsWith(c.model + '.')) who = who.slice(c.model.length + 1);
+    if (who === c.model) who = '';
+    let g = byReason[reason];
+    if (!g) { g = byReason[reason] = {reason, items: []}; groups.push(g); }
+    g.items.push({who, f});
+  }
+  for (const g of groups) {
+    box.append(el('p', {class: 'clead', text: g.reason}));
+    const named = g.items.filter(x => x.who);
+    if (named.length) box.append(el('ul', {class: 'citems'}, named.map(x => el('li', {}, [
+      el('span', {text: x.who}),
+      ...(x.f.asked && x.f.asked.sure != null ? [el('span', {class: 'sure',
+        text: Number(x.f.asked.sure).toFixed(2), title: 'how sure the reading was'})] : [])]))));
+    for (const x of g.items)
+      if (x.f.claim) box.append(el('div', {class: 'q claim', text: '"' + x.f.claim + '"'}));
+    /* the reason's own detail once: the first item's, saying the others read the same */
+    /* ...without the reason again: a detail that opens with it keeps only what it adds */
+    const d = (g.items.find(x => x.f.detail) || {}).f;
+    let more = d ? String(d.detail).trim() : '';
+    if (more.startsWith(g.reason.trim())) more = more.slice(g.reason.trim().length).trim();
+    if (more) seenDetail.add(named.length > 1 ? 'For ' + named[0].who + ', and the same for the '
+      + 'other ' + (named.length - 1) + ': ' + more : more);
   }
   for (const f of c.findings) {
     const b = f.back;
@@ -1146,9 +1200,12 @@ function card(c) {
     box.append(el('div', {class: 'lbl', text: 'the reading'}));
     box.append(el('dl', {class: 'reading'}, [
       el('dt', {text: 'asked'}), el('dd', {text: asked.question.replace(/_/g, ' ')
-        + (asked.about && asked.about !== c.model ? ', about ' + asked.about : '')}),
-      el('dt', {text: 'answered'}), el('dd', {text: asked.answer}),
-      el('dt', {text: 'sure'}), el('dd', {text: asked.sure == null ? '' : Number(asked.sure).toFixed(2)})]));
+        + (c.findings.length > 1 ? ', about each of the above'
+           : asked.about && asked.about !== c.model ? ', about ' + asked.about : '')}),
+      el('dt', {text: 'answered'}), el('dd', {text: [...new Set(c.findings.map(f => f.asked
+        && f.asked.answer).filter(Boolean))].join(', ')}),
+      ...(c.findings.length > 1 ? [] : [el('dt', {text: 'sure'}),
+        el('dd', {text: asked.sure == null ? '' : Number(asked.sure).toFixed(2)})])]));
   }
   if (seenDetail.size) {
     box.append(el('div', {class: 'lbl', text: asked ? 'why that is a finding' : 'what it means'}));
@@ -1673,6 +1730,9 @@ function explanationsTab(host) {
        under `options`, and the card says what it covers. */
     const base = x.named ? ['explanations', x.mart, 'options'] : ['explanations', x.mart];
     if (x.named) row.append(el('div', {class: 'measured', text: 'covers ' + x.applies_to}));
+    /* what is failing now, so the kinds are named against real failures, not in the abstract */
+    if ((x.failing || []).length) row.append(el('div', {class: 'measured', text: 'failing now: '
+      + x.failing.map(t => t.test + ' (' + t.status + (t.at ? ', ' + t.at : '') + ')').join('; ')}));
     for (const o of (x.options || []))
       row.append(field(o.name, [...base, o.name], o.means, '', 1));
     /* *** EVERY ENTRY WAS LABELLED "(NEW OPTION NAME)". *** (R4) with an unrelated example as its
@@ -1682,7 +1742,9 @@ function explanationsTab(host) {
     bits.push(row);
   }
   if (!CTX.explanations.length)
-    bits.push(el('p', {class: 'measured', text: 'Nothing to adjudicate yet.'}));
+    bits.push(el('p', {class: 'measured', text: 'No test is failing, or no test result was read: '
+      + '`assay volume` reads each test\u2019s last result from Elementary, and a `dbt build` '
+      + 'leaves them in target/. A model appears here once one of its tests fails.'}));
   host.replaceChildren(...bits);
 }
 
