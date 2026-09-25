@@ -51,7 +51,7 @@ def library_lemmas() -> list[dict]:
     for p in sorted((LEAN_DIR / "Assay").glob("*.lean")):
         text = p.read_text()
         for m in re.finditer(r"(?:/--(?P<doc>.*?)-/\s*)?^theorem\s+(?P<name>\S+)(?P<sig>.*?):=",
-                             text, re.S | re.M):
+                             text, re.DOTALL | re.MULTILINE):
             sig = " ".join(m.group("sig").split())
             doc = " ".join((m.group("doc") or "").split())[:300]
             out.append({"name": m.group("name"), "file": p.name, "statement": sig, "doc": doc})
@@ -60,7 +60,7 @@ def library_lemmas() -> list[dict]:
 
 def goal(project, digests, schema, entries, store, model: str, prop: str = "") -> dict:
     """The goal for one property of a model, or the list of properties when none is named."""
-    o, all_, led = _obligation(project, digests, schema, entries, store, model, prop)
+    o, all_, _led = _obligation(project, digests, schema, entries, store, model, prop)
     if not all_:
         return {"error": f"no provable property of `{model}`: no join, dedupe, grain or merge "
                          f"a rule applies to"}
@@ -124,7 +124,7 @@ def check(project, digests, schema, entries, store, model: str, prop: str, proof
                            text=True, env=env, timeout=600, check=False)
     out = r.stdout + r.stderr
     errors = [m.group(0) for m in re.finditer(r"error: .*?(?=\n\S+\.lean:\d+:\d+:|\Z)", out,
-                                              re.S)]
+                                              re.DOTALL)]
     if errors or r.returncode != 0:
         return {"status": "not_proven", "lean": "\n".join(errors)[:4000] or out[-2000:],
                 "theorem": o.theorem}

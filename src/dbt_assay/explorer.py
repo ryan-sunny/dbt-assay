@@ -930,7 +930,9 @@ def explorer_html(data: dict, record_html: str) -> str:
         # all three lists, not the first one: the tab said 16 while it held 16 + 39 + the odd ones
         "areas": sum(len((data.get("areas") or {}).get(k) or [])
                      for k in ("predicate_clusters", "odd_ones_out", "same_claim")) or None,
-        "guarantees": (sum(1 for p in data.get("premises") or [] if p.get("status") != "holding")
+        # premises about installed packages' models are not this project's to fix (L3)
+        "guarantees": (sum(1 for p in data.get("premises") or [] if p.get("status") != "holding"
+                           and not p.get("package"))
                        if data.get("premises") else None),
     }
     # *** THE OVERVIEW IS THE WAY IN, NOT THE LAST TAB. ***
@@ -3032,7 +3034,7 @@ function understoodTab(host) {
   }
 
   // ---- what the findings rest on, and whether it still holds
-  const PR = DATA.premises || [];
+  const PR = (DATA.premises || []).filter(p => !p.package);
   if (PR.length) {
     const notH = PR.filter(p => p.status !== 'holding');
     const brk = PR.filter(p => p.status === 'broken');
@@ -3478,7 +3480,7 @@ function monitoringTab(host) {
   }
 
   /* A declared test that has not run, backing a premise: the key it declares is unchecked. */
-  const unrunBacking = (DATA.premises || []).filter(p => p.status === 'unchecked'
+  const unrunBacking = (DATA.premises || []).filter(p => p.status === 'unchecked' && !p.package
     && (p.evidence || []).some(e => e.kind === 'declared'));
   if (unrunBacking.length)
     glance.push({what: 'unrun tests that a grain or a held-back finding rests on',
@@ -3614,6 +3616,7 @@ function monitoringTab(host) {
    excused by a unique tie-break: each is a statement about the data that something here leans
    on. This tab is every one of them, what measured it and when, and what rests on it. */
 const PSTATUS = ['broken', 'unchecked', 'assumed', 'unknown', 'holding'];
+let showPackagedPrem = false;
 const PCOLOR = {broken: '#a8491a', unchecked: '#cec5b6', assumed: '#d2833a', unknown: '#e4ddd0',
                 holding: '#1a1714'};
 const PWORD = {broken: 'broken', unchecked: 'unchecked', assumed: 'assumed only',
@@ -3705,7 +3708,10 @@ function premiseWhatToDo(p) {
 }
 
 function guaranteesTab(host) {
-  const rows = DATA.premises || [];
+  /* Installed packages' premises (Elementary's own tables) are left out unless asked for: nothing
+     in this project can fix them. (L3) */
+  const PKG_PREM = (DATA.premises || []).filter(p => p.package).length;
+  const rows = (DATA.premises || []).filter(p => showPackagedPrem || !p.package);
   if (!rows.length) {
     host.replaceChildren(block('Nothing rests on a premise yet',
       'A premise is recorded when a grain is declared by a test or a check holds a finding back '
@@ -3760,6 +3766,9 @@ function guaranteesTab(host) {
       el('div', {class: 'mfl'}, [el('span', {text: f.l, tip: f.tip})])]))));
     if (broke) box.append(el('p', {class: 'fact bad', text: num(broke) + ' premise(s) broke at '
       + 'the latest check.'}));
+    const cf = (DATA.meta || {}).counted || {};
+    if (cf.run) box.append(el('p', {class: 'fact', text: 'Counted from ' + (cf.store || 'the store')
+      + ', run ' + cf.run + ' at ' + cf.at + '.'}));
     return box;
   }
 
@@ -3874,7 +3883,14 @@ function guaranteesTab(host) {
       : p.statement + ' ' + p.name + ' ' + (p.uses || []).map(u => u.model_name).join(' '),
     detailOf: p => p.theorem ? proofPane(p) : detailOf(p),
   });
-  host.replaceChildren(top(), d);
+  const pkgBox = PKG_PREM ? (() => {
+    const cb = el('input', {type: 'checkbox'});
+    cb.checked = showPackagedPrem;
+    cb.onchange = () => { showPackagedPrem = cb.checked; guaranteesTab(host); };
+    return el('label', {class: 'chk'}, [cb, el('span', {text: 'include ' + PKG_PREM
+      + ' premise(s) about installed packages’ models'})]);
+  })() : null;
+  host.replaceChildren(...[top(), pkgBox, d].filter(Boolean));
   GO.guarantees = id => {
     const p = rows.find(x => x.id === id); if (!p) return;
     d.showRows(groups.find(g => g.key === p.status));

@@ -106,7 +106,7 @@ def _git(root, *args):
                    env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
                         "GIT_COMMITTER_EMAIL": "t@t", "PATH": "/usr/bin:/bin:/usr/local/bin"})
     return subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True,
-                          text=True).stdout.strip()
+                          text=True, check=False).stdout.strip()
 
 
 def test_the_page_shows_both_commits_of_a_returned_finding(project_dir, tmp_path):

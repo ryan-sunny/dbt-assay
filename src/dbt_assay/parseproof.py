@@ -87,14 +87,14 @@ def run(project, store, target_dir, *, select=None, force: bool = False, say=pri
         try:
             q = sqlfrag.query(m.compiled, dialect)
         except sqlfrag.Outside as e:
-            rows.append((uid, m.checksum or "", L.UNCHECKED, f"parse unproven: outside the "
-                         f"fragment ({e})", 0, VIA, now))
+            rows.append((uid, m.checksum or "", L.UNCHECKED, (f"parse unproven: outside the "
+                         f"fragment ({e})"), 0, VIA, now))
             continue
         ours = sqlfrag.s_query(q)
         theirs = lean_parse(m.compiled)
         if theirs.startswith("OUTSIDE"):
-            rows.append((uid, m.checksum or "", L.UNCHECKED, "parse unproven: outside Lean's "
-                         f"grammar of the fragment ({theirs.split(' ', 1)[-1]})", 0, VIA, now))
+            rows.append((uid, m.checksum or "", L.UNCHECKED, ("parse unproven: outside Lean's "
+                         f"grammar of the fragment ({theirs.split(' ', 1)[-1]})"), 0, VIA, now))
             continue
         if ours != theirs:
             rows.append((uid, m.checksum or "", L.UNCHECKED, "parse unproven: sqlglot's tree "
@@ -128,8 +128,8 @@ def run(project, store, target_dir, *, select=None, force: bool = False, say=pri
                              f"parse unproven: rests on {axioms}", 0, VIA, now))
             else:
                 rows.append((uid, m.checksum or "", L.HOLDING,
-                             "proven: Lean's parser reads exactly sqlglot's tree from the "
-                             "model's text, checked by the kernel", 0, VIA, now))
+                             ("proven: Lean's parser reads exactly sqlglot's tree from the "
+                             "model's text, checked by the kernel"), 0, VIA, now))
     if rows:
         store.con.executemany("insert or replace into parse_checks values (?,?,?,?,?,?,?)", rows)
     from collections import Counter

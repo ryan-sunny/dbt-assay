@@ -71,7 +71,7 @@ class Incremental:
 
 
 _BLOCK = re.compile(r"{%-?\s*if\s+is_incremental\(\s*\)\s*-?%}(.*?){%-?\s*(?:endif|else|elif)\b",
-                    re.S | re.I)
+                    re.DOTALL | re.IGNORECASE)
 
 
 def _dejinja(text: str) -> str:
@@ -81,11 +81,11 @@ def _dejinja(text: str) -> str:
                lambda m: m.group(2) or m.group(1), t)
     t = re.sub(r"{{-?\s*source\(\s*['\"]([^'\"]+)['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)\s*-?}}",
                r"\1.\2", t)
-    t = re.sub(r"{{.*?}}", "__assay_jinja__", t, flags=re.S)
-    t = re.sub(r"{%.*?%}", " ", t, flags=re.S)
-    t = re.sub(r"{#.*?#}", " ", t, flags=re.S)
+    t = re.sub(r"{{.*?}}", "__assay_jinja__", t, flags=re.DOTALL)
+    t = re.sub(r"{%.*?%}", " ", t, flags=re.DOTALL)
+    t = re.sub(r"{#.*?#}", " ", t, flags=re.DOTALL)
     # comments, so a block that opens with one still starts with its `where`
-    t = re.sub(r"/\*.*?\*/", " ", t, flags=re.S)
+    t = re.sub(r"/\*.*?\*/", " ", t, flags=re.DOTALL)
     t = re.sub(r"--[^\n]*", " ", t)
     return t.strip()
 
@@ -115,7 +115,7 @@ def parse_filter(block: str, dialect: str) -> tuple[str, str, bool, bool]:
     body = _dejinja(block)
     if not body:
         return "", "", False, True
-    cond = re.sub(r"^\s*(where|and)\s+", "", body, flags=re.I)
+    cond = re.sub(r"^\s*(where|and)\s+", "", body, flags=re.IGNORECASE)
     try:
         tree = sqlglot.parse_one(f"select 1 from __assay_t__ where {cond}", dialect=dialect)
     except Exception:                                            # noqa: BLE001
@@ -208,7 +208,7 @@ def per_batch_premise(led, inc: Incremental, digest_):
         ev.append(L.Evidence(e.kind, f"the table: {e.detail}"
                              + ("" if st == L.BROKEN else " (a run's own rows are not counted)"),
                              st, e.at))
-    p.evidence = [e for e in ev if not (e.kind == "config")]
+    p.evidence = [e for e in ev if e.kind != "config"]
     p.status = L._verdict(p.evidence) if p.evidence else L.UNKNOWN
     return p
 

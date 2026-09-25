@@ -442,8 +442,7 @@ def arbitrary_pick(project, digests: dict[str, Digest]) -> list[Finding]:
                 continue
             keys = [o.split()[0].split(".")[-1].strip("()").lower() for o in w.order_sql]
             back = None
-            hit = next(((k, sorted(declared_in.get(k, set()) & near,
-                                   key=lambda r: (r == uid, r))[0])
+            hit = next(((k, min(declared_in.get(k, set()) & near, key=lambda r: (r == uid, r)))
                         for k in keys if declared_in.get(k, set()) & near), None)
             if hit is not None:
                 k, rel = hit

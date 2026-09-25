@@ -22,12 +22,12 @@ from typing import ClassVar
 
 import duckdb
 
-from .jev import DDL as JEV_DDL
 from .checks.incremental import DDL_LATENESS
+from .conformance import DDL as DDL_CONFORMANCE
+from .jev import DDL as JEV_DDL
 from .ledger import DDL as LEDGER_DDL
 from .ledger import DDL_PARSE
 from .prove import DDL as DDL_PROOFS
-from .conformance import DDL as DDL_CONFORMANCE
 
 # `accept`: the finding is CORRECT and the person chose to leave it. Not `agree`, which leaves it
 # outstanding forever, and not `disagree`, which is a lie that tells a working check it was wrong.

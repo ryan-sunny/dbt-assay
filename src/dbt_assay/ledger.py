@@ -323,9 +323,7 @@ def unique(led: Ledger, relation: str, columns) -> Premise:
     for t in project.tests:
         if t.tests_model != relation:
             continue
-        if t.kind == "unique" and t.column and (t.column.lower(),) == cols:
-            pass
-        elif (t.kind or "").startswith("unique_combination") and tuple(sorted(
+        if t.kind == "unique" and t.column and (t.column.lower(),) == cols or (t.kind or "").startswith("unique_combination") and tuple(sorted(
                 c.lower() for c in (t.kwargs.get("combination_of_columns") or []))) == cols:
             pass
         else:
@@ -648,7 +646,8 @@ def changes(store, run_id: str) -> list:
                  prv as (select * from premises where run_id = (
                     select run_id from premises p join runs r using (run_id)
                     where run_id <> ? order by r.started_at desc limit 1))
-            select cur.name, cur.columns, cur.property, prv.status, cur.status, cur.evidence
+            select cur.name, cur.columns, cur.property, prv.status, cur.status, cur.evidence,
+                   cur.relation
             from cur join prv using (premise_id)
             where cur.status <> prv.status
             order by cur.status, cur.name""", [run_id, run_id]).fetchall()
@@ -661,7 +660,7 @@ def change_lines(rows: list, each: int = 8) -> list:
     the rest are counted by where they moved from and to, because the first run after test
     results arrive moves hundreds from `unchecked` to `holding` and a list of them says nothing."""
     broke, rest = [], {}
-    for name, cols, prop, before, after, ev in rows:
+    for name, cols, prop, before, after, ev, *_rel in rows:
         if after != BROKEN:
             rest[(before, after)] = rest.get((before, after), 0) + 1
             continue
@@ -725,6 +724,17 @@ def moves(store, run_id: str | None = None) -> list:
         return []
 
 
+def in_package(project, uid: str) -> bool:
+    """Is this relation an installed package's (Elementary, dbt_utils, ...)? Nothing in this
+    project can fix a premise about one, so the ledger leaves them out by default. (L3)"""
+    m = project.models.get(uid) if project is not None else None
+    if m is not None:
+        return bool(getattr(m, "is_installed_package", False))
+    node = (((getattr(project, "raw", None) or {}).get("sources") or {}).get(uid) or {})
+    pkg = node.get("package_name")
+    return bool(pkg) and pkg != getattr(project, "project_name", pkg)
+
+
 def to_rows(led: Ledger, store=None) -> list:
     """Every premise as the page and MCP read it: the statement, status, since, evidence, and
     each thing resting on it. `since` comes from the latest `check` that wrote premises, when the
@@ -741,8 +751,57 @@ def to_rows(led: Ledger, store=None) -> list:
         d["since"] = st[1] if st and st[0] == p.status else ""
         d["label"] = label(p)
         d["why"] = why(p)
+        d["package"] = in_package(led.project, p.relation)
         d["uses"] = [{"kind": u.kind, "dependent": u.dependent, "model": u.model,
                       "model_name": names.get(u.model, u.model), "detail": u.detail}
                      for u in led.uses_of(p.id)]
         out.append(d)
+    return out
+
+
+def counted_from(store, store_path: str = "") -> dict:
+    """Which store and which run a number was counted from, so two reports can be compared.
+    (sunny-data feedback L4: the handoff's numbers came from another store and did not say so.)"""
+    out = {"store": str(store_path or getattr(store, "path", "") or ""), "run": "", "at": ""}
+    try:
+        got = store.con.execute(
+            "select run_id, started_at from runs where scope is null "
+            "order by started_at desc, run_id desc limit 1").fetchone()
+    except Exception:                                            # noqa: BLE001
+        got = None
+    if got:
+        out["run"], out["at"] = got[0], str(got[1] or "")[:16]
+    return out
+
+
+def counted_line(c: dict) -> str:
+    return (f"counted from {c['store'] or 'the store'}"
+            + (f", run {c['run']} at {c['at']}" if c.get("run") else ", no full run yet"))
+
+
+def parse_state(store, project) -> dict:
+    """{model name: proven | agrees | differs | unchecked} for each model's CURRENT file: one
+    number for the parse, whatever this run re-checked. (L2)"""
+    try:
+        store.con.execute(DDL_PARSE)
+        rows = store.con.execute(
+            "select model, model_checksum, via, status from parse_checks").fetchall()
+    except Exception:                                            # noqa: BLE001
+        rows = []
+    by: dict = {}
+    for uid, cs, via, st in rows:
+        by.setdefault((uid, cs), []).append((via, st))
+    out = {}
+    for uid, m in project.models.items():
+        if getattr(m, "is_installed_package", False) or not m.readable:
+            continue
+        got = by.get((uid, m.checksum or ""), [])
+        if any(v == "lean" and st == HOLDING for v, st in got):
+            out[m.name] = "proven"
+        elif any(v != "lean" and st == BROKEN for v, st in got):
+            out[m.name] = "differs"
+        elif any(v != "lean" and st == HOLDING for v, st in got):
+            out[m.name] = "agrees"
+        else:
+            out[m.name] = "unchecked"
     return out

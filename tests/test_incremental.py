@@ -118,7 +118,7 @@ def test_the_lateness_premise_is_unchecked_with_an_arrival_column_and_unmeasured
 def test_measured_lateness_beyond_the_lookback_breaks_it(snow, tmp_path):
     from dbt_assay.store import Store
     s = Store(str(tmp_path / "s.duckdb"))
-    p, d, sch = _load(snow)
+    _p, _d, sch = _load(snow)
     rel = (sch.relation.get("model.w.micro_fixed") or "").replace('"', "").lower()
     s.con.execute("insert into observed_lateness values (?, 'event_at', '_loaded_at', ?, 10, "
                   "now(), 'test')", [rel, 5 * 86400.0])

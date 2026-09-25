@@ -779,7 +779,8 @@ def check(
             for c, n, sm in d["gone"][:5]:
                 console.print(f"  [green]-[/] {n}: {sm}")
             # *** WHAT THE FINDINGS REST ON, WHEN IT MOVED. *** Nothing printed when nothing did.
-            _moved = ledger_mod.changes(s, run_id)
+            _moved = [r for r in ledger_mod.changes(s, run_id)
+                      if not ledger_mod.in_package(project, r[6])]
             if _moved:
                 console.print(f"\n[bold]premises that changed:[/] {len(_moved)}")
                 for line in ledger_mod.change_lines(_moved):
@@ -5531,6 +5532,8 @@ def prove(
                                     "dbt connection, priced)"),
     n_random: int = typer.Option(200, "--random",
                                  help="with --conformance: random differential cases"),
+    verbose: bool = typer.Option(False, "--verbose", "-v",
+                                 help="every model and every property, not only the summary"),
     export_proofs: str = typer.Option(None, "--export-proofs",
                                       help="instead: write every proof an agent wrote (the only "
                                            "copy is the store) to this directory, one .lean each"),
@@ -5616,42 +5619,84 @@ def prove(
         raise typer.Exit(1) from None
     store.close()
     rows = [r for r in rep["rows"] if scope is None or r["model"] in scope]
+    from . import ledger as ledger_mod
+    st = Store(store_path)
+    try:
+        parse_state = ledger_mod.parse_state(st, project)
+        counted = ledger_mod.counted_from(st, store_path)
+    finally:
+        st.close()
+    if scope is not None:
+        names = {project.models[u].name for u in scope if u in project.models}
+        parse_state = {k: v for k, v in parse_state.items() if k in names}
+    from collections import Counter
+    g = Counter(r["guarantee"] for r in rows)
+    ps = Counter(parse_state.values())
+    summary = {"properties": len(rows), "proven": g["holding"] + g["conditional"] + g["lost"]
+               + g["stale"], "holding": g["holding"], "conditional": g["conditional"],
+               "lost": g["lost"], "does_not_hold": g["refuted"], "not_proven": g["not_proven"],
+               "no_rule_applies": g["not_attempted"], "stale": g["stale"],
+               "parse": dict(ps), "models": len(parse_state)}
     if json_out:
-        print(_json.dumps({**rep, "rows": rows}, indent=2, default=str))
+        print(_json.dumps({**rep, "rows": rows, "summary": summary, "parse_state": parse_state,
+                           "counted": counted}, indent=2, default=str))
         return
-    by: dict = {}
-    for r in rows:
-        by.setdefault(r["model_name"], []).append(r)
+    # *** THE SUMMARY FIRST, THEN WHAT NEEDS A PERSON. *** (sunny-data feedback L6: 1,756 lines
+    # with the summary last.) Every model and property is behind --verbose, and all of it in --json.
+    console.print(f"[bold]{summary['proven']} of {summary['properties']} properties proven[/] "
+                  f"across {len({r['model_name'] for r in rows})} model(s): "
+                  f"{summary['holding']} holding, {summary['conditional']} resting on an "
+                  f"unchecked premise, [{'red' if summary['lost'] else 'dim'}]"
+                  f"{summary['lost']} guarantee(s) lost[/].")
+    console.print(f"{summary['does_not_hold']} do not hold (a key never declared, counted "
+                  f"repeating), {summary['not_proven']} refuted by Lean, "
+                  f"{summary['no_rule_applies']} with no rule for their shape.")
+    console.print(f"parse: proven by Lean for {ps['proven']} of {len(parse_state)} model(s); "
+                  f"the round trip agrees for {ps['agrees']} more, differs for {ps['differs']}, "
+                  f"{ps['unchecked']} unchecked.")
+    console.print(f"[dim]{ledger_mod.counted_line(counted)}. Lean checked {rep['checked_now']} "
+                  f"certificate(s) now; {rep['reused']} were unchanged. Proven from the parsed "
+                  f"structure.[/]")
     colour = {"holding": "green", "conditional": "yellow", "lost": "red", "stale": "yellow",
               "refuted": "yellow"}
-    for name, rs in sorted(by.items()):
-        proven = [r for r in rs if r["status"] == "proven"]
-        line = f"[bold]{name}[/]  {len(proven)} of {len(rs)} proven"
-        pp = (rep.get("parse_proof") or {}).get("by_model", {}).get(name)
-        pf = (parsed or {}).get("by_model", {}).get(name)
-        if pp == "proven":
-            line += "  [green]parse proven[/]"
-        elif pf:
-            line += f"  [dim]parse {pf}[/]"
-        console.print(line)
-        for r in rs:
-            if r["status"] == "proven":
-                g = r["guarantee"]
-                console.print(f"  [{colour.get(g, 'dim')}]{g}[/]  {r['statement']}"
-                              + (f"  [red]{r['lost_because']}[/]" if r["lost_because"] else ""))
-            else:
-                console.print(f"  [yellow]not proven[/]  {r['statement']}  "
-                              f"[dim]{(r['missing'] or r['detail'] or '')[:160]}[/]")
-    n = len(rows)
-    np_ = sum(1 for r in rows if r["status"] == "proven")
-    pp = rep.get("parse_proof") or {}
-    if pp.get("checked"):
-        console.print(f"\nparse proven by Lean's kernel for {pp['proven']} model(s) whose file "
-                      f"changed; {pp['unproven']} outside the fragment or not matching, "
-                      f"which keep the round trip.")
-    console.print(f"\n{np_} of {n} properties proven across {len(by)} model(s); "
-                  f"{rep['checked_now']} checked by Lean now, {rep['reused']} unchanged since. "
-                  f"[dim]Files in {rep['written_to']}. Proven from the parsed structure.[/]")
+    lost = [r for r in rows if r["guarantee"] == "lost"]
+    if lost:
+        console.print("\n[bold red]guarantees lost[/]")
+        for r in lost:
+            console.print(f"  {r['model_name']}  {r['statement']}  [red]{r['lost_because']}[/]")
+    refuted = [r for r in rows if r["guarantee"] == "refuted"]
+    if refuted:
+        console.print("\n[bold]do not hold[/] [dim](the join can multiply rows here; often on "
+                      "purpose, when the model groups afterwards)[/]")
+        for r in refuted:
+            console.print(f"  {r['model_name']}  {r['statement']}  [dim]{r['lost_because']}[/]")
+    why = Counter((r["missing"] or r["detail"] or "").split(":")[0][:90]
+                  for r in rows if r["status"] != "proven")
+    if why:
+        console.print("\n[bold]not proven, by reason[/]")
+        for w, n in why.most_common(8):
+            console.print(f"  {n:>4}  {w}")
+    if verbose:
+        by: dict = {}
+        for r in rows:
+            by.setdefault(r["model_name"], []).append(r)
+        for name in sorted(set(by) | set(parse_state)):
+            rs = by.get(name, [])
+            proven = [r for r in rs if r["status"] == "proven"]
+            console.print(f"\n[bold]{name}[/]  {len(proven)} of {len(rs)} proven  "
+                          f"[dim]parse {parse_state.get(name, 'unchecked')}[/]")
+            for r in rs:
+                if r["status"] == "proven":
+                    gg = r["guarantee"]
+                    console.print(f"  [{colour.get(gg, 'dim')}]{gg}[/]  {r['statement']}"
+                                  + (f"  [red]{r['lost_because']}[/]" if r["lost_because"]
+                                     else ""))
+                else:
+                    console.print(f"  [yellow]not proven[/]  {r['statement']}  "
+                                  f"[dim]{(r['missing'] or r['detail'] or '')[:160]}[/]")
+    else:
+        console.print(f"\n[dim]--verbose lists every model and property; --json has all of it. "
+                      f"Files in {rep['written_to']}.[/]")
 
 
 def _proof_state(target, store_path, dialect):
@@ -5757,6 +5802,10 @@ def premises(
     model: str = typer.Option("", "--model", "-m", help="only what this model rests on"),
     status: str = typer.Option("", "--status",
                                help="broken, unchecked, assumed, unknown or holding"),
+    include_packages: bool = typer.Option(False, "--include-packages",
+                                          help="also premises about installed packages' models "
+                                               "(Elementary's, dbt_utils'), which nothing in "
+                                               "this project can fix"),
     target: str = typer.Option(None, "--target", "-t"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     dialect: str = typer.Option(None, "--dialect"),
@@ -5782,7 +5831,7 @@ def premises(
         entries = inv_mod.build(project, digests, schema, store,
                                 probe_mod.read(store) if store else {}, facts=facts)
         rep = live.premises_report(project, digests, schema, entries, store, model=model,
-                                   status=status)
+                                   status=status, include_packages=include_packages)
     finally:
         if store is not None:
             store.close()
@@ -5794,6 +5843,12 @@ def premises(
         raise typer.Exit(1)
     c = rep["counts_in_project"]
     console.print("  ".join(f"{k} {c.get(k, 0):,}" for k in ledger_mod.STATUSES))
+    if rep.get("counted"):
+        console.print(f"[dim]{ledger_mod.counted_line({**rep['counted'], 'store': store_path})}"
+                      f"[/]")
+    if rep.get("in_installed_packages") and not include_packages:
+        console.print(f"[dim]{rep['in_installed_packages']} premise(s) about installed packages' "
+                      f"models are left out; --include-packages shows them.[/]")
     if rep.get("note"):
         console.print(f"[yellow]{rep['note']}[/]")
     colour = {"broken": "red", "holding": "green", "assumed": "yellow"}

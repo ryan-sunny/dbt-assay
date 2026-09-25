@@ -43,14 +43,14 @@ def test_lean_reads_the_same_tree_and_the_kernel_proves_it(tmp_path):
     f.write_text(parseproof.theorem_file("m", sql, q))
     lib = toolchain.library()
     r = subprocess.run([toolchain.lake_for_build(), "env", "lean", str(f)], cwd=lib,
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, check=False)
     assert r.returncode == 0 and "error" not in r.stdout, r.stdout
     assert "depends on axioms" in r.stdout and "sorryAx" not in r.stdout
     bad = dict(q)
     bad["body"]["first"]["items"][0] = (("col", ["a"], "kk"), None)
     f.write_text(parseproof.theorem_file("m", sql, bad))
     r = subprocess.run([toolchain.lake_for_build(), "env", "lean", str(f)], cwd=lib,
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, check=False)
     assert "error" in r.stdout, "a corrupted tree was accepted"
 
 
@@ -63,7 +63,7 @@ def test_the_parse_proof_outranks_the_round_trip(tmp_path):
     tp = __import__("importlib.util").util.module_from_spec(spec)
     spec.loader.exec_module(tp)
     target = tp.build(tmp_path)
-    p, d, sch = tp._load(target)
+    p, _d, sch = tp._load(target)
     from dbt_assay.store import Store
     s = Store(str(tmp_path / "s.duckdb"))
     rep = parseproof.run(p, s, target, say=lambda *_: None)

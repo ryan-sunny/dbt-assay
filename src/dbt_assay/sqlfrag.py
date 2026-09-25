@@ -14,7 +14,6 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
-
 _DIALECT = ["duckdb"]           # the dialect being read, for printing a function's own name
 
 

@@ -33,14 +33,14 @@ RULES_PROVEN: dict[str, list[tuple[str, str]]] = {
         ("left_join_preserves_rows", "a left join onto such a key keeps exactly the left rows"),
     ],
     "join_fans_out": [
-        ("inner_join_no_fanout", "only a join that covers the declared key is guaranteed not to "
-                                 "fan out; this one does not cover it"),
+        ("inner_join_no_fanout", ("only a join that covers the declared key is guaranteed not to "
+                                 "fan out; this one does not cover it")),
     ],
     "arbitrary_pick": [
-        ("pick_total_on_unique_key", "a dedupe whose order no two rows of a partition tie on "
-                                     "keeps the same rows in any input order; this one's may tie"),
-        ("pick_is_order_independent", "a dedupe that keeps only partition and order keys is "
-                                      "order-independent, which is why such a pick is exempt"),
+        ("pick_total_on_unique_key", ("a dedupe whose order no two rows of a partition tie on "
+                                     "keeps the same rows in any input order; this one's may tie")),
+        ("pick_is_order_independent", ("a dedupe that keeps only partition and order keys is "
+                                      "order-independent, which is why such a pick is exempt")),
     ],
 }
 # Rules a theorem backs that are not checks: how assay carries a grain.
@@ -73,7 +73,7 @@ def theorems_in_source() -> set:
     """Every `theorem` declared in the shipped Lean library."""
     out = set()
     for p in sorted((LEAN_DIR / "Assay").glob("*.lean")):
-        out |= set(re.findall(r"^theorem\s+([A-Za-z_][A-Za-z0-9_.']*)", p.read_text(), re.M))
+        out |= set(re.findall(r"^theorem\s+([A-Za-z_][A-Za-z0-9_.']*)", p.read_text(), re.MULTILINE))
     return out
 
 
@@ -120,7 +120,7 @@ def check_library(project_dir: Path | None = None, timeout: int = 1200) -> dict:
     names = sorted(theorems_in_source()) if project_dir is None else sorted(
         set(re.findall(r"^theorem\s+([A-Za-z_][A-Za-z0-9_.']*)",
                        "\n".join(p.read_text() for p in root.rglob("*.lean")
-                                 if ".lake" not in p.parts), re.M)))
+                                 if ".lake" not in p.parts), re.MULTILINE)))
     axioms = print_axioms(root, [f"Assay.{n}" for n in names], lake)
     bad = {t: [a for a in ax if a not in STANDARD_AXIOMS] for t, ax in axioms.items()}
     bad = {t: v for t, v in bad.items() if v}
@@ -131,7 +131,7 @@ def check_library(project_dir: Path | None = None, timeout: int = 1200) -> dict:
 
 def _code(text: str) -> str:
     """Lean source with comments removed, so a docstring saying 'no sorry' is not a sorry."""
-    text = re.sub(r"/-.*?-/", " ", text, flags=re.S)
+    text = re.sub(r"/-.*?-/", " ", text, flags=re.DOTALL)
     return re.sub(r"--[^\n]*", " ", text)
 
 

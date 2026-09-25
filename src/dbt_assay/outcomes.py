@@ -279,7 +279,7 @@ def returned(store, findings, project=None) -> list:
                 had[rid] = cs or ""
         gap = None
         for i in range(1, len(runs)):
-            rid, at, sha, unchecked = runs[i]
+            rid, at, _sha, unchecked = runs[i]
             prev = runs[i - 1][0]
             if rid in had or prev not in had:
                 continue

@@ -842,10 +842,10 @@ def latest_test_results(runner, schema: str, limit: int = 40000) -> dict:
     """
     from .probe import ask_many
     (res,) = ask_many(runner, [(
-        f"select test_unique_id, status, detected_at from (select test_unique_id, status, "
+        (f"select test_unique_id, status, detected_at from (select test_unique_id, status, "
         f"detected_at, row_number() over (partition by test_unique_id order by detected_at desc) "
         f"as rn from {schema}.{TEST_RESULTS} where test_type = 'dbt_test') as latest "
-        f"where rn = 1", limit)])
+        f"where rn = 1"), limit)])
     if res.failed:
         return {}
     out = {}

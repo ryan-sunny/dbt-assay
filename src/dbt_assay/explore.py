@@ -18,6 +18,7 @@ rests on -- and a dict iterating in insertion order is not a sort, so the sorts 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 
@@ -193,6 +194,8 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
             # *** AN EMPTY STORE AND A CLEAN WAREHOUSE RENDER THE SAME PAGE. ***
             # Every zero on this page -- ruled, spent, answered -- reads as "nothing is wrong"
             # when it can equally mean "nothing has run". The page says which.
+            # Which store and run every count on the page comes from (sunny-data L4).
+            "counted": _counted(store),
             # Where a commit can be opened in a browser, for the commits a finding names.
             "repo_url": _repo_url(project),
             "new_store": (store.new_store_warning() if store is not None else
@@ -252,6 +255,15 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         # *** THE LOOP: OF THE FINDINGS A PERSON AGREED WITH, HOW MANY WENT, AND CAME BACK. ***
         "loop": _loop(store, findings, project),
     }
+
+
+def _counted(store) -> dict:
+    if store is None:
+        return {}
+    from . import ledger as ledger_mod
+    c = ledger_mod.counted_from(store)
+    c["store"] = Path(c["store"]).name if c.get("store") else ""
+    return c
 
 
 def _repo_url(project) -> str:

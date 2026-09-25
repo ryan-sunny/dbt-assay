@@ -188,7 +188,7 @@ def _all_findings(project, digests, schema, entries, threshold, store) -> list:
         from . import probe as probe_mod
         try:
             fs += probe_mod.changes(store, project)
-        except Exception:                                        # noqa: BLE001
+        except Exception:                                  # noqa: BLE001, S110
             # A store too old to hold a series still produces every other finding. The comparison
             # is absent, which is honest: `assay probe` twice is what makes it possible.
             pass
@@ -312,7 +312,7 @@ def _incremental_of(state, uid: str) -> dict | None:
 
 
 def premises_report(project, digests, schema, entries, store, model: str = "",
-                    status: str = "") -> dict:
+                    status: str = "", include_packages: bool = False) -> dict:
     """What the findings rest on, for one model or all of them: the same rows the page's
     Guarantees tab shows, so `assay premises`, MCP `premises()` and the page cannot disagree."""
     from . import ledger as ledger_mod
@@ -327,6 +327,9 @@ def premises_report(project, digests, schema, entries, store, model: str = "",
                 {"finding": f.id, "check": f.check, "model": f.subject_name})
     for r in rows:
         r["raised"] = raised.get(r["id"], [])
+    in_packages = sum(1 for r in rows if r.get("package"))
+    if not include_packages:
+        rows = [r for r in rows if not r.get("package")]
     counts = {s: sum(1 for r in rows if r["status"] == s) for s in ledger_mod.STATUSES}
     if model:
         uid = next((u for u, m in project.models.items() if m.name == model), None)
@@ -337,6 +340,8 @@ def premises_report(project, digests, schema, entries, store, model: str = "",
     if status:
         rows = [r for r in rows if r["status"] == status]
     return {"premises": rows, "counts_in_project": counts,
+            "in_installed_packages": in_packages, "packages_included": include_packages,
+            "counted": ledger_mod.counted_from(store) if store is not None else {},
             "tests_read": bool(led and led.tests_read),
             "note": ("" if led and led.tests_read else
                      "no test results were read, so every declared key is unchecked. `assay "
@@ -364,6 +369,7 @@ def proofs_report(project, digests, schema, entries, store, model: str = "") -> 
     for r in rows:
         counts[r["guarantee"]] = counts.get(r["guarantee"], 0) + 1
     return {"proofs": rows, "by_guarantee": counts,
+            "counted": ledger_mod.counted_from(store) if store is not None else {},
             "note": ("" if rows else "nothing has been proven here yet: `assay prove` writes the "
                                      "certificates (it needs Lean, which `assay prove --setup` "
                                      "installs)"),

@@ -735,10 +735,10 @@ def test_the_model_pane_says_what_it_is_correct_as_long_as(broken_page):
 
 
 def test_a_float_sum_pane_shows_the_column_its_type_and_the_fix(tmp_path):
-    from playwright.sync_api import sync_playwright
-
     import importlib.util
     from pathlib import Path
+
+    from playwright.sync_api import sync_playwright
 
     from dbt_assay import explorer
     spec = importlib.util.spec_from_file_location("te", Path(__file__).with_name("test_explorer.py"))

@@ -126,14 +126,14 @@ def test_nothing_is_proven_when_lean_did_not_check_the_file(tmp_path):
 
 def test_the_parse_round_trip_agrees_on_a_plain_model(tmp_path):
     target = build(tmp_path)
-    p, d, sch = _load(target)
-    st, detail, n = parsecheck.check_duckdb(p, sch, MODELS["grouped"], "duckdb")
+    p, _d, sch = _load(target)
+    st, detail, _n = parsecheck.check_duckdb(p, sch, MODELS["grouped"], "duckdb")
     assert st in (ledger.HOLDING, ledger.UNCHECKED), detail
 
 
 def test_a_parse_that_changes_the_result_is_broken(tmp_path, monkeypatch):
     target = build(tmp_path)
-    p, d, sch = _load(target)
+    p, _d, sch = _load(target)
     sql = "select id, name from main.stg_parent where id > 1"
     good = parsecheck.check_duckdb(p, sch, sql, "duckdb")
     assert good[0] == ledger.HOLDING, good
@@ -275,3 +275,47 @@ def test_a_join_onto_a_grouped_subquery_is_proven_with_no_premise(tmp_path, monk
     assert g["status"] == "proven" and g["premises"] == [] and g["guarantee"] == "holding"
     sp = got[("spatial", "no_fanout:stg_parent")]
     assert sp["status"] == "not_attempted" and "not key equality" in sp["missing"]
+
+
+# --- sunny-data feedback L2 / L6: one parse number, the summary first ---------------------------
+
+def test_the_parse_state_is_one_number_for_each_current_file(tmp_path):
+    target = build(tmp_path)
+    p, *_ = _load(target)
+    s = Store(str(tmp_path / "s.duckdb"))
+    s.con.execute(ledger.DDL_PARSE)
+    cs = {m.name: m.checksum or "" for m in p.models.values()}
+    rows = [("model.p.covered", cs["covered"], ledger.HOLDING, "", 0, "lean"),
+            ("model.p.covered", cs["covered"], ledger.HOLDING, "", 0, "duckdb"),
+            ("model.p.uncovered", cs["uncovered"], ledger.HOLDING, "", 0, "duckdb"),
+            ("model.p.grouped", cs["grouped"], ledger.BROKEN, "", 0, "duckdb"),
+            # an older file's result says nothing about the current one
+            ("model.p.stg_parent", "old", ledger.HOLDING, "", 0, "lean")]
+    s.con.executemany("insert into parse_checks values (?,?,?,?,?,?,now())", rows)
+    assert ledger.parse_state(s, p) == {"covered": "proven", "uncovered": "agrees",
+                                        "grouped": "differs", "stg_parent": "unchecked"}
+
+
+@needs_lean
+def test_prove_prints_the_summary_first_and_every_model_only_when_asked(tmp_path):
+    from typer.testing import CliRunner
+
+    from dbt_assay.cli import app
+    target = build(tmp_path)
+    store = str(tmp_path / "s.duckdb")
+    base = ["prove", "--target", str(target), "--store", store, "--parse-on", "none"]
+    r = CliRunner().invoke(app, base, env={"COLUMNS": "400"})
+    assert r.exit_code == 0, r.output
+    lines = [ln for ln in r.output.splitlines() if ln.strip()]
+    head = next(i for i, ln in enumerate(lines) if "properties proven" in ln)
+    assert all("proving" in ln or "Lean" in ln or "build" in ln for ln in lines[:head]), lines
+    assert "parse: proven by Lean for" in r.output and f"counted from {store}" in r.output
+    assert "--verbose lists every model" in r.output and "\ncovered " not in r.output
+    v = CliRunner().invoke(app, [*base, "--verbose"], env={"COLUMNS": "400"})
+    assert "covered  " in v.output and "--verbose lists" not in v.output
+    doc = json.loads(CliRunner().invoke(app, [*base, "--json"]).stdout)
+    sm = doc["summary"]
+    assert sm["properties"] == len(doc["rows"])
+    assert sm["proven"] == sum(1 for x in doc["rows"] if x["status"] == "proven")
+    assert sum(sm["parse"].values()) == sm["models"] == len(doc["parse_state"])
+    assert "run" in doc["counted"]

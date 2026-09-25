@@ -90,6 +90,9 @@ again once it finishes. Never conclude the tools are broken from a lock.
    `assumed`, `unknown`, `holding`. A `broken` one raises the finding it held back, with a
    `why_it_is_back` block; an `unchecked` one means the grain is declared, not known. Do not
    write a join that relies on a key whose premise is not `holding` without saying so.
+   Premises about an installed package's models (Elementary's own tables, dbt_utils') are left
+   out of the list and every count, since nothing in this project fixes them;
+   `in_installed_packages` says how many, and `include_packages=true` lists them.
 
 ## After you edit, before you hand anything back
 
@@ -337,8 +340,8 @@ and nothing is lost:
 | `traversal(model)` | `assay traverse --model <model>` |
 | `practices(model)` | `assay practices --keys-only --no-verify --model <model>` |
 | `lineage(model, column)` | `assay trace <model>.<column>` |
-| `premises(model, status)` | `assay premises --model <model> --json` (`--status broken`) |
-| `proofs(model)` | `assay prove --json`, then read `rows` for the model |
+| `premises(model, status, include_packages)` | `assay premises --model <model> --json` (`--status broken`, `--include-packages`) |
+| `proofs(model)` | `assay prove --json`, then read `rows` for the model (`summary` has the totals) |
 | `proof_goal(model, prop)` | `assay proof-goal <model> <prop>` |
 | `check_proof(model, prop, proof, helpers)` | `assay check-proof <model> <prop> --proof <file>` |
 | `findings(model)` | `assay check --json` — one object with a `findings` list |
@@ -543,10 +546,10 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay patch <out_dir>` | `assay_patch` | Write the uniqueness tests assay can prove will pass. | `--target/-t` `--store` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--dry-run` `--dialect` `--worth-testing` `--limit/-n` `--json` |
 | `assay plan` | `assay_plan` | What to DO about the findings a person agreed with. | `--target/-t` `--config` `--store` `--out` `--dialect` `--json` |
 | `assay practices` | `assay_practices` | Standard dbt practice: deferred to where it exists, adjudicated where it is noisy. | `--target/-t` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--evaluator-schema` `--dialect` `--verify` `--keys-only` `--model/-m` `--store` `--config` |
-| `assay premises` | `assay_premises` | What the findings rest on: every key a declared grain or a held-back finding assumes is unique, with its evidence, its status, and what rests on it. | `--model/-m` `--status` `--target/-t` `--store` `--dialect` `--json` |
+| `assay premises` | `assay_premises` | What the findings rest on: every key a declared grain or a held-back finding assumes is unique, with its evidence, its status, and what rests on it. | `--model/-m` `--status` `--include-packages` `--target/-t` `--store` `--dialect` `--json` |
 | `assay probe` | `assay_probe` | Count what the SQL cannot settle. | `--target/-t` `--project-dir` `--profiles-dir` `--dialect` `--dbt/--dbt-bin` `--dry-run` `--emit` `--load` `--limit/-n` `--store` `--config` `--sample` `--lateness` `--json` |
 | `assay proof-goal <model> <prop>` | `assay_proof_goal` | The goal an agent can prove for one property of a model, as Lean, with its premises as named hypotheses and every lemma assay's library proves. | `--target/-t` `--store` `--dialect` |
-| `assay prove` | `assay_prove` | Prove what each model cannot do, with Lean: certificates whose premises are the ledger's. | `--target/-t` `--store` `--dialect` `--select/-s` `--setup` `--offline` `--force` `--parse-on` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--conformance` `--engine` `--random` `--export-proofs` `--json` |
+| `assay prove` | `assay_prove` | Prove what each model cannot do, with Lean: certificates whose premises are the ledger's. | `--target/-t` `--store` `--dialect` `--select/-s` `--setup` `--offline` `--force` `--parse-on` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--conformance` `--engine` `--random` `--verbose/-v` `--export-proofs` `--json` |
 | `assay prune` | `assay_prune` | Drop old runs from the tables a parser can regenerate. | `--keep/-k` `--store` `--dry-run` |
 | `assay read` | `assay_read` | Read every unruled review card once, by the judged tier, into a file a person checks. | `--out/-o` `--target/-t` `--store` `--config` `--select/-s` `--check` `--limit/-n` `--dry-run` `--dialect` |
 | `assay regress` | `assay_regress` | Re-ask every question a person already agreed with, and report what moved. | `--target/-t` `--store` `--config` `--family/-f` |

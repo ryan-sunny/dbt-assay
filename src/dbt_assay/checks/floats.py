@@ -39,10 +39,9 @@ def _kind(t: str) -> str:
     n = normalize_type(t or "")
     if not n:
         return "unknown"
-    if n in FLOAT_TYPES or n.startswith("float") or n.startswith("double"):
+    if n in FLOAT_TYPES or n.startswith(("float", "double")):
         return "float"
-    if n in EXACT_TYPES or n.startswith("decimal") or n.startswith("numeric") \
-            or n.startswith("number") or n.endswith("int"):
+    if n in EXACT_TYPES or n.startswith(("decimal", "numeric", "number")) or n.endswith("int"):
         return "exact"
     return "unknown"
 
@@ -172,7 +171,7 @@ def float_sum_is_not_reproducible(project, digests, schema, entries) -> list:
                           " There is no catalog.json: `dbt docs generate` writes one, with "
                           "every column's type."), unread))
     if unjudged:
-        UNREAD.append((f"{unjudged} floating-point sum/avg column(s) whose role was never "
+        UNREAD.append(((f"{unjudged} floating-point sum/avg column(s) whose role was never "
                        f"judged, so not flagged: only a `measure` is. `assay columns` judges "
-                       f"roles.", unjudged))
+                       f"roles."), unjudged))
     return out

@@ -331,7 +331,7 @@ def _grain(uid, m, cs, d, e, led, declared) -> Obligation | None:
     fu, fhow, forder = getattr(d, "from_unique", (None, "", [])) or (None, "", [])
     fsrc = getattr(d, "from_sources", []) or []
     extra = []
-    if fu and set(c.lower() for c in fu) == set(gcols) and len(fsrc) == 1:
+    if fu and {c.lower() for c in fu} == set(gcols) and len(fsrc) == 1:
         # *** THE MODEL READS A CTE ALREADY ONE ROW PER ITS GRAIN. *** (L1) The grain holds by
         # that CTE's own group by or dedupe; only "never null" is assumed, of the table under it.
         keys = [c.lower() for c in fu]
@@ -516,7 +516,7 @@ def _mark(f: Path, os_: list, out: str, rc: int = 0) -> None:
     order = sorted(starts.items(), key=lambda kv: kv[1])
     errs: dict = {}
     for m in re.finditer(rf"{re.escape(f.name)}:(\d+):\d+: error: (.*?)(?=\n\S+\.lean:\d+:\d+:|\Z)",
-                         out, re.S):
+                         out, re.DOTALL):
         line = int(m.group(1))
         owner = None
         for name, start in order:

@@ -76,7 +76,7 @@ def _sqltype(kind: str) -> str:
 
 
 # A geometry carried as text (GeoJSON, WKT, WKB): `'a'` is not one, and a NULL is always valid.
-_GEO_TEXT = re.compile(r"geojson|geom|wkt|wkb|shape|polygon|boundary", re.I)
+_GEO_TEXT = re.compile(r"geojson|geom|wkt|wkb|shape|polygon|boundary", re.IGNORECASE)
 
 
 def _seed_columns(project, name: str) -> list:
@@ -197,9 +197,9 @@ def check_duckdb(project, schema, sql: str, dialect: str) -> tuple[str, str, int
 def _check_duckdb(project, schema, sql: str, dialect: str, untyped: str = "text"):
     import duckdb
     if (dialect or "duckdb") != "duckdb":
-        return (L.UNCHECKED, f"this project's SQL is {dialect}; the in-memory round trip runs "
+        return (L.UNCHECKED, (f"this project's SQL is {dialect}; the in-memory round trip runs "
                              f"DuckDB only. `assay prove --parse-on warehouse` runs it through "
-                             f"your own connection", 0)
+                             f"your own connection"), 0)
     try:
         ins = _inputs(project, schema, sql, dialect)
         if untyped != "text":
@@ -213,7 +213,7 @@ def _check_duckdb(project, schema, sql: str, dialect: str, untyped: str = "text"
         # Geometry functions live in DuckDB's spatial extension; a project using them had it
         # loaded when it built. Loaded when it is installed; absent, those models read unchecked.
         spatial = False
-        if re.search(r"\bst_\w+\s*\(", sql, re.I):
+        if re.search(r"\bst_\w+\s*\(", sql, re.IGNORECASE):
             for stmt in (["load spatial"], ["install spatial", "load spatial"]):
                 try:
                     for x in stmt:
@@ -246,16 +246,16 @@ def _check_duckdb(project, schema, sql: str, dialect: str, untyped: str = "text"
             return (L.BROKEN, "the printed parse failed where the SQL ran: "
                               + str(e).splitlines()[0][:200], len(a))
         if _bag(a) == _bag(b):
-            return (L.HOLDING, f"the SQL and its printed parse agree on all {len(a)} row(s) "
-                               f"from generated inputs", len(a))
+            return (L.HOLDING, (f"the SQL and its printed parse agree on all {len(a)} row(s) "
+                               f"from generated inputs"), len(a))
         diff = (_bag(a) - _bag(b)) + (_bag(b) - _bag(a))
         loose = order_dependent(sql, dialect)
         if loose:
-            return (L.UNCHECKED, f"the results differ, and the SQL uses {loose} with no ORDER BY, "
+            return (L.UNCHECKED, (f"the results differ, and the SQL uses {loose} with no ORDER BY, "
                                  f"whose output order is the engine's choice: a difference here "
-                                 f"is not evidence about the parse", len(a))
-        return (L.BROKEN, f"{sum(diff.values())} row(s) differ between the SQL and its printed "
-                          f"parse, e.g. {list(diff)[:2]}", len(a))
+                                 f"is not evidence about the parse"), len(a))
+        return (L.BROKEN, (f"{sum(diff.values())} row(s) differ between the SQL and its printed "
+                          f"parse, e.g. {list(diff)[:2]}"), len(a))
     finally:
         con.close()
 
@@ -282,7 +282,7 @@ def warehouse_sql(project, schema, sql: str, dialect: str) -> tuple[str, str]:
     for full, cte in sorted(names.items(), key=lambda kv: -len(kv[0])):
         parts = full.split(".")
         pat = r"\.".join(r'"?' + re.escape(p) + r'"?' for p in parts)
-        orig = re.sub(pat, cte, orig, flags=re.I)
+        orig = re.sub(pat, cte, orig, flags=re.IGNORECASE)
     tree = sqlglot.parse_one(sql, read=dialect)
     for t in tree.find_all(exp.Table):
         full = ".".join(p for p in (t.catalog, t.db, t.name) if p).lower()
@@ -290,7 +290,7 @@ def warehouse_sql(project, schema, sql: str, dialect: str) -> tuple[str, str]:
             t.replace(exp.to_table(names[full]))
     again = tree.sql(dialect=dialect)
     pre = "WITH " + ", ".join(ctes)
-    wrap = lambda body: f"{pre}, __assay_model AS ({body}) SELECT * FROM __assay_model"  # noqa: E731
+    wrap = lambda body: f"{pre}, __assay_model AS ({body}) SELECT * FROM __assay_model"
     return wrap(orig), wrap(again)
 
 
@@ -308,8 +308,8 @@ def check_warehouse(project, schema, sql, dialect, runner) -> tuple[str, str, in
     ra = [tuple(r.values()) for r in a.rows]
     rb = [tuple(r.values()) for r in b.rows]
     if _bag(ra) == _bag(rb):
-        return (L.HOLDING, f"the SQL and its printed parse agree on all {len(ra)} row(s) "
-                           f"from generated inputs", len(ra))
+        return (L.HOLDING, (f"the SQL and its printed parse agree on all {len(ra)} row(s) "
+                           f"from generated inputs"), len(ra))
     return L.BROKEN, "the SQL and its printed parse return different rows", len(ra)
 
 

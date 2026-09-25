@@ -102,7 +102,7 @@ def _install(say) -> None:
     if not archive.exists() or _sha256(archive) != want:
         say(f"downloading Lean {VERSION} for {key} (~800 MB, once)")
         tmp = archive.with_suffix(".part")
-        with urllib.request.urlopen(url, timeout=120) as r, open(tmp, "wb") as f:  # noqa: S310
+        with urllib.request.urlopen(url, timeout=120) as r, open(tmp, "wb") as f:
             shutil.copyfileobj(r, f, length=1 << 20)
         tmp.rename(archive)
     got = _sha256(archive)

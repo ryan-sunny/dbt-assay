@@ -98,6 +98,9 @@ again once it finishes. Never conclude the tools are broken from a lock.
    `assumed`, `unknown`, `holding`. A `broken` one raises the finding it held back, with a
    `why_it_is_back` block; an `unchecked` one means the grain is declared, not known. Do not
    write a join that relies on a key whose premise is not `holding` without saying so.
+   Premises about an installed package's models (Elementary's own tables, dbt_utils') are left
+   out of the list and every count, since nothing in this project fixes them;
+   `in_installed_packages` says how many, and `include_packages=true` lists them.
 
 ## After you edit, before you hand anything back
 
@@ -345,8 +348,8 @@ and nothing is lost:
 | `traversal(model)` | `assay traverse --model <model>` |
 | `practices(model)` | `assay practices --keys-only --no-verify --model <model>` |
 | `lineage(model, column)` | `assay trace <model>.<column>` |
-| `premises(model, status)` | `assay premises --model <model> --json` (`--status broken`) |
-| `proofs(model)` | `assay prove --json`, then read `rows` for the model |
+| `premises(model, status, include_packages)` | `assay premises --model <model> --json` (`--status broken`, `--include-packages`) |
+| `proofs(model)` | `assay prove --json`, then read `rows` for the model (`summary` has the totals) |
 | `proof_goal(model, prop)` | `assay proof-goal <model> <prop>` |
 | `check_proof(model, prop, proof, helpers)` | `assay check-proof <model> <prop> --proof <file>` |
 | `findings(model)` | `assay check --json` — one object with a `findings` list |

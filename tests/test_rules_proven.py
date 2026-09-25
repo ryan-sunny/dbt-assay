@@ -30,8 +30,8 @@ def test_every_mapped_rule_is_a_real_check():
 def test_a_finding_from_a_proven_rule_carries_its_theorem():
     from types import SimpleNamespace
 
-    from dbt_assay.judged import hop_multiplies_rows
     from dbt_assay.inventory import ModelEntry
+    from dbt_assay.judged import hop_multiplies_rows
     e = ModelEntry(uid="model.p.c", name="c", path="c.sql", layer="marts", materialized="table")
     e.fanout_hops = [("lookup -> c", 0.8)]
     (f,) = proofs.stamp(hop_multiplies_rows(SimpleNamespace(), [e]))

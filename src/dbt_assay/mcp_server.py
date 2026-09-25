@@ -268,14 +268,16 @@ class Backend:
                         + f"; {len(in_force)} waived, accepted or dismissed"),
         }
 
-    def premises(self, model: str = "", status: str = "") -> dict:
+    def premises(self, model: str = "", status: str = "", include_packages: bool = False) -> dict:
         """What the findings rest on: each premise, its evidence and status, and what rests on
-        it -- the Guarantees tab's rows."""
+        it -- the Guarantees tab's rows. Installed packages' premises are left out unless
+        `include_packages`; `in_installed_packages` counts them, `counted` names the store and run."""
         st = self.state()
         store = self._open_store()
         try:
             return live.premises_report(st.project, st.digests, st.schema, st.entries, store,
-                                        model=model, status=status)
+                                        model=model, status=status,
+                                        include_packages=include_packages)
         finally:
             if store is not None:
                 store.close()
@@ -307,7 +309,7 @@ class Backend:
 
     def check_proof(self, model: str, prop: str, proof: str, helpers: str = "") -> dict:
         from . import proofwork
-        store, why = self._store_or_why()
+        store, _why = self._store_or_why()
         try:
             return proofwork.check(*self._proof_state(), store, model, prop, proof, helpers,
                                    by="agent")
@@ -1441,8 +1443,8 @@ def build_app(target: str, store_path: str | None = None, handbacks: str | None 
         return _guide(topic)
 
     @tool()
-    def premises(model: str = "", status: str = "") -> str:
-        return _out(be.premises(model, status))
+    def premises(model: str = "", status: str = "", include_packages: bool = False) -> str:
+        return _out(be.premises(model, status, include_packages))
 
     @tool()
     def proofs(model: str = "") -> str:

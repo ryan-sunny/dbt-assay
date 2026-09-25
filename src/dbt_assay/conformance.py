@@ -67,8 +67,8 @@ CONSTRUCTS = {
     "distinct_null": ("select distinct v from t", "DISTINCT keeps one NULL"),
     "row_number_ties": ("select k from t qualify row_number() over (partition by k order by v) = 1",
                         "one row per partition, whatever ties"),
-    "row_number_desc_nulls": ("select k, v from t qualify row_number() over "
-                              "(partition by k order by v desc) = 1",
+    "row_number_desc_nulls": (("select k, v from t qualify row_number() over "
+                              "(partition by k order by v desc) = 1"),
                               "where NULL sorts: larger than every value"),
     "integer_division": ("select v / 2 as h from t where v is not null",
                          "dividing integers truncates"),
@@ -201,6 +201,7 @@ def run(store, engine: str = "duckdb", runner=None, n_random: int = 0, seed: int
         say=print) -> dict:
     """Run every construct (and `n_random` random cases) through Lean and the engine."""
     import duckdb
+
     from .ledger import BROKEN, HOLDING
     store.con.execute(DDL)
     rows, out = [], {}
