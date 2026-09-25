@@ -23,12 +23,19 @@ import subprocess
 from collections import Counter
 from datetime import datetime, timezone
 
+# *** "DIFFERS", NEVER "BROKEN". *** (sunny-data feedback L5) DuckDB's integer `/` returning a
+# double is how DuckDB is defined, not a bug in it. What is at risk is the certificate whose rule
+# assumes the other meaning, so the engine "differs" and the certificate says so. Stores written
+# before this said holding / broken; `status_of` reads those as conforms / differs.
+CONFORMS, DIFFERS, UNCHECKED = "conforms", "differs", "unchecked"
+_LEGACY = {"holding": CONFORMS, "broken": DIFFERS}
+
 DDL = """
 create table if not exists conformance (
     construct      varchar,
     engine         varchar,        -- duckdb | snowflake | bigquery | ...
     engine_version varchar,
-    status         varchar,        -- holding | broken | unchecked
+    status         varchar,        -- conforms | differs | unchecked
     detail         varchar,
     checked_at     timestamp,
     primary key (construct, engine, engine_version)
@@ -184,15 +191,14 @@ def warehouse_sql(tables: dict, sql: str) -> str:
 
 
 def compare(a: list | None, b: list) -> tuple[str, str]:
-    from .ledger import BROKEN, HOLDING, UNCHECKED
     if a is None:
         return UNCHECKED, "Lean could not evaluate it"
     ca, cb = Counter(a), Counter(b)
     if ca == cb:
-        return HOLDING, f"{len(a)} row(s), identical"
+        return CONFORMS, f"{len(a)} row(s), identical"
     only_l = list((ca - cb).elements())[:3]
     only_e = list((cb - ca).elements())[:3]
-    return BROKEN, f"Lean's meaning gives {only_l} where the engine gives {only_e}"
+    return DIFFERS, f"Lean's meaning gives {only_l} where the engine gives {only_e}"
 
 
 # ------------------------------------------------------------------ the suite
@@ -202,7 +208,6 @@ def run(store, engine: str = "duckdb", runner=None, n_random: int = 0, seed: int
     """Run every construct (and `n_random` random cases) through Lean and the engine."""
     import duckdb
 
-    from .ledger import BROKEN, HOLDING
     store.con.execute(DDL)
     rows, out = [], {}
     now = datetime.now(timezone.utc)
@@ -220,7 +225,7 @@ def run(store, engine: str = "duckdb", runner=None, n_random: int = 0, seed: int
                     raise RuntimeError(got.why)
                 eng = [tuple(r.values()) for r in got.rows]
         except Exception as e:                                   # noqa: BLE001
-            st, detail = "unchecked", f"the engine could not run it: {str(e)[:200]}"
+            st, detail = UNCHECKED, f"the engine could not run it: {str(e)[:200]}"
         else:
             st, detail = compare(lean, eng)
         out[name] = (st, detail)
@@ -228,9 +233,9 @@ def run(store, engine: str = "duckdb", runner=None, n_random: int = 0, seed: int
             rows.append((name, engine, version, st, detail, now))
     rnd = {k: v for k, v in out.items() if k.startswith("random:")}
     if rnd:
-        bad = [(k, v[1]) for k, v in rnd.items() if v[0] == BROKEN]
+        bad = [(k, v[1]) for k, v in rnd.items() if v[0] == DIFFERS]
         rows.append(("random_differential", engine, version,
-                     BROKEN if bad else HOLDING,
+                     DIFFERS if bad else CONFORMS,
                      (f"{len(bad)} of {len(rnd)} random cases differ, e.g. {bad[0][1]}"
                       if bad else f"all {len(rnd)} random cases agree (seed {seed})"), now))
     store.con.executemany("insert or replace into conformance values (?,?,?,?,?,?)", rows)
@@ -239,7 +244,7 @@ def run(store, engine: str = "duckdb", runner=None, n_random: int = 0, seed: int
             "constructs": {k: {"status": v[0], "detail": v[1]} for k, v in out.items()
                            if not k.startswith("random:")},
             "random": ({"cases": len(rnd), "differ": sum(1 for v in rnd.values()
-                                                          if v[0] == BROKEN)} if rnd else None)}
+                                                          if v[0] == DIFFERS)} if rnd else None)}
 
 
 def random_cases(n: int, seed: int) -> list:
@@ -285,5 +290,5 @@ def status_of(store, construct: str, engine: str) -> tuple[str, str]:
     except Exception:                                            # noqa: BLE001
         got = None
     if got is None:
-        return "unchecked", f"not run on {engine} yet"
-    return got[0], f"{got[1]} ({engine} {got[2]})"
+        return UNCHECKED, f"not run on {engine} yet"
+    return _LEGACY.get(got[0], got[0]), f"{got[1]} ({engine} {got[2]})"

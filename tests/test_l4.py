@@ -79,12 +79,24 @@ def test_the_suite_agrees_on_what_it_should_and_names_what_duckdb_does_different
     toolchain.build_library(say=lambda *_: None)
     s = Store(str(tmp_path / "s.duckdb"))
     rep = conformance.run(s, n_random=150, seed=3)
-    bad = {k for k, v in rep["constructs"].items() if v["status"] != "holding"}
+    bad = {k for k, v in rep["constructs"].items() if v["status"] != "conforms"}
+    assert {v["status"] for v in rep["constructs"].values()} == {"conforms", "differs"}
     # DuckDB's `/` on integers returns a double, and it sorts NULLs last under DESC
     assert bad == {"integer_division", "row_number_desc_nulls"}, rep["constructs"]
     assert rep["random"]["differ"] == 0
-    assert conformance.status_of(s, "left_join_null_key", "duckdb")[0] == "holding"
+    assert conformance.status_of(s, "left_join_null_key", "duckdb")[0] == "conforms"
     assert conformance.status_of(s, "left_join_null_key", "snowflake")[0] == "unchecked"
+
+
+def test_a_store_written_before_says_conforms_and_differs_too(tmp_path):
+    """L5: a store from before the rename held holding / broken; it reads the same way now."""
+    from dbt_assay.store import Store
+    s = Store(str(tmp_path / "s.duckdb"))
+    s.con.execute(conformance.DDL)
+    s.con.execute("insert into conformance values ('integer_division', 'duckdb', '1', 'broken', "
+                  "'x', now()), ('left_join_null_key', 'duckdb', '1', 'holding', 'y', now())")
+    assert conformance.status_of(s, "integer_division", "duckdb")[0] == "differs"
+    assert conformance.status_of(s, "left_join_null_key", "duckdb")[0] == "conforms"
 
 
 def test_the_warehouse_statement_carries_its_tables_as_ctes():

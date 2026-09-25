@@ -1362,9 +1362,11 @@ assay prove --conformance --engine warehouse --project-dir . --dbt "uv run dbt"
 Each construct a rule leans on (a NULL join key, a fan-out, `row_number` ties, `count(*)` against
 `count(x)`, NULL in `IN`, ...) runs through Lean's evaluator and the engine on the same tables, and
 the bags must match; random differential cases do the same over generated tables and queries. A
-certificate lists its rule's constructs with their status on the project's engine. DuckDB differs
-on two, and says so: `/` on integers returns a double, and NULLs sort last under DESC. A Snowflake
-premise reads unchecked until it has run on a real Snowflake connection.
+certificate lists its rule's constructs with their status on the project's engine: `conforms`,
+`differs` or `unchecked`. DuckDB differs on two, and says so: `/` on integers returns a double, and
+NULLs sort last under DESC. That is DuckDB's defined behaviour, not a bug in it, so the word is
+"differs", never "broken"; what is at risk is a certificate whose rule assumes the other meaning. A
+Snowflake construct reads unchecked until it has run on a real Snowflake connection.
 
 `assay export` carries `premises`, `premise_uses`, `proofs` and `conformance` like its other
 tables, so a dashboard or an orchestrator asset can ask in plain SQL which marts are proven and

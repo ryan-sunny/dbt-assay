@@ -630,16 +630,16 @@ def with_guarantees(rows: list[dict], led: L.Ledger, project, store=None) -> lis
                               f"{broke['statement']} is not so: {broke['why']}")
                              if broke else "")
         # L4: does this project's engine do what the rule's constructs mean?
-        from .conformance import RULE_CONSTRUCTS, status_of
+        from .conformance import CONFORMS, DIFFERS, RULE_CONSTRUCTS, status_of
         eng = engine_of(project)
         r["engine"] = [{"construct": c, "engine": eng,
                         **dict(zip(("status", "detail"), status_of(store, c, eng)))}
                        for c in RULE_CONSTRUCTS.get(r.get("rule") or "", [])] \
             if store is not None else []
-        bad = [e for e in r["engine"] if e["status"] == L.BROKEN]
+        bad = [e for e in r["engine"] if e["status"] == DIFFERS]
         r["engine_note"] = (f"{eng} differs from assay's meaning of {bad[0]['construct']}: "
                             f"{bad[0]['detail']}" if bad else
-                            f"not yet measured on {eng}" if any(e["status"] != L.HOLDING
+                            f"not yet measured on {eng}" if any(e["status"] != CONFORMS
                                                                 for e in r["engine"]) else "")
     return rows
 

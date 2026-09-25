@@ -3674,8 +3674,11 @@ function proofBlock(r) {
     /* L4: whether this project's engine does what the rule's constructs mean. */
     ['the engine', (r.engine || []).length ? el('div', {class: 'ulist'}, r.engine.map(x =>
         el('div', {class: 'urow'}, [el('span', {class: 'mono', text: x.construct}),
-          premBadge(x.status, x.status === 'holding' ? 'conforms' : x.status === 'broken'
-            ? 'differs' : 'not measured', x.detail)])))
+          /* the badge colour is a premise's: conforms reads as holding, differs as assumed
+             (amber), never broken: it is the engine's defined behaviour. (L5) */
+          premBadge({conforms: 'holding', differs: 'assumed'}[x.status] || 'unchecked',
+            x.status === 'conforms' ? 'conforms' : x.status === 'differs' ? 'differs'
+            : 'not measured', x.detail)])))
       : null],
     ['checked', el('span', {class: 'tot', text: (r.lean_version ? 'Lean ' + r.lean_version + ', ' : '')
       + (r.proved_at || '').slice(0, 10) + (r.written_by === 'agent' ? ', written by an agent' : '')})],

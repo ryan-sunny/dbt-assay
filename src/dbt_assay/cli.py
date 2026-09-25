@@ -5736,15 +5736,16 @@ def _prove_conformance(target, store_path, engine, n_random, project_dir, profil
     if json_out:
         print(_json.dumps(rep, indent=2, default=str))
         return
-    colour = {"holding": "green", "broken": "red"}
+    colour = {"conforms": "green", "differs": "yellow"}
     for c, v in rep["constructs"].items():
         console.print(f"[{colour.get(v['status'], 'yellow')}]{v['status']:<9}[/] {c}  "
                       f"[dim]{v['detail']}[/]")
     if rep.get("random"):
         console.print(f"\nrandom differential: {rep['random']['cases']} case(s), "
                       f"{rep['random']['differ']} differ")
-    console.print(f"[dim]{rep['engine']} {rep['version']}. A construct that differs marks every "
-                  f"certificate whose rule uses it.[/]")
+    console.print(f"[dim]{rep['engine']} {rep['version']}. \"differs\" is the engine's own "
+                  f"defined behaviour, not a bug in it: it marks every certificate whose rule "
+                  f"assumes the other meaning.[/]")
 
 
 @app.command("proof-goal")
