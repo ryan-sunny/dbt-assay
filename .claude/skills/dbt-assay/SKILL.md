@@ -81,7 +81,9 @@ again once it finishes. Never conclude the tools are broken from a lock.
    key the join does not cover. `status` is the verdict: `proven` (holding or conditional),
    `lost`, `does_not_hold` (a join onto a key that repeats, nothing grouping it back),
    `regrouped` (it multiplies, then the model's group by collapses it to its grain), `stale`,
-   `not_proven`, `not_attempted`; `lean_checked` says whether Lean checked the certificate. An
+   `not_proven`, `not_attempted`; `lean_checked` says whether Lean checked the certificate, and
+   `run_check` whether the claim held when the model ran on inputs meeting its premises. A
+   `contradicted` certificate is one assay stated wrongly: never rely on it, report it. An
    edit that removes a proven property is a regression.
    Each certificate also says whether the model's parse is proven (`parse proven`) or only
    measured, and whether the engine was measured to do what the rule's constructs mean.

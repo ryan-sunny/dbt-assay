@@ -72,6 +72,10 @@ class Obligation:
     status: str = NOT_ATTEMPTED
     detail: str = ""
     missing: str = ""
+    # What the certificate says about the model's own rows, in a form `claimcheck` can test on a
+    # run: {"kind": "join", "index": i, "left": bool} (the i-th join, in the order the parse
+    # walks them), {"kind": "unique", "cols": [...]} on the output, {"kind": "pick"}, ...
+    claim: dict = field(default_factory=dict)
 
     @property
     def theorem(self) -> str:
@@ -145,7 +149,8 @@ def _target_name(led, j) -> tuple[str, str | None]:
     return (j.target_cte or j.target_alias or "a subquery"), None
 
 
-def _join_step(led, declared, j, i: int, used: set | None = None):
+def _join_step(led, declared, j, i: int, used: set | None = None, sql: str = "",
+               dialect: str = "duckdb"):
     """How one join is carried in a certificate: a dict with the right-hand table term, the
     uniqueness proof term, the hypotheses and premises it needs, and what to call it; or a
     string saying why no rule applies. (L1: the target's own grouping, dedupe or filter first,
@@ -182,6 +187,18 @@ def _join_step(led, declared, j, i: int, used: set | None = None):
     if base_uid is None:
         return ("the join reads a CTE or subquery built from several relations, and nothing "
                 "states what it is unique on")
+    if filtered:
+        # the CTE's column names are not the table's when it renames: follow each join key down
+        # to the column it is in the table (found by the run check)
+        from .parse import trace_cte
+        mapped = []
+        for k in rk:
+            hops = trace_cte(sql, j.target_cte, k, dialect) if sql else []
+            if not hops or hops[-1][0] != (j.target_filter_of or "").lower():
+                return (f"the CTE `{j.target_cte}` computes or renames `{k}` in a way the proof "
+                        f"cannot follow to `{j.target_filter_of}`")
+            mapped.append(hops[-1][1])
+        rk = mapped
     pk = [c.lower() for c in declared.get(base_uid) or []]
     us = pk or rk
     prem = L.unique(led, base_uid, us)
@@ -207,19 +224,21 @@ def _joins(uid, m, cs, e, led, declared, d=None) -> list[Obligation]:
         name, _u = _target_name(led, j)
         seen[name] = seen.get(name, 0) + 1
         prop = f"no_fanout:{name}" + (f"#{seen[name]}" if seen[name] > 1 else "")
-        step = _join_step(led, declared, j, 1)
+        step = _join_step(led, declared, j, 1, sql=m.compiled or "",
+                          dialect=getattr(led.project, "dialect", "duckdb") or "duckdb")
         left = (j.kind or "").upper() == "LEFT"
         stmt = (f"the left join onto `{name}` keeps exactly `{m.name}`'s left rows" if left
                 else f"a join onto `{name}` cannot multiply `{m.name}`'s rows")
+        claim = {"kind": "join", "index": i, "left": left}
         if isinstance(step, str):
-            o = Obligation(uid, m.name, cs, prop, stmt)
+            o = Obligation(uid, m.name, cs, prop, stmt, claim=claim)
             o.missing = step
             out.append(o)
             continue
         rkl = _lean_list(step["rk"])
         rule = "left_join_preserves_rows" if left else "inner_join_no_fanout"
         o = Obligation(uid, m.name, cs, prop,
-                       stmt + (f", {step['why']}" if step["why"] else ""), rule)
+                       stmt + (f", {step['why']}" if step["why"] else ""), rule, claim=claim)
         o.premises = step["premises"]
         concl = (f"(leftJoin lk {rkl} L {step['right']}).length = L.length" if left
                  else f"(innerJoin lk {rkl} L {step['right']}).length ≤ L.length")
@@ -250,7 +269,8 @@ def _picks(uid, m, cs, d, led, declared) -> list[Obligation]:
         part = list(w.part_keys or [])
         ordk = [k for k in (w.order_keys or []) if k]
         o = Obligation(uid, m.name, cs, f"pick:{n}",
-                       f"the dedupe on ({', '.join(part)}) keeps the same rows in any input order")
+                       f"the dedupe on ({', '.join(part)}) keeps the same rows in any input order",
+                       claim={"kind": "pick", "index": n})
         kept = w.kept_columns
         if kept is not None and part and set(kept) <= set(part) | set(ordk):
             o.rule = "pick_is_order_independent"
@@ -311,7 +331,8 @@ def _grain(uid, m, cs, d, e, led, declared) -> Obligation | None:
             binders = "(o : KeyOrder) (t : Table)"
         o = Obligation(uid, m.name, cs, "grain",
                        f"`{m.name}` is one row per ({', '.join(target)}): {words}",
-                       "group_by_unique" if how == "group_by" else "pick_unique")
+                       "group_by_unique" if how == "group_by" else "pick_unique",
+                       claim={"kind": "unique", "cols": list(target)})
         if target == own:
             o.lean = (f"theorem {o.theorem} {binders} : Unique {_lean_list(own)} {base} :=\n"
                       f"  {proof}\n")
@@ -325,7 +346,7 @@ def _grain(uid, m, cs, d, e, led, declared) -> Obligation | None:
         return None
     o = Obligation(uid, m.name, cs, "grain",
                    f"`{m.name}` stays one row per ({', '.join(gcols)}) through its joins",
-                   "grain_through_join")
+                   "grain_through_join", claim={"kind": "unique", "cols": list(gcols)})
     if d.group_by or d.windows or d.distinct or getattr(d, "union_members", None) \
             or getattr(d, "distinct_on", None):
         o.missing = ("the model groups, dedupes or unions on something other than its grain, so "
@@ -334,15 +355,37 @@ def _grain(uid, m, cs, d, e, led, declared) -> Obligation | None:
     fu, fhow, forder = getattr(d, "from_unique", (None, "", [])) or (None, "", [])
     fsrc = getattr(d, "from_sources", []) or []
     extra = []
-    if fu and {c.lower() for c in fu} == set(gcols) and len(fsrc) == 1:
+    # *** THE GRAIN IS NAMED AS THE MODEL OUTPUTS IT; THE PREMISES ARE ABOUT THE TABLE UNDER IT. ***
+    # Each grain column is followed down the FROM chain (renames, `select *`, CTEs) to the column
+    # it is where the premise is stated; one that is computed or comes from a joined table stops
+    # the proof rather than being assumed of a column the table does not have.
+    from .parse import trace_output
+    dialect = getattr(led.project, "dialect", "duckdb") or "duckdb"
+    hops = [trace_output(m.compiled or "", c, dialect) for c in gcols]
+    if not all(hops):
+        bad = next(c for c, h in zip(gcols, hops) if not h)
+        o.missing = (f"the grain column `{bad}` is computed, or comes from a joined relation, so "
+                     f"it cannot be followed to the table the grain comes from")
+        return o
+    if fu and {h[0][1] for h in hops} == {c.lower() for c in fu} and len(fsrc) == 1 \
+            and all(len(h) > 1 for h in hops):
         # *** THE MODEL READS A CTE ALREADY ONE ROW PER ITS GRAIN. *** (L1) The grain holds by
         # that CTE's own group by or dedupe; only "never null" is assumed, of the table under it.
         keys = [c.lower() for c in fu]
         src = L.uid_of(led.project, fsrc[0])
-        pns = [L.not_null(led, src, c) for c in gcols]
+        # the CTE's key columns, and what each is in the table under it
+        cte_cols = [h[0][1] for h in hops]
+        base_cols = [h[-1][1] for h in hops]
+        if cte_cols != base_cols:
+            # the Lean terms name one set of columns; a rename inside the CTE would need two
+            o.missing = ("the CTE the model reads renames its key columns, which this proof "
+                         "does not follow")
+            return o
+        pns = [L.not_null(led, src, c) for c in base_cols]
         prem = list(pns)
-        hyps = [f"({_hyp(p)} : NotNull {_lean_str(c)} T)" for p, c in zip(pns, gcols)]
-        nn0 = _all_notnull(gcols, [_hyp(p) for p in pns], "T")
+        hyps = [f"({_hyp(p)} : NotNull {_lean_str(c)} T)" for p, c in zip(pns, cte_cols)]
+        nn0 = _all_notnull(cte_cols, [_hyp(p) for p in pns], "T")
+        gcols = cte_cols
         if fhow == "group_by":
             base = f"(groupBy {_lean_list(keys)} T)"
             term = f"(Unique.mono (by decide) (group_by_unique {_lean_list(keys)} T))"
@@ -359,6 +402,13 @@ def _grain(uid, m, cs, d, e, led, declared) -> Obligation | None:
         table, rs = base, ["T"]
     else:
         driver = L.uid_of(led.project, drivers[0])
+        rel = ((led.schema.relation.get(driver) if led.schema is not None else "") or "")
+        want = rel.replace('"', "").lower().split(".")[-1] or drivers[0].lower().split(".")[-1]
+        if any(h[-1][0] != want for h in hops):
+            o.missing = (f"the grain columns do not all come from `{drivers[0]}`, the relation "
+                         f"the model reads its rows from")
+            return o
+        gcols = [h[-1][1] for h in hops]
         pg = L.unique(led, driver, gcols)
         pns = [L.not_null(led, driver, c) for c in gcols]
         prem = [pg, *pns]
@@ -368,7 +418,8 @@ def _grain(uid, m, cs, d, e, led, declared) -> Obligation | None:
         table, rs = "L", ["L"]
     used = {_hyp(p) for p in prem}
     for i, j in enumerate(d.joins or [], 1):
-        step = _join_step(led, declared, j, i, used)
+        step = _join_step(led, declared, j, i, used, sql=m.compiled or "",
+                          dialect=getattr(led.project, "dialect", "duckdb") or "duckdb")
         if isinstance(step, str):
             o.missing = f"a join cannot be carried: {step}"
             return o
@@ -648,6 +699,19 @@ def with_guarantees(rows: list[dict], led: L.Ledger, project, store=None) -> lis
     # feedback L9) Four of seven "do not hold" joined onto readings and grouped by the model's
     # grain afterwards, on purpose; the three left were a real duplication. Where the model's own
     # grain is proven by its group by, the fan-out is gone from its output: "regrouped".
+    # *** A PROOF OF THE WRONG THEOREM IS NOT A PROOF. *** A proven claim that failed on a run of
+    # the model, with inputs meeting its premises, reads `contradicted` whatever Lean said.
+    from . import claimcheck
+    runs = claimcheck.stored(store) if store is not None else {}
+    for r in rows:
+        rc = runs.get((r["model"], r["property"]))
+        if rc and rc["model_checksum"] == r.get("model_checksum"):
+            r["run_check"] = {"status": rc["status"], "detail": rc["detail"]}
+            if rc["status"] == claimcheck.CONTRADICTED and r["status"] == PROVEN:
+                r["guarantee"] = "contradicted"
+                r["lost_because"] = f"a run of the model contradicts it: {rc['detail']}"
+        else:
+            r["run_check"] = {"status": "not_run", "detail": ""}
     regrouped = {r["model"] for r in rows if r["property"] == "grain"
                  and r.get("rule") == "group_by_unique"
                  and r["guarantee"] in ("holding", "conditional")}
@@ -670,6 +734,7 @@ def with_guarantees(rows: list[dict], led: L.Ledger, project, store=None) -> lis
 # guarantee -> status. Proven means it holds for every input its premises allow.
 VERDICT = {"holding": PROVEN, "conditional": PROVEN, "refuted": "does_not_hold",
            "regrouped": "regrouped", "lost": "lost", "stale": "stale",
+           "contradicted": "contradicted",
            "not_proven": "not_proven", "not_attempted": "not_attempted"}
 
 
@@ -736,6 +801,11 @@ def run(project, digests, schema, entries, store, target_dir, *, force: bool = F
                 o.detail = f"{o.missing}\n\nLean: {o.detail}"
     if store is not None:
         write(store, todo, LEAN_VERSION)
+        # Lean checked the proofs; now each proven claim is run against its own model (see
+        # claimcheck): a certificate that states the wrong theorem shows here.
+        from . import claimcheck
+        proven = {(r["model"], r["property"]) for r in stored(store) if r["status"] == PROVEN}
+        claimcheck.run(project, schema, store, obls, proven, force=force, say=say)
     rows = with_guarantees(stored(store), led, project, store) if store is not None else []
     return {"certificates": len(obls), "checked_now": len(fresh), "reused": skipped,
             "rows": rows, "written_to": str(workdir(target_dir))}

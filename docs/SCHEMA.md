@@ -13,7 +13,7 @@ PRUNABLE     = ("findings", "edge_facts", "unreadable", "premises", "premise_use
 NEVER_PRUNED = ("model_calls", "model_decisions", "claims", "adjudications", "observed_keys",
                 "runs", "calibrations", "compiled_sql", "commits", "states", "warehouse_calls",
                 "test_status", "observed_lateness", "proofs", "parse_checks",
-                "conformance")
+                "conformance", "claim_checks")
 ```
 
 A new table belongs to one list or the other and a test fails until it does, so nothing becomes
@@ -41,6 +41,7 @@ erDiagram
     PREMISES ||--o{ PROOFS : "a certificate assumes them"
     PARSE_CHECKS |o--o{ PREMISES : "parse_faithful"
     CONFORMANCE |o--o{ PROOFS : "what the engine does to a rule's constructs"
+    PROOFS ||--o| CLAIM_CHECKS : "the claim, run against the model"
 
     STATES ||--o{ MODEL_DECISIONS : "one state, many answers"
     MODEL_CALLS ||--o{ MODEL_DECISIONS : "one call, many answers"
@@ -221,11 +222,20 @@ erDiagram
         timestamp checked_at
     }
     CONFORMANCE {
-        varchar construct PK "left_join_null_key, row_number_ties, ..."
+        varchar construct PK "left_join_null_key, rule_op:inner_join, ..."
         varchar engine PK "duckdb / snowflake / ..."
         varchar engine_version PK
-        varchar status "holding / broken / unchecked"
+        varchar status "conforms / differs / unchecked"
         varchar detail "the rows that differ"
+        timestamp checked_at
+    }
+    CLAIM_CHECKS {
+        varchar model PK "unique_id"
+        varchar property PK "grain, no_fanout:<parent>, ..."
+        varchar model_checksum "the file the run was of"
+        varchar premises_key "the premises the inputs were generated to meet"
+        varchar status "holds / contradicted / unchecked"
+        varchar detail "what broke it, or why it could not run"
         timestamp checked_at
     }
     TEST_STATUS {
@@ -354,7 +364,8 @@ rulings were structural, so a calibration report has to exclude them by construc
 | `observed_lateness` | how late rows arrive after their event time, for an incremental model's lookback | **a warehouse query** |
 | `proofs` | what Lean proved about each model, from which premises, and what it could not | **Lean time**, and an agent's proof cannot be written again for free |
 | `parse_checks` | whether a model's parse is what its SQL says, by round trip | free in DuckDB, **a warehouse query** otherwise |
-| `conformance` | whether an engine does what assay's meaning of SQL says, per construct | free in DuckDB, **a warehouse query** otherwise |
+| `conformance` | whether an engine does what assay's meaning of SQL says, per construct, and whether the definitions the rules are proven about (`rule_op:*`) run as the engine does | free in DuckDB, **a warehouse query** otherwise |
+| `claim_checks` | whether each proven claim held when its model ran on inputs meeting its premises | nothing: recomputed in memory, one row per claim |
 | `test_status` | each dbt test's last actual result, from Elementary or a build's `run_results.json` | **a build that is gone** |
 | `commits` | every commit touching the project, and the models it touched; with `runs.git_sha`, when a finding was first seen | free from git |
 

@@ -90,18 +90,29 @@ CONSTRUCTS = {
 }
 
 # which constructs each proven rule leans on
+# The ops a join certificate's target can be built with: the base table, `groupBy` or `pick` of
+# it, or `filterT`. Every join rule lists them all, so no certificate reads fewer checks than it
+# rests on.
+_TARGET_OPS = ["rule_op:group_by", "rule_op:pick"]
 RULE_CONSTRUCTS = {
-    "inner_join_no_fanout": ["inner_join_null_key", "join_fanout"],
-    "left_join_preserves_rows": ["left_join_null_key"],
-    "join_onto_grouped_no_fanout": ["inner_join_null_key", "group_by_null_key"],
-    "left_join_onto_grouped_preserves_rows": ["left_join_null_key", "group_by_null_key"],
-    "grain_through_join": ["inner_join_null_key", "join_fanout"],
-    "grain_through_left_join": ["left_join_null_key"],
-    "group_by_unique": ["group_by_null_key"],
+    "inner_join_no_fanout": ["inner_join_null_key", "join_fanout", "rule_op:inner_join",
+                             *_TARGET_OPS],
+    "left_join_preserves_rows": ["left_join_null_key", "rule_op:left_join", *_TARGET_OPS],
+    "join_onto_grouped_no_fanout": ["inner_join_null_key", "group_by_null_key",
+                                    "rule_op:inner_join", "rule_op:group_by"],
+    "left_join_onto_grouped_preserves_rows": ["left_join_null_key", "group_by_null_key",
+                                              "rule_op:left_join", "rule_op:group_by"],
+    "grain_through_join": ["inner_join_null_key", "join_fanout", "rule_op:inner_join",
+                           "rule_op:left_join", *_TARGET_OPS],
+    "grain_through_left_join": ["left_join_null_key", "rule_op:left_join", *_TARGET_OPS],
+    "notnull_all_through_join": ["inner_join_null_key", "left_join_null_key",
+                                 "rule_op:inner_join", "rule_op:left_join", *_TARGET_OPS],
+    "group_by_unique": ["group_by_null_key", "rule_op:group_by"],
     # the pick theorems hold for ANY total order on the sort key, so where an engine puts NULLs
     # (row_number_desc_nulls) is not a premise of theirs; ties are
-    "pick_is_order_independent": ["row_number_ties"],
-    "pick_total_on_unique_key": ["row_number_ties"],
+    "pick_is_order_independent": ["row_number_ties", "rule_op:pick"],
+    "pick_total_on_unique_key": ["row_number_ties", "rule_op:pick"],
+    "pick_unique": ["row_number_ties", "rule_op:pick"],
 }
 
 
@@ -231,6 +242,17 @@ def run(store, engine: str = "duckdb", runner=None, n_random: int = 0, seed: int
         out[name] = (st, detail)
         if not name.startswith("random:"):
             rows.append((name, engine, version, st, detail, now))
+    # the definitions the rules are proven about, against the same engine
+    def engine_rows(tables, sql):
+        if engine == "duckdb":
+            return duckdb_rows(tables, sql)
+        got = runner(warehouse_sql(tables, sql))
+        if got.failed:
+            raise RuntimeError(got.why)
+        return [tuple(r.values()) for r in got.rows]
+    for name, (st, detail) in run_ops(max(50, n_random // 2), engine_rows=engine_rows).items():
+        out[name] = (st, detail)
+        rows.append((name, engine, version, st, detail, now))
     rnd = {k: v for k, v in out.items() if k.startswith("random:")}
     if rnd:
         bad = [(k, v[1]) for k, v in rnd.items() if v[0] == DIFFERS]
@@ -245,6 +267,91 @@ def run(store, engine: str = "duckdb", runner=None, n_random: int = 0, seed: int
                            if not k.startswith("random:")},
             "random": ({"cases": len(rnd), "differ": sum(1 for v in rnd.values()
                                                           if v[0] == DIFFERS)} if rnd else None)}
+
+
+# ------------------------------------------------------------------ the rules' own definitions
+
+# *** THE RULES ARE PROVEN ABOUT `Assay/Ops.lean`, NOT ABOUT `Sql/Semantics.lean`. *** The
+# constructs above check the evaluator; nothing ran the join, group by and pick the THEOREMS are
+# stated over. Here those definitions run (`assay_sql ops`) on random tables with duplicate keys,
+# NULLs and ties, and must return exactly the rows the engine returns for the same SQL.
+RULE_OPS = ("inner_join", "left_join", "group_by", "pick")
+
+
+def ops_rows(tables: dict, op: list, cols: list) -> list | None:
+    from .parseproof import exe_path
+    lines = []
+    for name, (tcols, rows) in tables.items():
+        lines.append("TABLE " + " ".join([name, *tcols]))
+        lines += ["ROW " + "|".join(_enc(v) for v in r) for r in rows]
+    lines += ["OP " + " ".join(op), "COLS " + " ".join(cols)]
+    r = subprocess.run([str(exe_path()), "ops"], input="\n".join(lines), capture_output=True,
+                       text=True, timeout=60, check=False)
+    if r.returncode != 0:
+        return None
+    return [tuple(_dec(x) for x in ln[4:].split("|")) if ln[4:] else ()
+            for ln in r.stdout.splitlines() if ln.startswith("ROW")]
+
+
+def op_cases(n: int, seed: int) -> list:
+    """[(op, tables, op args, output columns, sql)], `n` of each op."""
+    rng = random.Random(seed)
+    val = lambda: rng.choice([None, 1, 2, 2, 3])
+    out = []
+    for _ in range(n):
+        two = rng.random() < 0.4
+        lt = (["k", "k2", "v"], [[val(), val(), rng.randint(0, 9)] for _ in range(rng.randint(0, 6))])
+        rt = (["rk", "rk2", "w"], [[val(), val(), rng.randint(0, 9)] for _ in range(rng.randint(0, 6))])
+        lk, rk = (["k", "k2"], ["rk", "rk2"]) if two else (["k"], ["rk"])
+        on = " and ".join(f"l.{a} = r.{b}" for a, b in zip(lk, rk))
+        cols = ["k", "k2", "v", "rk", "rk2", "w"]
+        sel = "select l.k, l.k2, l.v, r.rk, r.rk2, r.w from l "
+        for op, kw in (("inner_join", "join"), ("left_join", "left join")):
+            out.append((op, {"l": lt, "r": rt},
+                        [{"inner_join": "innerJoin", "left_join": "leftJoin"}[op], "l", "r",
+                         ",".join(lk), ",".join(rk)], cols, f"{sel}{kw} r on {on}"))
+        t = (["g", "g2", "s"], [[val(), val(), rng.choice([None, "a", "b", "ab"])]
+                                for _ in range(rng.randint(0, 7))])
+        g = rng.choice([["g"], ["g", "g2"], ["s"], ["g", "s"]])
+        out.append(("group_by", {"t": t}, ["groupBy", "t", ",".join(g)], g,
+                    f"select {', '.join(g)} from t group by {', '.join(g)}"))
+        # pick: the order is total within each partition (o is distinct, at most one NULL), so
+        # which row is first is fixed and the rows can be compared exactly
+        rows, used = [], {}
+        for i in rng.sample(range(20), rng.randint(0, 7)):
+            p = rng.choice([None, 1, 2])
+            o = i
+            if rng.random() < 0.2 and not used.get(p):
+                o, used[p] = None, True
+            rows.append([p, o, rng.choice([None, 1, 1, 2]), rng.randint(0, 9)])
+        ord_ = rng.choice([["o"], ["o2", "o"]])
+        pk = rng.choice([["p"], []])
+        over = (f"partition by {', '.join(pk)} " if pk else "") + f"order by {', '.join(ord_)}"
+        out.append(("pick", {"t": (["p", "o", "o2", "v"], rows)},
+                    ["pick", "t", ",".join(pk) or "-", ",".join(ord_)], ["p", "o", "o2", "v"],
+                    f"select p, o, o2, v from t qualify row_number() over ({over}) = 1"))
+    return out
+
+
+def run_ops(n: int = 100, seed: int = 11, engine_rows=None) -> dict:
+    """{op: (status, detail)}: each rule definition against the engine on `n` random cases."""
+    engine_rows = engine_rows or duckdb_rows
+    got: dict = {op: [0, 0, None] for op in RULE_OPS}      # cases, differing, first difference
+    for op, tables, args, cols, sql in op_cases(n, seed):
+        lean = ops_rows(tables, args, cols)
+        try:
+            st, detail = compare(lean, engine_rows(tables, sql))
+        except Exception as e:                                   # noqa: BLE001
+            st, detail = UNCHECKED, f"the engine could not run it: {str(e)[:200]}"
+        g = got[op]
+        g[0] += 1
+        if st != CONFORMS:
+            g[1] += 1
+            g[2] = g[2] or f"{sql} on {tables}: {detail}"
+    return {f"rule_op:{op}": ((DIFFERS if d else CONFORMS),
+                              (f"{d} of {c} random cases differ, e.g. {first}" if d else
+                               f"all {c} random cases agree (seed {seed})"))
+            for op, (c, d, first) in got.items()}
 
 
 def random_cases(n: int, seed: int) -> list:

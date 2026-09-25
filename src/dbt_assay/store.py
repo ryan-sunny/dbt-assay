@@ -23,6 +23,7 @@ from typing import ClassVar
 import duckdb
 
 from .checks.incremental import DDL_LATENESS
+from .claimcheck import DDL as DDL_CLAIMS
 from .conformance import DDL as DDL_CONFORMANCE
 from .jev import DDL as JEV_DDL
 from .ledger import DDL as LEDGER_DDL
@@ -54,7 +55,7 @@ def _shipping_versions() -> set:
         return set()
 
 
-DDL = JEV_DDL + LEDGER_DDL + DDL_LATENESS + DDL_PARSE + DDL_PROOFS + DDL_CONFORMANCE + """
+DDL = JEV_DDL + LEDGER_DDL + DDL_LATENESS + DDL_PARSE + DDL_PROOFS + DDL_CONFORMANCE + DDL_CLAIMS + """
 create table if not exists runs (
     run_id       varchar primary key,
     started_at   timestamp,
@@ -1476,7 +1477,9 @@ NEVER_PRUNED = ("model_calls", "model_decisions", "claims", "adjudications", "ob
                 # again for free. A parse check may have cost a warehouse statement.
                 "proofs", "parse_checks",
                 # What an engine was measured to do, per construct and engine version.
-                "conformance")
+                "conformance",
+                # One row per proven claim, overwritten when its model or premises change.
+                "claim_checks")
 
 
 def prune(store, keep: int = 10) -> dict:

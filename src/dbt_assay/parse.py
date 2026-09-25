@@ -452,6 +452,84 @@ def _from_of(sel: exp.Select):
     return sel.args.get("from_") or sel.args.get("from")
 
 
+def trace(tree, sel, col: str, _depth: int = 0) -> list:
+    """Where output column `col` of select `sel` comes from, hop by hop down its FROM chain:
+    [(relation or CTE name, column there), ...], the last hop a real table. Empty when the column
+    is computed, comes from a joined relation, or cannot be followed.
+
+    *** A RENAME IS NOT THE SAME COLUMN. *** (found by the run check) `select objectid as county_id`
+    made a certificate assume "`county_id` unique in the source", a column the source does not
+    have; Lean proved it, and a run of the model contradicted it."""
+    if _depth > 20 or not isinstance(sel, exp.Select):
+        return []
+    col = col.lower()
+    frm = _from_of(sel)
+    if frm is None:
+        return []
+    src = frm.this
+    alias = (src.alias_or_name or "").lower()
+    joined = bool(sel.args.get("joins"))
+    hit = None
+    for x in sel.expressions:
+        if (x.alias_or_name or "").lower() == col and not isinstance(x, exp.Star):
+            hit = x
+            break
+    if hit is not None:
+        inner = hit.this if isinstance(hit, exp.Alias) else hit
+        # a cast to text keeps distinct values distinct (and NULL NULL): the same key
+        if isinstance(inner, exp.Cast) and isinstance(inner.this, exp.Column) \
+                and inner.to.this in (exp.DataType.Type.VARCHAR, exp.DataType.Type.TEXT,
+                                      exp.DataType.Type.NVARCHAR):
+            inner = inner.this
+        if not isinstance(inner, exp.Column) or isinstance(inner.this, exp.Star):
+            return []
+        q = (inner.table or "").lower()
+        if (q and q != alias) or (not q and joined):
+            return []
+        name = inner.name.lower()
+    else:
+        stars = [x for x in sel.expressions if isinstance(x, exp.Star)
+                 or (isinstance(x, exp.Column) and isinstance(x.this, exp.Star))]
+        if not stars or joined and not any(
+                isinstance(x, exp.Column) and (x.table or "").lower() == alias for x in stars):
+            return []
+        name = col
+    if isinstance(src, exp.Subquery):
+        rest = trace(tree, src.this, name, _depth + 1)
+        return [(alias, name), *rest] if rest else []
+    if not isinstance(src, exp.Table):
+        return []
+    tname = (src.name or "").lower()
+    w = tree.args.get("with_") or tree.args.get("with")
+    for c in (w.expressions if w is not None else []):
+        if c.alias_or_name.lower() == tname and not src.db:
+            rest = trace(tree, c.this, name, _depth + 1)
+            return [(tname, name), *rest] if rest else []
+    return [(tname, name)]
+
+
+def trace_output(sql: str, col: str, dialect: str = "duckdb") -> list:
+    """`trace` from a model's final select."""
+    try:
+        tree = sqlglot.parse_one(sql, read=dialect)
+    except Exception:                                            # noqa: BLE001
+        return []
+    return trace(tree, tree, col)
+
+
+def trace_cte(sql: str, cte: str, col: str, dialect: str = "duckdb") -> list:
+    """`trace` from one CTE's select."""
+    try:
+        tree = sqlglot.parse_one(sql, read=dialect)
+    except Exception:                                            # noqa: BLE001
+        return []
+    w = tree.args.get("with_") or tree.args.get("with")
+    for c in (w.expressions if w is not None else []):
+        if c.alias_or_name.lower() == cte.lower():
+            return trace(tree, c.this, col)
+    return []
+
+
 def position_of(node: exp.Expression) -> str:
     """The nearest enclosing clause. 'projection' when the node is in a select list."""
     anc = node.parent

@@ -59,6 +59,9 @@ TABLES = {
               "live: join `premises` for whether they still hold.",
     "conformance": "One row per (construct, engine, version): whether the engine does what "
                    "assay's meaning of SQL says, measured on identical inputs.",
+    "claim_checks": "One row per (model, property): whether a proven certificate's claim held "
+                    "when the model ran on inputs meeting its premises (holds, contradicted, "
+                    "unchecked), for the model file it names.",
 }
 
 COLUMN_DOCS = {

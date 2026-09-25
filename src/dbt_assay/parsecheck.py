@@ -194,6 +194,43 @@ def check_duckdb(project, schema, sql: str, dialect: str) -> tuple[str, str, int
     return got
 
 
+def _default_rows(full: str, cols: list) -> list:
+    vals = [_values(k, i == len(cols) - 1) for i, (c, k, _r) in enumerate(cols)]
+    return [[v[r] for v in vals] for r in range(N_ROWS)]
+
+
+def fill(con, ins, sql: str, rows_for=None) -> None:
+    """Create and fill every relation the model reads. `rows_for(full, cols)` gives each one's
+    rows; the default is the adversarial five (a key, the same key, another, NULL, a tie)."""
+    rows_for = rows_for or _default_rows
+    # Geometry functions live in DuckDB's spatial extension; a project using them had it
+    # loaded when it built. Loaded when it is installed; absent, those models read unchecked.
+    spatial = False
+    if re.search(r"\bst_\w+\s*\(", sql, re.IGNORECASE):
+        for stmt in (["load spatial"], ["install spatial", "load spatial"]):
+            try:
+                for x in stmt:
+                    con.execute(x)
+                spatial = True
+                break
+            except Exception:                                    # noqa: BLE001, S112
+                continue
+    cats = set()
+    for full, cat, db, name, cols in ins:
+        if cat and cat.lower() not in cats and cat.lower() != "memory":
+            con.execute(f'attach \':memory:\' as "{cat}"')
+            cats.add(cat.lower())
+        prefix = ".".join(f'"{p}"' for p in (cat, db) if p)
+        if db:
+            con.execute(f"create schema if not exists {prefix}")
+        q = f'{prefix + "." if prefix else ""}"{name}"'
+        con.execute(f"create table if not exists {q} (" + ", ".join(
+            f'"{c}" {_coltype(k, raw, spatial)}' for c, k, raw in cols) + ")")
+        rows = rows_for(full, cols)
+        if rows:
+            con.executemany(f"insert into {q} values (" + ", ".join("?" * len(cols)) + ")", rows)
+
+
 def _check_duckdb(project, schema, sql: str, dialect: str, untyped: str = "text"):
     import duckdb
     if (dialect or "duckdb") != "duckdb":
@@ -210,32 +247,7 @@ def _check_duckdb(project, schema, sql: str, dialect: str, untyped: str = "text"
         return L.UNCHECKED, f"not read: {str(e)[:200]}", 0
     con = duckdb.connect(":memory:")
     try:
-        # Geometry functions live in DuckDB's spatial extension; a project using them had it
-        # loaded when it built. Loaded when it is installed; absent, those models read unchecked.
-        spatial = False
-        if re.search(r"\bst_\w+\s*\(", sql, re.IGNORECASE):
-            for stmt in (["load spatial"], ["install spatial", "load spatial"]):
-                try:
-                    for x in stmt:
-                        con.execute(x)
-                    spatial = True
-                    break
-                except Exception:                                # noqa: BLE001, S112
-                    continue
-        cats = set()
-        for full, cat, db, name, cols in ins:
-            if cat and cat.lower() not in cats and cat.lower() != "memory":
-                con.execute(f'attach \':memory:\' as "{cat}"')
-                cats.add(cat.lower())
-            prefix = ".".join(f'"{p}"' for p in (cat, db) if p)
-            if db:
-                con.execute(f"create schema if not exists {prefix}")
-            q = f'{prefix + "." if prefix else ""}"{name}"'
-            con.execute(f"create table if not exists {q} (" + ", ".join(
-                f'"{c}" {_coltype(k, raw, spatial)}' for c, k, raw in cols) + ")")
-            vals = [_values(k, i == len(cols) - 1) for i, (c, k, _r) in enumerate(cols)]
-            con.executemany(f"insert into {q} values (" + ", ".join("?" * len(cols)) + ")",
-                            [[v[r] for v in vals] for r in range(N_ROWS)])
+        fill(con, ins, sql)
         try:
             a = con.execute(sql).fetchall()
         except Exception as e:                                   # noqa: BLE001

@@ -11,6 +11,34 @@ Verified on a 357-model Colorado water-rights warehouse and two public dbt repos
 
 ---
 
+## The proofs: what is proven, what is tested, what is trusted
+
+`assay prove` certificates are checked by Lean, and that is the smallest part of the argument.
+Each link below says which of the three it is.
+
+| link | how it is established | what would make it wrong |
+|---|---|---|
+| The rules (`Assay/Rules.lean`, `Assay/Chain.lean`): "a join onto a unique key cannot multiply rows", "a group by is unique on its keys", ... | **Proven.** Lean's kernel checks every proof; the suite rebuilds the library and refuses `sorry`, `native_decide`, `set_option` tricks and any axiom beyond Lean's standard three | nothing, given the definitions below |
+| The definitions the rules are about (`Assay/Ops.lean`: `innerJoin`, `leftJoin`, `groupBy`, `pick`) mean what SQL means | **Tested.** `prove --conformance` runs each of them (`assay_sql ops`) and the same SQL in the engine on random tables with repeated keys, NULLs and ties, and the rows must be identical: 300 cases each agree with DuckDB. `pick` runs with a proven order (`Assay/Order.lean`: DuckDB's ascending, NULLs last) | a case the random tables never produce |
+| The evaluator (`Sql/Semantics.lean`) means what SQL means | **Tested**, the same way: 22 named constructs and random queries against DuckDB (2 differ, both DuckDB's defined behaviour, and certificates using them say so) | as above |
+| The statement: the theorem assay writes for a model is about THAT model (the join, the target, the columns) | **Tested on every run.** Each proven claim is run against the model itself: inputs generated to meet the certificate's premises and adversarial everywhere else, three datasets, the model's own SQL in DuckDB, the claim checked on its output. A claim that fails reads `contradicted`, never proven. On the 358-model warehouse: 351 of 433 held, 0 contradicted; the rest could not run (a UDF defined on the connection, generated values a function refuses) and say so | a model whose SQL cannot run on generated inputs; three datasets missing the case |
+| The parse: the tree assay reasons about is the SQL's | **Proven** for 113 models (Lean's own parser reads the same tree from the text, checked by the kernel), **tested** for 137 more (the SQL and its printed parse agree on generated rows), unchecked for 78 | a model outside the fragment; two parsers agreeing wrongly |
+| The engine does what the SQL means | **Tested**, not provable: the conformance suite, per construct and per engine. Snowflake reads unchecked until run on a real connection | an engine release that changes a construct, until the suite runs again |
+
+The statement check earned its place on its first run: nine sunny-data certificates were proven
+about a column their source does not have (`select objectid as county_id` read as "`county_id` is
+unique in the source"). Assay now follows each grain column down its renames, `select *` and CTEs
+to the column the premise is about, and stops where a column is computed; 43 certificates that
+could not be followed read "not proven" with the reason instead of proven.
+
+The Lean definitions of SQL are assay's own. There is no formal DuckDB or Snowflake grammar or
+semantics to build on; the closest prior work, Benzaken and Contejean's Coq semantics of SQL
+(CPP 2019) and Ricciotti and Cheney's formalisation of SQL with nulls (JAR 2022), is the reference
+`Sql/Semantics.lean` follows, and like it, the definitions are kept honest by running them against
+the engine rather than by being read.
+
+---
+
 ## Verified working
 
 | family | how | result |

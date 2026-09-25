@@ -1347,10 +1347,19 @@ collapses it to its grain: usually deliberate), those Lean refuted, the reasons 
 rule, one number for the parse, and the store and run it counted from. `--verbose` lists every
 model and property; `--json` carries it all with a `summary`, and each row's `status` is that
 verdict (`proven`, `lost`, `does_not_hold`, `regrouped`, `stale`, `not_proven`, `not_attempted`)
-with `lean_checked` beside it. On a 358-model warehouse: 708 properties, 461 proven (263 holding,
-198 conditional, 0 lost), 3 do not hold, 4 fan out and are regrouped, 19 refuted by Lean with the
-missing premise named, 221 with no rule for their shape, in 54 seconds; a rerun with nothing
-changed takes a few.
+with `lean_checked` beside it.
+
+Lean checks the proof; nothing in Lean checks that the theorem assay wrote is about the model. So
+every proven claim is also run: the model's own SQL in an in-memory DuckDB, on three generated
+datasets that meet the certificate's premises and repeat keys, hold NULLs and tie everywhere else,
+and the claim is checked on what it returns (`run_check`). One that fails reads `contradicted`,
+never proven. `prove --conformance` runs the join, group by and dedupe the rules are proven about
+against the engine too. `docs/VERIFICATION.md` lists what is proven, tested and trusted.
+
+On a 358-model warehouse: 708 properties, 433 proven (265 holding, 168 conditional, 0 lost), 351
+of them held on runs and 0 were contradicted, 3 do not hold, 4 fan out and are regrouped, 19
+refuted by Lean with the missing premise named, 249 with no rule for their shape, in about 50
+seconds; a rerun with nothing changed takes a few.
 
 Premises about an installed package's own tables (Elementary's `data_monitoring_metrics`) are left
 out of every count and list, since nothing in the project fixes them: `assay premises

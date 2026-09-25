@@ -5674,7 +5674,12 @@ def prove(
                "lean_did_not_check": sum(1 for r in rows if r["guarantee"] == "not_proven"
                                          and not r["lean_checked"]),
                "no_rule_applies": g["not_attempted"], "stale": g["stale"],
-               "parse": dict(ps), "models": len(parse_state)}
+               "parse": dict(ps), "models": len(parse_state),
+               # each proven claim, run against its own model on inputs meeting its premises
+               "on_runs": dict(Counter((r.get("run_check") or {}).get("status", "not_run")
+                                       for r in rows if r["status"] in ("proven",
+                                                                        "contradicted"))),
+               "contradicted": g["contradicted"]}
     if json_out:
         print(_json.dumps({**rep, "rows": rows, "summary": summary, "parse_state": parse_state,
                            "counted": counted}, indent=2, default=str))
@@ -5694,6 +5699,12 @@ def prove(
                      f"did not load)[/]" if summary["lean_did_not_check"] else "")
                   + (f", {summary['stale']} whose file changed since" if summary["stale"] else "")
                   + ".")
+    runs = summary["on_runs"]
+    console.print(f"on runs: {runs.get('holds', 0)} of {summary['proven']} proven held on "
+                  f"generated inputs meeting their premises; "
+                  + (f"[red]{summary['contradicted']} contradicted (assay stated the wrong "
+                     f"theorem: listed below)[/]; " if summary["contradicted"] else "")
+                  + f"{runs.get('unchecked', 0)} could not run.")
     console.print(f"parse: proven by Lean for {ps['proven']} of {len(parse_state)} model(s); "
                   f"the round trip agrees for {ps['agrees']} more, differs for {ps['differs']}, "
                   f"{ps['unchecked']} unchecked.")
@@ -5706,6 +5717,13 @@ def prove(
     if lost:
         console.print("\n[bold red]guarantees lost[/]")
         for r in lost:
+            console.print(f"  {r['model_name']}  {r['statement']}  [red]{r['lost_because']}[/]")
+    wrong = [r for r in rows if r["guarantee"] == "contradicted"]
+    if wrong:
+        console.print("\n[bold red]contradicted by a run[/] [dim](Lean proved the theorem assay "
+                      "wrote, and the model does not do what it says: a defect in assay, please "
+                      "report it)[/]")
+        for r in wrong:
             console.print(f"  {r['model_name']}  {r['statement']}  [red]{r['lost_because']}[/]")
     refuted = [r for r in rows if r["guarantee"] == "refuted"]
     if refuted:
