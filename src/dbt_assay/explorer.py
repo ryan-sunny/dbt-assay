@@ -2243,8 +2243,9 @@ function findingsTab(host) {
   });
   const RT = (DATA.meta || {}).review;
   host.replaceChildren(...[RT ? el('p', {class: 'fact tally', text: num(RT.findings)
-    + ' open finding(s) in ' + num(RT.pairs) + ' (model, check) pair(s). On the review form: '
-    + RT.line}) : null, d].filter(Boolean));
+    + ' open finding(s) in ' + num(RT.pairs) + ' (model, check) pair(s). The review form shows '
+    + num(RT.cards) + ' of those pairs, one card each: one answer covers every finding of that '
+    + 'check on that model.' + (RT.tail ? ' ' + RT.tail : '')}) : null, d].filter(Boolean));
   GO.findings = id => {
     const f = FIND[id]; if (!f) return;
     d.showRows(byCheck[f.check]);

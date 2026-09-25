@@ -94,21 +94,32 @@ def tally(pairs: list, ruled: set, set_aside_whys: list | None = None) -> dict:
                           for k in ("dismissed", "accepted", "waived", "switched off")}}
 
 
-def tally_line(t: dict) -> str:
-    """The sentence both surfaces print."""
+CARD_RULE = ("A card is one (model, check): one answer covers every finding of that check on "
+             "that model.")
+
+
+def tally_tail(t: dict) -> str:
+    """What the form leaves out, and what neither surface lists. The counts themselves are said
+    once, where each surface puts them (the form's masthead, the page's own line)."""
     def _n(v):
         return f"{int(v):,}"
-    line = (f"{_n(t['cards'])} card(s) covering {_n(t['card_findings'])} of "
-            f"{_n(t['findings'])} open finding(s). A card is one (model, check): one answer "
-            f"covers every finding of that check on that model.")
+    out = ""
     if t["ruled_pairs"]:
-        line += (f" Left out: {_n(t['ruled_pairs'])} pair(s) ({_n(t['ruled_findings'])} "
-                 f"finding(s)) a person already ruled on; they stay open on the page until "
-                 f"fixed.")
+        out += (f"Left out: {_n(t['ruled_pairs'])} pair(s) ({_n(t['ruled_findings'])} "
+                f"finding(s)) a person already ruled on; they stay open on the page until fixed.")
     aside = [f"{_n(v)} {k}" for k, v in t["set_aside"].items() if v]
     if aside:
-        line += (f" Not open, so on neither surface: {', '.join(aside)}.")
-    return line
+        out += (" " if out else "") + f"Not open, so on neither surface: {', '.join(aside)}."
+    return out
+
+
+def tally_line(t: dict) -> str:
+    """The whole sentence, for the terminal."""
+    def _n(v):
+        return f"{int(v):,}"
+    tail = tally_tail(t)
+    return (f"{_n(t['cards'])} card(s) covering {_n(t['card_findings'])} of "
+            f"{_n(t['findings'])} open finding(s). {CARD_RULE}" + (f" {tail}" if tail else ""))
 
 
 def cards(findings, store, project_root, reads: dict | None = None,
@@ -1423,7 +1434,9 @@ function findingsPane(host) {
   /* U1: the numbers name their unit. A group's count is cards; its findings are said under it,
      and the line above says what the form leaves out, so it reconciles with the page. */
   const T = CTX.tally;
-  const intro = T ? el('p', {class: 'measured tally', text: T.line}) : null;
+  /* the masthead has the counts; this says what a card is and what is left out */
+  const intro = T ? el('p', {class: 'measured tally', text: (T.rule || '') + (T.tail ? ' '
+    + T.tail : '')}) : null;
   host.replaceChildren(...[intro, nav3(host, {
     name: 'findings', groups: groups, allLabel: 'every card', filterText: 'filter by model...',
     subOf: g => { const n = g.rows.filter(c => (answers[c.key] || {}).verdict).length;

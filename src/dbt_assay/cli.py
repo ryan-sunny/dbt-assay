@@ -5090,6 +5090,7 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
     tally = reviewform.tally([(f.subject, f.check) for f in findings], _ruled,
                              [w for _f, w in _waived])
     tally["line"] = reviewform.tally_line(tally)
+    tally["rule"], tally["tail"] = reviewform.CARD_RULE, reviewform.tally_tail(tally)
     reads = {}
     if reads_path:
         reads = _json.loads(Path(reads_path).read_text())

@@ -586,7 +586,10 @@ def test_the_page_and_the_form_print_the_same_tally(project_dir, tmp_path):
     assert "Findings" in out.read_text() and "fact tally" in out.read_text()
     assert line and "a person already ruled on" in line
     assert line in r.output, (line, r.output)
-    assert line in form.read_text()
+    # the form and the page each say the counts once, their own way, and share what is left out
+    tail = meta["review"]["tail"]
+    assert tail and "a person already ruled on" in tail
+    assert tail in form.read_text() and tail in line
 
 
 # --------------------------------------------------------------- Ryan, on the served form
