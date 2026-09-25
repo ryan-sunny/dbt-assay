@@ -74,13 +74,29 @@ class Fix:
 
     def as_dict(self) -> dict:
         return {"id": self.id, "kind": self.kind, "kind_title": KIND_TITLE[self.kind],
+                "kind_rank": KIND_ORDER.index(self.kind),
                 "key": self.key, "title": self.title, "findings": self.findings,
                 "resolves": len(self.findings), "measured": self.measured,
                 "measured_note": self.measured_note, "checks": self.checks,
                 "models": self.models[:40], "decisions": self.decisions,
                 "files": sorted(self.files), "new_files": self.new_files,
                 "recipe": self.recipe, "how": self.how, "why": self.why, "tier": self.tier,
-                "moves_logic": self.moves_logic, "refused": self.refused}
+                "moves_logic": self.moves_logic, "refused": self.refused,
+                "effect": self.effect()}
+
+    def effect(self) -> str:
+        """What the change does, for a fix that no open finding is attached to (the layering
+        rules come from dbt-project-evaluator; without it a staging fix still stands)."""
+        n = len(self.models)
+        if self.kind == "stage_raw_source":
+            return f"{n} model(s) stop reading it raw"
+        if self.kind == "add_proven_tests":
+            return f"{n} key test(s)"
+        if self.kind == "declare_premise":
+            return "a premise becomes a test"
+        if self.kind == "document":
+            return "columns documented"
+        return ""
 
 
 def _layer(m) -> int:
@@ -234,7 +250,7 @@ def _document(project, entries, digests, schema, by_check, root: Path) -> list[F
                 undrafted.append(c)
         if not edits:
             continue
-        fx = Fix("document", uid, f"Document {len(edits)} column(s) of `{m.name}`")
+        fx = Fix("document", uid, f"Document {len(edits)} column(s) of {m.name}")
         fx.models = [m.name]
         fx.findings = [f.id for f in fs] if not undrafted else []
         yml = _yml_of(project, uid)
@@ -295,7 +311,7 @@ def _stage(project, by_check, root: Path, digests: dict | None = None) -> list[F
         existing = next((u for u, m in project.models.items()
                          if m.parents == [src_uid] and _is_staging(m)
                          and _passes_through(digests.get(u))), None)
-        fx = Fix("stage_raw_source", src_uid, f"Stage `{s.source_name}.{s.name}` for "
+        fx = Fix("stage_raw_source", src_uid, f"Stage {s.source_name}.{s.name} for "
                                               f"{len(uids)} model(s) that read it raw")
         fx.moves_logic = True
         target = project.models[existing].name if existing else stg
@@ -306,11 +322,13 @@ def _stage(project, by_check, root: Path, digests: dict | None = None) -> list[F
                               f"{{{{ source('{s.source_name}', '{s.name}') }}}}\n")
             fx.new_files.append(path)
         pat = _source_call(s.source_name, s.name)
+        left_out = []
         for uid in uids:
             m = project.models[uid]
             text = _read(root, m.path)
             if text is None or not pat.search(text):
-                fx.refused.append(f"{m.name}: the source call was not found in {m.path}")
+                # built by Jinja (a loop, a macro): no text substitution can repoint it safely
+                left_out.append(m.name)
                 continue
             fx.files[m.path] = pat.sub(f"{{{{ ref('{target}') }}}}", text)
             fx.models.append(m.name)
@@ -327,7 +345,10 @@ def _stage(project, by_check, root: Path, digests: dict | None = None) -> list[F
                    f"A new pass-through model `{stg}` reads the source once, and the readers "
                    f"point at it. ")
                   + "It changes no rows: the readers see the same columns. Cleaning (renames, "
-                    "types, filters) can then be added in one place.")
+                    "types, filters) can then be added in one place."
+                  + (f" Left as it is: {', '.join(left_out)}, which call the source through "
+                     f"Jinja (a loop or a macro), so the call cannot be repointed by text."
+                     if left_out else ""))
         fx.recipe = ["dbt build --select " + " ".join([target] + fx.models[:40]),
                      ("row equivalence: each repointed model's rows before and after compare "
                       "equal (count, key set, a hash over sorted rows)")]
@@ -451,8 +472,9 @@ def build(project, findings, *, entries=None, digests=None, schema=None, store=N
             continue
         shape, how = SHAPES.get(check, ("", ""))
         from .titles import title as _title
+        who = rest[0].subject_name or subj
         fx = Fix("review", f"{check}|{subj}",
-                 f"{rest[0].subject_name or subj}: {_title(check)}"
+                 (f"{who}: " if who else "") + _title(check)
                  + (f", {shape}" if shape else ""))
         fx.findings = [f.id for f in rest]
         fx.models = [rest[0].subject_name] if rest[0].subject_name else []

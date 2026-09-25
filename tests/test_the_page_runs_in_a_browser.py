@@ -892,3 +892,52 @@ def test_a_card_can_be_ruled_finding_by_finding_and_loads_back(tmp_path):
     assert got["split_cards"] == 1 and got["findings_dismissed"] == 1 \
         and got["findings_agreed"] == 2
     s.close()
+
+
+def test_a_fix_is_approved_on_its_card_and_loads_back(tmp_path):
+    """The Fix cards (leverage v1): one decision per change. A reject needs a reason; an
+    approval reaches the store through the handback, never through an agent."""
+    import json
+
+    from playwright.sync_api import sync_playwright
+
+    from dbt_assay import fixes, handback, reviewform
+    from dbt_assay.store import Store
+    fx = {"id": "abc123", "kind": "document", "kind_title": "Document columns", "kind_rank": 4,
+          "title": "Document 2 column(s) of orders", "resolves": 1, "measured": None,
+          "decisions": 1, "files": ["models/schema.yml"], "new_files": [], "models": ["orders"],
+          "why": ["3 marts downstream"], "how": "Drafted from what assay knows.",
+          "recipe": ["dbt parse"], "refused": [], "effect": "", "status": "proposed",
+          "diff": "--- a/models/schema.yml\n+++ b/models/schema.yml\n+  - name: id\n"}
+    ctx = {"words": [], "explanations": [], "waivers": [], "settings": [], "fixes": [fx],
+           "open_findings": 5}
+    out = tmp_path / "review.html"
+    out.write_text(reviewform.form_html([], {}, "p", "x", "0", ctx))
+    errors: list[str] = []
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(accept_downloads=True)
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(out.as_uri() + "#embed&pane=fixes")
+            assert page.evaluate("document.body.classList.contains('embed')")
+            assert page.locator("nav.tabs").is_hidden()
+            c = page.locator("#p-fixes .card").first
+            assert "Document 2 column(s) of orders" in c.inner_text()
+            c.locator('input[value="approve"]').check()
+            with page.expect_download() as dl:
+                page.click("#dl")
+            doc = json.loads(dl.value.path().read_text())
+            assert not errors, "\n".join(errors[:5])
+        finally:
+            browser.close()
+    assert doc["fixes"] == [{"fix": "abc123", "verdict": "approve", "note": "",
+                             "title": "Document 2 column(s) of orders", "kind": "document"}]
+    s = Store(str(tmp_path / "s.duckdb"))
+    got = handback.record(s, doc)
+    assert got["fixes_decided"]["approved"] == 1
+    assert fixes.statuses(s)["abc123"]["status"] == "approved"
+    # a reject with no reason is refused, like an accept with none
+    got = handback.record(s, {"fixes": [{"fix": "abc123", "verdict": "reject"}]})
+    assert fixes.statuses(s)["abc123"]["status"] == "approved" and got["recorded_nothing"]
+    s.close()

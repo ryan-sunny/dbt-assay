@@ -327,6 +327,35 @@ def load(payload) -> tuple[list, list]:
     return ok, bad
 
 
+FIX_STATUS = {"approve": "approved", "defer": "deferred", "reject": "rejected"}
+
+
+def load_fixes(payload) -> tuple[list, list]:
+    """`([{fix, status, note, title, kind}], [problem])`: the decisions on the Fix cards. A reject
+    with no reason is refused, the same as an accept with none: the reason is what stops the same
+    change being proposed again."""
+    rows = payload.get("fixes") if isinstance(payload, dict) else None
+    if not rows:
+        return [], []
+    ok, bad = [], []
+    for r in rows:
+        if not isinstance(r, dict) or not r.get("fix"):
+            bad.append("a fix decision names no fix")
+            continue
+        v = str(r.get("verdict", "")).strip().lower()
+        if v not in FIX_STATUS:
+            bad.append(f"fix {r['fix']}: {v or 'no'} decision, not recorded")
+            continue
+        note = str(r.get("note", "") or "").strip()
+        if v == "reject" and not note:
+            bad.append(f"fix {r['fix']} ({r.get('title', '')[:60]}): rejected with no reason, "
+                       f"not recorded")
+            continue
+        ok.append({"fix": str(r["fix"]), "status": FIX_STATUS[v], "note": note,
+                   "title": str(r.get("title") or ""), "kind": str(r.get("kind") or "")})
+    return sorted(ok, key=lambda x: x["fix"]), bad
+
+
 # The settings the form writes that have a legal range, and what that range IS. The message is
 # the one a person reads, so it says what the number MEANS rather than quoting a bound.
 _RANGES = {
@@ -943,6 +972,17 @@ pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospa
 background:#f4f1e9;border:0;border-left:2px solid var(--rule);padding:9px 12px;
 max-height:340px;overflow:auto}
 pre .n{color:var(--faint);user-select:none}
+pre.diff span{display:block}
+ul.plain{margin:2px 0 6px;padding-left:18px}
+ul.plain li{margin:1px 0}
+/* embedded in the report: its masthead and section tabs replace these */
+body.embed header h1 > svg,body.embed header .hname,body.embed header .hmeta,
+body.embed nav.tabs{display:none}
+body.embed header h1{justify-content:flex-end;padding-top:6px}
+body.embed header{border-bottom:1px solid var(--rule);padding:4px 26px 8px}
+pre.diff .a{background:#e9ecdf}
+pre.diff .d{background:#f3e4dc;color:var(--rust)}
+pre.diff .h{color:var(--faint)}
 details summary{cursor:pointer;color:var(--rust);font-size:13.5px;font-family:Fell,Georgia,serif}
 .ans{display:flex;gap:18px;align-items:baseline;flex-wrap:wrap;margin-top:14px;
 padding-top:11px;border-top:1px solid var(--rule)}
@@ -1592,7 +1632,7 @@ function tick() {
     ? n + ' of ' + tot + ' answered'
     : (edits ? edits + ' box(es) filled across the form' : 'nothing filled yet');
   document.getElementById('dl').disabled = n === 0 && edits === 0;
-  const single = p.pages <= 1 || pane === 'findings' || pane === 'words';
+  const single = p.pages <= 1 || pane === 'findings' || pane === 'words' || pane === 'fixes';
   document.getElementById('pager').style.display = single ? 'none' : '';
   if (!single) {
     document.getElementById('where').textContent =
@@ -1602,7 +1642,7 @@ function tick() {
   }
 }
 
-const PANE_NOUN = {findings: 'to rule on', words: 'words', explanations: 'models',
+const PANE_NOUN = {findings: 'to rule on', fixes: 'fixes', words: 'words', explanations: 'models',
                    waivers: 'proposed', monitoring: 'findings', settings: 'settings'};
 
 function edits_() { return (typeof edits === 'undefined') ? {} : edits; }
@@ -1616,6 +1656,9 @@ function download() {
   /* file:// cannot write to disk, so the answers leave as a download. No server, no port, and
      nothing to leave running -- the same delivery model every other page here has. */
   const out = [];
+  const fixes = Object.entries(answers).filter(([k, a]) => k.startsWith('fix::') && a
+    && a.verdict).map(([k, a]) => ({fix: k.slice(5), verdict: a.verdict, note: a.note || '',
+                                     title: a.title || '', kind: a.kind || ''}));
   for (const c of D.cards) {
     const a = answers[c.key];
     if (!a || !a.verdict) continue;      // never an answer nobody gave
@@ -1632,8 +1675,8 @@ function download() {
   out.sort((x, y) => (x.subject + x.question < y.subject + y.question ? -1 : 1));
   const body = JSON.stringify(
     {project: D.project, by: document.getElementById('by').value || '', verdicts: out,
-     config: configChanges(), rows: rowVerdicts()}, null, 2);
-  const n = new Set(out.map(r => r.subject + '\u001f' + r.question)).size,
+     fixes: fixes, config: configChanges(), rows: rowVerdicts()}, null, 2);
+  const n = new Set(out.map(r => r.subject + '\u001f' + r.question)).size + fixes.length,
         e = Object.keys(edits_()).length;
   const saved = document.getElementById('saved');
   const close = () => Object.assign(el('button', {text: 'close'}),
@@ -2119,8 +2162,133 @@ function block2(title, text) {
   return b;
 }
 
+/* ------------------------------------------------------------------ fixes
+
+   *** NOBODY RULES ON TWO THOUSAND FINDINGS. *** (Ryan: "I want to know what's important, and how
+   to fix it.") The findings grouped into the changes that resolve them, most important first.
+   Each card is one change with its files, and one decision: approve it (an agent then applies
+   it in a branch), defer it, or reject it with the reason. */
+const FIX_VERDICTS = [
+  ['approve', 'approve', 'Make this change. An agent applies it in a branch and verifies it.'],
+  ['defer', 'defer', 'Not now. It stays on the list.'],
+  ['reject', 'reject', 'This change is wrong here. Say why, so it is not proposed again for '
+    + 'the same reason.'],
+];
+const FIX_REASON = {approve: 'anything to add (optional)', defer: 'why not now (optional)',
+                    reject: 'why it is wrong here'};
+
+function diffView(text) {
+  const p = el('pre', {class: 'diff'});
+  for (const ln of String(text || '').split('\n')) {
+    const cls = ln.startsWith('+++') || ln.startsWith('---') ? 'h'
+      : ln.startsWith('+') ? 'a' : ln.startsWith('-') ? 'd' : ln.startsWith('@@') ? 'h' : '';
+    p.append(el('span', {class: cls, text: ln + '\n'}));
+  }
+  return p;
+}
+
+function fixCard(fx) {
+  const key = 'fix::' + fx.id;
+  const a = answers[key] || {};
+  const box = el('div', {class: 'card' + (a.verdict ? ' done' : '')});
+  box.append(el('div', {class: 'pkind', text: fx.kind_title}));
+  box.append(el('h2', {class: 'ctitle', text: fx.title}));
+  const n = fx.measured != null ? num(fx.measured) + ' resolved on a patched copy'
+    : fx.resolves ? 'resolves ~' + num(fx.resolves) : (fx.effect || 'resolves nothing open');
+  box.append(el('div', {class: 'cwhere'}, [
+    el('span', {text: n}),
+    el('span', {text: num(fx.decisions) + (fx.decisions === 1 ? ' decision' : ' decisions')}),
+    ...(fx.status && fx.status !== 'proposed' ? [el('span', {text: fx.status})] : [])]));
+  if ((fx.why || []).length) {
+    box.append(el('div', {class: 'lbl', text: 'why it matters'}));
+    box.append(el('ul', {class: 'plain'}, fx.why.map(w => el('li', {text: w}))));
+  }
+  box.append(el('div', {class: 'lbl', text: 'the change'}));
+  box.append(el('p', {class: 'q', text: fx.how}));
+  if ((fx.refused || []).length)
+    box.append(el('p', {class: 'q warn', text: 'Not placed: ' + fx.refused.join('; ')}));
+  if (fx.diff) box.append(el('details', {}, [
+    el('summary', {text: fx.files.length === 1 ? 'the diff, 1 file' :
+                            'the diff, ' + fx.files.length + ' files'}), diffView(fx.diff)]));
+  if ((fx.recipe || []).length) {
+    box.append(el('div', {class: 'lbl', text: 'how it is verified'}));
+    box.append(el('ul', {class: 'plain'}, fx.recipe.map(r => el('li', {text: r}))));
+  }
+  box.append(el('div', {class: 'lbl', text: 'your decision'}));
+  const vbox = el('div', {class: 'verdicts'});
+  const more = el('div', {class: 'vmore'});
+  const note = el('textarea', {class: 'note'});
+  note.value = a.note || '';
+  const lab = el('label', {class: 'vlab'});
+  const show = () => { const v = (answers[key] || {}).verdict; more.hidden = !v;
+                       lab.textContent = FIX_REASON[v] || 'why'; };
+  for (const [v, label, meaning] of FIX_VERDICTS) {
+    const r = el('input', {type: 'radio', name: 'v-' + key, value: v});
+    if (a.verdict === v) r.checked = true;
+    r.onchange = () => {
+      answers[key] = Object.assign({}, answers[key], {verdict: v, fix: fx.id, title: fx.title,
+                                                      kind: fx.kind});
+      box.classList.add('done'); save(); tick(); show(); markRow(key, v);
+      if (v === 'reject') note.focus();
+    };
+    vbox.append(el('label', {class: 'vopt'}, [r, el('span', {class: 'vname', text: label}),
+                                              el('span', {class: 'vmean', text: meaning})]));
+  }
+  note.oninput = () => { answers[key] = Object.assign({}, answers[key], {note: note.value});
+                         save(); };
+  more.append(el('div', {class: 'vrow'}, [lab, note]));
+  box.append(vbox, more);
+  show();
+  return box;
+}
+
+function fixesPane(host) {
+  const F = CTX.fixes || [];
+  if (!F.length) {
+    host.replaceChildren(el('p', {class: 'measured', text: 'No fixes: nothing open is '
+      + 'attributed to a change assay can propose.'}));
+    return;
+  }
+  const by = {};
+  for (const f of F) (by[f.kind] = by[f.kind] || {id: f.kind, label: f.kind_title, rows: []})
+    .rows.push(f);
+  const groups = Object.values(by).sort((a, b) => a.rows[0].kind_rank - b.rows[0].kind_rank);
+  const resolved = F.filter(f => f.kind !== 'review').reduce((n, f) => n + (f.resolves || 0), 0);
+  const withF = F.filter(f => f.kind !== 'review' && f.resolves);
+  const structural = F.filter(f => f.kind !== 'review' && !f.resolves);
+  const head = el('div', {class: 'tgrid'}, [
+    el('span', {class: 'tl', text: 'fixes'}),
+    el('span', {}, [el('b', {text: num(withF.length)}),
+      el('span', {class: 'tn', text: ' would resolve ~' + num(resolved) + ' of '
+        + num(CTX.open_findings || 0) + ' open findings'})]),
+    ...(structural.length ? [el('span', {class: 'tl', text: 'structure'}),
+      el('span', {}, [el('b', {text: num(structural.length)}),
+        el('span', {class: 'tn', text: ' changes to how the project is built, with no open '
+          + 'finding attached'})])] : []),
+    el('span', {class: 'tl', text: 'to read'}),
+    el('span', {}, [el('b', {text: num(F.filter(f => f.kind === 'review').length)}),
+      el('span', {class: 'tn', text: ' proposals that need reading, most important first'})])]);
+  host.replaceChildren(head, nav3(host, {
+    name: 'fixes', groups: groups, allLabel: 'every fix', filterText: 'filter by model or text...',
+    subOf: g => { const n = g.rows.filter(f => (answers['fix::' + f.id] || {}).verdict).length;
+                  const r = g.rows.reduce((x, f) => x + (f.resolves || 0), 0);
+                  return (r ? 'resolves ~' + num(r) : (g.rows[0].effect ? g.rows.length + ' changes'
+                    : '')) + (n ? ' · ' + num(n) + ' decided' : ''); },
+    keyOf: f => 'fix::' + f.id,
+    textOf: f => f.title + ' ' + (f.models || []).join(' '),
+    doneOf: f => !!(answers['fix::' + f.id] || {}).verdict,
+    cellsOf: f => [el('span', {class: 'fmain'}, [wb(f.title)]),
+                   el('span', {class: 'fmeta', text: f.measured != null ? num(f.measured)
+                     : f.resolves ? '~' + num(f.resolves) : ''}),
+                   el('span', {class: 'fstate', text: (answers['fix::' + f.id] || {}).verdict
+                     || (f.status && f.status !== 'proposed' ? f.status : '')})],
+    detailOf: f => fixCard(f),
+  }));
+}
+
 const PANES = {words: wordsTab, explanations: explanationsTab, waivers: waiversTab,
-               monitoring: monitoringTab, settings: settingsTab, findings: null};
+               monitoring: monitoringTab, settings: settingsTab, fixes: fixesPane,
+               findings: null};
 function drawPane(name) {
   if (PANES[name]) PANES[name](document.getElementById('p-' + name));
   else render();
@@ -2128,7 +2296,8 @@ function drawPane(name) {
 
 function openPane(name) {
   pane = name;
-  document.querySelector('main').classList.toggle('fill', name === 'findings' || name === 'words');
+  document.querySelector('main').classList.toggle('fill', name === 'findings' || name === 'words'
+                                                  || name === 'fixes');
   document.querySelectorAll('.tabs button').forEach(b =>
     b.classList.toggle('on', b.dataset.pane === name));
   document.querySelectorAll('.pane').forEach(p => { p.hidden = p.id !== 'p-' + name; });
@@ -2173,7 +2342,20 @@ document.getElementById('n-mon').textContent = ((CTX.monitoring || {}).findings 
 document.getElementById('n-set').textContent =
   (CTX.settings || []).filter(s => s.set_here).length || '';
 document.getElementById('n-find').textContent = D.cards.length || '';
-openPane(SAVED_PANE && (SAVED_PANE in PANES) ? SAVED_PANE : 'findings');
+document.getElementById('n-fix').textContent = (CTX.fixes || []).length || '';
+/* *** ONE APP. *** Inside the report's Fix and Decide sections this form is embedded: the report
+   carries the masthead and the section tabs, so the form keeps only its own controls, and the
+   report picks the pane with `#embed&pane=<name>`. */
+const embedded = () => document.body.classList.toggle('embed',
+  /(^|[#&])embed(&|$)/.test(location.hash));
+embedded();
+function paneFromHash() {
+  const m = location.hash.match(/pane=([a-z]+)/);
+  return m && (m[1] in PANES) ? m[1] : null;
+}
+window.addEventListener('hashchange', () => { embedded(); const p = paneFromHash();
+                                              if (p) openPane(p); });
+openPane(paneFromHash() || (SAVED_PANE && (SAVED_PANE in PANES) ? SAVED_PANE : 'findings'));
 """
 
 
@@ -2227,6 +2409,7 @@ def form_html(card_list: list, sql: dict, project: str, generated_at: str, versi
      to a tab that has no pager slid them sideways: "so it doesnt get moved around by the UI when
      switching tabs". They belong to the form, so they hold position on the form's own row. -->
 <nav class="tabs">
+  <button data-pane="fixes" data-tip="The findings grouped into the changes that resolve them, most important first. One decision per change.">Fixes<b id="n-fix"></b></button>
   <button data-pane="findings" class="on" data-tip="Every finding to rule on, grouped by check. The models with the most marts downstream come first: that is where a wrong verdict costs something.">Findings<b id="n-find"></b></button>
   <button data-pane="waivers" data-tip="Findings you accepted, proposed as waivers with the reason you gave. Fills as you accept findings.">Waivers<b id="n-waiv"></b></button>
   <button data-pane="words" data-tip="Words your warehouse uses that assay has no definition for, and the ones already in your vocabulary.">Words<b id="n-words"></b></button>
@@ -2248,6 +2431,7 @@ def form_html(card_list: list, sql: dict, project: str, generated_at: str, versi
 <div id="p-waivers" class="pane" hidden></div>
 <div id="p-monitoring" class="pane" hidden></div>
 <div id="p-settings" class="pane" hidden></div>
+<div id="p-fixes" class="pane" hidden></div>
 <div id="p-findings" class="pane"></div>
 </main>
 <script id="assay-form" type="application/json">{blob}</script>

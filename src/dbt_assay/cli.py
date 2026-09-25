@@ -4679,6 +4679,30 @@ def _fix_plan(project, digests, schema, entries, findings, store, tdir, dialect,
                   f"the top ten resolve on a patched copy.[/]")
 
 
+def _fixes_for_form(project, digests, schema, entries, findings, store) -> list:
+    """The ranked fixes as the form's Fix cards: each with its diff and its status."""
+    from . import fixes as fixes_mod
+    from . import groups as groups_mod
+    from . import ledger as ledger_mod
+    try:
+        fx = fixes_mod.build(project, findings, entries=entries, digests=digests, schema=schema,
+                             store=store, led=ledger_mod.last(),
+                             groups=groups_mod.build(project, findings),
+                             root=project.project_root)
+    except Exception as e:                                       # noqa: BLE001
+        console.print(f"[yellow]the fixes could not be built for the form:[/] [dim]{e}[/]")
+        return []
+    st = fixes_mod.statuses(store)
+    out = []
+    for f in fx:
+        d = f.as_dict()
+        d.pop("findings", None)
+        d["status"] = st.get(f.id, {}).get("status", "proposed")
+        d["diff"] = fixes_mod.diff(f, project.project_root)[:60000]
+        out.append(d)
+    return out
+
+
 @app.command("fix")
 def fix_cmd(
     fix_id: str = typer.Argument(..., help="a fix id, from `assay plan`"),
@@ -5568,6 +5592,8 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
                          f"model, 40 models at most)" if len(failing) > len(expl_tests) else "")
                       + ".[/]")
     ctx["tally"] = tally
+    ctx["fixes"], ctx["open_findings"] = _fixes_for_form(project, digests, schema, entries,
+                                                         findings, store), len(findings)
     p.write_text(reviewform.form_html(
         cards, sql, project.project_name or "this project",
         project.raw.get("metadata", {}).get("generated_at", ""), _pkg_version(), ctx, report))
@@ -5667,6 +5693,12 @@ def _load_verdicts(store, path: str, who: str) -> None:
     bad = got["recorded_nothing"] + [""] * (got["recorded_nothing_total"]
                                            - len(got["recorded_nothing"]))
     console.print(f"recorded [bold]{len(rows)}[/] verdict(s) as `{by}`.")
+    fd = got.get("fixes_decided") or {}
+    if any(fd.values()):
+        console.print(f"   [bold]{fd.get('approved', 0)} fix(es) approved[/], "
+                      f"{fd.get('deferred', 0)} deferred, {fd.get('rejected', 0)} rejected "
+                      f"[dim]-- an agent applies an approved fix in a branch "
+                      f"(`apply_plan_item`), and `verify_plan_item` checks it.[/]")
     if agreed:
         console.print(f"   [bold]{agreed} finding(s) confirmed real[/] [dim]-- they stay, and "
                       f"`assay check` now reports how many of them a fix has actually removed. "

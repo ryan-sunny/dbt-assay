@@ -6,6 +6,10 @@ has: under `- name: <model>`, under `columns:`, under `- name: <column>`. Every 
 comment and blank line stays as it was, the way configpatch.py edits audit.yml. A model with no
 entry gets one in a new file beside its SQL, which collides with nothing.
 
+YAML allows a list's items at the same indent as its key (`models:` then `- name:` in column 0),
+and a flow list for tests (`data_tests: [unique, not_null]`). Both are common, so both are read,
+and new lines follow the indentation the file already uses.
+
 It refuses rather than guesses: an entry it cannot place is reported, not approximated.
 """
 from __future__ import annotations
@@ -27,12 +31,30 @@ def _indent(s: str) -> int:
     return len(s) - len(s.lstrip())
 
 
-def _block_end(lines: list, start: int, indent: int) -> int:
-    """The first line after `start` at an indent <= indent that is not blank or a comment."""
-    i = start + 1
+def _content(ln: str) -> bool:
+    return bool(ln.strip()) and not ln.lstrip().startswith("#")
+
+
+def _key_end(lines: list, at: int) -> int:
+    """The end of a `key:` block: deeper lines, and list items at the key's own indent."""
+    k = _indent(lines[at])
+    i = at + 1
     while i < len(lines):
         ln = lines[i]
-        if ln.strip() and not ln.lstrip().startswith("#") and _indent(ln) <= indent:
+        if _content(ln):
+            ind = _indent(ln)
+            if ind < k or (ind == k and not ln.lstrip().startswith("- ")):
+                return i
+        i += 1
+    return i
+
+
+def _item_end(lines: list, at: int) -> int:
+    """The end of a `- name: x` item: everything deeper than its dash."""
+    k = _indent(lines[at])
+    i = at + 1
+    while i < len(lines):
+        if _content(lines[i]) and _indent(lines[i]) <= k:
             return i
         i += 1
     return i
@@ -56,6 +78,13 @@ def _find_item(lines, name, start, end, indent=None) -> tuple[int, int] | None:
     return None
 
 
+def _find_key(lines, key, start, end, indent) -> int | None:
+    for j in range(start, end):
+        if re.match(rf"^\s{{{indent}}}{key}:(\s|$)", lines[j]):
+            return j
+    return None
+
+
 def _yaml_str(s: str) -> str:
     s = s.replace("\n", " ").strip()
     if not s or any(c in s for c in ":#'\"{}[],&*!|>%@`") or s[0] in "-?":
@@ -63,74 +92,78 @@ def _yaml_str(s: str) -> str:
     return s
 
 
+def _add_tests(lines: list, key_at: int, tests: list) -> None:
+    """Append tests to a `data_tests:` / `tests:` key, flow or block."""
+    ln = lines[key_at]
+    m = re.match(r"^(\s*)((?:data_)?tests):\s*\[(.*)\]\s*(#.*)?$", ln)
+    if m:
+        have = [x.strip() for x in m.group(3).split(",") if x.strip()]
+        names = {h.split(":")[0].strip() for h in have}
+        add = [t for t in tests if t.split(":")[0].strip() not in names]
+        if add:
+            lines[key_at] = f"{m.group(1)}{m.group(2)}: [{', '.join(have + add)}]" + \
+                (f" {m.group(4)}" if m.group(4) else "")
+        return
+    end = _before_blanks(lines, _key_end(lines, key_at), key_at)
+    have = {re.sub(r"^\s*-\s*", "", lines[j]).split(":")[0].strip()
+            for j in range(key_at + 1, end) if lines[j].strip().startswith("-")}
+    add = [t for t in tests if t.split(":")[0].strip() not in have]
+    first = next((j for j in range(key_at + 1, end) if lines[j].strip().startswith("-")), None)
+    ind = _indent(lines[first]) if first is not None else _indent(ln) + 2
+    lines[end:end] = [" " * ind + f"- {t}" for t in add]
+
+
 def apply(text: str, model: str, edits: list[Edit]) -> tuple[str, list[str]]:
     """(new text, [refusals]). Adds only what is missing; an existing description is kept."""
     lines = text.split("\n")
-    refused: list[str] = []
     top = next((i for i, ln in enumerate(lines) if re.match(r"^models:\s*(#.*)?$", ln)), None)
     if top is None:
         return text, [f"no `models:` section in the file for {model}"]
-    end = _block_end(lines, top, 0)
-    hit = _find_item(lines, model, top + 1, end)
+    hit = _find_item(lines, model, top + 1, _key_end(lines, top))
     if hit is None:
         return text, [f"`{model}` has no entry in this file"]
     at, ind = hit
-    item_end = _block_end(lines, at, ind)
     key_ind = ind + 2
     for e in edits:
+        item_end = _item_end(lines, at)
         if not e.column:
-            has = any(re.match(rf"^\s{{{key_ind}}}description:", lines[j])
-                      for j in range(at + 1, item_end))
-            if e.description and not has:
+            if e.description and _find_key(lines, "description", at + 1, item_end,
+                                           key_ind) is None:
                 lines.insert(at + 1, " " * key_ind + f"description: {_yaml_str(e.description)}")
-                item_end += 1
             continue
-        cols = next((j for j in range(at + 1, item_end)
-                     if re.match(rf"^\s{{{key_ind}}}columns:\s*(#.*)?$", lines[j])), None)
+        cols = _find_key(lines, "columns", at + 1, item_end, key_ind)
         if cols is None:
             at_end = _before_blanks(lines, item_end, at)
             lines.insert(at_end, " " * key_ind + "columns:")
             cols = at_end
-            item_end += 1
-        cols_end = _block_end(lines, cols, key_ind)
-        c = _find_item(lines, e.column, cols + 1, cols_end)
-        cols_end = _before_blanks(lines, cols_end, cols)
+        cols_end = _key_end(lines, cols)
+        # the file's own style: items at the key's indent, or two deeper
+        first = next((j for j in range(cols + 1, cols_end) if _NAME.match(lines[j])), None)
+        c_ind = _indent(lines[first]) if first is not None else key_ind + 2
+        c = _find_item(lines, e.column, cols + 1, cols_end, c_ind)
         if c is None:
-            new = [" " * (key_ind + 2) + f"- name: {e.column}"]
+            end = _before_blanks(lines, cols_end, cols)
+            new = [" " * c_ind + f"- name: {e.column}"]
             if e.description:
-                new.append(" " * (key_ind + 4) + f"description: {_yaml_str(e.description)}")
+                new.append(" " * (c_ind + 2) + f"description: {_yaml_str(e.description)}")
             if e.tests:
-                new.append(" " * (key_ind + 4) + "data_tests:")
-                new += [" " * (key_ind + 6) + f"- {t}" for t in e.tests]
-            lines[cols_end:cols_end] = new
-            item_end += len(new)
+                new.append(" " * (c_ind + 2) + f"data_tests: [{', '.join(e.tests)}]")
+            lines[end:end] = new
             continue
         c_at, c_ind = c
-        c_end = _before_blanks(lines, _block_end(lines, c_at, c_ind), c_at)
-        body = range(c_at + 1, c_end)
-        if e.description and not any(re.match(rf"^\s{{{c_ind + 2}}}description:", lines[j])
-                                     for j in body):
+        c_end = _before_blanks(lines, _item_end(lines, c_at), c_at)
+        if e.description and _find_key(lines, "description", c_at + 1, c_end,
+                                       c_ind + 2) is None:
             lines.insert(c_at + 1, " " * (c_ind + 2) + f"description: {_yaml_str(e.description)}")
             c_end += 1
-            item_end += 1
         if e.tests:
             tk = next((j for j in range(c_at + 1, c_end)
-                       if re.match(rf"^\s{{{c_ind + 2}}}(data_)?tests:\s*(#.*)?$", lines[j])), None)
+                       if re.match(rf"^\s{{{c_ind + 2}}}(data_)?tests:", lines[j])), None)
             if tk is None:
-                block = [" " * (c_ind + 2) + "data_tests:"] + \
-                    [" " * (c_ind + 4) + f"- {t}" for t in e.tests]
-                lines[c_end:c_end] = block
-                item_end += len(block)
+                lines.insert(c_end, " " * (c_ind + 2) + f"data_tests: [{', '.join(e.tests)}]")
             else:
-                t_end = _before_blanks(lines, _block_end(lines, tk, c_ind + 2), tk)
-                have = {re.sub(r"^\s*-\s*", "", lines[j]).split(":")[0].strip()
-                        for j in range(tk + 1, t_end) if lines[j].strip().startswith("-")}
-                add = [t for t in e.tests if t.split(":")[0].strip() not in have]
-                ti = _indent(lines[tk + 1]) if tk + 1 < t_end and lines[tk + 1].strip() \
-                    else c_ind + 4
-                lines[t_end:t_end] = [" " * ti + f"- {t}" for t in add]
-                item_end += len(add)
-    return "\n".join(lines), refused
+                _add_tests(lines, tk, e.tests)
+    return "\n".join(lines), []
 
 
 def new_entry(model: str, edits: list[Edit]) -> str:
@@ -147,6 +180,5 @@ def new_entry(model: str, edits: list[Edit]) -> str:
             if e.description:
                 out.append(f"        description: {_yaml_str(e.description)}")
             if e.tests:
-                out.append("        data_tests:")
-                out += [f"          - {t}" for t in e.tests]
+                out.append(f"        data_tests: [{', '.join(e.tests)}]")
     return "\n".join(out) + "\n"

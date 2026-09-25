@@ -113,7 +113,16 @@ def record(store, payload, by: str = "") -> dict:
         fams[_record_one_verdict(store, subj, q, "unclear", "",
                                  f"ruled finding by finding in the review form: {how}"
                                  + (f". {note}" if note else ""), who)] += 1
-    return {"recorded": len(rows) - sum(len(p) for p in split.values()) + len(split),
+    # the decisions on the Fix cards: a person's approve / defer / reject, never an agent's
+    from . import fixes as fixes_mod
+    fixed, fbad = reviewform.load_fixes(payload if isinstance(payload, dict) else {})
+    for fx in fixed:
+        fixes_mod.record(store, fx["fix"], fx["status"], kind=fx["kind"], title=fx["title"],
+                         note=fx["note"], by=who)
+    bad = bad + fbad
+    return {"fixes_decided": {k: sum(1 for f in fixed if f["status"] == k)
+                              for k in ("approved", "deferred", "rejected")},
+            "recorded": len(rows) - sum(len(p) for p in split.values()) + len(split),
             "by": who, "as": "human", "split_cards": len(split),
             "findings_agreed": agreed, "findings_accepted": accepted,
             "findings_dismissed": dismissed,

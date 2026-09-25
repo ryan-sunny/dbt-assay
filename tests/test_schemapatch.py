@@ -50,3 +50,33 @@ def test_a_model_description_and_a_missing_entry():
     new = yaml.safe_load(new_entry("payments", [Edit(description="One row per payment."),
                                                 Edit(column="id", tests=["unique"])]))
     assert new["models"][0]["columns"][0]["data_tests"] == ["unique"]
+
+
+FLAT = """version: 2
+
+models:
+- name: stg_a
+  description: 'A.'
+  columns:
+  - name: parcel_id
+    data_tests: [unique]
+  - name: owner
+- name: stg_b
+  columns:
+  - name: id
+"""
+
+
+def test_items_at_the_keys_own_indent_and_flow_test_lists():
+    out, refused = apply(FLAT, "stg_a", [
+        Edit(column="parcel_id", tests=["unique", "not_null"]),
+        Edit(column="owner", description="Who holds title."),
+        Edit(column="sale_date", description="When it sold.")])
+    assert not refused, refused
+    d = yaml.safe_load(out)
+    a = {c["name"]: c for c in d["models"][0]["columns"]}
+    assert a["parcel_id"]["data_tests"] == ["unique", "not_null"]
+    assert a["owner"]["description"] == "Who holds title."
+    assert a["sale_date"]["description"] == "When it sold."
+    assert d["models"][1] == {"name": "stg_b", "columns": [{"name": "id"}]}
+    assert "  - name: sale_date" in out                   # the file's own indentation
