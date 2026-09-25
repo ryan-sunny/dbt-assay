@@ -284,6 +284,7 @@ assay completeness --verify   # ...and count empty models and row loss through y
 assay patch tests/assay   # WRITE the uniqueness tests it can prove will pass
 assay premises            # what the findings REST ON: each key a grain or a held-back
                           #   finding assumes unique, its evidence and its status
+                          #   (--include-packages adds installed packages' own tables)
 ```
 
 **What the findings rest on.** A grain "declared by a test" rests on that test, and a hop assay
@@ -1336,9 +1337,21 @@ lost* on the next `check`, with no Lean run; when the model's file changes, it i
 Each model's parse is also checked against its SQL (the premise `parse_faithful`): both run on
 generated rows that duplicate keys, hold NULLs and tie, in an in-memory DuckDB by default or
 through your connection with `--parse-on warehouse`. MCP `proofs(model)` and the page's
-Guarantees tab and model pane read the same rows. On a 358-model warehouse: 585 properties, 404
-proven, 137 refuted by Lean with the missing premise named, 44 with no rule that applies, in 16
-seconds.
+Guarantees tab and model pane read the same rows.
+
+The terminal prints the summary first: properties proven, split into `holding` (every premise
+holds), `conditional` (a premise is unchecked) and `lost` (a premise it assumed broke); then those
+that do not hold (the join is onto a key that is not unique, often on purpose when the model groups
+afterwards), those Lean refuted, the reasons the rest have no rule, one number for the parse, and
+the store and run it counted from. `--verbose` lists every model and property; `--json` carries it
+all with a `summary`. On a 358-model warehouse: 708 properties, 461 proven (263 holding, 198
+conditional, 0 lost), 7 do not hold, 19 refuted by Lean with the missing premise named, 221 with
+no rule for their shape, in 54 seconds; a rerun with nothing changed takes a few.
+
+Premises about an installed package's own tables (Elementary's `data_monitoring_metrics`) are left
+out of every count and list, since nothing in the project fixes them: `assay premises
+--include-packages`, MCP `premises(include_packages=true)` and a checkbox on the Guarantees tab
+show them.
 
 ### The parse, proven, and the engine, measured
 

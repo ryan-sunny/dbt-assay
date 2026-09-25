@@ -150,8 +150,10 @@ def _join_step(led, declared, j, i: int, used: set | None = None):
     string saying why no rule applies. (L1: the target's own grouping, dedupe or filter first,
     the base table's key only when the join reads the table itself.)"""
     kind = (j.kind or "").upper()
-    if j.lateral or kind in ("CROSS", "RIGHT", "FULL"):
-        return f"a {kind or 'lateral'} join: no rule states its row count yet"
+    if j.lateral:
+        return "a lateral join: no rule states its row count yet"
+    if kind in ("CROSS", "RIGHT", "FULL"):
+        return f"a {kind} join: no rule states its row count yet"
     if not j.equi:
         return ("the join condition is not key equality (a spatial, range or computed join): "
                 "no row-count rule applies to it")

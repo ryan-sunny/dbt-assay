@@ -2397,7 +2397,8 @@ function answerPart(a) {
    marts reading it" was the question header. Filled from one answer where there is one (the model,
    and its reach), and in general words where there is not. */
 const FIELD_WORDS = {model: 'the model', marts_downstream: 'N', models_downstream: 'N',
-                     descendants: 'N', test: 'a test', monitor: 'a monitor', column: 'a column'};
+                     descendants: 'N', test: 'a test', monitor: 'a monitor', column: 'a column',
+                     source: 'the source'};
 function fillQuestion(text, a) {
   const m = a ? BY_NAME[subjectOf(a).name] : null;
   const part = a ? answerPart(a).part : '';

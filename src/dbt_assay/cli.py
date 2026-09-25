@@ -5703,12 +5703,17 @@ def prove(
                       "purpose, when the model groups afterwards)[/]")
         for r in refuted:
             console.print(f"  {r['model_name']}  {r['statement']}  [dim]{r['lost_because']}[/]")
-    why = Counter((r["missing"] or r["detail"] or "").split(":")[0][:90]
-                  for r in rows if r["status"] != "proven")
+    why = Counter((r["missing"] or r["detail"] or "").split(":")[0].strip()
+                  for r in rows if r["guarantee"] == "not_attempted")
     if why:
-        console.print("\n[bold]not proven, by reason[/]")
+        console.print("\n[bold]no rule for their shape, by reason[/]")
         for w, n in why.most_common(8):
             console.print(f"  {n:>4}  {w}")
+    refused = Counter(r["model_name"] for r in rows if r["guarantee"] == "not_proven")
+    if refused:
+        console.print("\n[bold]refuted by Lean[/] [dim](--verbose has what each is "
+                      "missing)[/]: " + ", ".join(f"{m} ({n})" if n > 1 else m
+                                                  for m, n in sorted(refused.items())))
     if verbose:
         by: dict = {}
         for r in rows:
