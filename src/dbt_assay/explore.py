@@ -130,6 +130,17 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
     # `check` reports and the Overview can still say how many were waived.
     waived_rows = [r for r in find_rows if r.get("action") == "waived"]
     find_rows = [r for r in find_rows if r.get("action") != "waived"]
+    # U1: what the review form makes of these findings, in the same numbers the form prints.
+    from . import reviewform
+    try:
+        _ruled = store.ruled_pairs() if store is not None else set()
+    except Exception:                                            # noqa: BLE001
+        _ruled = set()
+    review_tally = reviewform.tally([(r["subject"], r["check"]) for r in find_rows], _ruled,
+                                    [r.get("action_why") or "" for r in waived_rows])
+    review_tally["line"] = reviewform.tally_line(review_tally)
+    for r in find_rows:
+        r["pair_ruled"] = (str(r["subject"]), str(r["check"])) in _ruled
     find_by_subject: dict = {}
     for f in find_rows:
         find_by_subject.setdefault(f["subject"], []).append(f["id"])
@@ -196,6 +207,7 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
             # when it can equally mean "nothing has run". The page says which.
             # Which store and run every count on the page comes from (sunny-data L4).
             "counted": _counted(store),
+            "review": review_tally,
             # Where a commit can be opened in a browser, for the commits a finding names.
             "repo_url": _repo_url(project),
             "new_store": (store.new_store_warning() if store is not None else

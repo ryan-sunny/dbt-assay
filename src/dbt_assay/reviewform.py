@@ -60,6 +60,57 @@ def _excerpt(name: str, text: str) -> str:
     return text
 
 
+def _set_aside_kind(why: str) -> str:
+    w = (why or "").lower()
+    if w.startswith("dismissed"):
+        return "dismissed"
+    if w.startswith("accepted"):
+        return "accepted"
+    if w.startswith("waived"):
+        return "waived"
+    return "switched off"                         # disabled, or out of a question's scope
+
+
+def tally(pairs: list, ruled: set, set_aside_whys: list | None = None) -> dict:
+    """What the page's findings and the form's cards count, and how one becomes the other.
+
+    *** THE PAGE SAID 1,774 AND THE FORM SAID 1,082, AND NEITHER SAID WHAT IT COUNTS. ***
+    (sunny-data feedback U1) The page counts findings. The form counts cards, one per (model,
+    check), since one verdict covers every finding of that check on that model, and it leaves
+    out the pairs a person already ruled on (an `agree` keeps the finding open on the page).
+    Both surfaces show these numbers, computed here from the same open list, so they reconcile on
+    screen. `pairs` is one (subject, check) per open finding; `set_aside_whys` is why each
+    finding the policy took off the open list went (dismissed, accepted, waived, switched off).
+    """
+    from collections import Counter
+    per = Counter((str(a), str(b)) for a, b in pairs)
+    done = {k for k in per if k in ruled}
+    aside = Counter(_set_aside_kind(w) for w in (set_aside_whys or []))
+    return {"findings": sum(per.values()), "pairs": len(per),
+            "cards": len(per) - len(done), "card_findings": sum(n for k, n in per.items()
+                                                                  if k not in done),
+            "ruled_pairs": len(done), "ruled_findings": sum(per[k] for k in done),
+            "set_aside": {k: aside.get(k, 0)
+                          for k in ("dismissed", "accepted", "waived", "switched off")}}
+
+
+def tally_line(t: dict) -> str:
+    """The sentence both surfaces print."""
+    def _n(v):
+        return f"{int(v):,}"
+    line = (f"{_n(t['cards'])} card(s) covering {_n(t['card_findings'])} of "
+            f"{_n(t['findings'])} open finding(s). A card is one (model, check): one answer "
+            f"covers every finding of that check on that model.")
+    if t["ruled_pairs"]:
+        line += (f" Left out: {_n(t['ruled_pairs'])} pair(s) ({_n(t['ruled_findings'])} "
+                 f"finding(s)) a person already ruled on; they stay open on the page until "
+                 f"fixed.")
+    aside = [f"{_n(v)} {k}" for k, v in t["set_aside"].items() if v]
+    if aside:
+        line += (f" Not open, so on neither surface: {', '.join(aside)}.")
+    return line
+
+
 def cards(findings, store, project_root, reads: dict | None = None,
           groups: list | None = None) -> tuple[list, dict]:
     """`([card], {path: sql})`, ordered so the ones where a wrong verdict costs most come first.
@@ -839,6 +890,7 @@ input[type=text]:focus,textarea:focus{border-color:var(--ink);background:#fbf9f4
 .wrow,.wrow .measured,.q,.card{overflow-wrap:anywhere;min-width:0}
 /* The navigator panes fill the window; every other pane scrolls. */
 main.fill{overflow:hidden;display:flex;flex-direction:column;padding-bottom:12px}
+.tally{margin:0 0 8px;flex:0 0 auto}
 main.fill > .pane:not([hidden]){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
 .fnav{flex:1 1 auto;min-height:0;display:grid;
 grid-template-columns:minmax(180px,250px) minmax(260px,1fr) minmax(0,2.1fr);gap:0}
@@ -1274,17 +1326,22 @@ function findingsPane(host) {
   for (const c of D.cards) (by[c.question] = by[c.question] || {id: c.question,
     label: c.question, rows: []}).rows.push(c);
   const groups = Object.values(by).sort((a, b) => b.rows.length - a.rows.length);
-  host.replaceChildren(nav3(host, {
-    name: 'findings', groups: groups, allLabel: 'every finding', filterText: 'filter by model...',
+  /* U1: the numbers name their unit. A group's count is cards; its findings are said under it,
+     and the line above says what the form leaves out, so it reconciles with the page. */
+  const T = CTX.tally;
+  const intro = T ? el('p', {class: 'measured tally', text: T.line}) : null;
+  host.replaceChildren(...[intro, nav3(host, {
+    name: 'findings', groups: groups, allLabel: 'every card', filterText: 'filter by model...',
     subOf: g => { const n = g.rows.filter(c => (answers[c.key] || {}).verdict).length;
-                  return n ? num(n) + ' answered' : null; },
+                  const nf = g.rows.reduce((a, c) => a + (c.findings || []).length, 0);
+                  return num(nf) + ' finding(s)' + (n ? ' · ' + num(n) + ' answered' : ''); },
     keyOf: c => c.key, textOf: c => c.model + ' ' + c.question + ' ' + c.file,
     doneOf: c => !!(answers[c.key] || {}).verdict,
     cellsOf: c => [el('span', {class: 'mono fmain'}, [wb(c.model)]),
                    el('span', {class: 'fmeta', text: num(c.marts) + ' marts'}),
                    el('span', {class: 'fstate', text: (answers[c.key] || {}).verdict || ''})],
     detailOf: c => card(c),
-  }));
+  })].filter(Boolean));
 }
 
 /* *** THE BAR BELONGED TO ONE PANE AND SAT OVER ALL OF THEM. ***
@@ -1823,7 +1880,7 @@ def form_html(card_list: list, sql: dict, project: str, generated_at: str, versi
 <link rel="icon" href="{FAVICON}">
 <style>{FONT_CSS}{_CSS}</style></head><body>
 <header>
-<h1>{MARK_SVG}<span class="hname">{e(project)}</span><span class="hmeta hint" data-tip="{withread} of the findings carry an agent&#39;s reading. Manifest generated {e(str(generated_at))}.">{len(card_list)} to rule on &middot; {len(ctx.get("words") or [])} words &middot; assay {e(version)}{report_link}</span>
+<h1>{MARK_SVG}<span class="hname">{e(project)}</span><span class="hmeta hint" data-tip="{withread} of the cards carry an agent&#39;s reading. Manifest generated {e(str(generated_at))}.">{len(card_list):,} card(s) covering {sum(len(c.get("findings") or []) for c in card_list):,} finding(s) &middot; {len(ctx.get("words") or [])} words &middot; assay {e(version)}{report_link}</span>
 <!-- *** IT MOVED EVERY TIME THE COUNT TEXT CHANGED LENGTH OR A PAGER APPEARED. ***
      On the tab strip it wrapped to a second line on five panes and sat at x=176 on the sixth,
      measured. These belong to the whole form, not to a tab, so they sit on the masthead where

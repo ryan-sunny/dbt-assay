@@ -2217,14 +2217,22 @@ function findingsTab(host) {
 
   const d = drill({
     noun: 'findings', groups: groups, chip: g => g.check, groupFilter: 'find a check...',
-    groupSub: g => g.ruled ? num(g.ruled) + ' read by a person' : null,
+    /* U1: a check's findings, and the cards the review form makes of them (one per model). */
+    groupSub: g => {
+      const cards = new Set(g.rows.filter(f => !f.pair_ruled).map(f => f.subject)).size;
+      return num(cards) + ' card(s) on the form' + (g.ruled ? ' · ' + num(g.ruled)
+        + ' read by a person' : '');
+    },
     rowsOf: g => g.rows, rowCols: withCheck,
     colsFor: g => (g && g.__all) ? withCheck : perCheck,
     rowSort: 'w', rowDir: -1, rowFilter: 'filter by model or text...',
     rowText: f => [f.check, f.model, f.summary].join(' '),
     detailOf: f => findingPane(f),
   });
-  host.replaceChildren(d);
+  const RT = (DATA.meta || {}).review;
+  host.replaceChildren(...[RT ? el('p', {class: 'fact tally', text: num(RT.findings)
+    + ' open finding(s) in ' + num(RT.pairs) + ' (model, check) pair(s). On the review form: '
+    + RT.line}) : null, d].filter(Boolean));
   GO.findings = id => {
     const f = FIND[id]; if (!f) return;
     d.showRows(byCheck[f.check]);

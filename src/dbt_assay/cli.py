@@ -5065,6 +5065,13 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
     # out, so the form says 978 where check does. It said 984. (P8)
     findings, _waived, _acts = live_mod.open_findings(project, digests, schema, entries, store,
                                                      cfg, config_path)
+    try:
+        _ruled = store.ruled_pairs()
+    except Exception:                                            # noqa: BLE001
+        _ruled = set()
+    tally = reviewform.tally([(f.subject, f.check) for f in findings], _ruled,
+                             [w for _f, w in _waived])
+    tally["line"] = reviewform.tally_line(tally)
     reads = {}
     if reads_path:
         reads = _json.loads(Path(reads_path).read_text())
@@ -5088,14 +5095,14 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
                           f"emitted without the monitoring numbers rather than with wrong "
                           f"ones.[/]")
     ctx = reviewform.context(store, project, cfg, findings, vol)
+    ctx["tally"] = tally
     p.write_text(reviewform.form_html(
         cards, sql, project.project_name or "this project",
         project.raw.get("metadata", {}).get("generated_at", ""), _pkg_version(), ctx, report))
 
     n_read = sum(1 for c in cards if c.get("read") or c.get("agent"))
-    console.print(f"wrote [bold]{p}[/] [dim]({len(cards)} card(s) from {len(findings)} finding(s); "
-                  f"a verdict covers a (model, check) pair, so one answer clears every finding of "
-                  f"that check on that model)[/]")
+    console.print(f"wrote [bold]{p}[/]")
+    console.print(f"   [dim]{tally['line']}[/]")
     console.print(f"   [dim]{n_read} carry a reading already; {len(cards) - n_read} are a cold "
                   f"start.[/]")
     if len(cards) - n_read:

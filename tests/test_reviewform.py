@@ -530,3 +530,59 @@ def test_a_finding_raised_by_a_broken_premise_carries_why_it_is_back(store, tmp_
                                                  "why": "3 duplicate value(s)", "broke_on": "2026-09-14"}}
     (card,), _sql = reviewform.cards([f], store, tmp_path)
     assert card["findings"][0]["back"]["broke_on"] == "2026-09-14"
+
+
+# --------------------------------------------------------------- U1: the numbers name their unit
+
+def test_the_tally_reconciles_findings_pairs_and_cards(store, tmp_path):
+    """sunny-data feedback U1: the page said 1,774 and the form 1,082, and neither said what it
+    counted. Findings, pairs, cards, the pairs a person ruled on, and what the policy set aside."""
+    fs = [_f("model.p.a", "check_one", "f1"), _f("model.p.a", "check_one", "f2"),
+          _f("model.p.a", "check_two", "f3"), _f("model.p.b", "check_one", "f4")]
+    _human(store, "model.p.a", "check_one")
+    t = reviewform.tally([(f.subject, f.check) for f in fs], store.ruled_pairs(),
+                         ["dismissed by x", "accepted by y until 2027-01-01", "waived: seed",
+                          "disabled in audit.yml"])
+    cards, _sql = reviewform.cards(fs, store, tmp_path)
+    assert t["findings"] == 4 and t["pairs"] == 3 and t["cards"] == len(cards) == 2
+    assert t["card_findings"] == sum(len(c["findings"]) for c in cards) == 2
+    assert t["ruled_pairs"] == 1 and t["ruled_findings"] == 2
+    assert t["set_aside"] == {"dismissed": 1, "accepted": 1, "waived": 1, "switched off": 1}
+    line = reviewform.tally_line(t)
+    assert line.startswith("2 card(s) covering 2 of 4 open finding(s)")
+    assert "1 pair(s) (2 finding(s)) a person already ruled on" in line
+    assert "1 dismissed, 1 accepted, 1 waived, 1 switched off" in line
+    html = reviewform.form_html(cards, {}, "p", "", "0", {"words": [], "explanations": [],
+                                                          "waivers": [], "settings": [],
+                                                          "tally": {**t, "line": line}})
+    assert "2 card(s) covering 2 finding(s)" in html and "every card" in html
+
+
+def test_the_page_and_the_form_print_the_same_tally(project_dir, tmp_path):
+    import json
+
+    from typer.testing import CliRunner
+
+    from dbt_assay.cli import app
+    store = str(tmp_path / "s.duckdb")
+    CliRunner().invoke(app, ["check", "--target", str(project_dir), "--store", store])
+    doc = json.loads(CliRunner().invoke(app, ["check", "--target", str(project_dir), "--store",
+                                              store, "--json"]).stdout)
+    f0 = doc["findings"][0]
+    s = Store(store)
+    _human(s, f"model.p.{f0['model']}", f0["check"])
+    s.close()
+    form = tmp_path / "form.html"
+    r = CliRunner().invoke(app, ["review", "--emit", str(form), "--target", str(project_dir),
+                                 "--store", store], env={"COLUMNS": "400"})
+    assert r.exit_code == 0, r.output
+    out = tmp_path / "p.html"
+    r2 = CliRunner().invoke(app, ["page", str(out), "--target", str(project_dir), "--store",
+                                  store])
+    assert r2.exit_code == 0, r2.output
+    meta = json.loads(next(tmp_path.glob("p*data/meta.json")).read_text())
+    line = meta["review"]["line"]
+    assert "Findings" in out.read_text() and "fact tally" in out.read_text()
+    assert line and "a person already ruled on" in line
+    assert line in r.output, (line, r.output)
+    assert line in form.read_text()
