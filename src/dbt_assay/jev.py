@@ -28,8 +28,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
+import threading
 import time
 import uuid
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 
 from dotenv import find_dotenv, load_dotenv
@@ -256,6 +259,11 @@ class Client:
     # Whether the endpoint ever rejected the policy -- measured, not assumed.
     provider_rejected: str = ""
     _resolved: tuple | None = field(default=None, repr=False)
+    # *** WORKERS SHARE ONE CAP. *** `prefetch` sends from several threads; each request reserves
+    # its estimate under the lock before it goes, so eight in flight cannot each pass a check the
+    # eight together would fail.
+    reserved: float = 0.0
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def _conn(self) -> tuple[str, dict, str]:
         if self._resolved is None:
@@ -273,7 +281,7 @@ class Client:
     def ask(self, state, questions: dict, *, caller: str = "assay") -> dict:
         """One batch of questions about one state. Uncached; `decide()` is the one with the table."""
         try:
-            import httpx
+            import httpx  # noqa: F401  (checked here, used in _send)
         except ImportError as e:
             raise RuntimeError(
                 "the judgment tier needs httpx: `uv add dbt-assay[jev]` or `pip install httpx`"
@@ -304,10 +312,20 @@ class Client:
 
         # Estimated BEFORE the call, because a cap that only fires after the spend is not a cap.
         est = len(json.dumps(body, default=str)) / 4 * USD_PER_INPUT_TOKEN
-        if self.spent_usd + est > self.max_spend_usd:
-            raise BudgetExceeded(
-                f"would exceed the ${self.max_spend_usd:.2f} cap "
-                f"(spent ${self.spent_usd:.4f}). Raise jev.max_spend_usd in audit.yml.")
+        with self._lock:
+            if self.spent_usd + self.reserved + est > self.max_spend_usd:
+                raise BudgetExceeded(
+                    f"would exceed the ${self.max_spend_usd:.2f} cap "
+                    f"(spent ${self.spent_usd:.4f}). Raise jev.max_spend_usd in audit.yml.")
+            self.reserved += est
+        try:
+            return self._send(spec, key, body, est, caller)
+        finally:
+            with self._lock:
+                self.reserved -= est
+
+    def _send(self, spec: dict, key: str, body: dict, est: float, caller: str) -> dict:
+        import httpx
 
         # Encoded ONCE, outside the retries. An encoding failure is assay's own bug, it happens
         # before anything reaches a provider, and retrying it only waits nine seconds to blame
@@ -319,11 +337,22 @@ class Client:
                 f"assay could not encode the request for {caller} ({e}). Nothing was sent to the "
                 f"provider; this is a bug in assay, not in your key or your network.") from e
         last = None
-        for attempt in range(self.retries):
+        # *** A 429 IS "SLOW DOWN", NOT "YOUR QUESTION IS WRONG". *** It was raised on the spot
+        # with every other 4xx; with several requests in flight it is the expected answer from a
+        # rate limit. It and a 5xx wait (the provider's Retry-After when it gives one, else an
+        # exponential backoff with jitter) and go again.
+        attempts = max(self.retries, RATE_LIMIT_ATTEMPTS)
+        for attempt in range(attempts):
             try:
                 r = httpx.post(spec["url"], content=payload, timeout=self.timeout,
                                headers={"Authorization": f"Bearer {key}",
                                         "Content-Type": "application/json"})
+                if r.status_code == 429 or r.status_code >= 500:
+                    last = RuntimeError(f"HTTP {r.status_code} from the provider")
+                    if attempt < attempts - 1:
+                        time.sleep(_backoff(r, attempt))
+                        continue
+                    break
                 out = r.json()
                 if "answers" not in out:
                     # *** A REJECTED POLICY IS DROPPED ONCE, LOUDLY, NOT SILENTLY FOREVER. ***
@@ -341,9 +370,10 @@ class Client:
                     # names the field. Surfacing it beats retrying what cannot succeed.
                     raise RuntimeError(f"HTTP {r.status_code}: {json.dumps(out)[:300]}")
                 used = int((out.get("usage") or {}).get("input_tokens") or 0)
-                self.calls += 1
-                self.input_tokens += used
-                self.spent_usd += used * USD_PER_INPUT_TOKEN if used else est
+                with self._lock:
+                    self.calls += 1
+                    self.input_tokens += used
+                    self.spent_usd += used * USD_PER_INPUT_TOKEN if used else est
                 return out
             except BudgetExceeded:
                 raise
@@ -353,7 +383,25 @@ class Client:
                     raise                       # a bad question will not fix itself
                 if attempt < self.retries - 1:
                     time.sleep(1.5 * (attempt + 1))
-        raise RuntimeError(f"jev failed after {self.retries} attempts: {last}")
+                elif attempt >= self.retries - 1:
+                    break
+        raise RuntimeError(f"jev failed after {attempts} attempts: {last}")
+
+
+# A rate-limited request is tried this many times before the command is told.
+RATE_LIMIT_ATTEMPTS = 6
+
+
+def _backoff(r, attempt: int) -> float:
+    """Seconds to wait: the provider's Retry-After when it says, else 1, 2, 4... up to 30, with
+    jitter so workers that were limited together do not return together."""
+    try:
+        ra = float(r.headers.get("retry-after") or "")
+        if 0 <= ra <= 120:
+            return ra
+    except (TypeError, ValueError):
+        pass
+    return min(30.0, 2.0 ** attempt) * (0.5 + random.random())
 
 
 # (caller, how many values) for every request that carried a non-finite float, coerced to null.
@@ -476,70 +524,207 @@ def decide(store, client: Client, recipe, questions: dict, *,
 
     hits, ask_these = cache_split(store, recipe, questions, prompt_version, sh)
 
+    # Answered a moment ago by `prefetch`, from several workers, and already written: it was this
+    # command's call, so it is served as one (not "cached") and the progress line already counted.
+    pre = (getattr(store, "_prefetched", None) or {}).pop((decision_key, sh), None)
+    if pre is not None:
+        for q, h in pre.items():
+            if q in questions:
+                hits[q] = h
+        ask_these = {q: d for q, d in ask_these.items() if q not in pre}
+
     if ask_these:
         resp = client.ask(state, ask_these, caller=caller)
-        served = resp.get("model") or model_name
-        # *** A CALL assay CANNOT NAME IS A CALL assay CANNOT COUNT. ***
-        # This was `resp.get("id") or ""`, and the provider returned no id for a whole day's work:
-        # 9,762 of 19,707 decisions on the field store carry an empty one, so nothing could say
-        # which rows shared a call and every total over them was a guess. The id is assay's to
-        # mint when the provider declines, and `id_source` says which happened rather than
-        # letting a minted id pass as the provider's.
-        call_id = resp.get("id") or ""
-        id_source = "provider" if call_id else "minted"
-        if not call_id:
-            call_id = f"assay-{uuid.uuid4().hex}"
-        usage = resp.get("usage") or {}
-        # *** ABSENT USAGE IS NULL, NOT ZERO. ***
-        # A zero here is a measurement saying the call was free. NULL is assay saying it does not
-        # know, which is the only honest reading and the one `assay cost` reports a count of.
-        used = usage.get("input_tokens")
-        used = int(used) if used is not None else None
-        out_used = usage.get("output_tokens")
-        out_used = int(out_used) if out_used is not None else None
-        usd = used * USD_PER_INPUT_TOKEN if used is not None else None
-        checksum = _checksum_for(store, decision_key)
-        inputs_json = json.dumps(recipe.inputs, sort_keys=True, default=str)
-        rows = []
-        answers_map = resp.get("answers") or {}
-        for q, ans in answers_map.items():
-            kind, answer, conf, probs = unpack(ans)
-            hits[q] = {"kind": kind, "answer": answer, "confidence": conf,
-                       "probabilities": json.loads(probs), "cached": False}
-            rows.append([decision_key, q, kind, answer, conf, probs, sh,
-                         version_of(prompt_version, q), served, call_id, caller,
-                         (contexts or {}).get(q, ""), used, checksum,
-                         recipe.builder, inputs_json])
-        # *** THE STATE ITSELF, KEYED BY ITS HASH. ***
-        # Written before the answers, so a decision can never point at a state that is not there.
-        # `insert or ignore`: the same state under the same hash is the same state, and a cache
-        # hit re-uses one by definition.
-        store.con.execute(
-            "insert or ignore into states (state_hash, state, first_seen) "
-            "values (?, ?, current_timestamp)",
-            [sh, json.dumps(state, default=str, sort_keys=True)])
-        # Written before the answers, for the same reason the state is: a decision must never
-        # point at a call that is not there.
-        store.con.execute(
-            """insert or replace into model_calls
-               (call_id, id_source, caller, model_name, input_tokens, output_tokens, usd,
-                usd_per_input_token, called_at)
-               values (?,?,?,?,?,?,?,?, current_timestamp)""",
-            [call_id, id_source, caller, served, used, out_used, usd, USD_PER_INPUT_TOKEN])
-        bulk.many(store.con,
-            """insert or replace into model_decisions
-               (decision_key, question, kind, answer, confidence, probabilities, state_hash,
-                prompt_version, model_version, call_id, caller, context, input_tokens,
-                file_checksum, state_builder, state_inputs, decided_at)
-               values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, current_timestamp)""", rows)
-        # keep the lookup index current: this is the one writer of model_decisions in a command
-        idx = getattr(store, "_latest_decisions", None)
-        if idx is not None:
-            for r in rows:
-                idx[(r[0], r[1], r[7])] = (r[2], r[3], r[4], r[5], r[6])
-    if ON_DECIDE is not None:
+        got, writes = _answered(store, client, recipe, sh, prompt_version, caller, contexts,
+                                resp, model_name)
+        hits.update(got)
+        _write(store, [writes])
+    if ON_DECIDE is not None and pre is None:
         ON_DECIDE(bool(ask_these), client)
     return hits
+
+
+def _answered(store, client: Client, recipe, sh: str, prompt_version, caller: str,
+              contexts, resp: dict, model_name: str) -> tuple[dict, tuple]:
+    """(the answers as `decide` returns them, the rows that record them) for one response."""
+    decision_key, state = recipe.key, recipe.state
+    served = resp.get("model") or model_name
+    # *** A CALL assay CANNOT NAME IS A CALL assay CANNOT COUNT. ***
+    # This was `resp.get("id") or ""`, and the provider returned no id for a whole day's work:
+    # 9,762 of 19,707 decisions on the field store carry an empty one, so nothing could say which
+    # rows shared a call and every total over them was a guess. The id is assay's to mint when
+    # the provider declines, and `id_source` says which happened rather than letting a minted id
+    # pass as the provider's.
+    call_id = resp.get("id") or ""
+    id_source = "provider" if call_id else "minted"
+    if not call_id:
+        call_id = f"assay-{uuid.uuid4().hex}"
+    usage = resp.get("usage") or {}
+    # *** ABSENT USAGE IS NULL, NOT ZERO. ***
+    # A zero here is a measurement saying the call was free. NULL is assay saying it does not
+    # know, which is the only honest reading and the one `assay cost` reports a count of.
+    used = usage.get("input_tokens")
+    used = int(used) if used is not None else None
+    out_used = usage.get("output_tokens")
+    out_used = int(out_used) if out_used is not None else None
+    usd = used * USD_PER_INPUT_TOKEN if used is not None else None
+    checksum = _checksum_for(store, decision_key)
+    inputs_json = json.dumps(recipe.inputs, sort_keys=True, default=str)
+    rows, hits = [], {}
+    for q, ans in (resp.get("answers") or {}).items():
+        kind, answer, conf, probs = unpack(ans)
+        hits[q] = {"kind": kind, "answer": answer, "confidence": conf,
+                   "probabilities": json.loads(probs), "cached": False}
+        rows.append([decision_key, q, kind, answer, conf, probs, sh,
+                     version_of(prompt_version, q), served, call_id, caller,
+                     (contexts or {}).get(q, ""), used, checksum,
+                     recipe.builder, inputs_json])
+    state_row = [sh, json.dumps(state, default=str, sort_keys=True)]
+    call_row = [call_id, id_source, caller, served, used, out_used, usd, USD_PER_INPUT_TOKEN]
+    return hits, (state_row, call_row, rows)
+
+
+def _write(store, writes: list) -> None:
+    """Record responses: their states, then their calls, then their answers.
+
+    *** THE STATE AND THE CALL BEFORE THE ANSWERS. *** A decision must never point at a state or
+    a call that is not there. `insert or ignore` on the state: the same state under the same hash
+    is the same state, and a cache hit re-uses one by definition."""
+    if not writes:
+        return
+    bulk.many(store.con, "insert or ignore into states (state_hash, state, first_seen) "
+                         "values (?, ?, current_timestamp)", [w[0] for w in writes])
+    bulk.many(store.con,
+              """insert or replace into model_calls
+                 (call_id, id_source, caller, model_name, input_tokens, output_tokens, usd,
+                  usd_per_input_token, called_at)
+                 values (?,?,?,?,?,?,?,?, current_timestamp)""", [w[1] for w in writes])
+    rows = [r for w in writes for r in w[2]]
+    bulk.many(store.con,
+              """insert or replace into model_decisions
+                 (decision_key, question, kind, answer, confidence, probabilities, state_hash,
+                  prompt_version, model_version, call_id, caller, context, input_tokens,
+                  file_checksum, state_builder, state_inputs, decided_at)
+                 values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, current_timestamp)""", rows)
+    # keep the lookup index current: `decide` and `prefetch` are the only writers of
+    # model_decisions while a command runs
+    idx = getattr(store, "_latest_decisions", None)
+    if idx is not None:
+        for r in rows:
+            idx[(r[0], r[1], r[7])] = (r[2], r[3], r[4], r[5], r[6])
+
+
+def concurrency() -> int:
+    """How many judged requests go at once: `jev.concurrency` in audit.yml, or
+    ASSAY_JEV_CONCURRENCY, else 8. 1 sends them one at a time, as before."""
+    try:
+        return max(1, int(os.environ.get("ASSAY_JEV_CONCURRENCY") or CONCURRENCY))
+    except ValueError:
+        return CONCURRENCY
+
+
+CONCURRENCY = 8                   # set from audit.yml's `jev.concurrency` when a config loads
+
+# Flushed to the store every this many answered requests, or this many seconds.
+FLUSH_EVERY, FLUSH_SECONDS = 100, 10.0
+
+
+def prefetch(store, client: Client, asks: list, *, caller: str = "assay",
+             workers: int | None = None) -> dict:
+    """Send every request a loop of `decide` calls is about to make, several at once.
+
+    *** 608 CALLS IN 488 SECONDS, ONE AT A TIME. *** (sunny-data box, 16c53fb) A judged command
+    sent one request, waited ~0.8s, and sent the next. `asks` is the loop's
+    [(recipe, questions, prompt_version, contexts)]; what the store does not already answer goes
+    out on a bounded pool, and the loop's own `decide` calls then find each answer waiting, so no
+    call site changes what it does with them.
+
+    Only the network is concurrent. Answers come back to THIS thread, which writes them in
+    chunks (every FLUSH_EVERY answers or FLUSH_SECONDS), never only at the end: each one is paid
+    for, and a crash or a deploy at request 500 keeps what the first 499 bought. The spend cap is
+    one reservation across every worker. A request that fails (the cap, a bad question, a
+    provider that stays down) is left for the loop's own `decide`, which reports it exactly as
+    it always has.
+    """
+    from .contracts import check_question_ids
+    workers = workers or concurrency()
+    store.con.execute(DDL)
+    pre = getattr(store, "_prefetched", None)
+    if pre is None:
+        pre = store._prefetched = {}
+    todo, seen = [], set()
+    for recipe, questions, prompt_version, contexts in asks:
+        if recipe is None:
+            continue
+        check_question_ids(questions)
+        sh = state_hash(recipe.state)
+        _hits, ask_these = cache_split(store, recipe, questions, prompt_version, sh)
+        if ask_these and (recipe.key, sh) not in pre and (recipe.key, sh) not in seen:
+            seen.add((recipe.key, sh))
+            todo.append((recipe, ask_these, prompt_version, contexts, sh))
+    out = {"sent": 0, "failed": 0, "left": 0}
+    if workers <= 1 or len(todo) < 2:
+        return out                   # nothing to overlap; the loop sends it
+    model_name = client.model or client._conn()[1]["model"]
+    buf, last_flush = [], time.monotonic()
+
+    def flush():
+        nonlocal buf, last_flush
+        _write(store, buf)
+        buf, last_flush = [], time.monotonic()
+
+    it = iter(todo)
+    stop = False
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        running = {}
+        try:
+            while True:
+                while not stop and len(running) < workers:
+                    item = next(it, None)
+                    if item is None:
+                        break
+                    running[ex.submit(client.ask, item[0].state, item[1], caller=caller)] = item
+                if not running:
+                    break
+                done, _ = wait(running, timeout=FLUSH_SECONDS, return_when=FIRST_COMPLETED)
+                for f in done:
+                    recipe, ask_these, pv, contexts, sh = running.pop(f)
+                    try:
+                        resp = f.result()
+                    except BudgetExceeded:
+                        stop = True          # the loop's own decide reports the cap
+                        out["failed"] += 1
+                        continue
+                    except Exception:        # noqa: BLE001
+                        out["failed"] += 1   # the loop's own decide retries and reports it
+                        continue
+                    got, writes = _answered(store, client, recipe, sh, pv, caller, contexts,
+                                            resp, model_name)
+                    buf.append(writes)
+                    pre[(recipe.key, sh)] = got
+                    out["sent"] += 1
+                    if ON_DECIDE is not None:
+                        ON_DECIDE(True, client)
+                if len(buf) >= FLUSH_EVERY or (buf and time.monotonic() - last_flush
+                                               >= FLUSH_SECONDS):
+                    flush()
+        finally:
+            # Interrupted or not, what was paid for is written before anything else happens:
+            # requests already sent are waited for and kept; nothing new goes out.
+            for f, (recipe, _a, pv, contexts, sh) in running.items():
+                if f.cancel():
+                    continue
+                try:
+                    resp = f.result()
+                except BaseException:        # noqa: BLE001, S112
+                    continue
+                got, writes = _answered(store, client, recipe, sh, pv, caller, contexts, resp,
+                                        model_name)
+                buf.append(writes)
+                pre[(recipe.key, sh)] = got
+            flush()
+    out["left"] = sum(1 for _ in it)
+    return out
 
 
 def version_of(prompt_version: str | dict, question: str) -> str:

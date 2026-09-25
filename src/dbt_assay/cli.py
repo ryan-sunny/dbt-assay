@@ -37,7 +37,7 @@ from . import versioning as ver_mod
 from .checks import unevaluable_tests
 from .config import DEFAULT_YML, Config
 from .infer import Schema, derive_columns
-from .jev import BudgetExceeded, Client, NoProvider, decide
+from .jev import BudgetExceeded, Client, NoProvider, decide, prefetch
 from .manifest import Project
 from .parse import digest
 from .store import Store
@@ -1675,13 +1675,21 @@ def claims(
     # the store each time)
     kind_ctx = _state_ctx(project, digests, schema, store, cfg)
     with _judging("sentences", sum(-(-len(cs) // claims_mod.CHUNK) for cs in todo.values())):
+        chunks = [(uid, cs[i:i + claims_mod.CHUNK]) for uid, cs in todo.items()
+                  for i in range(0, len(cs), claims_mod.CHUNK)]
+        recs = {(uid, ch[0].claim_id): states.make(
+                    "claim_kind", kind_ctx, key=f"{uid}::sentence::{ch[0].claim_id}",
+                    inputs={"uid": uid, "claim_ids": [c.claim_id for c in ch]})
+                for uid, ch in chunks}
+        store.use_project(project)
+        prefetch(store, client, [(recs[(uid, ch[0].claim_id)], claims_mod.kind_questions(ch),
+                                  claims_mod.KIND_VERSION,
+                                  {f"sentence__{i}": c.text[:120] for i, c in enumerate(ch)})
+                                 for uid, ch in chunks], caller="assay.claims")
         for uid, cs in todo.items():
             for chunk in [cs[i:i + claims_mod.CHUNK]
                           for i in range(0, len(cs), claims_mod.CHUNK)]:
-                rec = states.make(
-                    "claim_kind", kind_ctx,
-                    key=f"{uid}::sentence::{chunk[0].claim_id}",
-                    inputs={"uid": uid, "claim_ids": [c.claim_id for c in chunk]})
+                rec = recs[(uid, chunk[0].claim_id)]
                 if rec is None:
                     continue
                 try:
@@ -1782,6 +1790,7 @@ def verify(
     # nothing) A fresh context per claim threw away its memo, so every claim re-read all 5,820
     # stored claims from the store.
     align_ctx = _state_ctx(project, digests, schema, store, cfg)
+    ready: list = []
     with _judging("claims", len(rows)):
         for r in rows:
             ev = claims_mod.evidence_for(r["subject"], project, digests, schema, observed,
@@ -1806,6 +1815,13 @@ def verify(
                               inputs={"claim_id": c.claim_id})
             if rec is None:
                 continue
+            ready.append((c, rec))
+        # every request at once (bounded), then each answer read in order
+        store.use_project(project)
+        prefetch(store, client, [(rec, claims_mod.align_question(), claims_mod.ALIGN_VERSION,
+                                  {"claim": f"{c.subject_name}: {c.text[:120]}"})
+                                 for c, rec in ready], caller="assay.verify")
+        for c, rec in ready:
             try:
                 # so the answer records the checksum of the SQL it was computed from
                 store.use_project(project)
@@ -1873,7 +1889,10 @@ def traverse(
 
     # *** CODE NARROWS FIRST. *** An edge that carries everything and joins on nothing cannot have
     # changed a grain, and asking is paying to be told so.
-    cands = [f for f in facts if f.joined_on or f.dropped]
+    # An installed package's own edges are not this project's to judge (sunny-data: the 37 calls
+    # a warm run re-sent were dbt_project_evaluator's, present once its build succeeded).
+    cands = [f for f in facts if (f.joined_on or f.dropped)
+             and not getattr(project.models.get(f.child), "is_installed_package", False)]
     if model:
         cands = [f for f in cands if f.child_name == model or f.parent_name == model]
     scope = resolve(project, select)
@@ -1896,11 +1915,15 @@ def traverse(
     ctx = _state_ctx(project, digests, schema, store, cfg)
     counts, bad = Counter(), []
     with _judging("edges", len(cands)):
-        for f in cands:
-            rec = states.make("edge", ctx, key=f"{f.child}::edge::{f.parent}",
-                              inputs={"parent": f.parent, "child": f.child})
-            if rec is None:
-                continue
+        ready = [(f, states.make("edge", ctx, key=f"{f.child}::edge::{f.parent}",
+                                 inputs={"parent": f.parent, "child": f.child})) for f in cands]
+        ready = [(f, rec) for f, rec in ready if rec is not None]
+        store.use_project(project)
+        prefetch(store, client, [(rec, {"edge": choice_q("edge_preserves_the_grain")},
+                                  _prompt_version("edge_preserves_the_grain"),
+                                  {"edge": f"{f.parent_name} -> {f.child_name}"})
+                                 for f, rec in ready], caller="assay.traverse")
+        for f, rec in ready:
             try:
                 # so the answer records the checksum of the SQL it was computed from
                 store.use_project(project)
@@ -2435,7 +2458,8 @@ def page(
     cfg = Config.load(config_path)
     tdir = _find_target(target)
     project, digests, _f, schema, _s = _load(tdir, dialect)
-    store = Store(store_path) if Path(store_path).exists() else None
+    # The page only reads the store: read-only, so it runs beside `review --emit`.
+    store = Store(store_path, read_only=True) if Path(store_path).exists() else None
     facts, _ = relate.run_all(project, digests, schema)
     entries = inv_mod.build(project, digests, schema, store,
                             probe_mod.read(store) if store else {}, facts=facts)
@@ -2819,6 +2843,11 @@ def ask(
         want = [want] if isinstance(want, str) else (want or [])
         counts, hits = Counter(), []
         with _judging(name, len(work), plan_):
+            # the requests go out several at once; the loop below then finds each answer waiting
+            store.use_project(project)
+            prefetch(store, client, [(rec, qs, q["prompt_version"],
+                                      {q["id_prefix"]: f"{sub.name}"}) for sub, rec in work],
+                     caller=f"assay.ask.{name}")
             for sub, rec in work:
                 try:
                     # so the answer records the checksum of the SQL it was computed from
@@ -3699,10 +3728,17 @@ def _judge_monitoring(project, digests, schema, store, cfg, rep, ran, threshold,
         q = QUESTIONS[fam]
         want = q.get("finding_when") or []
         counts, hits = Counter(), []
+        recs = []
         for uid, key, name, st in items:
             v = ctx.vocab_for(uid)
-            rec = states.make("volume", ctx, key=key, inputs={"uid": uid, "family": fam},
-                              state={**st, **({"vocabulary": v} if v else {})})
+            recs.append(states.make("volume", ctx, key=key, inputs={"uid": uid, "family": fam},
+                                    state={**st, **({"vocabulary": v} if v else {})}))
+        store.use_project(project)
+        prefetch(store, client, [(rec, {q["id_prefix"]: choice_q(fam)}, q["prompt_version"],
+                                  {q["id_prefix"]: name})
+                                 for (_u, _k, name, _s), rec in zip(items, recs)],
+                 caller=f"assay.volume.{fam}")
+        for (uid, key, name, st), rec in zip(items, recs):
             try:
                 store.use_project(project)
                 ans = decide(store, client, rec, {q["id_prefix"]: choice_q(fam)},
@@ -3926,12 +3962,19 @@ def _judge_volume(project, digests, schema, store, store_path, cfg, rep, thresho
     want = q.get("finding_when") or []
     want = [want] if isinstance(want, str) else list(want)
     with _judging("pairs", len(subjects)):
-        for i, (uid, vol, claim) in enumerate(subjects):
-            st = elem.claim_state(project, uid, vol, claim, entries.get(uid),
-                                  vocab_ctx.vocab_for(uid))
-            rec = states.make("volume", vocab_ctx,
-                              key=f"{uid}::volume::{claim['claim_id']}",
-                              inputs={"uid": uid, "claim_id": claim["claim_id"]}, state=st)
+        recs = [states.make("volume", vocab_ctx, key=f"{uid}::volume::{claim['claim_id']}",
+                            inputs={"uid": uid, "claim_id": claim["claim_id"]},
+                            state=elem.claim_state(project, uid, vol, claim, entries.get(uid),
+                                                   vocab_ctx.vocab_for(uid)))
+                for uid, vol, claim in subjects]
+        store.use_project(project)
+        prefetch(store, client, [(rec, {q["id_prefix"]: choice_q("volume_contradicts_a_claim")},
+                                  q["prompt_version"],
+                                  {q["id_prefix"]: f"{project.models[uid].name}: "
+                                                   f"{claim['text'][:100]}"})
+                                 for (uid, _v, claim), rec in zip(subjects, recs)],
+                 caller="assay.volume")
+        for i, ((uid, vol, claim), rec) in enumerate(zip(subjects, recs)):
             try:
                 # so the answer records the checksum of the SQL it was computed from
                 store.use_project(project)
@@ -4902,10 +4945,19 @@ def columns(
     store = Store(store_path)
     agree = disagree = 0
     disagreements = []
+    col_ctx = _state_ctx(project, digests, schema, store, cfg)
+    col_recs = {(uid, tuple(chunk)): states.make("columns", col_ctx, key=uid,
+                                                 inputs={"uid": uid, "columns": list(chunk)})
+                for uid, facts, cols, grain in work for chunk in columns_mod.chunks(cols)}
+    store.use_project(project)
+    prefetch(store, client, [(col_recs[(uid, tuple(chunk))],
+                              columns_mod.questions_for(chunk, facts, with_null),
+                              f"{columns_mod.ROLE_VERSION}+{columns_mod.NULL_VERSION}", None)
+                             for uid, facts, cols, grain in work
+                             for chunk in columns_mod.chunks(cols)], caller="assay.columns")
     for uid, facts, cols, grain in work:
         for chunk in columns_mod.chunks(cols):
-            rec = states.make("columns", _state_ctx(project, digests, schema, store, cfg),
-                              key=uid, inputs={"uid": uid, "columns": list(chunk)})
+            rec = col_recs[(uid, tuple(chunk))]
             if rec is None:
                 continue
             try:
@@ -5017,7 +5069,8 @@ def review(
     Until a question has verdicts, config refuses to let it fail a build. There is no way to skip
     this and still gate on anything honestly.
     """
-    store = Store(store_path)
+    # `--emit` only reads: read-only, so it can run beside `page` or another reader.
+    store = Store(store_path, read_only=bool(emit) and Path(store_path).exists())
 
     # *** ONE TURN PER FINDING IS 159 TURNS, AND NOBODY DOES 159 TURNS. ***
     # The interactive loop is the right shape for a call and the wrong shape for a project. The
@@ -6444,6 +6497,9 @@ def read(
     tally = Counter()
     root = Path(tdir).parent
     with _judging("read", len(work), plan_):
+        store.use_project(project)
+        prefetch(store, client, [(rec, qq, versions, {q["id_prefix"]: sub.name})
+                                 for sub, rec, qq, _l in work], caller="assay.read")
         for sub, rec, qq, lines in work:
             try:
                 store.use_project(project)
@@ -7024,6 +7080,9 @@ def clusters(
                               f"exceeds the ${cfg.max_spend_usd:.2f} cap in audit.yml.")
                 continue
             with _judging(fam, len(recs), plan_):
+                work_store.use_project(project)
+                prefetch(work_store, client, [(r, qs, q["prompt_version"], None) for r in recs],
+                         caller="assay.clusters")
                 for r in recs:
                     try:
                         work_store.use_project(project)
@@ -7173,6 +7232,12 @@ def semantics(
 
     intents, stale = {}, []
     with _judging("semantics", len(work), plan_):
+        store.use_project(project)
+        prefetch(store, client, [(rec, qs, pv, ({f"pred__{i}": f"{s.name}: {p}"
+                                                 for i, p in enumerate(chunk)}
+                                                if kind == "pred" else None))
+                                 for kind, s, chunk, rec, qs, pv in work],
+                 caller="assay.semantics")
         for kind, s, chunk, rec, qs, pv in work:
             try:
                 # so the answer records the checksum of the SQL it was computed from
@@ -7382,11 +7447,16 @@ def align(
         store = Store(store_path)
 
     routed, agree, checked = {}, 0, 0
-    for chunk in [pairs[i:i + 10] for i in range(0, len(pairs), 10)]:
-        rec = states.make("align", _state_ctx(project, digests, schema, store, cfg,
-                                              entries=entries),
-                          key=f"align::{states.digest_of(p.key for p in chunk)}",
-                          inputs={"pairs": [p.key for p in chunk]})
+    al_ctx = _state_ctx(project, digests, schema, store, cfg, entries=entries)
+    al_chunks = [pairs[i:i + 10] for i in range(0, len(pairs), 10)]
+    al_recs = [states.make("align", al_ctx, key=f"align::{states.digest_of(p.key for p in ch)}",
+                           inputs={"pairs": [p.key for p in ch]}) for ch in al_chunks]
+    store.use_project(project)
+    prefetch(store, client, [(r, align_mod.questions_for(ch), align_mod.ALIGN_VERSION,
+                              {f"align__{i}": f"{x.model_a}.{x.column_a} ~ {x.model_b}.{x.column_b}"
+                               for i, x in enumerate(ch)})
+                             for ch, r in zip(al_chunks, al_recs)], caller="assay.align")
+    for chunk, rec in zip(al_chunks, al_recs):
         if rec is None:
             continue
         try:
@@ -7595,11 +7665,15 @@ def tests_cmd(
         store = Store(store_path)
 
     wrong = []
-    for chunk in [subs[i:i + testing_mod.CHUNK] for i in range(0, len(subs), testing_mod.CHUNK)]:
-        rec = states.make("severity", _state_ctx(project, digests, None, store, cfg,
-                                                 entries=entries),
-                          key=f"sev::{states.digest_of(s.test_name for s in chunk)}",
-                          inputs={"tests": [s.test_name for s in chunk]})
+    sev_ctx = _state_ctx(project, digests, None, store, cfg, entries=entries)
+    sev_chunks = [subs[i:i + testing_mod.CHUNK] for i in range(0, len(subs), testing_mod.CHUNK)]
+    sev_recs = [states.make("severity", sev_ctx,
+                            key=f"sev::{states.digest_of(s.test_name for s in ch)}",
+                            inputs={"tests": [s.test_name for s in ch]}) for ch in sev_chunks]
+    store.use_project(project)
+    prefetch(store, client, [(r, testing_mod.questions_for(ch), testing_mod.SEV_VERSION, None)
+                             for ch, r in zip(sev_chunks, sev_recs)], caller="assay.tests")
+    for chunk, rec in zip(sev_chunks, sev_recs):
         if rec is None:
             continue
         try:
@@ -7859,6 +7933,9 @@ def practices(
                       + (f" and {len(not_checked) - 8} more" if len(not_checked) > 8 else "")
                       + ". This is not a pass. `dbt build --select package:dbt_project_evaluator` "
                         "builds them.[/]")
+    if rep.disabled:
+        console.print(f"[dim]{len(rep.disabled)} evaluator rule(s) are disabled in the project "
+                      f"and were not read: {', '.join(rep.disabled)}.[/]")
     if not rep.rows:
         console.print("\n[yellow]no dbt-project-evaluator rows.[/] [dim]"
                       + ("Given the above, that is because it was not built, not because the "
@@ -7935,6 +8012,9 @@ def practices(
         raise typer.Exit(0)
     verdicts: dict = {}
     with _judging("practices", len(work), plan_):
+        store.use_project(project)
+        prefetch(store, client, [(rec, prac_mod.question_for(flag), prac_mod.PRACTICE_VERSION,
+                                  None) for _c, flag, rec in work], caller="assay.practices")
         for c, flag, rec in work:
             try:
                 # so the answer records the checksum of the SQL it was computed from

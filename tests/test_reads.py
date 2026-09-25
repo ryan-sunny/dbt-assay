@@ -39,6 +39,7 @@ def fake_jev(monkeypatch):
                     "probabilities": {"correct": 0.9, "cannot_tell": 0.1}} for k in questions}
     monkeypatch.setattr(cli, "Client", C)
     monkeypatch.setattr(cli, "decide", decide)
+    monkeypatch.setattr(cli, "prefetch", lambda *_a, **_k: {"sent": 0})   # decide is the stub
     return calls
 
 

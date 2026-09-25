@@ -402,6 +402,9 @@ class Config:
         cfg.provider = j.get("provider", "auto")
         cfg.model = j.get("model", "jev-latest")
         cfg.max_spend_usd = float(j.get("max_spend_usd", 1.0))
+        if j.get("concurrency") is not None:
+            from . import jev as _jev
+            _jev.CONCURRENCY = max(1, int(j["concurrency"]))
         gating = data.get("gating") or {}
         cfg.min_adjudications = int(gating.get("min_adjudications", 20))
         cfg.min_agreement = float(gating.get("min_agreement", 0.0))
@@ -634,6 +637,7 @@ jev:
   provider: auto
   model: jev-latest
   max_spend_usd: 1.0      # hard cap per invocation. ~80 full sweeps of a 300-model project.
+  concurrency: 8          # judged requests in flight at once; 1 sends them one at a time
 
   # WHO MAY SEE YOUR SQL, when the provider is a router. A judged call sends a digest of compiled
   # SQL and the prose your project wrote about itself; this is the request that they not keep it.

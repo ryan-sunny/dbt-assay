@@ -315,8 +315,35 @@ def lock_message(path: str, err: str) -> str:
             f"was written by this run.")
 
 
+class _ReadOnly:
+    """A read-only connection that lets the store's own `create ... if not exists` pass.
+
+    Every module that owns a table creates it before use; on a reader those are no-ops at best
+    and errors in DuckDB's read-only mode. They are skipped here. Any other write is refused by
+    DuckDB, loudly, so a reader that tries to write is found rather than quietly dropped.
+    """
+
+    def __init__(self, con):
+        self._con = con
+
+    def execute(self, sql, *a, **k):
+        head = str(sql).lstrip().lower()
+        if head.startswith(("create table if not exists", "create index if not exists",
+                            "create sequence if not exists", "create view if not exists",
+                            "create or replace view", "set ")) or \
+                (head.startswith("create") and "if not exists" in head[:80]):
+            if head.startswith("set "):
+                return self._con.execute(sql, *a, **k)
+            return self._con.execute("select 1 where false")
+        return self._con.execute(sql, *a, **k)
+
+    def __getattr__(self, name):
+        return getattr(self._con, name)
+
+
 class Store:
-    def __init__(self, path: str | Path = "assay.duckdb", timeout: float | None = None):
+    def __init__(self, path: str | Path = "assay.duckdb", timeout: float | None = None,
+                 read_only: bool = False):
         """`timeout` seconds to wait for the write lock. 0 means do not wait.
 
         Waiting is opt-in because the honest default for a person at a terminal is to be TOLD who
@@ -334,7 +361,17 @@ class Store:
         deadline = time.monotonic() + max(0.0, float(timeout or 0.0))
         while True:
             try:
-                self.con = duckdb.connect(self.path)
+                try:
+                    self.con = duckdb.connect(self.path, read_only=read_only)
+                except Exception as e:
+                    # DuckDB will not open one file read-only in a process that already has it
+                    # open to write (a test, an MCP server): then this reader shares that mode.
+                    if not read_only or _is_lock_error(str(e)):
+                        raise
+                    read_only = False
+                    self.con = duckdb.connect(self.path)
+                if read_only:
+                    self.con = _ReadOnly(self.con)
                 break
             except Exception as e:
                 text = str(e)
@@ -356,6 +393,18 @@ class Store:
         # into one in the SESSION's zone: the box wrote UTC, the laptop wrote Denver time, and a
         # laptop run made after the box's sorted before it, so "latest run" was the wrong one.
         self.con.execute("SET TimeZone = 'UTC'")
+        self.read_only = read_only
+        if read_only:
+            # *** A READER NEEDS NO LOCK. *** (sunny-data) `page` and `review --emit` only read,
+            # and a read-write open held DuckDB's one writer lock, so they could not run beside
+            # each other. Read-only, several run at once. Nothing is created or migrated: a store
+            # a writer has not brought up to date is read as it is.
+            self.renamed_question_ids, self.unrenamable_question_ids = [], []
+            self.checksums: dict = {}
+            self._ddl_ok = True
+            self.superseded_decisions = self.stale_decisions = 0
+            self.observations_kept = 0
+            return
         self.con.execute(DDL)
         self.renamed_question_ids: list[tuple[str, str, int]] = []
         self.unrenamable_question_ids: list[tuple[str, str, int]] = []

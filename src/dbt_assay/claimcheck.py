@@ -29,6 +29,7 @@ import hashlib
 import json
 import random
 import re
+import threading
 from datetime import datetime, timezone
 
 import sqlglot
@@ -325,9 +326,10 @@ def run(project, schema, store, obligations: list, proven: set, *, force: bool =
     rows: list = []
     counter = [0]
     now = datetime.now(timezone.utc)
-    # every model's SQL runs in one worker process: an engine crash costs that model, not the run
-    from .sandbox import Worker
-    with Worker() as worker:
+    # every model's SQL runs in a worker process, several at once: an engine crash costs that
+    # model, not the run
+    from .sandbox import Worker, default_slots
+    with Worker(slots=default_slots()) as worker:
         _run_models(project, schema, by_model, have, force, dialect, plugins, worker, rows, now,
                     counter)
     n = counter[0]
@@ -340,24 +342,38 @@ def run(project, schema, store, obligations: list, proven: set, *, force: bool =
 
 def _run_models(project, schema, by_model, have, force, dialect, plugins, worker, rows, now,
                 counter) -> None:
-    for uid, certs in sorted(by_model.items()):
-        # the inputs meet EVERY premise of the model's proven certificates at once, so all its
-        # claims are tested on the same runs
-        allp = [p for c in certs for p in c["premises"]]
-        key = _premises_key(certs)
-        todo = [c for c in certs if force or have.get((uid, c["property"])) != (c["checksum"], key)]
-        if not todo:
-            continue
-        m = project.models.get(uid)
-        if m is None or not m.readable:
-            continue
+    def one(item):
+        out: list = []
+        _run_model(project, schema, item[0], item[1], have, force, dialect, plugins, worker, out,
+                   now, counter)
+        return out
+    for got in worker.map(one, sorted(by_model.items())):
+        rows.extend(got)
+
+
+_COUNT = threading.Lock()          # models run from several threads
+
+
+def _run_model(project, schema, uid, certs, have, force, dialect, plugins, worker, rows, now,
+               counter) -> None:
+    # the inputs meet EVERY premise of the model's proven certificates at once, so all its
+    # claims are tested on the same runs
+    allp = [p for c in certs for p in c["premises"]]
+    key = _premises_key(certs)
+    todo = [c for c in certs if force or have.get((uid, c["property"])) != (c["checksum"], key)]
+    if not todo:
+        return
+    m = project.models.get(uid)
+    if m is None or not m.readable:
+        return
+    with _COUNT:
         counter[0] += len(todo)
-        got = check_model(project, schema, uid, m.compiled, dialect,
-                          [{**c, "premises": allp} for c in todo], plugins=plugins,
-                          worker=worker)
-        for c in todo:
-            st, detail = got[c["property"]]
-            rows.append((uid, c["property"], c["checksum"], key, st, detail, now))
+    got = check_model(project, schema, uid, m.compiled, dialect,
+                      [{**c, "premises": allp} for c in todo], plugins=plugins,
+                      worker=worker)
+    for c in todo:
+        st, detail = got[c["property"]]
+        rows.append((uid, c["property"], c["checksum"], key, st, detail, now))
 
 
 def stored(store) -> dict:

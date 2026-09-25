@@ -186,6 +186,57 @@ def question_for(flag: Flag) -> dict:
                                 PRACTICE_Q["criteria"])}
 
 
+# Engines whose information_schema lists columns per (schema, table) and answers it cheaply.
+_LISTABLE = ("duckdb", "postgres", "snowflake", "redshift")
+
+
+def present_columns(probe_mod, rels, project_dir: str, profiles_dir: str | None, dbt_bin: str,
+                    dialect: str = "duckdb") -> dict | None:
+    """{relation as given: its columns (lowercase), or None when the table is not built}, from
+    ONE statement; None overall when the engine cannot be asked, and then nothing is filtered.
+
+    *** ONE MISSING COLUMN COST A dbt CALL PER HALVING. *** (sunny-data box) The counted checks
+    send a union of counts; a member naming a table that is not built, or a column the built
+    table does not have yet, fails the whole statement, which is then split in halves to find it,
+    each half another dbt start (~9s on the box). `practices` made 13 calls where one would do.
+    Listed first, a member that cannot run is left out and stays uncounted, which is what the
+    halving concluded about it anyway, one call later each time.
+    """
+    if dialect not in _LISTABLE:
+        return None
+    parts = {}
+    for r in set(rels):
+        bits = [x.strip('"`').lower() for x in str(r).split(".")]
+        if len(bits) < 2:
+            return None                 # a bare name: which schema is not known here
+        parts[r] = (bits[-2], bits[-1])
+    if not parts:
+        return {}
+    names = ", ".join("'" + t.replace("'", "''") + "'" for t in sorted({t for _s, t in
+                                                                           parts.values()}))
+    got = probe_mod.run_sql(
+        "select lower(table_schema) as s, lower(table_name) as t, lower(column_name) as c "
+        f"from information_schema.columns where lower(table_name) in ({names})",
+        project_dir, profiles_dir, dbt_bin, limit=500_000,
+        caller="assay.practices.present_columns", kind="metadata")
+    if got.failed:
+        return None
+    if any(not {"s", "t", "c"} <= set(row) for row in got.rows):
+        return None                     # not a listing: filter nothing rather than everything
+    have: dict = {}
+    for row in got.rows:
+        have.setdefault((str(row["s"]), str(row["t"])), set()).add(str(row["c"]))
+    return {r: have.get(st) for r, st in parts.items()}
+
+
+def _runnable(present: dict | None, rel: str, cols=()) -> bool:
+    """Whether a count over `rel` and `cols` can run, as far as the listing knows."""
+    if present is None:
+        return True
+    have = present.get(rel)
+    return have is not None and all(str(c).lower() in have for c in cols)
+
+
 def primary_key_patches(project, entries) -> list[tuple]:
     """*** WHERE A JUDGMENT BEATS THE STANDARD CHECK OUTRIGHT. ***
 
@@ -200,6 +251,9 @@ def primary_key_patches(project, entries) -> list[tuple]:
     for e in entries:
         if e.uid in tested or not e.grain or e.unreadable:
             continue
+        m = (getattr(project, "models", None) or {}).get(e.uid)
+        if m is not None and getattr(m, "is_installed_package", False):
+            continue                    # a package's model is not this project's to test
         cols = e.grain.value if isinstance(e.grain.value, list) else [e.grain.value]
         # *** A TEST CANNOT ASSERT ON A COLUMN THE MODEL DOES NOT EMIT. ***
         # Reported from the field: 0 of 15 proposed grains held, and 9 named a column that is not
@@ -269,7 +323,7 @@ def fanout(n: int, d: int) -> str:
 
 
 def verify_join_keys(entries, project, probe_mod, project_dir: str, profiles_dir: str | None,
-                     dbt_bin: str, schema=None, batch: int = 40, store=None) -> int:
+                     dbt_bin: str, schema=None, batch: int = 200, store=None) -> int:
     """Count whether each flagged hop's join key is unique IN THE DATA, and refuse the finding.
 
     *** dbt KNOWS WHICH KEYS ARE DECLARED UNIQUE. IT DOES NOT KNOW WHICH KEYS ARE. ***
@@ -340,6 +394,9 @@ def verify_join_keys(entries, project, probe_mod, project_dir: str, profiles_dir
         walk(chunk[:mid])
         walk(chunk[mid:])
 
+    present = present_columns(probe_mod, [rel for _k, rel in items], project_dir, profiles_dir,
+                              dbt_bin, getattr(project, "dialect", "duckdb"))
+    items = [(k, rel) for k, rel in items if _runnable(present, rel, k[1])]
     for i in range(0, len(items), batch):
         walk(items[i:i + batch])
 
@@ -389,7 +446,7 @@ def grain_verdict(counted) -> tuple[str, str]:
 
 
 def verify_grains(patches: list, project, probe_mod, project_dir: str,
-                  profiles_dir: str | None, dbt_bin: str, batch: int = 60, schema=None) -> dict:
+                  profiles_dir: str | None, dbt_bin: str, batch: int = 200, schema=None) -> dict:
     """{model_name: (rows, distinct)} for every proposal that could be counted.
 
     A model absent from the result was not counted, and an absent count must never read as a pass:
@@ -440,6 +497,9 @@ def verify_grains(patches: list, project, probe_mod, project_dir: str,
         walk(chunk[:mid])
         walk(chunk[mid:])
 
+    present = present_columns(probe_mod, [by_name[n] for n, _c in todo], project_dir,
+                              profiles_dir, dbt_bin, getattr(project, "dialect", "duckdb"))
+    todo = [(n, c) for n, c in todo if _runnable(present, by_name[n], c)]
     for i in range(0, len(todo), batch):
         walk(todo[i:i + batch])
     return out
@@ -503,7 +563,7 @@ def row_loss_candidates(entries) -> list[tuple]:
 
 
 def verify_row_loss(entries, project, probe_mod, project_dir: str, profiles_dir: str | None,
-                    dbt_bin: str, schema=None, batch: int = 40) -> int:
+                    dbt_bin: str, schema=None, batch: int = 200) -> int:
     """Count parent and child rows for every candidate hop. Returns how many it counted.
 
     A hop it could not count stays absent from `row_loss`, and an absent count is never a pass:
@@ -547,6 +607,9 @@ def verify_row_loss(entries, project, probe_mod, project_dir: str, profiles_dir:
         walk(chunk[:mid])
         walk(chunk[mid:])
 
+    present = present_columns(probe_mod, [by_name[n] for n in todo], project_dir, profiles_dir,
+                              dbt_bin, getattr(project, "dialect", "duckdb"))
+    todo = [n for n in todo if _runnable(present, by_name[n])]
     for i in range(0, len(todo), batch):
         walk(todo[i:i + batch])
 
@@ -591,7 +654,7 @@ def hop_drops_most_rows(project, entries, threshold: float = 0.8) -> list:
 # ------------------------------------------------------------------- minimality, counted not judged
 
 def verify_minimality(candidates: dict, probe_mod, project_dir: str, profiles_dir: str | None,
-                      dbt_bin: str, batch: int = 20) -> dict:
+                      dbt_bin: str, batch: int = 50, dialect: str = "duckdb") -> dict:
     """Which columns of each candidate key actually ADD identifying power.
 
     *** THIS WAS A JUDGED QUESTION AND IT IS ARITHMETIC. ***
@@ -665,6 +728,9 @@ def verify_minimality(candidates: dict, probe_mod, project_dir: str, profiles_di
         walk(chunk[:mid])
         walk(chunk[mid:])
 
+    present = present_columns(probe_mod, [rel for rel, _c in work], project_dir, profiles_dir,
+                              dbt_bin, dialect)
+    work = [(rel, cols) for rel, cols in work if _runnable(present, rel, cols)]
     for i in range(0, len(work), batch):
         walk(work[i:i + batch])
     return out

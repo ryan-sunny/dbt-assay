@@ -386,13 +386,16 @@ def run(project, digests, schema, store, *, via: str = "duckdb", select=None, fo
             and (force or (u, m.checksum or "") not in done)]
     if todo:
         say(f"checking the parse of {len(todo)} model(s) against their SQL ({via})")
-    from .sandbox import Worker
-    with Worker() as worker:
-        for uid, m in todo:
+    from .sandbox import Worker, default_slots
+    # In DuckDB each model runs in a sandbox process, several at once; through the warehouse it
+    # is a dbt call, and those share one DuckDB writer, so they go one at a time.
+    with Worker(slots=1 if via == "warehouse" else default_slots()) as worker:
+        def one(item):
+            _uid, m = item
             if via == "warehouse":
-                st, detail, n = check_warehouse(project, schema, m.compiled, dialect, runner)
-            else:
-                st, detail, n = check_duckdb(project, schema, m.compiled, dialect, worker)
+                return check_warehouse(project, schema, m.compiled, dialect, runner)
+            return check_duckdb(project, schema, m.compiled, dialect, worker)
+        for (uid, m), (st, detail, n) in zip(todo, worker.map(one, todo)):
             rows.append((uid, m.checksum or "", st, detail, n, via, datetime.now(timezone.utc)))
             by_model[m.name] = st
     if rows:

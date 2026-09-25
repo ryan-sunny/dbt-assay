@@ -20,6 +20,7 @@ import functools
 import importlib
 import os
 import sys
+import threading
 from pathlib import Path
 
 import sqlglot
@@ -62,9 +63,16 @@ def plugin_modules(project_dir, profiles_dir: str | None = None) -> list[str]:
 # A failed import is not cached by Python, and the run check opens a connection per dataset: one
 # attempt per module per process, remembered (it was 40% of the run check's time).
 _PLUGINS: dict = {}
+# The run check runs models from several threads; an import edits sys.path, so one at a time.
+_PLUGIN_LOCK = threading.Lock()
 
 
 def _plugin(mod: str, project_dir):
+    with _PLUGIN_LOCK:
+        return _plugin_locked(mod, project_dir)
+
+
+def _plugin_locked(mod: str, project_dir):
     if mod not in _PLUGINS:
         extra = [str(Path(project_dir).resolve()), str(Path(project_dir).resolve().parent)] \
             if project_dir else []

@@ -166,7 +166,8 @@ def test_verify_grains_counts_a_model_in_a_custom_schema():
     held = prac.verify_grains([("stg_water", ["k"], "derived", 1, [])], proj, _Probe,
                               ".", None, "dbt", schema=sch)
     assert held == {"stg_water": (149, 1)}
-    assert "db.main_water.stg_water" in seen[0], seen[0]
+    counted = [q for q in seen if "count(distinct" in q]
+    assert counted and "db.main_water.stg_water" in counted[0], seen
 
 
 def test_a_locked_store_does_not_report_itself_as_a_missing_one():

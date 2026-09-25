@@ -245,3 +245,21 @@ def test_monitoring_and_counted_findings_reach_the_page_and_the_form(tmp_path):
     again = live.with_stored_warehouse([hop], st, p)
     assert [f.check for f in again].count("hop_drops_most_rows") == 1
     st.close()
+
+
+def test_a_rule_the_project_disabled_is_not_a_table_that_failed_to_build(tmp_path):
+    """(sunny-data) The three folder rules are disabled on purpose, and every warm run said they
+    were NOT read, not built. With the rest of the package enabled, the manifest says which."""
+    p = _project(tmp_path)
+    raw = p.raw
+    for uid in list(raw["disabled"]):
+        node = raw["disabled"][uid][0]
+        if node["name"] != "fct_model_directories":
+            raw["nodes"][uid] = node
+            del raw["disabled"][uid]
+    batches = []
+    rep = ev.read(p, _runner(_warehouse(), batches))
+    assert rep.disabled == ["fct_model_directories"] and rep.unread == {}
+    # all disabled (a var-gated package in an ordinary parse): no way to tell, so it is unbuilt
+    _p2, rep2, _b = _read(tmp_path)
+    assert rep2.disabled == [] and "fct_model_directories" in rep2.unread

@@ -141,6 +141,12 @@ def build(kind: str, src: SubjectSource, limit: int = 0,
         fn = {"model": _models, "edge": _edges, "column": _columns,
               "predicate": _predicates, "expression": _expressions, "window": _windows}[kind]
         out = fn(project, digests, schema)
+    # *** AN INSTALLED PACKAGE'S MODELS ARE NOT THIS PROJECT'S TO JUDGE. *** (sunny-data box) A
+    # warm run re-sent 45 requests per family, one per dbt_project_evaluator model, the day its
+    # build first succeeded: judged calls paid for about code the project does not own and cannot
+    # change. An edge is the child's: a model of yours reading a package's model stays.
+    out = [s for s in out
+           if not getattr(project.models.get(s.uid), "is_installed_package", False)]
     if state == "full":
         _add_what_a_row_is(out, project, digests, schema)
     # Most reachable first: a limit should spend itself where a defect costs most.

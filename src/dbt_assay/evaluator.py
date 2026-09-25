@@ -82,6 +82,7 @@ class Reading:
     unread: dict = field(default_factory=dict)        # rule -> why
     truncated: list = field(default_factory=list)
     installed: bool = False
+    disabled: list = field(default_factory=list)      # rules the project switched off
 
     @property
     def total(self) -> int:
@@ -102,6 +103,20 @@ def _evaluator_nodes(project) -> list[dict]:
 
 def installed(project) -> bool:
     return bool(_evaluator_nodes(project))
+
+
+def switched_off(project) -> set:
+    """The rules the project disabled: listed under `disabled` while other evaluator models are
+    enabled. When every one is disabled (a var-gated package in an ordinary parse), the manifest
+    cannot tell a rule switched off from a package switched off, so this is empty."""
+    raw = project.raw or {}
+    on = {n.get("name") for n in (raw.get("nodes") or {}).values()
+          if n.get("package_name") == EVALUATOR and n.get("resource_type") == "model"}
+    if not on:
+        return set()
+    off = {n.get("name") for g in (raw.get("disabled") or {}).values() for n in g or []
+           if n.get("package_name") == EVALUATOR and n.get("resource_type") == "model"}
+    return {n for n in off - on if n and n.startswith("fct_")}
 
 
 def relations(project, schema: str | None = None) -> dict:
@@ -144,8 +159,12 @@ def read(project, runner, schema: str | None = None, dialect: str = "duckdb",
     rep = Reading(schema=schema or _schema_of(rels), installed=bool(rels))
     if not rels:
         return rep
+    # A rule the project switched off is not a rule that failed to build: it is not read and not
+    # reported (sunny-data disables the three folder rules on purpose).
+    off = switched_off(project)
+    rep.disabled = sorted(off)
     wanted = {k: v for k, v in rels.items()
-              if (cats or {}).get(k) != "off" and k not in SUMMARY_RULES}
+              if (cats or {}).get(k) != "off" and k not in SUMMARY_RULES and k not in off}
     exists = None
     if dialect in ("duckdb", "postgres", "snowflake", "redshift") and rep.schema:
         listing = (f"select lower(table_name) as t from information_schema.tables "

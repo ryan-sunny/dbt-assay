@@ -271,6 +271,6 @@ def test_a_rejected_policy_is_recorded_rather_than_silently_dropped():
     import inspect
 
     from dbt_assay.jev import Client
-    src = inspect.getsource(Client.ask)
+    src = inspect.getsource(Client.ask) + inspect.getsource(Client._send)
     assert "provider_rejected" in src, "a rejected policy leaves no trace"
     assert 'body.pop("provider")' in src, "a rejected policy would fail the call forever"
