@@ -484,6 +484,33 @@ def profiles_args(profiles_dir: str | None) -> list:
     return ["--profiles-dir", os.path.abspath(os.path.expanduser(profiles_dir))]
 
 
+SHOW_ROOT: str | None = None        # the tests point this at a folder of their own
+
+
+def show_args(project_dir: str) -> list:
+    """`--target-path <assay's own folder> --no-write-json`, for every `dbt show` assay sends.
+
+    *** EACH CALL COST ~20s OF dbt STARTUP AND ~0s OF QUERY. *** (sunny-data box, dde3fd1: 28
+    calls a day, about 9 minutes.) dbt reuses its saved parse only when the one in the target
+    folder was written the same way, and the project's own `target/` is also written by the
+    orchestrator, so assay's calls kept missing it. In a folder of assay's own, the first call
+    parses the project and every later one reads the saved parse: 20s -> ~9s each on the box,
+    6.9s -> 2.3s here. `--no-write-json` skips rewriting a 10MB manifest.json per query, and it
+    also stops `show` from overwriting the project's `run_results.json` with a compile result.
+    The folder sits beside assay's parse cache, keyed by project; unwritable means no flag.
+    """
+    import hashlib
+    base = os.environ.get("ASSAY_CACHE") or os.environ.get("XDG_CACHE_HOME")
+    root = SHOW_ROOT or os.path.join(base or os.path.expanduser("~/.cache"), "assay", "dbt-target")
+    key = hashlib.sha256(os.path.abspath(project_dir or ".").encode()).hexdigest()[:12]
+    where = os.path.join(root, key)
+    try:
+        os.makedirs(where, exist_ok=True)
+    except OSError:
+        return []
+    return ["--target-path", where, "--no-write-json"]
+
+
 class WarehouseUnreachable(RuntimeError):
     """dbt could not answer `select 1` here, so nothing this command counts would be real."""
 
@@ -504,7 +531,7 @@ def _reach(project_dir: str, profiles_dir: str | None, dbt_bin: str) -> None:
             raise WarehouseUnreachable(_REACHED[key])
         return
     cmd = [*dbt_bin.split(), "show", "--inline", "select 1 as assay_reachable", "--output",
-           "json", "--limit", "1", *profiles_args(profiles_dir)]
+           "json", "--limit", "1", *profiles_args(profiles_dir), *show_args(project_dir)]
     if profiles_dir:
         where = profiles_args(profiles_dir)[1]
         if not os.path.isfile(os.path.join(where, "profiles.yml")):
@@ -523,8 +550,12 @@ def _reach(project_dir: str, profiles_dir: str | None, dbt_bin: str) -> None:
     # *** A LOCKED WAREHOUSE IS NOT A WRONG FLAG. *** (sunny-data, 0.52.4) Another job held the
     # DuckDB file, and the advice to pass --project-dir and --dbt was wrong: both were given.
     locked = bool(re.search(r"Could not set lock on file|Conflicting lock is held", why or ""))
-    _REACHED[key] = ((f"could not reach the warehouse: it is locked by another process (DuckDB "
-                      f"allows one writer; the command that holds it has to finish first)."
+    # The holder as DuckDB named it, and nothing looked up: the PID is often inside another
+    # container, where `ps` here would name some other process -- the one a person might kill.
+    held = re.search(r"held in (\S+) \(PID (\d+)\)", why or "")
+    who = f" (PID {held.group(2)}, {held.group(1)})" if held else ""
+    _REACHED[key] = ((f"could not reach the warehouse: it is locked by another process{who}. "
+                      f"DuckDB allows one writer, so that process has to finish first."
                       f"{DBT_OUTPUT}{why}") if locked else
                      (f"could not reach the warehouse: `{dbt_bin} show` in `{project_dir}` "
                       f"failed, so nothing counted here would be real. Pass --project-dir (the "
@@ -548,7 +579,7 @@ def _execute(sql: str, project_dir: str, profiles_dir: str | None = None,
     """
     _reach(project_dir, profiles_dir, dbt_bin)
     cmd = [*dbt_bin.split(), "show", "--inline", sql, "--output", "json", "--limit", str(limit),
-           *profiles_args(profiles_dir)]
+           *profiles_args(profiles_dir), *show_args(project_dir)]
     if measure:
         cmd += ["--log-format", "json", "--log-level", "debug"]
     started = time.monotonic()
@@ -1270,13 +1301,15 @@ def unwrap_many(rows: list[dict], n: int) -> list[list[dict]]:
     return [[row for _o, row in sorted(part, key=lambda x: x[0])] for part in out]
 
 
-def plan_statements(stmts: list[Statement]) -> list[list[int]]:
-    """Indexes of `stmts`, grouped into batches no engine should refuse."""
+def plan_statements(stmts: list[Statement], max_rows: int | None = None) -> list[list[int]]:
+    """Indexes of `stmts`, grouped into batches no engine should refuse. `max_rows` replaces
+    BATCH_ROWS for a caller whose limits are safety nets over results collapsed in SQL."""
+    max_rows = max_rows or BATCH_ROWS
     out: list[list[int]] = []
     cur: list[int] = []
     rows = chars = 0
     for i, s in enumerate(stmts):
-        if cur and (len(cur) >= BATCH_STATEMENTS or rows + s.limit > BATCH_ROWS
+        if cur and (len(cur) >= BATCH_STATEMENTS or rows + s.limit > max_rows
                     or chars + len(s.sql) > BATCH_CHARS):
             out.append(cur)
             cur, rows, chars = [], 0, 0
@@ -1289,7 +1322,8 @@ def plan_statements(stmts: list[Statement]) -> list[list[int]]:
 
 
 def run_many(stmts: list[Statement], project_dir: str, profiles_dir: str | None = None,
-             dbt_bin: str = "dbt", dialect: str = "duckdb") -> list[Result]:
+             dbt_bin: str = "dbt", dialect: str = "duckdb",
+             max_rows: int | None = None) -> list[Result]:
     """One `Result` per statement, in order, from as few dbt invocations as the bounds allow.
 
     Every `Result` is exactly what `run_sql` would have returned for that statement alone: its
@@ -1304,7 +1338,7 @@ def run_many(stmts: list[Statement], project_dir: str, profiles_dir: str | None 
                         columns=s.columns, sampled=s.sampled, sample_rows=s.sample_rows)
                 for s in stmts]
     out: list[Result | None] = [None] * len(stmts)
-    for idx in plan_statements(stmts):
+    for idx in plan_statements(stmts, max_rows):
         _run_group([stmts[i] for i in idx], idx, out, project_dir, profiles_dir, dbt_bin,
                    dialect)
     return [r if r is not None else Result(failed=True, why="not run") for r in out]
@@ -1361,18 +1395,18 @@ def many_runner(project_dir: str, profiles_dir: str | None, dbt_bin: str, dialec
         return run_sql(sql, project_dir, profiles_dir, dbt_bin, limit=n, caller=caller,
                        kind=kind)
 
-    def many(pairs: list[tuple[str, int]]) -> list[Result]:
+    def many(pairs: list[tuple[str, int]], max_rows: int | None = None) -> list[Result]:
         return run_many([Statement(sql, caller=caller, kind=kind, limit=n) for sql, n in pairs],
-                        project_dir, profiles_dir, dbt_bin, dialect)
+                        project_dir, profiles_dir, dbt_bin, dialect, max_rows=max_rows)
     runner.many = many
     return runner
 
 
-def ask_many(runner, pairs: list[tuple[str, int]]) -> list[Result]:
+def ask_many(runner, pairs: list[tuple[str, int]], max_rows: int | None = None) -> list[Result]:
     """`runner.many` when the runner has it, else one at a time. Test doubles need not batch."""
     many = getattr(runner, "many", None)
     if many is not None:
-        return many(pairs)
+        return many(pairs, max_rows=max_rows) if max_rows else many(pairs)
     return [runner(sql, n) for sql, n in pairs]
 
 

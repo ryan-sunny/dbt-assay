@@ -245,3 +245,49 @@ def test_a_deprecation_on_a_successful_select_1_still_reaches(tmp_path, monkeypa
                         lambda *a, **k: SimpleNamespace(returncode=0, stdout=out, stderr=""))
     probe._reach(str(tmp_path), None, "dbt")
     assert probe._DEPRECATIONS_SAID and "5 deprecation warnings" in probe._DEPRECATIONS_SAID[0]
+
+
+def test_a_locked_warehouse_names_the_holder_first(tmp_path, monkeypatch):
+    """(sunny-data, dde3fd1) volume printed DuckDB's lock traceback; the sentence comes first,
+    with the holder as DuckDB named it and nothing looked up."""
+    import subprocess
+    from types import SimpleNamespace
+
+    import pytest
+
+    from dbt_assay.elementary import dbt_error
+    out = ("15:15:43  Encountered an error:\nRuntime Error\n  IO Error: Could not set lock on file "
+           '"/app/warehouse/sunny.duckdb": Conflicting lock is held in /usr/local/bin/python3.12 '
+           "(PID 17967). See also https://duckdb.org/docs/connect/concurrency")
+    monkeypatch.setattr(probe, "_REACHED", {})
+    monkeypatch.setattr(subprocess, "run",
+                        lambda *a, **k: SimpleNamespace(returncode=1, stdout=out, stderr=""))
+    with pytest.raises(probe.WarehouseUnreachable) as e:
+        probe._reach(str(tmp_path), None, "dbt")
+    said = dbt_error(str(e.value))
+    assert said == ("it is locked by another process (PID 17967, /usr/local/bin/python3.12). "
+                    "DuckDB allows one writer, so that process has to finish first."), said
+
+
+def test_every_dbt_show_uses_assays_own_target_folder(tmp_path, monkeypatch):
+    """*** ~20s OF dbt STARTUP PER CALL. *** (sunny-data box) The shared target/ kept losing its
+    saved parse; a folder of assay's own keeps it. Both commands carry it, and --no-write-json."""
+    import subprocess
+    from types import SimpleNamespace
+    seen = []
+
+    def fake(cmd, **k):
+        seen.append(cmd)
+        return SimpleNamespace(returncode=0, stderr="",
+                               stdout='{"show": [{"assay_reachable": 1, "n": 1}]}')
+    monkeypatch.setattr(probe, "_REACHED", {})
+    monkeypatch.setattr(probe, "SHOW_ROOT", str(tmp_path / "t"))
+    monkeypatch.setattr(subprocess, "run", fake)
+    probe.run_sql("select 1 as n", str(tmp_path), dbt_bin="dbt")
+    assert len(seen) == 2
+    for cmd in seen:
+        i = cmd.index("--target-path")
+        assert cmd[i + 1].startswith(str(tmp_path / "t")) and "--no-write-json" in cmd
+    assert (tmp_path / "t").is_dir()
+    # another project, another folder: two projects never share a saved parse
+    assert probe.show_args(str(tmp_path / "other"))[1] != seen[0][seen[0].index("--target-path") + 1]

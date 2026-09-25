@@ -74,6 +74,10 @@ def dbt_error(detail: str | None, keep: int = 4) -> str:
         # assay's own reason; dbt never ran. Every caller has already said it could not reach
         # the warehouse, so the reason is given without saying it twice.
         return " ".join(text.split()).removeprefix("could not reach the warehouse: ")
+    head = " ".join(text.split(mark, 1)[0].split())
+    if "locked by another process" in head:
+        # assay's sentence names the holder; dbt's traceback under it says the same thing worse.
+        return head.split("could not reach the warehouse: ", 1)[-1]
     lines = []
     for ln in _ANSI.sub("", text.split(mark, 1)[1]).splitlines():
         ln = re.sub(r"^\s*\d{2}:\d{2}:\d{2}(\.\d+)?\s*", "", ln).strip()
@@ -377,8 +381,7 @@ def read(runner, schema: str, *, stale_after_days: int = STALE_AFTER_DAYS,
     # histories. Each statement still comes back as its own Result with its own failure, so the
     # five states below are told apart exactly as they were one statement at a time.
     from .probe import ask_many
-    counts = ask_many(runner, [(f"select count(*) as n from {schema}.{rel}", 1)
-                               for rel in RELATIONS])
+    counts = ask_many(runner, [(_count_sql(schema, rel), 1) for rel in RELATIONS])
     holding: list[tuple[str, int]] = []
     order: dict = {}
     for rel, counted in zip(RELATIONS, counts):
@@ -884,8 +887,7 @@ def build_cadence(runner, schema: str, limit: int = 5000) -> Cadence:
     describes how fast dbt runs back-to-back rather than how often this project builds. Days,
     for the same reason `write_history` uses them.
     """
-    res = runner(f"select distinct cast(run_started_at as date) as assay_day "
-                 f"from {schema}.{INVOCATIONS} where run_started_at is not null", limit)
+    res = runner(_cadence_sql(schema), limit)
     return _cadence_of(_days(res), "this project's build cadence",
                        unreadable=res.failed, detail=res.why)
 
@@ -903,15 +905,8 @@ def test_coverage(runner, schema: str, limit: int = 40000) -> dict:
     # *** 1,846 SKIPPED OUT OF 1,291 TESTS. *** Skipped RESULTS are counted once per run, so they
     # outnumber the tests, and the page set the two side by side as if they were one unit. The
     # fourth count is in tests: how many are skipped as of their latest result.
-    declared, ran, skipped, skipped_now = ask_many(runner, [
-        (f"select count(*) as n from {schema}.{DBT_TESTS}", 1),
-        ((f"select count(distinct test_unique_id) as n from {schema}.{TEST_RESULTS} "
-          f"where test_type = 'dbt_test'"), 1),
-        ((f"select count(*) as n from {schema}.{TEST_RESULTS} "
-          f"where test_type = 'dbt_test' and status = 'skipped'"), 1),
-        ((f"select count(*) as n from (select status, row_number() over (partition by "
-          f"test_unique_id order by detected_at desc) as rn from {schema}.{TEST_RESULTS} "
-          f"where test_type = 'dbt_test') as latest where rn = 1 and status = 'skipped'"), 1)])
+    declared, ran, skipped, skipped_now = ask_many(runner, [(q, 1) for q in
+                                                            _coverage_sqls(schema)])
 
     def one(res):
         """None when the statement did not run. A coverage figure built from a failed count
@@ -939,11 +934,7 @@ def latest_test_results(runner, schema: str, limit: int = 40000) -> dict:
     "no results were read", never as "nothing ran".
     """
     from .probe import ask_many
-    (res,) = ask_many(runner, [(
-        (f"select test_unique_id, status, detected_at from (select test_unique_id, status, "
-        f"detected_at, row_number() over (partition by test_unique_id order by detected_at desc) "
-        f"as rn from {schema}.{TEST_RESULTS} where test_type = 'dbt_test') as latest "
-        f"where rn = 1"), limit)])
+    (res,) = ask_many(runner, [(_latest_sql(schema), limit)])
     if res.failed:
         return {}
     out = {}
@@ -1045,3 +1036,92 @@ def monitoring_findings(rep: Report, project, cad: Cadence | None = None,
                     "test that has not evaluated your data in months."),
             base=1, evidence={"skipped": cov["skipped_results"]}))
     return out
+
+
+def _count_sql(schema: str, rel: str) -> str:
+    return f"select count(*) as n from {schema}.{rel}"
+
+
+def _cadence_sql(schema: str) -> str:
+    return (f"select distinct cast(run_started_at as date) as assay_day "
+            f"from {schema}.{INVOCATIONS} where run_started_at is not null")
+
+
+def _coverage_sqls(schema: str) -> list[str]:
+    return [f"select count(*) as n from {schema}.{DBT_TESTS}",
+            (f"select count(distinct test_unique_id) as n from {schema}.{TEST_RESULTS} "
+             f"where test_type = 'dbt_test'"),
+            (f"select count(*) as n from {schema}.{TEST_RESULTS} "
+             f"where test_type = 'dbt_test' and status = 'skipped'"),
+            (f"select count(*) as n from (select status, row_number() over (partition by "
+             f"test_unique_id order by detected_at desc) as rn from {schema}.{TEST_RESULTS} "
+             f"where test_type = 'dbt_test') as latest where rn = 1 and status = 'skipped'")]
+
+
+def _latest_sql(schema: str) -> str:
+    return (f"select test_unique_id, status, detected_at from (select test_unique_id, status, "
+            f"detected_at, row_number() over (partition by test_unique_id order by detected_at "
+            f"desc) as rn from {schema}.{TEST_RESULTS} where test_type = 'dbt_test') as latest "
+            f"where rn = 1")
+
+
+def primed(runner, schema: str, *, limit: int = 20000):
+    """`runner`, with every statement the readers here will send already fetched, in two batches.
+
+    *** EIGHT dbt CALLS, AT ~20s OF dbt STARTUP EACH, FOR ONE READING OF ELEMENTARY. ***
+    (sunny-data box, dde3fd1: 16 calls across `check --verify` and `volume`, five minutes cold.)
+    Each reader sent its own statement or batch: cadence, a reach check, counts, reads,
+    histories, coverage, latest results. Now: one batch counting every relation they read, then
+    ONE batch of all the rest over the relations that exist. A batch with a failing member is
+    split in halves to find it, each half another call, so the statements that fail when a
+    package is absent (the counts) never share a batch with the rest.
+
+    The readers themselves are untouched: they send the same SQL, and a statement already fetched
+    is answered from here. Anything not fetched (another limit, a statement added later) goes to
+    the warehouse as before. A runner without `.many` (a test double) is returned as it is.
+    """
+    from .probe import ask_many
+    if getattr(runner, "many", None) is None:
+        return runner
+    got: dict = {}
+
+    def fetch(pairs):
+        # The limits here are safety nets over results collapsed to one row per key in SQL (a
+        # few thousand rows in all), so their sum is not what bounds a batch: 120,000 of them
+        # split one batch into three dbt calls.
+        want = [p for p in pairs if p not in got]
+        for p, res in zip(want, ask_many(runner, want, max_rows=200_000)):
+            got[p] = res
+
+    # Pass 1: does each relation exist, and does it hold rows. These are the statements that
+    # fail when a package is absent, so they go alone, and nothing in pass 2 can fail that way.
+    used = [*RELATIONS, INVOCATIONS, DBT_TESTS]
+    fetch([("select 1 as assay_reachable", 1), *[(_count_sql(schema, r), 1) for r in used]])
+    rows: dict = {}
+    for r in used:
+        res = got[(_count_sql(schema, r), 1)]
+        try:
+            rows[r] = None if res.failed else int(next(iter(res.rows[0].values())))
+        except (TypeError, ValueError, IndexError, AttributeError, StopIteration):
+            rows[r] = None
+    # Pass 2: everything else, over the relations that exist.
+    later = []
+    if rows[INVOCATIONS] is not None:
+        later.append((_cadence_sql(schema), 5000))
+    if rows[DBT_TESTS] is not None and rows[TEST_RESULTS] is not None:
+        later += [(q, 1) for q in _coverage_sqls(schema)]
+    if rows[TEST_RESULTS] is not None:
+        later.append((_latest_sql(schema), 40000))
+    for r in RELATIONS:
+        if rows[r]:
+            later += [(_query(schema, r), limit), (_history_sql(schema, r), 5000)]
+    fetch(later)
+
+    def one(sql: str, n: int):
+        return got[(sql, n)] if (sql, n) in got else runner(sql, n)
+
+    def many(pairs):
+        fetch(pairs)
+        return [got[p] for p in pairs]
+    one.many = many
+    return one

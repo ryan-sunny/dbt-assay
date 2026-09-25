@@ -3415,6 +3415,7 @@ def volume(
     say = (lambda *a, **k: None) if as_json else console.print
     with console.status(f"reading {schema_name}..."):
         try:
+            runner = elem.primed(runner, schema_name)
             cad = elem.build_cadence(runner, schema_name)
             rep = elem.read(runner, schema_name, stale_after_days=stale_days, fallback=cad)
             cov = elem.test_coverage(runner, schema_name) if rep.reachable else {}
@@ -3750,6 +3751,7 @@ def _monitoring_findings(project, cfg, verify: bool, project_dir: str, profiles_
                                    caller="assay.elementary")
 
     try:
+        runner = elem.primed(runner, schema_name)
         cad = elem.build_cadence(runner, schema_name)
         rep = elem.read(runner, schema_name, fallback=cad,
                         stale_after_days=int(opts.get("stale_after_days")
