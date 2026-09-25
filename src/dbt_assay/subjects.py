@@ -228,6 +228,14 @@ def _sql_excerpt(sql: str, names: set, limit: int = _SQL_CHARS) -> str:
     return "\n".join(out)
 
 
+# Findings a count settles outright: whether one is right is the count, so a judged reading of its
+# card is paid for and says nothing. (RC box: the new counted checks added 219 cards, two questions
+# each, to the first `ask` after the release.)
+SETTLED_BY_A_COUNT = frozenset({
+    "column_name_does_not_state_its_type", "view_read_by_many_models", "values_lost_at_hop",
+    "test_is_failing", "guarantee_lost", "guarantee_does_not_hold"})
+
+
 def _findings(project, digests, schema, findings, store) -> list[Subject]:
     """One subject per (model, check), the grain a verdict covers and a review card shows."""
     if findings is None:
@@ -237,6 +245,8 @@ def _findings(project, digests, schema, findings, store) -> list[Subject]:
     for f in findings:
         if not f.subject:
             continue                          # a finding about the whole project has no card
+        if f.check in SETTLED_BY_A_COUNT:
+            continue
         by.setdefault((f.subject, f.check), []).append(f)
     out = []
     for (uid, check), fs in sorted(by.items()):

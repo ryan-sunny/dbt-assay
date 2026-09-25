@@ -381,6 +381,7 @@ class Config:
     # 0.8 catches all three enrichment gaps on the warehouse this was built against (82%, 82%,
     # 94% lost); 0.9 catches one of three. It is a number somebody acts on, so it is theirs.
     row_loss_threshold: float = 0.8
+    value_loss_seconds: float = 120.0
     # Where handbacks are kept on a server (`review.handbacks`), resolved against audit.yml's own
     # folder. None means the browser's download folder. (S4)
     handbacks: str | None = None
@@ -417,6 +418,7 @@ class Config:
         cfg.min_agreement = float(gating.get("min_agreement", 0.0))
         comp = data.get("completeness") or {}
         cfg.row_loss_threshold = float(comp.get("row_loss_threshold", 0.8))
+        cfg.value_loss_seconds = float(comp.get("value_loss_seconds", 120.0))
         if not 0.0 < cfg.row_loss_threshold < 1.0:
             raise ValueError(f"completeness.row_loss_threshold must be between 0 and 1 "
                              f"(exclusive), got {cfg.row_loss_threshold}. It is the share of the "
@@ -701,6 +703,10 @@ completeness:
   # and only for a child that declares no filter, no group by and no union -- a hop that drops
   # rows on purpose is not a finding. 0.8 means "kept less than a fifth".
   row_loss_threshold: 0.8
+  # How long `check --verify` may spend counting values a model drops from its source. Only a
+  # source whose data changed (its row count, or its newest load id) is counted again; the rest
+  # come from the last count. What the budget does not reach is counted on the next run first.
+  value_loss_seconds: 120
 
 questions:
   # An EXACT check has no probability to threshold, so it takes a plain action and may gate

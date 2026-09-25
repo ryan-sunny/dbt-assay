@@ -581,8 +581,16 @@ def check(
     if verify:
         from . import valueloss
         try:
-            findings += valueloss.measure(valueloss.candidates(project, digests, schema),
-                                          project, probe_mod, project_dir, profiles_dir, dbt_bin)
+            _vs = Store(store_path) if store_path else None   # created now if new, as check will
+            try:
+                findings += valueloss.measure(
+                    valueloss.candidates(project, digests, schema), project, probe_mod,
+                    project_dir, profiles_dir, dbt_bin, store=_vs, schema=schema,
+                    max_seconds=_cfg_pre.value_loss_seconds,
+                    say=None if json_out else (lambda m: console.print(f"[dim]{m}[/]")))
+            finally:
+                if _vs is not None:
+                    _vs.close()
         except probe_mod.WarehouseUnreachable:
             raise
         except Exception as e:                                   # noqa: BLE001

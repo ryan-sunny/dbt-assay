@@ -32,18 +32,49 @@ def test_candidates_are_single_column_transforms_and_unread_variants():
     assert not any(c.column in ("id",) for c in got)
 
 
-def test_one_statement_per_relation_and_a_finding_only_where_values_were_lost():
+def test_counted_once_then_read_from_the_last_count_until_the_data_moves(tmp_path):
+    """RC box: 441s, then 524s for the same counts. A source is counted again only when its
+    fingerprint (row count, newest load id) moved; the rest come from the store."""
+    from dbt_assay.store import Store
     p = _project(SQL)
     cands = valueloss.candidates(p, {"model.p.stg": digest(SQL, "stg")}, None)
+    s = Store(str(tmp_path / "s.duckdb"))
     sent: list = []
+    rows_now = {"n": 10}
 
     def run_many(stmts, *a, **k):
-        sent.append(stmts)
-        if stmts[0].kind == "count":
-            return [Result(rows=[{"l0": 2, "p0": 3, "l1": 0, "p1": 4}])]
-        return [Result(rows=[{"v": "abc"}, {"v": "n/a"}])]
+        out = []
+        for st in stmts:
+            sent.append(st.sql)
+            if st.sql.startswith("select count(*) as n"):
+                out.append(Result(rows=[dict(rows_now)]))
+            elif st.kind == "count":
+                out.append(Result(rows=[{"l0": 2, "p0": 3, "l1": 0, "p1": 4}]))
+            else:
+                out.append(Result(rows=[{"v": "abc"}, {"v": "n/a"}]))
+        return out
     probe = SimpleNamespace(Statement=Statement, run_many=run_many)
-    got = valueloss.measure(cands, p, probe, ".", None, "dbt")
-    assert len(sent[0]) == 1 and "sum(case when" in sent[0][0].sql      # one per relation
+    got = valueloss.measure(cands, p, probe, ".", None, "dbt", store=s)
     assert [f.evidence["column"] for f in got] == ["valuation"]
     assert got[0].evidence["lost"] == 2 and got[0].evidence["sample"] == ["abc", "n/a"]
+    assert any("sum(case when" in x for x in sent)          # one statement per relation
+    # same data: only the fingerprint is read, and the finding comes from the store
+    sent.clear()
+    got = valueloss.measure(cands, p, probe, ".", None, "dbt", store=s)
+    assert not any("sum(case when" in x for x in sent), sent
+    assert got[0].evidence["lost"] == 2 and got[0].evidence["sample"] == ["abc", "n/a"]
+    # the data moved: counted again
+    rows_now["n"] = 11
+    sent.clear()
+    valueloss.measure(cands, p, probe, ".", None, "dbt", store=s)
+    assert any("sum(case when" in x for x in sent)
+    # no budget left: nothing is counted, and the last count still stands
+    rows_now["n"] = 12
+    sent.clear()
+    said: list = []
+    got = valueloss.measure(cands, p, probe, ".", None, "dbt", store=s, max_seconds=0,
+                            say=said.append)
+    assert not any("sum(case when" in x for x in sent)
+    assert "left for the next run" in said[0]
+    assert got[0].evidence.get("data_changed_since") is True
+    s.close()
