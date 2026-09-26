@@ -47,6 +47,16 @@ def _yours(m) -> bool:
                 == getattr(m, "package", ""))
 
 
+def missing_descriptions(project, uid: str, schema=None) -> tuple[list, list]:
+    """(the model's known columns, the ones with no description), all of them: the finding's
+    evidence lists 40, and a fix drafted from the 40 left a wide model's finding open."""
+    m = project.models[uid]
+    declared = {str(k).lower() for k in (getattr(m, "columns", None) or {})}
+    have = described(m)
+    known = list(schema.columns(uid).names if schema else []) or sorted(declared)
+    return known, sorted(c for c in known if str(c).lower() not in have)
+
+
 def column_has_no_description(project, _digests=None, schema=None) -> list[Finding]:
     """Columns nobody has written a sentence for, reported per MODEL and not per column.
 
@@ -59,12 +69,9 @@ def column_has_no_description(project, _digests=None, schema=None) -> list[Findi
     for uid, m in project.models.items():
         if not _yours(m):
             continue
-        declared = {str(k).lower() for k in (getattr(m, "columns", None) or {})}
-        have = described(m)
-        known = list(schema.columns(uid).names if schema else []) or sorted(declared)
+        known, missing = missing_descriptions(project, uid, schema)
         if not known:
             continue                       # nothing knows this model's columns; not a pass, a gap
-        missing = sorted(c for c in known if str(c).lower() not in have)
         if not missing:
             continue
         ingestion = _layer_of(m) in INGESTION_LAYERS

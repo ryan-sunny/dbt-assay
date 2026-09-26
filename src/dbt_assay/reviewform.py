@@ -2250,13 +2250,22 @@ function fixesPane(host) {
       + 'attributed to a change assay can propose.'}));
     return;
   }
+  /* *** THE HEADER COUNTED 47 CHANGES THE LIST HAD NO ENTRY FOR. *** (tester, 5c8fdd4) A fix
+     with no open finding attached sits in its own group under the header's word for it, and the
+     groups run in the fixes' order: most findings resolved per decision first. */
   const by = {};
-  for (const f of F) (by[f.kind] = by[f.kind] || {id: f.kind, label: f.kind_title, rows: []})
-    .rows.push(f);
-  const groups = Object.values(by).sort((a, b) => a.rows[0].kind_rank - b.rows[0].kind_rank);
+  const structure = {id: '__structure', label: 'Structure', rows: []};
+  for (const f of F) {
+    if (f.kind !== 'review' && !f.resolves) { structure.rows.push(f); continue; }
+    (by[f.kind] = by[f.kind] || {id: f.kind, label: f.kind_title, rows: []}).rows.push(f);
+  }
+  const lev = g => g.rows.reduce((n, f) => n + (f.measured != null ? f.measured : f.resolves || 0), 0)
+    / Math.max(1, g.rows.reduce((n, f) => n + (f.decisions || 1), 0));
+  const groups = Object.values(by).sort((a, b) => lev(b) - lev(a) || a.rows[0].kind_rank
+    - b.rows[0].kind_rank).concat(structure.rows.length ? [structure] : []);
   const resolved = F.filter(f => f.kind !== 'review').reduce((n, f) => n + (f.resolves || 0), 0);
   const withF = F.filter(f => f.kind !== 'review' && f.resolves);
-  const structural = F.filter(f => f.kind !== 'review' && !f.resolves);
+  const structural = structure.rows;
   const head = el('div', {class: 'tgrid'}, [
     el('span', {class: 'tl', text: 'fixes'}),
     el('span', {}, [el('b', {text: num(withF.length)}),
@@ -2268,13 +2277,13 @@ function fixesPane(host) {
           + 'finding attached'})])] : []),
     el('span', {class: 'tl', text: 'to read'}),
     el('span', {}, [el('b', {text: num(F.filter(f => f.kind === 'review').length)}),
-      el('span', {class: 'tn', text: ' proposals that need reading, most important first'})])]);
+      el('span', {class: 'tn', text: ' proposals that need reading'})])]);
   host.replaceChildren(head, nav3(host, {
     name: 'fixes', groups: groups, allLabel: 'every fix', filterText: 'filter by model or text...',
     subOf: g => { const n = g.rows.filter(f => (answers['fix::' + f.id] || {}).verdict).length;
                   const r = g.rows.reduce((x, f) => x + (f.resolves || 0), 0);
-                  return (r ? 'resolves ~' + num(r) : (g.rows[0].effect ? g.rows.length + ' changes'
-                    : '')) + (n ? ' · ' + num(n) + ' decided' : ''); },
+                  return (r ? 'resolves ~' + num(r) : g.id === '__structure' ? 'nothing open attached'
+                    : '') + (n ? ' · ' + num(n) + ' decided' : ''); },
     keyOf: f => 'fix::' + f.id,
     textOf: f => f.title + ' ' + (f.models || []).join(' '),
     doneOf: f => !!(answers['fix::' + f.id] || {}).verdict,

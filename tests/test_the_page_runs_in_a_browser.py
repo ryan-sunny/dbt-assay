@@ -920,7 +920,9 @@ def test_a_fix_is_approved_on_its_card_and_loads_back(tmp_path):
           "why": ["3 marts downstream"], "how": "Drafted from what assay knows.",
           "recipe": ["dbt parse"], "refused": [], "effect": "", "status": "proposed",
           "diff": "--- a/models/schema.yml\n+++ b/models/schema.yml\n+  - name: id\n"}
-    ctx = {"words": [], "explanations": [], "waivers": [], "settings": [], "fixes": [fx],
+    stage = dict(fx, id="st1", kind="stage_raw_source", kind_title="Stage a raw source",
+                 kind_rank=8, title="Stage raw.p for 2 model(s) that read it raw", resolves=0)
+    ctx = {"words": [], "explanations": [], "waivers": [], "settings": [], "fixes": [fx, stage],
            "open_findings": 5}
     out = tmp_path / "review.html"
     out.write_text(reviewform.form_html([], {}, "p", "x", "0", ctx))
@@ -933,6 +935,12 @@ def test_a_fix_is_approved_on_its_card_and_loads_back(tmp_path):
             page.goto(out.as_uri() + "#embed&pane=fixes")
             assert page.evaluate("document.body.classList.contains('embed')")
             assert page.locator("nav.tabs").is_hidden()
+            # the header's "structure" count has a group in the list, and it opens
+            groups = page.locator("#p-fixes .fg .fgname").all_inner_texts()
+            assert groups[-1] == "Structure", groups
+            page.locator("#p-fixes .fg", has_text="Structure").click()
+            assert "Stage raw.p" in page.locator("#p-fixes .fdetail").inner_text()
+            page.locator("#p-fixes .fg").first.click()
             c = page.locator("#p-fixes .card").first
             assert "Document 2 column(s) of orders" in c.inner_text()
             c.locator('input[value="approve"]').check()

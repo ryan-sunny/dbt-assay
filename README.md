@@ -1090,8 +1090,9 @@ assay fix <id> --approve --by you     # a person's decision; --defer, or --rejec
 ```
 
 Nobody rules on two thousand findings, and most of them are not judgment calls. `plan` attributes
-every finding to the change that would resolve it and ranks the changes: customer-facing and
-happening now first, then staging before marts, then findings resolved per decision. A fix carries
+every finding to the change that would resolve it and ranks the changes by findings resolved per
+decision, with customer-facing and happening now breaking ties. Changes to one file are one fix
+(every model a schema file documents, every source repointed in the models that read it). A fix carries
 its files: descriptions drafted from what assay already knows (a parent's description where the
 value passes through, else the judged role and what a NULL means), key tests on grains assay counted
 unique, a pass-through staging model with the readers of a raw source repointed to it, a premise many

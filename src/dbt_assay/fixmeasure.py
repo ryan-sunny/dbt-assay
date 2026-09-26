@@ -37,32 +37,40 @@ def _copy(root: Path, dst: Path, target_dir: Path) -> None:
 
 
 def _compiled_for_stage(fx, project, scratch: Path, patched) -> None:
-    """A stage fix changes SQL, and parse compiles nothing: the new pass-through model's compiled
-    text is `select * from <the source>`, and each reader's is its old compiled text with the
-    source relation replaced by the new model's."""
-    src = project.sources.get(fx.key)
-    if src is None:
-        return
-    node = (project.raw.get("sources", {}) or {}).get(fx.key) or {}
-    rel = node.get("relation_name") or f"{src.schema}.{src.name}"
+    """A stage fix changes SQL, and parse compiles nothing: each new pass-through model's compiled
+    text is `select * from <its source>`, and each reader's is its old compiled text with every
+    source relation it read replaced by the staging model's. A fix merged from several sources
+    carries them in `parts`."""
     comp_root = scratch / "target" / "compiled" / project.project_name
-    for path in fx.new_files:
-        if path.endswith(".sql"):
-            (comp_root / path).parent.mkdir(parents=True, exist_ok=True)
-            (comp_root / path).write_text(f"select * from {rel}\n")
-    stg_name = Path(next((p for p in fx.new_files if p.endswith(".sql")), "")).stem or ""
-    stg_uid = next((u for u, m in patched.models.items() if m.name == stg_name), None)
-    stg_rel = ((patched.raw.get("nodes", {}) or {}).get(stg_uid) or {}).get("relation_name") \
-        if stg_uid else None
-    if not stg_rel:
+    swaps = []                                    # (source relation, staging relation)
+    for src_uid, target in (getattr(fx, "parts", None) or [(fx.key, "")]):
+        src = project.sources.get(src_uid)
+        if src is None:
+            continue
+        node = (project.raw.get("sources", {}) or {}).get(src_uid) or {}
+        rel = node.get("relation_name") or f"{src.schema}.{src.name}"
+        for path in fx.new_files:
+            if path.endswith(".sql") and Path(path).stem == (target or Path(path).stem):
+                (comp_root / path).parent.mkdir(parents=True, exist_ok=True)
+                (comp_root / path).write_text(f"select * from {rel}\n")
+        stg_name = target or Path(next((p for p in fx.new_files if p.endswith(".sql")), "")).stem
+        stg_uid = next((u for u, m in patched.models.items() if m.name == stg_name), None)
+        stg_rel = ((patched.raw.get("nodes", {}) or {}).get(stg_uid) or {}).get("relation_name") \
+            if stg_uid else None
+        if stg_rel:
+            swaps.append((rel, stg_rel))
+    if not swaps:
         return
     for name in fx.models:
         m = next((x for x in project.models.values() if x.name == name), None)
         if m is None or not m.compiled_path or not Path(m.compiled_path).exists():
             continue
+        text = Path(m.compiled_path).read_text()
+        for rel, stg_rel in swaps:
+            text = text.replace(rel, stg_rel)
         out = comp_root / m.path
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(Path(m.compiled_path).read_text().replace(rel, stg_rel))
+        out.write_text(text)
 
 
 def _simulated_gone(f, patched) -> bool | None:

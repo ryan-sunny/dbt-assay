@@ -1373,8 +1373,8 @@ TOOLS = [
                      "definition you write from a model name looks exactly like one they chose "
                      "and then rides along with every judged question forever.")),
     ("plan_items", ("WHAT TO CHANGE NEXT: the findings grouped into the fixes that resolve "
-                    "them, ranked (customer-facing and happening now first, then staging before "
-                    "marts, then findings resolved per decision). Each has a kind, a title, how "
+                    "them, ranked by findings resolved per decision (customer-facing and "
+                    "happening now break ties). Each has a kind, a title, how "
                     "many it resolves and its status. Call it before findings.")),
     ("plan_item", ("One fix in full: the diff it would make, the recipe that verifies it, and "
                    "whether a person approved it.")),

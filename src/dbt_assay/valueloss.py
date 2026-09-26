@@ -133,6 +133,12 @@ create table if not exists value_loss (
     counted_at   timestamp,
     primary key (relation, column_key)
 );
+create table if not exists value_loss_tries (
+    relation     varchar primary key,
+    reason       varchar,
+    outcome      varchar,
+    tried_at     timestamp
+);
 """
 
 
@@ -251,6 +257,31 @@ def _cached(store) -> dict:
     return out
 
 
+def _tries(store) -> dict:
+    if store is None:
+        return {}
+    try:
+        store.con.execute(DDL)
+        return {r: {"reason": why, "outcome": out, "at": at} for r, why, out, at in
+                store.con.execute("select relation, reason, outcome, epoch(tried_at) "
+                                  "from value_loss_tries").fetchall()}
+    except Exception:                                            # noqa: BLE001
+        return {}
+
+
+def _why(have: dict, cands: list, fp: str, stale_before: float) -> str:
+    """Why a source is counted again, in words a person can check against the warehouse."""
+    rows = [have.get(_key(c)) for c in cands]
+    if not any(rows):
+        return "never counted"
+    if not all(rows):
+        return "a column new since the last count"
+    old = sorted({str(x.get("fp")) for x in rows})
+    if old != [fp]:
+        return f"changed: {', '.join(old)} -> {fp}"
+    return f"last counted over {RECOUNT_DAYS} days ago"
+
+
 def measure(cands: list[Candidate], project, probe_mod, project_dir: str,
             profiles_dir: str | None, dbt_bin: str, *, store=None, schema=None,
             max_seconds: float = 120.0, say=None) -> list[Finding]:
@@ -280,9 +311,14 @@ def measure(cands: list[Candidate], project, probe_mod, project_dir: str,
             and have[_key(c)]["at"] >= stale_before for c in by_rel[r])
 
     todo = [r for r in rels if r in fp and not fresh(r)]
+    why = {r: _why(cache.get(r) or {}, by_rel[r], fp[r], stale_before) for r in todo}
+    tries = _tries(store)
+    # oldest count first; among those never counted, the ones never tried before the ones that
+    # failed last time, so a table that times out cannot hold every other one back
     todo.sort(key=lambda r: (min(((cache.get(r) or {}).get(_key(c)) or {}).get("at") or 0.0
-                                 for c in by_rel[r]), r))
+                                 for c in by_rel[r]), (tries.get(r) or {}).get("at") or 0.0, r))
     counted: dict = {}
+    outcome: dict = {}
     left = list(todo)
     while left and _t.monotonic() - started < max_seconds:
         chunk, left = left[:6], left[6:]
@@ -298,7 +334,10 @@ def measure(cands: list[Candidate], project, probe_mod, project_dir: str,
         for r, res in zip(chunk, probe_mod.run_many(stmts, project_dir, profiles_dir, dbt_bin,
                                                     dialect)):
             if res.failed or not res.rows:
+                outcome[r] = "failed: " + (str(getattr(res, "why", "") or "no rows")
+                                           .splitlines() or [""])[0][:160]
                 continue
+            outcome[r] = "counted"
             row = res.rows[0]
             for i, c in enumerate(by_rel[r]):
                 try:
@@ -318,18 +357,34 @@ def measure(cands: list[Candidate], project, probe_mod, project_dir: str,
         for (r, c), res in zip(hits, got):
             samples[(r, _key(c))] = [str(next(iter(x.values()))) for x in (res.rows or [])][
                 :SAMPLE] if not res.failed else []
-    if store is not None and counted:
+    if store is not None and (counted or outcome):
         from . import bulk
         store.con.execute(DDL)
-        bulk.many(store.con, "insert or replace into value_loss values (?,?,?,?,?,?,now())",
-                  [(r, k, fp.get(r, ""), lost, present, _j.dumps(samples.get((r, k), [])))
-                   for (r, k), (lost, present) in counted.items()])
+        if counted:
+            bulk.many(store.con, "insert or replace into value_loss values (?,?,?,?,?,?,now())",
+                      [(r, k, fp.get(r, ""), lost, present, _j.dumps(samples.get((r, k), [])))
+                       for (r, k), (lost, present) in counted.items()])
+        bulk.many(store.con, "insert or replace into value_loss_tries values (?,?,?,now())",
+                  [(r, why[r], o) for r, o in outcome.items()])
     if say is not None:
-        n_skip = len(rels) - len(todo)
-        say(f"--verify: values lost at a hop: {len(todo) - len(left)} source(s) counted, "
-            f"{n_skip} unchanged since the last count"
+        ok = [r for r, o in outcome.items() if o == "counted"]
+        bad = [r for r, o in outcome.items() if o != "counted"]
+        reasons: dict = {}
+        for r in ok:
+            k = why[r].split(":")[0]
+            reasons[k] = reasons.get(k, 0) + 1
+        say(f"--verify: values lost at a hop: {len(ok)} source(s) counted"
+            + (" (" + ", ".join(f"{n} {k}" for k, n in sorted(reasons.items())) + ")"
+               if reasons else "")
+            + f", {len(rels) - len(todo)} unchanged since the last count"
+            + (f", {len(bad)} failed and tried again next run" if bad else "")
             + (f", {len(left)} left for the next run (the {max_seconds:.0f}s budget)"
                if left else ""))
+        for r in ok:
+            if why[r].startswith("changed"):
+                say(f"  {r}: {why[r]}")
+        for r in bad:
+            say(f"  {r}: {outcome[r]}")
     # 4. the findings: what was counted now, else the last count
     out = []
     for r in rels:

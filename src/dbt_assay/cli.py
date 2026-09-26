@@ -4607,8 +4607,8 @@ def plan(
 ) -> None:
     """What to change next: the findings grouped into the fixes that resolve them, ranked.
 
-    Customer-facing and happening now first, then by layer (staging before marts), then by
-    findings resolved per decision. Each fix carries its files (a drafted description, a counted
+    Most findings resolved per decision first; customer-facing and happening now break ties, and
+    each fix says why it matters. Changes to one file are one fix. Each fix carries its files (a drafted description, a counted
     key test, a staging model and its readers repointed); `--measure` applies the top ones to a
     copy and counts what they resolve. assay never writes them into the project: an agent applies
     an approved fix in a branch.

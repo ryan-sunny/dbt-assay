@@ -178,3 +178,66 @@ def test_what_could_break_is_one_fix_per_model_and_the_rest_one_per_check():
     got = fixes._test_what_could_break(project, fs)
     assert len(got) == 1 and got[0].findings == ["w0", "w1"] and got[0].decisions == 1
     assert "col0: unique, or relationships" in got[0].how
+
+
+def test_stage_fixes_that_edit_the_same_model_are_one_fix(tmp_path):
+    """Two fixes each carrying their own full text of one model cannot both be applied: sources
+    read raw by the same model are staged in one fix, and a model reading both is resolved."""
+    (tmp_path / "a.sql").write_text("select * from {{ source('raw', 'p') }} join "
+                                    "{{ source('raw', 'q') }} using (id)\n")
+    (tmp_path / "b.sql").write_text("select * from {{ source('raw', 'q') }}\n")
+    (tmp_path / "c.sql").write_text("select * from {{ source('raw', 'r') }}\n")
+    srcs = {f"source.p.raw.{n}": SimpleNamespace(name=n, source_name="raw", schema="raw",
+                                                 columns={}) for n in "pqr"}
+    project = SimpleNamespace(
+        models={"model.p.a": _m("a", "a.sql", ["source.p.raw.p", "source.p.raw.q"]),
+                "model.p.b": _m("b", "b.sql", ["source.p.raw.q"]),
+                "model.p.c": _m("c", "c.sql", ["source.p.raw.r"])},
+        sources=srcs, raw={"nodes": {}})
+    by = {("reads_raw_source_outside_staging", "model.p.a"): [_finding(
+        "reads_raw_source_outside_staging", "model.p.a", "a", "fa")]}
+    got = sorted(fixes._stage(project, by, tmp_path, {}), key=lambda f: len(f.models))
+    assert len(got) == 2
+    one, merged = got
+    assert one.models == ["c"]
+    assert merged.models == ["a", "b"] and merged.decisions == 1
+    assert merged.files["a.sql"] == ("select * from {{ ref('stg_raw__p') }} join "
+                                     "{{ ref('stg_raw__q') }} using (id)\n")
+    assert merged.files["b.sql"] == "select * from {{ ref('stg_raw__q') }}\n"
+    assert sorted(merged.new_files) == ["models/staging/raw/stg_raw__p.sql",
+                                        "models/staging/raw/stg_raw__q.sql"]
+    assert merged.findings == ["fa"]            # a reads neither raw once both are repointed
+
+
+def test_every_model_a_schema_file_documents_is_one_fix_in_one_text(tmp_path):
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "_s.yml").write_text(
+        "version: 2\n\nmodels:\n  - name: a\n  - name: b\n")
+    project = SimpleNamespace(
+        models={"model.p.a": _m("a", "models/a.sql", []), "model.p.b": _m("b", "models/b.sql", [])},
+        raw={"nodes": {u: {"patch_path": "p://models/_s.yml"} for u in ("model.p.a", "model.p.b")}})
+    by = {}
+    for u, n in (("model.p.a", "a"), ("model.p.b", "b")):
+        f = _finding("column_has_no_description", u, n, "d" + n)
+        f.evidence = {"missing": ["id"]}
+        by[("column_has_no_description", u)] = [f]
+    import dbt_assay.fixes as fm
+    orig = fm._draft
+    fm._draft = lambda *a: "The row id."
+    try:
+        got = fixes._document(project, [], {}, None, by, tmp_path)
+    finally:
+        fm._draft = orig
+    assert len(got) == 1
+    fx = got[0]
+    assert fx.findings == ["da", "db"] and fx.decisions == 1 and list(fx.files) == ["models/_s.yml"]
+    assert fx.files["models/_s.yml"].count("description: The row id.") == 2
+
+
+def test_the_plan_ranks_by_findings_resolved_per_decision():
+    lo = fixes.Fix("make_it_pass", "t", "one failing test", findings=["x"])
+    lo.tier = "customer-facing"
+    hi = fixes.Fix("document", "f", "a file", findings=[f"d{i}" for i in range(50)])
+    hi.tier = "the rest"
+    wide = fixes.Fix("review", "c", "a check", findings=[f"r{i}" for i in range(60)], decisions=120)
+    assert [f.key for f in fixes.rank([lo, wide, hi])] == ["f", "t", "c"]

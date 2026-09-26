@@ -67,11 +67,27 @@ def test_counted_once_then_read_from_the_last_count_until_the_data_moves(tmp_pat
     got = valueloss.measure(cands, p, probe, ".", None, "dbt", store=s)
     assert not any("sum(case when" in x for x in sent), sent
     assert got[0].evidence["lost"] == 2 and got[0].evidence["sample"] == ["abc", "n/a"]
-    # the data moved: counted again
+    # the data moved: counted again, and the run says why (tester, 5c8fdd4: "unchanged" could
+    # not be trusted while a recount did not name its reason)
     rows_now["n"] = 11
     sent.clear()
-    valueloss.measure(cands, p, probe, ".", None, "dbt", store=s)
+    said: list = []
+    valueloss.measure(cands, p, probe, ".", None, "dbt", store=s, say=said.append)
     assert any("sum(case when" in x for x in sent)
+    assert "1 source(s) counted (1 changed)" in said[0], said
+    assert said[1].endswith(": changed: 10 -> 11"), said
+    # a count that fails is not reported as counted, and it is tried again next run
+    ok_many = probe.run_many
+    probe.run_many = lambda stmts, *a, **k: [Result(failed=True, why="timeout after 5s")
+                                             if st.kind == "count" else ok_many([st])[0]
+                                             for st in stmts]
+    rows_now["n"] = 13
+    said = []
+    valueloss.measure(cands, p, probe, ".", None, "dbt", store=s, say=said.append)
+    assert "0 source(s) counted" in said[0] and "1 failed and tried again next run" in said[0]
+    assert said[1].endswith(": failed: timeout after 5s"), said
+    assert s.con.execute("select outcome from value_loss_tries").fetchone()[0].startswith("failed")
+    probe.run_many = ok_many
     # no budget left: nothing is counted, and the last count still stands
     rows_now["n"] = 12
     sent.clear()

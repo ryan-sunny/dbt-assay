@@ -10,7 +10,8 @@ A fix carries its change as files: new files whole, edits to existing files as t
 text. assay never writes them into the project; an agent applies them in a branch, and
 `fixmeasure` says, on a patched copy, how many findings each one actually resolves.
 
-Kinds, in the order they are done (free first, then by layer):
+Kinds, in the order a finding is attributed (each counts once, against the first that takes it).
+The list itself is ranked by findings resolved per decision:
   make_it_pass        a failing dbt test                         no diff; the test names the rows
   run_the_tests       tests declared and never run               no diff; the job's selector
   schedule_freshness  freshness declared and never checked        no diff; the job
@@ -70,6 +71,7 @@ class Fix:
     measured: int | None = None                         # resolved on a patched copy
     measured_note: str = ""
     refused: list = field(default_factory=list)
+    parts: list = field(default_factory=list)           # stage: (source uid, staging model)
 
     @property
     def id(self) -> str:
@@ -234,14 +236,20 @@ def _yml_of(project, uid: str) -> str:
 
 
 def _document(project, entries, digests, schema, by_check, root: Path) -> list[Fix]:
+    """One fix per schema file: every model in it with columns to document, drafted into that
+    file in one edit. (sunny-data: 207 models, 11 files, 117 in one of them. Per model, the fixes
+    were 207 rows to read and 117 full new texts of one file that could not all be applied.)"""
     from . import schemapatch
     by_uid = {e.uid: e for e in entries or []}
-    out = []
+    per_file: dict = {}
     for (check, uid), fs in sorted(by_check.items()):
         if check != "column_has_no_description" or uid not in project.models:
             continue
         m = project.models[uid]
         missing = list((fs[0].evidence or {}).get("missing") or [])
+        if len(missing) < int((fs[0].evidence or {}).get("missing_total") or 0):
+            from .checks.columns import missing_descriptions
+            missing = missing_descriptions(project, uid, schema)[1]
         if not missing:
             continue
         edits, undrafted = [], []
@@ -253,29 +261,47 @@ def _document(project, entries, digests, schema, by_check, root: Path) -> list[F
                 undrafted.append(c)
         if not edits:
             continue
-        fx = Fix("document", uid, f"Document {len(edits)} column(s) of {m.name}")
-        fx.models = [m.name]
-        fx.findings = [f.id for f in fs] if not undrafted else []
         yml = _yml_of(project, uid)
-        text = _read(root, yml) if yml else None
-        if text is not None:
-            new, refused = schemapatch.apply(text, m.name, edits)
-            if refused:
-                fx.refused += refused
+        key = yml if yml and _read(root, yml) is not None else str(Path(m.path).parent)
+        per_file.setdefault(key, []).append((m, edits, undrafted, fs))
+    out = []
+    for key, items in sorted(per_file.items()):
+        n_cols = sum(len(e) for _m, e, _u, _f in items)
+        names = [m.name for m, _e, _u, _f in items]
+        fx = Fix("document", key,
+                 f"Document {n_cols} column(s) of {names[0]}" if len(items) == 1 else
+                 f"Document {n_cols} column(s) of {len(items)} models in {key}")
+        fx.models = names
+        text = _read(root, key) if key.endswith((".yml", ".yaml")) else None
+        undrafted_all = []
+        for m, edits, undrafted, fs in items:
+            if text is not None:
+                new, refused = schemapatch.apply(text, m.name, edits)
+                if refused:
+                    fx.refused += refused
+                    continue
+                text = new
             else:
-                fx.files[yml] = new
-        else:
-            path = str(Path(m.path).with_name(f"_{m.name}.yml"))
-            fx.files[path] = schemapatch.new_entry(m.name, edits)
-            fx.new_files.append(path)
+                path = str(Path(m.path).with_name(f"_{m.name}.yml"))
+                fx.files[path] = schemapatch.new_entry(m.name, edits)
+                fx.new_files.append(path)
+            if not undrafted:
+                fx.findings += [f.id for f in fs]
+            undrafted_all += [f"{m.name}.{c}" for c in undrafted]
+        if text is not None:
+            fx.files[key] = text
+        if not fx.files:
+            continue
+        fx.decisions = 1
         fx.how = ("Drafted from what assay already knows: a parent's description where the value "
                   "passes through, else the judged role, what a NULL means, and the expression. "
                   "Read each and correct it; it is a draft, and it becomes the project's once you "
                   "accept it.")
-        if undrafted:
-            fx.how += (f" {len(undrafted)} column(s) had nothing to draft from and still need a "
-                       f"sentence: {', '.join(undrafted[:8])}.")
-        fx.recipe = ["dbt parse (the yml is valid)", f"assay check --select {m.name}"]
+        if undrafted_all:
+            fx.how += (f" {len(undrafted_all)} column(s) had nothing to draft from and still need "
+                       f"a sentence: {', '.join(undrafted_all[:8])}.")
+        fx.recipe = ["dbt parse (the yml is valid)",
+                     "assay check --select " + " ".join(names[:40])]
         out.append(fx)
     return out
 
@@ -318,6 +344,7 @@ def _stage(project, by_check, root: Path, digests: dict | None = None) -> list[F
                                               f"{len(uids)} model(s) that read it raw")
         fx.moves_logic = True
         target = project.models[existing].name if existing else stg
+        fx.parts = [(src_uid, target)]
         if not existing:
             path = f"models/staging/{s.source_name}/{stg}.sql"
             fx.files[path] = (f"-- generated by assay: a pass-through staging model, so readers "
@@ -357,6 +384,82 @@ def _stage(project, by_check, root: Path, digests: dict | None = None) -> list[F
                       "equal (count, key set, a hash over sorted rows)")]
         if fx.models:
             out.append(fx)
+    return _merge_stages(out, project, root, by_check)
+
+
+def _merge_stages(fxs: list[Fix], project, root: Path, by_check: dict) -> list[Fix]:
+    """Stage fixes that edit the same model become one fix: two fixes each carrying their own
+    full new text of one file cannot both be applied, and one decision covers what one edit to
+    that file changes. (sunny-data: 80 sources, one mart edited by 11 of them, 33 fixes.)"""
+    par = list(range(len(fxs)))
+
+    def find(i):
+        while par[i] != i:
+            par[i] = par[par[i]]
+            i = par[i]
+        return i
+    owner: dict = {}
+    for i, fx in enumerate(fxs):
+        for path in fx.files:
+            if path in fx.new_files:
+                continue
+            if path in owner:
+                par[find(i)] = find(owner[path])
+            else:
+                owner[path] = i
+    comps: dict = {}
+    for i in range(len(fxs)):
+        comps.setdefault(find(i), []).append(fxs[i])
+    out = []
+    for group in comps.values():
+        if len(group) == 1:
+            out.append(group[0])
+            continue
+        srcs = [project.sources[u] for fx in group for u, _t in fx.parts]
+        models = sorted({m for fx in group for m in fx.models})
+        fx = Fix("stage_raw_source", "|".join(sorted(u for g in group for u, _t in g.parts)),
+                 f"Stage {len(srcs)} raw sources for {len(models)} model(s) that read them raw")
+        fx.moves_logic = True
+        fx.parts = [p for g in group for p in g.parts]
+        fx.models = models
+        fx.findings = [x for g in group for x in g.findings]
+        fx.decisions = 1
+        for g in group:
+            for path in g.new_files:
+                fx.files[path] = g.files[path]
+                fx.new_files.append(path)
+        # every reader edited once, with every source it reads raw repointed in the same text
+        for path in sorted({p for g in group for p in g.files if p not in g.new_files}):
+            text = _read(root, path) or ""
+            for (u, target) in fx.parts:
+                s = project.sources[u]
+                text = _source_call(s.source_name, s.name).sub(f"{{{{ ref('{target}') }}}}", text)
+            fx.files[path] = text
+        # a model reading several of these sources raw is resolved once its text reads none
+        ours = {u for u, _t in fx.parts}
+        for uid, m in project.models.items():
+            raw = [p for p in m.parents if p in project.sources]
+            text = fx.files.get(m.path)
+            if not raw or text is None or not set(raw) <= ours or any(
+                    _source_call(project.sources[u].source_name,
+                                 project.sources[u].name).search(text) for u in raw):
+                continue
+            for f in by_check.get(("reads_raw_source_outside_staging", uid), []):
+                if f.id not in fx.findings:
+                    fx.findings.append(f.id)
+        fx.how = ("Each source gets a pass-through staging model (an existing one where it "
+                  "already has one), and every model below that reads one of them raw points at "
+                  "it instead: " + "; ".join(f"{project.sources[u].source_name}."
+                                             f"{project.sources[u].name} -> `{t}`"
+                                             for u, t in fx.parts[:20])
+                  + ". It changes no rows: the readers see the same columns. They are one fix "
+                    "because they edit the same models.")
+        left = [h for g in group for h in g.how.split(" Left as it is: ")[1:]]
+        if left:
+            fx.how += " Left as it is: " + " ".join(left)
+        fx.recipe = ["dbt build --select " + " ".join([t for _u, t in fx.parts] + models[:40]),
+                     group[0].recipe[1]]
+        out.append(fx)
     return out
 
 
@@ -500,31 +603,40 @@ _RISK_TEST = {
 
 
 def _test_what_could_break(project, findings) -> list[Fix]:
-    """One fix per model: the columns judged able to break silently, and the test each needs."""
-    by: dict = {}
+    """One fix per schema file: the columns judged able to break silently in the models it
+    declares, and the test each needs, because that file is where the tests are written."""
+    per: dict = {}
     for f in findings:
-        if f.check == "what_would_break_silently":
-            by.setdefault(f.subject, []).append(f)
+        if f.check == "what_would_break_silently" and f.subject in project.models:
+            m = project.models[f.subject]
+            key = (_yml_of(project, f.subject) if getattr(project, "raw", None) else "") \
+                or str(Path(m.path).parent)
+            per.setdefault(key, {}).setdefault(f.subject, []).append(f)
     out = []
-    for uid, fs in sorted(by.items()):
-        m = project.models.get(uid)
-        if m is None:
-            continue
-        lines = []
-        for f in fs:
-            col = str((f.evidence or {}).get("context") or "").split(".")[-1]
-            test = _RISK_TEST.get(str((f.evidence or {}).get("answer") or ""), "a test")
-            lines.append(f"{col}: {test}")
-        fx = Fix("test_what_could_break", uid,
-                 f"Test {len(fs)} column(s) of {m.name} that could break silently")
-        fx.findings = [f.id for f in fs]
-        fx.models = [m.name]
-        fx.decisions = 1
+    for key, by_model in sorted(per.items()):
+        lines, ids, names = [], [], []
+        for uid, fs in sorted(by_model.items()):
+            m = project.models[uid]
+            names.append(m.name)
+            for f in fs:
+                col = str((f.evidence or {}).get("context") or "").split(".")[-1]
+                test = _RISK_TEST.get(str((f.evidence or {}).get("answer") or ""), "a test")
+                lines.append(f"{m.name}.{col}: {test}" if len(by_model) > 1 else f"{col}: {test}")
+                ids.append(f.id)
+        fx = Fix("test_what_could_break", key,
+                 f"Test {len(ids)} column(s) of {names[0]} that could break silently"
+                 if len(names) == 1 else
+                 f"Test {len(ids)} column(s) in {len(names)} models of {key} that could break "
+                 f"silently")
+        fx.findings = ids
+        fx.models = names
+        fx.decisions = len(names)
         fx.how = ("Each column below was judged able to go wrong without any error, and the test "
-                  "named is what would catch it: " + "; ".join(lines[:20])
+                  "named is what would catch it: " + "; ".join(lines[:30])
+                  + (f"; and {len(lines) - 30} more" if len(lines) > 30 else "")
                   + ". `assay plan --verify` counts the key and value tests through your dbt and "
                     "writes the ones that pass today.")
-        fx.recipe = [f"dbt test --select {m.name} (the new tests pass)"]
+        fx.recipe = ["dbt test --select " + " ".join(names[:40]) + " (the new tests pass)"]
         out.append(fx)
     return out
 
@@ -639,15 +751,14 @@ def build(project, findings, *, entries=None, digests=None, schema=None, store=N
 
 
 def rank(fixes: list[Fix]) -> list[Fix]:
-    """Free first (no decision, or one), then customer-facing and live harm, then by layer, then
-    findings resolved per decision."""
+    """Most findings resolved per decision first, then most resolved, then customer-facing and
+    live harm, then by layer. (Ryan, on the Fix tab: single failing tests at ~1 each sat on top
+    while the fixes resolving hundreds were far down. The priority's reasons stay on each fix.)"""
     tiers = {"customer-facing": 0, "happening now": 1, "wide reach": 2, "the rest": 3}
 
     def key(fx: Fix):
         n = fx.measured if fx.measured is not None else len(fx.findings)
-        early = fx.kind in ("make_it_pass", "run_the_tests", "schedule_freshness")
-        return (0 if early else 1, tiers.get(fx.tier, 3), fx.layer,
-                -(n / max(1, fx.decisions)), -n, fx.id)
+        return (-(n / max(1, fx.decisions)), -n, tiers.get(fx.tier, 3), fx.layer, fx.id)
     return sorted(fixes, key=key)
 
 
