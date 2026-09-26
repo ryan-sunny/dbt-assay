@@ -1066,15 +1066,16 @@ def explorer_html(data: dict, record_html: str) -> str:
     # has to make. Explore: one thing at a time, with every list the tabs used to be. Settings
     # hold what is configured. Fix and Decide are the review form, embedded.
     labels = {t: label for t, label, _n in tabs}
-    fixes_n = sum(1 for f in (data.get("fixes") or []) if f.get("kind") != "review")
-    cards_n = ((data.get("meta") or {}).get("review") or {}).get("cards")
+    fixes_n = len(data.get("fixes") or [])
+    cards_n = ((data.get("meta") or {}).get("review") or {}).get("groups")
     sections = [("overview", "Overview", None,
                  "Whether this warehouse is healthy and getting better, and what to change next."),
                 ("fix", "Fix", fixes_n or None,
-                 ("The findings grouped into the changes that resolve them, most important "
-                  "first. One decision per change.")),
+                 ("The changes that clear the findings, the most per decision first. One "
+                  "decision per change.")),
                 ("decide", "Decide", cards_n or None,
-                 "Only the calls a person has to make: judgment calls, the failing rows, the words."),
+                 ("Only the calls a person has to make: the queued judgment calls, in groups, "
+                  "the failing rows, the words.")),
                 ("explore", "Explore", None,
                  "Every model, hop, claim and answer, and every finding by kind.")]
     nav = ('<span class="secbtns">' + "".join(
@@ -2277,19 +2278,27 @@ function tallyGrid(T, onPage) {
   const add = (label, value, note) => rows.push(el('span', {class: 'tl', text: label}),
     el('span', {}, [el('b', {text: value}), note ? el('span', {class: 'tn', text: ' ' + note}) : null]
       .filter(Boolean)));
-  if (onPage) add('open', num(T.findings) + ' findings', 'on ' + num(T.pairs) + ' model + check pairs');
-  add(onPage ? 'on the review form' : 'to rule on', num(T.cards) + ' cards',
-      'one card is one model and one check; you can split a card if its findings differ');
+  /* *** 2,202 NOTES ARE NOT 2,202 PROBLEMS. *** (Ryan) What the policy queues leads, split into
+     broken now and worth a look; the notes are one line; no verdict on the warehouse. */
+  if (T.queued != null) {
+    const paid = n => n ? '(' + num(n) + ' customer-facing)' : '';
+    add('broken now', num(T.broken), paid(T.broken_paid));
+    add('worth a look', num(T.look), paid(T.look_paid));
+    add('notes', num(T.notes), 'not queued by audit.yml; inside the changes that clear them, '
+        + 'and in Explore');
+    if (!onPage) add('to decide', num(T.cards) + ' cards in ' + num(T.groups) + ' groups',
+                     'the queued judgment calls; one verdict per group, and any card can differ');
+  } else {
+    if (onPage) add('open', num(T.findings) + ' findings', 'on ' + num(T.pairs) + ' model + check pairs');
+    add(onPage ? 'on the review form' : 'to rule on', num(T.cards) + ' cards',
+        'one card is one model and one check; you can split a card if its findings differ');
+  }
   if (T.ruled_pairs) add('already ruled', num(T.ruled_pairs) + ' cards (' + num(T.ruled_findings)
       + ' findings)', onPage ? 'not on the form; still listed here until fixed'
                              : 'left off this form; still open on the page until fixed');
   const aside = Object.entries(T.set_aside || {}).filter(([, n]) => n)
     .map(([k, n]) => num(n) + ' ' + k);
   if (aside.length) add('set aside', aside.join(' · '), 'not open, so on neither list');
-  const E = T.evaluator;
-  if (E) add('dbt-project-evaluator', num(E.rows) + ' rows → ' + num(E.cards) + ' cards',
-      (E.folded ? num(E.folded) + ' rows landed on assay’s own findings; ' : '')
-      + 'one card per model and fact');
   return el('div', {class: 'tgrid'}, rows);
 }
 
@@ -3105,10 +3114,20 @@ function understoodTab(host) {
   if (answered)
     leadBits.push(num(answered) + ' questions answered across ' + num(meta.yours ?? meta.models) + ' models');
   const leadCost = spent == null ? '' : ' for $' + spent.toFixed(2);
+  /* *** 2,202 NOTES ARE NOT 2,202 PROBLEMS. *** (Ryan: "tone it down", and then: "that doesnt
+     mean start claiming any warehouse is suddenly perfect") What is wrong, at its real size:
+     what is broken now, what is worth a look, and the notes on one line. No verdict either way. */
+  const T = meta.review || {};
+  const Q = F.filter(f => f.action === 'queue' || f.action === 'fail');
+  const paidN = (T.broken_paid || 0) + (T.look_paid || 0);
+  const triage = T.queued != null
+    ? num(T.broken) + ' broken now and ' + num(T.look) + ' worth a look'
+      + (paidN ? ', ' + num(paidN) + ' of them customer-facing' : '')
+      + '; ' + num(T.notes) + ' notes.'
+    : num(F.length) + ' findings.';
   bits.push(el('p', {class: 'tlead', text: (leadBits.length
-    ? leadBits.join(', and ') + leadCost + ', finding '
-    : 'Reading ' + num(meta.yours ?? meta.models) + ' models found ')
-    + num(F.length) + ' defects no dbt test can express.'}));
+    ? leadBits.join(', and ') + leadCost + '. '
+    : 'Read ' + num(meta.yours ?? meta.models) + ' models. ') + triage}));
 
   const ticket = el('div', {class: 'ticket'}, [
     column('read', num(DATA.claims.length), 'sentences',
@@ -3119,9 +3138,11 @@ function understoodTab(host) {
            'from ' + num(DATA.questions.length) + ' questions',
            'Questions no parser can settle -- what a filter is for, what a NULL means -- each '
            + 'answer stored with what it was asked from.'),
-    column('found', num(F.length), 'defects', 'across ' + num(checks) + ' checks',
-           'Grain, meaning, provenance and drift: defects no unique or not_null test can '
-           + 'express.'),
+    column('queued', num(T.queued != null ? T.queued : F.length), 'findings',
+           T.queued != null ? num(T.broken) + ' broken now, ' + num(T.look) + ' worth a look'
+                            : 'across ' + num(checks) + ' checks',
+           'What audit.yml puts in front of a person. The notes are not counted here: they are '
+           + 'in Explore, and inside the changes that clear them.'),
     column('at cost', spent == null ? '\u2014' : '$' + spent.toFixed(2), '',
            spent == null ? 'unknown: this store predates the ledger'
              : num((DATA.cost || {}).calls || 0) + ' model call(s)',
@@ -3135,33 +3156,19 @@ function understoodTab(host) {
     cut ? el('img', {class: 'cut ticketcut', src: cut, alt: ''}) : el('div'),
   ]));
 
-  // ---- what to change next: the few kinds of change most findings come down to (the Fix section)
+  // ---- what to change next: the changes that clear the most, one card per edit (the Fix section)
   const FX = DATA.fixes || [];
   if (FX.length) {
-    const kinds = {};
-    for (const f of FX) {
-      if (f.kind === 'review') continue;
-      const k = kinds[f.kind] = kinds[f.kind] || {title: f.kind_title, n: 0, resolves: 0,
-                                                   decided: 0, rank: f.kind_rank};
-      k.n += 1; k.resolves += f.resolves || 0;
-      if (f.status && f.status !== 'proposed') k.decided += 1;
-    }
-    const top = Object.values(kinds).sort((a, b) => b.resolves - a.resolves || a.rank - b.rank)
-      .slice(0, 4);
-    const resolved = FX.filter(f => f.kind !== 'review').reduce((n, f) => n + (f.resolves || 0), 0);
+    const cleared = FX.reduce((n, f) => n + (f.resolves || 0), 0);
     const toFix = el('button', {class: 'back', text: 'every change, ranked →'});
     toFix.onclick = () => open('fix');
     bits.push(block('What to change next',
-      'The findings grouped into the changes that resolve them. Each change is one decision; '
-      + 'an agent applies an approved one in a branch.',
-      el('div', {}, [el('div', {class: 'tiles'}, top.map(k => tile(
-        k.resolves ? num(k.resolves) : num(k.n), k.title,
-        k.resolves ? num(k.n) + (k.n === 1 ? ' change' : ' changes')
-                     + (k.decided ? ', ' + num(k.decided) + ' decided' : '')
-                   : num(k.n) + ' changes to how the project is built'))),
-        el('p', {class: 'fact', text: num(resolved) + ' of ' + num(F.length)
-          + ' open findings come down to these; '
-          + num(FX.filter(f => f.kind === 'review').length) + ' more need reading.'}),
+      'The changes that clear the most findings per decision. An agent applies an approved one '
+      + 'in a branch.',
+      el('div', {}, [el('div', {class: 'tiles'}, FX.slice(0, 4).map(f => tile(
+        num(f.resolves || 0), f.title, f.queued ? num(f.queued) + ' of them queued' : ''))),
+        el('p', {class: 'fact', text: num(FX.length) + (FX.length === 1 ? ' change clears '
+          : ' changes clear ') + num(cleared) + ' findings.'}),
         toFix])));
   }
 
@@ -3174,7 +3181,7 @@ function understoodTab(host) {
       'Open findings at each full run in the store, oldest first. A fix batch shows as the drop '
       + 'after it.',
       el('div', {}, [el('div', {class: 'tiles'}, [
-        tile(num(last.open), 'open at the last full run', last.at),
+        tile(num(last.open), 'findings at the last full run', last.at + ', notes included'),
         tile((d > 0 ? '+' : d < 0 ? '\u2212' : '') + num(Math.abs(d)), 'since the run before',
              prev.at, d > 0 ? 'bad' : ''),
         tile(num(last.harm), 'happening now', 'a failing test, a lost guarantee, a broken key, '
@@ -3189,7 +3196,8 @@ function understoodTab(host) {
     'The one number no release can move. Agent rulings triage what to read first and gate '
     + 'nothing.',
     el('div', {class: 'tiles'}, [
-      tile(num(ruledN) + ' of ' + num(F.length), 'findings ruled on',
+      tile(num(Q.filter(f => f.ruled_finding).length) + ' of ' + num(Q.length),
+           'queued findings ruled on',
            humanN + ' human verdict(s), ' + agentN + ' agent', ruledN ? '' : 'bad'),
       tile(num((meta.coverage || {}).readable || 0), 'assay could read',
            unread ? num(unread) + ' could not be read, so were not checked' : 'all of them',
@@ -3265,19 +3273,21 @@ function understoodTab(host) {
     + 'different facts.',
     el('div', {}, [stackedBar(gparts, M_.length), glegend])));
 
-  // ---- findings by check, ranked, one hue
+  // ---- the queued findings by check, ranked, one hue
   const byCheck = {};
   for (const f of F) byCheck[f.check] = (byCheck[f.check] || 0) + 1;
-  const rows = Object.entries(byCheck).sort((a, b) => b[1] - a[1]).map(([c, n]) => {
-    const mine = F.filter(f => f.check === c);
+  const byQ = {};
+  for (const f of Q) byQ[f.check] = (byQ[f.check] || 0) + 1;
+  const rows = Object.entries(byQ).sort((a, b) => b[1] - a[1]).map(([c, n]) => {
+    const mine = Q.filter(f => f.check === c);
     const read = mine.filter(f => f.ruled_finding).length;
     return {label: c, n: n, note: read ? read + ' read' : '',
             tip: `${c}: ${n} finding(s), ${read} read by a person, worst reach `
                  + Math.max(...mine.map(f => f.marts)) + ' marts',
             onclick: () => { open('findings'); }};
   });
-  bits.push(block('What is wrong, and how much of it',
-    'Ranked by count. Click a bar for the findings.',
+  if (rows.length) bits.push(block('What is queued, by check',
+    'Ranked by count. The notes are in Explore. Click a bar for the findings.',
     rankedBars(rows)));
 
   // ---- what would happen on a build. STATUS colors, always with their label.

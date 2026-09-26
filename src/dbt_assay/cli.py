@@ -4608,8 +4608,9 @@ def plan(
     """What to change next: the findings grouped into the fixes that resolve them, ranked.
 
     Most findings resolved per decision first; customer-facing and happening now break ties, and
-    each fix says why it matters. Changes to one file are one fix. Each fix carries its files (a drafted description, a counted
-    key test, a staging model and its readers repointed); `--measure` applies the top ones to a
+    each fix says why it matters. Documenting, testing and staging are one change each. Each fix
+    carries its files (a drafted description, a counted key test, a staging model and its readers
+    repointed); `--measure` applies the top ones to a
     copy and counts what they resolve. assay never writes them into the project: an agent applies
     an approved fix in a branch.
 
@@ -4632,13 +4633,19 @@ def plan(
     cfg = Config.load(config_path)
     store = Store(store_path) if Path(store_path).exists() else None
     entries = inv_mod.build(project, digests, schema, store, probe_mod.read(store) if store else {})
-    findings = live_mod.all_findings(project, digests, schema, entries, store=store,
-                                     threshold=cfg.row_loss_threshold)
+    acts = None
+    if store is not None:
+        # the same open list and policy `check` reports, so the plan counts what check counts
+        findings, _waived, acts = live_mod.open_findings(project, digests, schema, entries, store,
+                                                         cfg, config_path)
+    else:
+        findings = live_mod.all_findings(project, digests, schema, entries, store=store,
+                                         threshold=cfg.row_loss_threshold)
     from . import groups as groups_mod
     if not agreed:
         _fix_plan(project, digests, schema, entries, findings, store, tdir, dialect, measure,
                   fixes_out, dbt_bin, profiles_dir, json_out, limit,
-                  verify=verify, project_dir=project_dir)
+                  verify=verify, project_dir=project_dir, acts=acts)
         return
     rows = plan_mod.build(findings, store, groups_mod.build(project, findings), project=project)
 
@@ -4677,13 +4684,14 @@ def plan(
 
 def _fix_plan(project, digests, schema, entries, findings, store, tdir, dialect, measure: int,
               fixes_out: str, dbt_bin: str, profiles_dir, json_out: bool, limit: int, *,
-              verify: bool = False, project_dir: str = ".") -> None:
+              verify: bool = False, project_dir: str = ".", acts: dict | None = None) -> None:
     from . import fixes as fixes_mod
     from . import groups as groups_mod
     from . import ledger as ledger_mod
     fx = fixes_mod.build(project, findings, entries=entries, digests=digests, schema=schema,
                          store=store, led=ledger_mod.last(),
-                         groups=groups_mod.build(project, findings), root=project.project_root)
+                         groups=groups_mod.build(project, findings), root=project.project_root,
+                         acts=acts)
     if verify:
         # *** A CONFIRMED JUDGMENT BECOMES PART OF THE PROJECT. *** (Ryan: "bless my warehouse")
         # The judged roles justify tests; the ones counted to pass today are offered as fixes.
@@ -4703,10 +4711,19 @@ def _fix_plan(project, digests, schema, entries, findings, store, tdir, dialect,
     doc = {"open": len(findings), "fixes": [{**f.as_dict(), "status": st.get(f.id, {}),
                                              "diff": fixes_mod.diff(f, project.project_root)}
                                             for f in fx]}
-    resolved = sum(len(f.findings) for f in fx if f.kind != "review")
-    doc["line"] = (f"{sum(1 for f in fx if f.kind != 'review')} fix(es) would resolve "
-                   f"~{resolved:,} of {len(findings):,} open finding(s); "
-                   f"{sum(1 for f in fx if f.kind == 'review')} need(s) reading")
+    sp = fixes_mod.split(findings, fx, acts)
+    n_groups = len({f.check for f in findings if f.id in sp["decide"]})
+    doc["split"] = {k: len(v) for k, v in sp.items()}
+    from . import reviewform
+    t = reviewform.split_counts(findings, sp, project, acts)
+    doc["triage"] = t
+    paid = t["broken_paid"] + t["look_paid"]
+    doc["line"] = (f"{t['broken']:,} broken now and {t['look']:,} worth a look"
+                   + (f" ({paid:,} customer-facing)" if paid else "")
+                   + f"; notes: {t['notes']:,}. {len(fx)} change(s) clear "
+                     f"{len(sp['fix']) + len(sp['settled']):,} finding(s); "
+                     f"{len(sp['decide']):,} judgment call(s) to decide in {n_groups} group(s) "
+                     f"(`assay review`).")
     Path(fixes_out).write_text(_json.dumps(doc, indent=2, default=str))
     if json_out:
         print(_json.dumps({k: v for k, v in doc.items()}, indent=2, default=str))
@@ -4728,8 +4745,10 @@ def _fix_plan(project, digests, schema, entries, findings, store, tdir, dialect,
                   f"the top ten resolve on a patched copy.[/]")
 
 
-def _fixes_for_form(project, digests, schema, entries, findings, store) -> list:
-    """The ranked fixes as the form's Fix cards: each with its diff and its status."""
+def _fixes_for_form(project, digests, schema, entries, findings, store,
+                    acts: dict | None = None) -> tuple[list, list]:
+    """(the ranked fixes as the form's Fix cards, each with its diff and its status; the Fix
+    objects, which say which findings each clears)."""
     from . import fixes as fixes_mod
     from . import groups as groups_mod
     from . import ledger as ledger_mod
@@ -4737,10 +4756,10 @@ def _fixes_for_form(project, digests, schema, entries, findings, store) -> list:
         fx = fixes_mod.build(project, findings, entries=entries, digests=digests, schema=schema,
                              store=store, led=ledger_mod.last(),
                              groups=groups_mod.build(project, findings),
-                             root=project.project_root)
+                             root=project.project_root, acts=acts)
     except Exception as e:                                       # noqa: BLE001
         console.print(f"[yellow]the fixes could not be built for the form:[/] [dim]{e}[/]")
-        return []
+        return [], []
     st = fixes_mod.statuses(store)
     out = []
     for f in fx:
@@ -4749,7 +4768,7 @@ def _fixes_for_form(project, digests, schema, entries, findings, store) -> list:
         d["status"] = st.get(f.id, {}).get("status", "proposed")
         d["diff"] = fixes_mod.diff(f, project.project_root)[:60000]
         out.append(d)
-    return out
+    return out, fx
 
 
 @app.command("fix")
@@ -5591,26 +5610,30 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
         _ruled = store.ruled_pairs()
     except Exception:                                            # noqa: BLE001
         _ruled = set()
-    tally = reviewform.tally([(f.subject, f.check) for f in findings], _ruled,
+    # *** ONLY WHAT A PERSON HAS TO DECIDE IS A CARD. *** (Ryan: "im not deciding on 1600 cards")
+    # A finding a change clears is decided on that change; one a count settled is a proposal on
+    # the Fix tab; a note stays in Explore. The rest are the queued judgment calls.
+    from . import fixes as fixes_mod
+    fix_rows, fix_objs = _fixes_for_form(project, digests, schema, entries, findings, store,
+                                         _acts)
+    sp = fixes_mod.split(findings, fix_objs, _acts)
+    decide = [f for f in findings if f.id in sp["decide"]]
+    tally = reviewform.tally([(f.subject, f.check) for f in decide], _ruled,
                              [w for _f, w in _waived])
+    tally.update(reviewform.split_counts(findings, sp, project, _acts))
     tally["line"] = reviewform.tally_line(tally)
     tally["rule"], tally["tail"] = reviewform.CARD_RULE, reviewform.tally_tail(tally)
-    from . import evaluator as _ev_mod
-    _ev_line = _ev_mod.surface_line(findings)
-    tally["evaluator"] = _ev_mod.surface_counts(findings)
-    if _ev_line:
-        tally["line"] = (tally["line"] + " " + _ev_line).strip()
     reads = {}
     if reads_path:
         reads = _json.loads(Path(reads_path).read_text())
 
     from . import groups as groups_mod
-    cards, sql = reviewform.cards(findings, store, Path(tdir).parent, reads,
+    cards, sql = reviewform.cards(decide, store, Path(tdir).parent, reads,
                                   groups=groups_mod.build(project, findings), project=project)
-    if not cards:
-        console.print("[green]nothing to rule on.[/] [dim]Either there are no findings, or every "
-                      "(model, check) pair already has a human verdict. Those are different "
-                      "things: `assay check` says which.[/]")
+    if not cards and not fix_rows:
+        console.print("[green]nothing to decide and no change to approve.[/] [dim]Either nothing "
+                      "is queued, or every queued (model, check) pair already has a human "
+                      "verdict. Those are different things: `assay check` says which.[/]")
         return
     p = Path(out)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -5651,8 +5674,7 @@ def _emit_review_form(store, out: str, target: str, config_path: str, store_path
                          f"model, 40 models at most)" if len(failing) > len(expl_tests) else "")
                       + ".[/]")
     ctx["tally"] = tally
-    ctx["fixes"], ctx["open_findings"] = _fixes_for_form(project, digests, schema, entries,
-                                                         findings, store), len(findings)
+    ctx["fixes"], ctx["open_findings"] = fix_rows, len(findings)
     p.write_text(reviewform.form_html(
         cards, sql, project.project_name or "this project",
         project.raw.get("metadata", {}).get("generated_at", ""), _pkg_version(), ctx, report))

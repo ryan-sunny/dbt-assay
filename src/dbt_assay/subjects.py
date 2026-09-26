@@ -236,6 +236,14 @@ SETTLED_BY_A_COUNT = frozenset({
     "test_is_failing", "guarantee_lost", "guarantee_does_not_hold"})
 
 
+def settled_by_a_count(f) -> bool:
+    """A finding nobody has to judge: its check counts it, or dbt-project-evaluator's rows did.
+    `f` is a Finding or a dict with `check` and `evidence`."""
+    check = f.get("check") if isinstance(f, dict) else f.check
+    ev = (f.get("evidence") if isinstance(f, dict) else f.evidence) or {}
+    return check in SETTLED_BY_A_COUNT or bool((ev.get("evaluator") or {}).get("rules"))
+
+
 def _findings(project, digests, schema, findings, store) -> list[Subject]:
     """One subject per (model, check), the grain a verdict covers and a review card shows."""
     if findings is None:

@@ -935,12 +935,12 @@ def test_a_fix_is_approved_on_its_card_and_loads_back(tmp_path):
             page.goto(out.as_uri() + "#embed&pane=fixes")
             assert page.evaluate("document.body.classList.contains('embed')")
             assert page.locator("nav.tabs").is_hidden()
-            # the header's "structure" count has a group in the list, and it opens
-            groups = page.locator("#p-fixes .fg .fgname").all_inner_texts()
-            assert groups[-1] == "Structure", groups
-            page.locator("#p-fixes .fg", has_text="Structure").click()
-            assert "Stage raw.p" in page.locator("#p-fixes .fdetail").inner_text()
-            page.locator("#p-fixes .fg").first.click()
+            # one ranked list, no column of kinds, and the header counts the list (Ryan: "fixes
+            # 380 / structure 47" over a list of kinds saying 207, 129 and 80)
+            assert page.locator("#p-fixes .fgroups").count() == 0
+            rows = page.locator("#p-fixes .frow").count()
+            head = page.locator("#p-fixes .tgrid").inner_text()
+            assert rows == 2 and head.split("\n")[1].startswith("2 clear"), head
             c = page.locator("#p-fixes .card").first
             assert "Document 2 column(s) of orders" in c.inner_text()
             c.locator('input[value="approve"]').check()
@@ -1010,3 +1010,51 @@ def test_fix_and_decide_are_the_form_embedded_on_its_panes(tmp_path, project_dir
             assert page.locator("#p-form iframe").count() == 0
         finally:
             browser.close()
+
+
+def test_a_group_verdict_answers_its_cards_and_the_view_is_capped(tmp_path):
+    """(Ryan: "im not deciding on 1600 cards") One verdict for a check's cards, any card can say
+    otherwise, and the handback carries one row per card. The groups past 25 sit behind a count."""
+    import json
+
+    from playwright.sync_api import sync_playwright
+
+    from dbt_assay import reviewform
+
+    def card(model, check):
+        return {"key": f"model.p.{model}::{check}", "subject": f"model.p.{model}",
+                "model": model, "question": check, "title": check.replace("_", " "),
+                "file": "", "marts": 0, "descendants": 0, "exposures": [],
+                "findings": [{"id": f"{model}-{check}", "summary": "s", "detail": "d",
+                              "claim": ""}], "agent": None, "read": None}
+    cards = [card(m, "code_contradicts_a_claim") for m in ("a", "b", "c")]
+    cards += [card("z", f"check_{i:02d}") for i in range(29)]
+    out = tmp_path / "review.html"
+    out.write_text(reviewform.form_html(cards, {}, "p", "x", "0",
+                                        {"words": [], "explanations": [], "waivers": [],
+                                         "settings": []}))
+    errors: list[str] = []
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(accept_downloads=True, viewport={"width": 1400, "height": 900})
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(out.as_uri() + "#pane=findings")
+            names = page.locator("#p-findings .fg .fgname").all_inner_texts()
+            assert names[0] == "every card" and len(names) == 27 and names[-1] == "5 more", names
+            page.locator("#p-findings .fg", has_text="5 more").click()
+            assert page.locator("#p-findings .fg").count() == 31
+            # the first group opens by itself; its verdict answers all three cards
+            page.locator(".gcard .rbtns button", has_text="agree").first.click()
+            page.locator("#p-findings .frow").nth(1).click()
+            page.locator('#p-findings .card input[value="disagree"]').check()
+            page.locator("#p-findings .card textarea.note").first.fill("b is fine")
+            assert page.locator("#count").inner_text() == "3 of 32 answered"
+            with page.expect_download() as dl:
+                page.click("#dl")
+            doc = json.loads(dl.value.path().read_text())
+            assert not errors, errors
+        finally:
+            browser.close()
+    got = {(v["model"], v["verdict"]) for v in doc["verdicts"]}
+    assert got == {("a", "agree"), ("b", "disagree"), ("c", "agree")}, doc["verdicts"]

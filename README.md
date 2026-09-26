@@ -1091,12 +1091,19 @@ assay fix <id> --approve --by you     # a person's decision; --defer, or --rejec
 
 Nobody rules on two thousand findings, and most of them are not judgment calls. `plan` attributes
 every finding to the change that would resolve it and ranks the changes by findings resolved per
-decision, with customer-facing and happening now breaking ties. Changes to one file are one fix
-(every model a schema file documents, every source repointed in the models that read it). A fix carries
-its files: descriptions drafted from what assay already knows (a parent's description where the
-value passes through, else the judged role and what a NULL means), key tests on grains assay counted
-unique, a pass-through staging model with the readers of a raw source repointed to it, a premise many
-things rest on declared as a test. Everything else is a proposal with its fix shape.
+decision, with customer-facing and happening now breaking ties. Documenting, testing what could
+break and staging raw sources are one change each, with their parts inside; a change that clears
+nothing open is left out. A fix carries its files: descriptions drafted from what assay already
+knows (a parent's description where the value passes through, else the judged role and what a NULL
+means), key tests on grains assay counted unique, a pass-through staging model with the readers of
+a raw source repointed to it, a premise many things rest on declared as a test.
+
+What is left splits three ways, and the four parts add up to the open findings. A queued finding a
+count settled is a proposal with its fix shape. A queued judgment call is decided in `review`, one
+verdict per check, and any card can differ. A finding `audit.yml` only annotates is a note: it
+sits inside the change that clears it and in Explore, and is never an item of its own. The page
+and the form lead with what is broken now and what is worth a look, and count the notes on one
+line.
 
 `--measure` writes a fix into a scratch copy of the project, runs `dbt parse` there (no warehouse),
 and checks the copy: "resolves 212 (measured)" is a count, not an estimate. assay never writes into

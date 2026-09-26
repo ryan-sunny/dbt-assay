@@ -379,11 +379,11 @@ def test_the_pagination_belongs_to_the_pane_you_are_looking_at():
     js = reviewform._JS
     assert "const PAGES" in js, "paging state is not per pane"
     assert "function pageOf(" in js and "paneItems(" in js
-    # every pane that pages slices its own items; Findings and Words list everything in the
-    # navigator (R1, R5), so they do not page and the pager is hidden on them
-    for pane in ("'explanations'", "'waivers'"):
+    # every pane that pages slices its own items; Findings, Words, Fixes and Explanations list
+    # everything in the navigator (R1, R5), so they do not page and the pager is hidden on them
+    for pane in ("'waivers'",):
         assert f"pageOf({pane})" in js, f"{pane} does not page itself"
-    assert "pane === 'findings' || pane === 'words'" in js
+    assert "['findings', 'words', 'fixes', 'explanations'].includes(pane)" in js
     # and the single global page is gone
     for gone in ("let page = 0", "page * PER", "page++", "page--"):
         assert gone not in js, f"the global pager survived: {gone}"
@@ -744,12 +744,15 @@ def test_a_failing_test_does_not_empty_the_form(project_dir, tmp_path):
                                  "--store", store], env={"COLUMNS": "400"})
     assert r.exit_code == 0, r.output
     assert "Explanations: 1 failing test(s)" in r.output, r.output
-    m = re.search(r"([\d,]+) card\(s\) covering ([\d,]+) of", r.output)
+    m = re.search(r"To decide: ([\d,]+) card\(s\) in ([\d,]+) group", r.output)
     html = form.read_text()
     data = json.loads(html.split('<script id="assay-form" type="application/json">')[1]
                       .split("</script>")[0].replace("<\\/", "</"))
-    assert len(data["cards"]) == int(m.group(1).replace(",", "")) > 0
-    assert sum(len(c["findings"]) for c in data["cards"]) == int(m.group(2).replace(",", ""))
+    assert m, r.output
+    assert len(data["cards"]) == int(m.group(1).replace(",", ""))
+    assert len({c["question"] for c in data["cards"]}) == int(m.group(2).replace(",", ""))
+    # the form was written with its cards and its changes, not with the failing tests
+    assert data["context"]["fixes"] and not any("failing" in c for c in data["cards"])
 
 
 def test_a_failing_test_with_project_dir_shows_its_rows_or_says_why_not(project_dir, tmp_path,

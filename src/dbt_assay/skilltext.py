@@ -134,9 +134,11 @@ was intended and it needs a version bump. Do not hand back work where the grain 
 
 `plan_items()` is where to start once a project has been checked: the findings grouped into the
 fixes that resolve them, ranked by findings resolved per decision, with customer-facing and
-happening now breaking ties. Changes to one file are one fix. A fix is one change with its
-files: drafted descriptions in the model's own yml, key tests assay counted unique, a
-pass-through staging model with its readers repointed, a premise declared as a test.
+happening now breaking ties. Documenting, testing and staging are one change each. A fix is one
+change with its files: drafted descriptions in the model's own yml, key tests assay counted
+unique, a pass-through staging model with its readers repointed, a premise declared as a test.
+A finding audit.yml only annotates is a note, never an item of its own; the queued judgment
+calls are decided in `review`, one verdict per check.
 
 **You apply only a fix a person approved.** They approve it on the Fix cards in the review form or
 with `assay fix <id> --approve`. Then, in a branch: `apply_plan_item(id)`, `dbt parse` (or

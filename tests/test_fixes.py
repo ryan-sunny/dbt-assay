@@ -1,6 +1,7 @@
 """Findings become fixes (leverage spec): each finding is attributed to the change that resolves
 it, the change carries its files, a person approves it, and only then may an agent apply it."""
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from dbt_assay import fixes
@@ -241,3 +242,66 @@ def test_the_plan_ranks_by_findings_resolved_per_decision():
     hi.tier = "the rest"
     wide = fixes.Fix("review", "c", "a check", findings=[f"r{i}" for i in range(60)], decisions=120)
     assert [f.key for f in fixes.rank([lo, wide, hi])] == ["f", "t", "c"]
+
+
+def test_the_open_findings_split_four_ways_and_a_note_is_never_a_proposal():
+    """(Ryan: "im not deciding on 1600 cards"; "2,202 notes are not 2,202 problems") Every open
+    finding is in exactly one place: a change clears it, a proposal says what to do about what a
+    count settled, a person decides it, or it is a note."""
+    def f(check, fid, base=3, subject="model.p.a"):
+        x = _finding(check, subject, "a", fid)
+        x.base = base
+        return x
+    fs = [f("test_declared_but_never_run", "t1", base=1),         # a change clears it
+          f("values_lost_at_hop", "v1"),                          # a count settled it, queued: a proposal
+          f("values_lost_at_hop", "v2", subject="model.p.b"),     # the same, annotated
+          f("code_contradicts_a_claim", "c1"),                    # a judgment call, queued
+          f("code_contradicts_a_claim", "c2", subject="model.p.b")]  # a judgment call, a note
+    acts = {"t1": ("annotate", ""), "v1": ("queue", ""), "v2": ("annotate", ""),
+            "c1": ("queue", ""), "c2": ("annotate", "")}
+    project = SimpleNamespace(models={}, sources={}, exposures={}, raw={"nodes": {}},
+                              project_root=".", tests=[])
+    fx = fixes.build(project, fs, acts=acts, led=SimpleNamespace(uses=[], premises={}),
+                     root=Path("."))
+    sp = fixes.split(fs, fx, acts)
+    assert sp == {"fix": {"t1"}, "settled": {"v1"}, "decide": {"c1"}, "notes": {"v2", "c2"}}
+    review = [x for x in fx if x.kind == "review"]
+    assert [x.findings for x in review] == [["v1"]]              # the queued count, not the note
+    assert sum(len(v) for v in sp.values()) == len(fs)
+
+
+def test_a_batch_kind_is_one_card_and_a_change_that_clears_nothing_is_dropped(tmp_path):
+    (tmp_path / "m").mkdir()
+    for n in ("a", "b"):
+        (tmp_path / "m" / f"_{n}.yml").write_text(f"version: 2\n\nmodels:\n  - name: {n}\n")
+    project = SimpleNamespace(
+        models={"model.p.a": _m("a", "m/a.sql", []), "model.p.b": _m("b", "m/b.sql", [])},
+        sources={}, exposures={}, project_root=str(tmp_path), tests=[],
+        raw={"nodes": {"model.p.a": {"patch_path": "p://m/_a.yml"},
+                       "model.p.b": {"patch_path": "p://m/_b.yml"}}})
+    fs = []
+    for u, n in (("model.p.a", "a"), ("model.p.b", "b")):
+        x = _finding("column_has_no_description", u, n, "d" + n)
+        x.evidence = {"missing": ["id"], "missing_total": 1}
+        fs.append(x)
+    import dbt_assay.fixes as fm
+    orig = fm._draft
+    fm._draft = lambda *a: "The row id."
+    try:
+        fx = fixes.build(project, fs, led=SimpleNamespace(uses=[], premises={}), root=tmp_path)
+    finally:
+        fm._draft = orig
+    doc = [x for x in fx if x.kind == "document"]
+    assert len(doc) == 1 and doc[0].decisions == 1
+    assert sorted(doc[0].files) == ["m/_a.yml", "m/_b.yml"] and sorted(doc[0].findings) == ["da", "db"]
+    assert doc[0].title == "Document 2 column(s) in 2 model(s)" and len(doc[0].pieces) == 2
+    assert all(x.findings for x in fx)                           # nothing that clears nothing
+
+
+def test_triage_leads_with_what_is_broken_now_and_counts_notes_once():
+    from dbt_assay import priority
+    fs = [{"id": "a", "check": "test_is_failing", "tier": "customer-facing"},
+          {"id": "b", "check": "code_contradicts_a_claim", "tier": "the rest"},
+          {"id": "c", "check": "column_has_no_description", "tier": "the rest"}]
+    t = priority.triage(fs, {"a", "b"})
+    assert t == {"queued": 2, "broken": 1, "broken_paid": 1, "look": 1, "look_paid": 0, "notes": 1}

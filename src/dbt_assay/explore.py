@@ -139,12 +139,16 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         _ruled = store.ruled_pairs() if store is not None else set()
     except Exception:                                            # noqa: BLE001
         _ruled = set()
-    review_tally = reviewform.tally([(r["subject"], r["check"]) for r in find_rows], _ruled,
+    # the changes, once: the Fix section lists them and the split below says what is left to decide
+    fix_objs = _fix_objs(project, digests, schema, entries, findings, store, ledger, acted)
+    from . import fixes as fixes_mod
+    sp = fixes_mod.split(find_rows, fix_objs)
+    review_tally = reviewform.tally([(r["subject"], r["check"]) for r in find_rows
+                                     if r["id"] in sp["decide"]], _ruled,
                                     [r.get("action_why") or "" for r in waived_rows])
+    review_tally.update(reviewform.split_counts(find_rows, sp, project))
     review_tally["line"] = reviewform.tally_line(review_tally)
     review_tally["tail"] = reviewform.tally_tail(review_tally)
-    from . import evaluator as _ev_mod
-    review_tally["evaluator"] = _ev_mod.surface_counts(find_rows)
     for r in find_rows:
         r["pair_ruled"] = (str(r["subject"]), str(r["check"])) in _ruled
     find_by_subject: dict = {}
@@ -273,24 +277,32 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         # *** THE LOOP: OF THE FINDINGS A PERSON AGREED WITH, HOW MANY WENT, AND CAME BACK. ***
         "loop": _loop(store, findings, project),
         # What to change next, and whether it is getting better: the Overview leads with both.
-        "fixes": _fixes(project, digests, schema, entries, findings, store, ledger),
+        "fixes": _fixes(fix_objs, store),
         "trend": _trend(store, project),
     }
 
 
-def _fixes(project, digests, schema, entries, findings, store, ledger) -> list:
-    """The ranked fixes, in short: what the Overview names and the Fix section opens."""
+def _fix_objs(project, digests, schema, entries, findings, store, ledger, acted=None) -> list:
     try:
         from . import fixes as fixes_mod
         from . import groups as groups_mod
-        fx = fixes_mod.build(project, findings, entries=entries, digests=digests, schema=schema,
-                             store=store, led=ledger, groups=groups_mod.build(project, findings),
-                             root=project.project_root)
-        st = fixes_mod.statuses(store)
+        return fixes_mod.build(project, findings, entries=entries, digests=digests, schema=schema,
+                               store=store, led=ledger,
+                               groups=groups_mod.build(project, findings),
+                               root=project.project_root, acts=acted or None)
     except Exception:                                            # noqa: BLE001
         return []
+
+
+def _fixes(fx: list, store) -> list:
+    """The ranked fixes, in short: what the Overview names and the Fix section opens."""
+    try:
+        from . import fixes as fixes_mod
+        st = fixes_mod.statuses(store)
+    except Exception:                                            # noqa: BLE001
+        st = {}
     keep = ("id", "kind", "kind_title", "kind_rank", "title", "resolves", "measured", "effect",
-            "why", "tier", "decisions")
+            "why", "tier", "decisions", "queued", "notes")
     return [{**{k: v for k, v in f.as_dict().items() if k in keep},
              "status": st.get(f.id, {}).get("status", "proposed")} for f in fx]
 

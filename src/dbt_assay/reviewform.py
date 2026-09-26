@@ -116,11 +116,33 @@ def tally_tail(t: dict) -> str:
     return out
 
 
+def split_counts(findings, sp: dict, project=None, acts: dict | None = None) -> dict:
+    """What every surface leads with: the queue, split into broken now and worth a look (the
+    paid report first), the notes on one line, and where each finding is decided. `sp` is
+    `fixes.split`; its four parts add up to `open`."""
+    from . import priority
+    from .fixes import queued_ids
+    ctx = priority.Context.of(project) if project is not None else priority.Context()
+    tri = priority.triage(findings, queued_ids(findings, acts), ctx)
+    decide = [f for f in findings
+              if (f.get("id") if isinstance(f, dict) else f.id) in sp["decide"]]
+    return {**tri, "open": len(findings), "on_fixes": len(sp["fix"]),
+            "settled": len(sp["settled"]), "to_decide": len(sp["decide"]),
+            "notes_left": len(sp["notes"]),
+            "groups": len({(f.get("check") if isinstance(f, dict) else f.check) for f in decide})}
+
+
 def tally_line(t: dict) -> str:
     """The whole sentence, for the terminal."""
     def _n(v):
         return f"{int(v):,}"
     tail = tally_tail(t)
+    if "queued" in t:
+        paid = t["broken_paid"] + t["look_paid"]
+        return (f"{_n(t['broken'])} broken now and {_n(t['look'])} worth a look"
+                + (f" ({_n(paid)} on the paid report)" if paid else "")
+                + f"; notes: {_n(t['notes'])}. To decide: {_n(t['cards'])} card(s) in "
+                  f"{_n(t['groups'])} group(s)." + (f" {tail}" if tail else ""))
     return (f"{_n(t['cards'])} card(s) covering {_n(t['card_findings'])} of "
             f"{_n(t['findings'])} open finding(s). {CARD_RULE}" + (f" {tail}" if tail else ""))
 
@@ -1051,6 +1073,10 @@ color:var(--ink);cursor:pointer;border-bottom:1px solid var(--rule2)}
 .fgname{overflow-wrap:break-word;min-width:0}
 .fgn{color:var(--ash);font-size:13px;font-variant-numeric:tabular-nums}
 .fgsub{grid-column:1 / -1;font-size:12.5px;color:var(--ash)}
+.fgmore .fgname{color:var(--ash)}
+.fnav.flat{grid-template-columns:minmax(260px,1fr) minmax(0,2.1fr)}
+.gcard{padding:0 0 14px;margin:0 0 18px;border-bottom:1px solid var(--rule)}
+.gcard .rbtns{margin:2px 0 8px}
 .frow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 10px;padding:7px 6px;
 border-bottom:1px solid var(--rule2);cursor:pointer;align-items:baseline}
 .frow:hover{background:#f2efe7}
@@ -1427,7 +1453,7 @@ function card(c) {
     r.onchange = () => {
       answers[c.key] = Object.assign({}, answers[c.key], {verdict: v});
       if (v === 'accept' && answers[c.key].write_waiver !== false) writeW.checked = true;
-      box.classList.add('done'); save(); tick(); showMore(); emitWaiver(); markRow(c.key, v);
+      box.classList.add('done'); save(); tick(); showMore(); emitWaiver(); paintCardRow(c);
       if (v === 'disagree' || v === 'accept') note.focus();
     };
     vbox.append(el('label', {class: 'vopt'}, [r, el('span', {class: 'vname', text: label}),
@@ -1497,11 +1523,12 @@ function markRow(key, v) {
    one being worked on the right. Findings group by check and Words by why each word is here. */
 const NAV = {};
 function nav3(host, o) {
-  const st = NAV[o.name] = NAV[o.name] || {g: '__all', key: null, q: ''};
+  const first = o.start === 'first' && o.groups.length ? o.groups[0].id : '__all';
+  const st = NAV[o.name] = NAV[o.name] || {g: first, key: null, q: '', more: false};
   const all = {id: '__all', label: o.allLabel, rows: o.groups.flatMap(g => g.rows)};
-  const every = [all, ...o.groups];
-  if (!every.some(g => g.id === st.g)) st.g = '__all';
-  const grid = el('div', {class: 'fnav'});
+  const every = o.flat ? [all] : [all, ...o.groups];
+  if (!every.some(g => g.id === st.g)) st.g = o.flat ? '__all' : first;
+  const grid = el('div', {class: 'fnav' + (o.flat ? ' flat' : '')});
   const left = el('div', {class: 'fgroups'}), mid = el('div', {class: 'frows'});
   const right = el('div', {class: 'fdetail'});
   const q = el('input', {type: 'text', placeholder: o.filterText || 'filter...'});
@@ -1509,10 +1536,21 @@ function nav3(host, o) {
   const cnt = el('span', {class: 'count'});
   const list = el('div', {class: 'frowlist'});
   mid.append(el('div', {class: 'fbar'}, [q, cnt]), list);
-  grid.append(left, mid, right);
+  grid.append(...(o.flat ? [mid, right] : [left, mid, right]));
   const group = () => every.find(g => g.id === st.g);
+  /* *** WHAT ONE SITTING CAN DO, AND A COUNT OF THE REST BEHIND IT. *** (Ryan: "the volume
+     being presented is insane") With `cap`, the first groups show and one line says how many
+     more there are. */
+  function shownGroups() {
+    if (!o.cap || st.more || every.length <= o.cap + 2) return every;
+    const head = every.slice(0, o.cap + 1);
+    const cur = group();
+    return head.includes(cur) ? head : [...head, cur];
+  }
   function paintLeft() {
-    left.replaceChildren(...every.map(g => {
+    const shown = shownGroups();
+    const rest = every.length - shown.length;
+    left.replaceChildren(...shown.map(g => {
       const b = el('button', {class: 'fg' + (g.id === st.g ? ' on' : '')},
                    [el('span', {class: 'fgname'}, [wb(g.label)]),
                     el('span', {class: 'fgn', text: num(g.rows.length)})]);
@@ -1520,7 +1558,11 @@ function nav3(host, o) {
       if (sub) b.append(el('span', {class: 'fgsub', text: sub}));
       b.onclick = () => { st.g = g.id; st.key = null; paintLeft(); paintMid(); };
       return b;
-    }));
+    }), ...(rest > 0 ? [Object.assign(el('button', {class: 'fg fgmore'}, [
+      el('span', {class: 'fgname', text: num(rest) + ' more'}),
+      el('span', {class: 'fgn', text: num(every.slice(1).filter(g => !shown.includes(g))
+        .reduce((n, g) => n + g.rows.length, 0))})]),
+      {onclick: () => { st.more = true; paintLeft(); }})] : []));
   }
   function paintMid() {
     let rows = group().rows;
@@ -1542,9 +1584,10 @@ function nav3(host, o) {
     const cur = rows.find(x => o.keyOf(x) === st.key);
     if (cur) paintRight(cur); else right.replaceChildren();
   }
-  function paintRight(x) { right.replaceChildren(o.detailOf(x)); right.scrollTop = 0; }
+  function paintRight(x) { right.replaceChildren(o.detailOf(x, group())); right.scrollTop = 0; }
   q.oninput = () => { st.q = q.value; paintMid(); };
   paintLeft(); paintMid();
+  grid._paintLeft = paintLeft;          // a group's line changes when its verdict does
   return grid;
 }
 
@@ -1556,43 +1599,116 @@ function tallyGrid(T, onPage) {
   const add = (label, value, note) => rows.push(el('span', {class: 'tl', text: label}),
     el('span', {}, [el('b', {text: value}), note ? el('span', {class: 'tn', text: ' ' + note}) : null]
       .filter(Boolean)));
-  if (onPage) add('open', num(T.findings) + ' findings', 'on ' + num(T.pairs) + ' model + check pairs');
-  add(onPage ? 'on the review form' : 'to rule on', num(T.cards) + ' cards',
-      'one card is one model and one check; you can split a card if its findings differ');
+  /* *** 2,202 NOTES ARE NOT 2,202 PROBLEMS. *** (Ryan) What the policy queues leads, split into
+     broken now and worth a look; the notes are one line; no verdict on the warehouse. */
+  if (T.queued != null) {
+    const paid = n => n ? '(' + num(n) + ' customer-facing)' : '';
+    add('broken now', num(T.broken), paid(T.broken_paid));
+    add('worth a look', num(T.look), paid(T.look_paid));
+    add('notes', num(T.notes), 'not queued by audit.yml; inside the changes that clear them, '
+        + 'and in Explore');
+    if (!onPage) add('to decide', num(T.cards) + ' cards in ' + num(T.groups) + ' groups',
+                     'the queued judgment calls; one verdict per group, and any card can differ');
+  } else {
+    if (onPage) add('open', num(T.findings) + ' findings', 'on ' + num(T.pairs) + ' model + check pairs');
+    add(onPage ? 'on the review form' : 'to rule on', num(T.cards) + ' cards',
+        'one card is one model and one check; you can split a card if its findings differ');
+  }
   if (T.ruled_pairs) add('already ruled', num(T.ruled_pairs) + ' cards (' + num(T.ruled_findings)
       + ' findings)', onPage ? 'not on the form; still listed here until fixed'
                              : 'left off this form; still open on the page until fixed');
   const aside = Object.entries(T.set_aside || {}).filter(([, n]) => n)
     .map(([k, n]) => num(n) + ' ' + k);
   if (aside.length) add('set aside', aside.join(' · '), 'not open, so on neither list');
-  const E = T.evaluator;
-  if (E) add('dbt-project-evaluator', num(E.rows) + ' rows → ' + num(E.cards) + ' cards',
-      (E.folded ? num(E.folded) + ' rows landed on assay’s own findings; ' : '')
-      + 'one card per model and fact');
   return el('div', {class: 'tgrid'}, rows);
 }
 
+/* *** ONE VERDICT FOR A GROUP, AND ANY CARD CAN SAY OTHERWISE. *** (Ryan: "im not deciding on
+   1600 cards") The cards of one check are one group; the group's verdict is every card's answer
+   unless the card has its own. The handback carries a row per card either way. */
+const groupKey = check => 'group::' + check;
+const verdictOf = c => (answers[c.key] || {}).verdict
+  || (answers[groupKey(c.question)] || {}).verdict || '';
+function paintCardRow(c) {
+  const v = verdictOf(c);
+  for (const r of document.querySelectorAll('.frow[data-key="' + CSS.escape(c.key) + '"]')) {
+    r.classList.toggle('done', !!v);
+    const st = r.querySelector('.fstate'); if (st) st.textContent = v;
+  }
+}
+const GROUP_VERDICTS = [['agree', 'agree'], ['disagree', 'disagree'], ['accept', 'accept'],
+                        ['unclear', 'can\u2019t tell']];
+function groupCard(g) {
+  const key = groupKey(g.id);
+  const box = el('div', {class: 'gcard'});
+  const own = () => g.rows.filter(c => (answers[c.key] || {}).verdict).length;
+  const head = el('div', {class: 'cwhere'});
+  const paintHead = () => head.replaceChildren(
+    el('span', {text: num(g.rows.length) + ' cards'}),
+    ...(own() ? [el('span', {text: num(own()) + ' answered on their own'})] : []));
+  const btns = el('div', {class: 'rbtns'});
+  const more = el('div', {class: 'vrow'});
+  const lab = el('label', {class: 'vlab'});
+  const note = el('textarea', {class: 'note'});
+  note.value = (answers[key] || {}).note || '';
+  const paint = () => {
+    const v = (answers[key] || {}).verdict;
+    for (const b of btns.children) b.classList.toggle('on', b.dataset.v === v);
+    more.hidden = !v; lab.textContent = REASON_LABEL[v] || 'why';
+  };
+  for (const [v, label] of GROUP_VERDICTS) {
+    const b = el('button', {type: 'button', text: label});
+    b.dataset.v = v;
+    b.onclick = () => {
+      const cur = (answers[key] || {}).verdict;
+      if (cur === v) delete answers[key];
+      else answers[key] = Object.assign({}, answers[key], {verdict: v});
+      save(); tick(); paint(); g.rows.forEach(paintCardRow);
+      const nav = box.closest('.fnav'); if (nav && nav._paintLeft) nav._paintLeft();
+      if (answers[key] && (v === 'disagree' || v === 'accept')) note.focus();
+    };
+    btns.append(b);
+  }
+  note.oninput = () => { if (answers[key]) { answers[key].note = note.value; save(); } };
+  more.append(lab, note);
+  paintHead();
+  box.append(el('div', {class: 'lbl', text: 'the whole group'}), head, btns, more);
+  paint();
+  return box;
+}
+
 function findingsPane(host) {
-  const by = {};
-  for (const c of D.cards) (by[c.question] = by[c.question] || {id: c.question,
-    label: c.title || c.question, rows: []}).rows.push(c);
-  const groups = Object.values(by).sort((a, b) => b.rows.length - a.rows.length);
+  /* the groups in the order of their most urgent card (the cards arrive in priority order) */
+  const by = {}, groups = [];
+  for (const c of D.cards) {
+    if (!by[c.question]) groups.push(by[c.question] = {id: c.question,
+                                                       label: c.title || c.question, rows: []});
+    by[c.question].rows.push(c);
+  }
   /* U1: the numbers name their unit. A group's count is cards; its findings are said under it,
      and the line above says what the form leaves out, so it reconciles with the page. */
   const intro = tallyGrid(CTX.tally, false);
+  if (!D.cards.length) {
+    host.replaceChildren(...[intro, el('p', {class: 'measured', text: 'Nothing queued needs a '
+      + 'person\u2019s call. What a change clears is on the Fix tab.'})].filter(Boolean));
+    return;
+  }
   host.replaceChildren(...[intro, nav3(host, {
     name: 'findings', groups: groups, allLabel: 'every card', filterText: 'filter by model...',
-    subOf: g => { const n = g.rows.filter(c => (answers[c.key] || {}).verdict).length;
+    cap: 25, start: 'first',
+    subOf: g => { const n = g.rows.filter(verdictOf).length;
+                  const gv = (answers[groupKey(g.id)] || {}).verdict;
                   const nf = g.rows.reduce((a, c) => a + (c.findings || []).length, 0);
-                  return num(nf) + ' finding(s)' + (n ? ' · ' + num(n) + ' answered' : '')
-                    + (String(g.id).startsWith('__') ? '' : ' · ' + g.id); },
+                  return num(nf) + ' finding(s)' + (gv ? ' · all ' + gv
+                    : n ? ' · ' + num(n) + ' answered' : ''); },
     keyOf: c => c.key, textOf: c => c.model + ' ' + c.question + ' ' + (c.title || '') + ' '
       + c.file,
-    doneOf: c => !!(answers[c.key] || {}).verdict,
+    doneOf: c => !!verdictOf(c),
     cellsOf: c => [el('span', {class: 'mono fmain'}, [wb(c.model)]),
                    el('span', {class: 'fmeta', text: num(c.marts) + ' marts'}),
-                   el('span', {class: 'fstate', text: (answers[c.key] || {}).verdict || ''})],
-    detailOf: c => card(c),
+                   el('span', {class: 'fstate', text: verdictOf(c)})],
+    detailOf: c => by[c.question].rows.length > 1
+      ? el('div', {}, [groupCard(by[c.question]), card(c)]) : card(c),
   })].filter(Boolean));
 }
 
@@ -1627,13 +1743,17 @@ function tick() {
   const n = answered(), tot = D.cards.length;
   const edits = Object.keys(edits_() || {}).length;
   const p = pageOf(pane);
-  /* The count describes the pane you are on. On Findings that is verdicts; everywhere else it is
-     boxes you have filled, because nothing on those panes is a verdict. */
+  const FX = CTX.fixes || [];
+  /* The count describes the pane you are on. On Findings that is verdicts (a group's verdict
+     answers its cards); on Fix, changes decided; everywhere else, boxes you have filled. */
   document.getElementById('count').textContent = pane === 'findings'
-    ? n + ' of ' + tot + ' answered'
-    : (edits ? edits + ' box(es) filled across the form' : 'nothing filled yet');
+    ? num(D.cards.filter(verdictOf).length) + ' of ' + num(tot) + ' answered'
+    : pane === 'fixes'
+      ? num(FX.filter(f => (answers['fix::' + f.id] || {}).verdict).length) + ' of '
+        + num(FX.length) + ' decided'
+      : (edits ? edits + ' box(es) filled across the form' : 'nothing filled yet');
   document.getElementById('dl').disabled = n === 0 && edits === 0;
-  const single = p.pages <= 1 || pane === 'findings' || pane === 'words' || pane === 'fixes';
+  const single = p.pages <= 1 || ['findings', 'words', 'fixes', 'explanations'].includes(pane);
   document.getElementById('pager').style.display = single ? 'none' : '';
   if (!single) {
     document.getElementById('where').textContent =
@@ -1661,8 +1781,11 @@ function download() {
     && a.verdict).map(([k, a]) => ({fix: k.slice(5), verdict: a.verdict, note: a.note || '',
                                      title: a.title || '', kind: a.kind || ''}));
   for (const c of D.cards) {
-    const a = answers[c.key];
-    if (!a || !a.verdict) continue;      // never an answer nobody gave
+    const own = answers[c.key];
+    const grp = answers[groupKey(c.question)];
+    const a = own && own.verdict ? own : grp && grp.verdict ? {verdict: grp.verdict,
+      note: grp.note || '', until: grp.until || ''} : null;
+    if (!a) continue;                    // never an answer nobody gave
     /* one row per verdict the card's findings carry: the card's, and any one ruled apart */
     const by = {};
     for (const f of c.findings) ((by[(a.per || {})[f.id] || a.verdict]) ||= []).push(f.id);
@@ -2010,53 +2133,71 @@ function explanationsTab(host) {
     + '    "the stock had not arrived, so there is no ship date yet"',
     'A failing row somebody can name is a decision; one nobody can name gets ruled `unclear` and '
     + 'measures nothing.', 'assayer')];
-  const _p = pageOf('explanations');
-  for (const x of CTX.explanations.slice(_p.from, _p.to)) {
-    const row = el('div', {class: 'wrow'});
-    row.append(el('h3', {text: x.mart}));
-    const base = x.named ? ['explanations', x.mart, 'options'] : ['explanations', x.mart];
-    if (x.named) row.append(el('div', {class: 'measured', text: 'covers ' + x.applies_to}));
-    if ((x.options || []).length) {
-      row.append(el('div', {class: 'lbl', text: 'kinds already named'}));
-      for (const o of x.options) row.append(field(o.name, [...base, o.name], o.means, '', 1));
-    }
-    for (const t of (x.failing || [])) {
-      const card = el('div', {class: 'ftest'});
-      card.append(el('div', {class: 'fthead'}, [
-        el('span', {class: 'mono', text: t.test}),
-        el('span', {text: t.what}),
-        el('span', {class: 'measured', text: t.status + (t.at ? ', ' + t.at : '')})]));
-      const info = {model: x.mart, test: t.test, base};
-      if ((t.rows || []).length) {
-        const m = /`([^`]+)`/.exec(t.what || '');
-        const {order, table} = rowsTable(t.rows, m ? m[1] : '');
-        t.rows.forEach((r, i) => {
-          table.append(el('tr', {}, order.map((c, j) => el('td', {class: 'mono' + (r[c] == null
-            ? ' null' : ''), text: (r[c] == null ? 'null' : r[c])
-              + (j === order.length - 1 && r.__n > 1 ? '   \u00d7' + r.__n : '')}))));
-          const k = [x.mart, t.test, i].join('\u001f');
-          table.append(el('tr', {class: 'rpickrow'}, [el('td', {colspan: order.length},
-            [pickRow(k, Object.assign({row: Object.fromEntries(Object.entries(r)
-              .filter(([c]) => !c.startsWith('__')))}, info))])]));
-        });
-        card.append(table);
-      } else {
-        card.append(el('div', {class: 'measured', text: t.why_no_rows || 'No failing rows were '
-          + 'read. Build the form with `assay review --emit ... --project-dir <your dbt project>` '
-          + 'to see a few of them here.'}));
-        card.append(el('div', {class: 'lbl', text: 'what does this test catch?'}));
-        card.append(pickRow([x.mart, t.test, 'test'].join('\u001f'),
-                            Object.assign({row: null}, info)));
-      }
-      row.append(card);
-    }
-    bits.push(row);
-  }
-  if (!CTX.explanations.length)
+  if (!CTX.explanations.length) {
     bits.push(el('p', {class: 'measured', text: 'No test is failing, or no test result was read: '
       + '`assay volume` reads each test\u2019s last result from Elementary, and a `dbt build` '
       + 'leaves them in target/. A model appears here once one of its tests fails.'}));
+    host.replaceChildren(...bits);
+    return;
+  }
+  /* *** THE SAME LAYOUT AS WORDS. *** (Ryan: organized, one thing at a time, with what to do)
+     The models on the left, their failing tests in the middle, one test and its rows on the
+     right. */
+  const groups = CTX.explanations.filter(x => (x.failing || []).length).map(x => ({
+    id: x.mart, label: x.mart, rows: (x.failing || []).map(t => ({t, x}))}));
+  const marked = r => Object.entries(rowPicks).some(([k, v]) => v.pick
+    && k.startsWith(r.x.mart + '\u001f' + r.t.test + '\u001f'));
+  bits.push(nav3(host, {
+    name: 'explanations', groups: groups, allLabel: 'every failing test', start: 'first',
+    filterText: 'filter by model or test...',
+    subOf: g => { const n = g.rows.filter(marked).length; return n ? num(n) + ' marked' : null; },
+    keyOf: r => r.x.mart + '\u001f' + r.t.test,
+    textOf: r => r.x.mart + ' ' + r.t.test + ' ' + (r.t.what || ''),
+    doneOf: marked,
+    cellsOf: r => [el('span', {class: 'mono fmain'}, [wb(r.t.test)]),
+                   el('span', {class: 'fmeta', text: (r.t.rows || []).length
+                     ? num(r.t.rows.length) + ' rows' : ''}),
+                   el('span', {class: 'fstate', text: marked(r) ? 'marked' : ''})],
+    detailOf: r => failingTest(r.x, r.t),
+  }));
   host.replaceChildren(...bits);
+}
+
+function failingTest(x, t) {
+  const box = el('div', {class: 'wedit'});
+  box.append(el('div', {class: 'pkind', text: 'failing test \u00b7 ' + x.mart}));
+  box.append(el('h2', {class: 'ctitle mono', text: t.test}));
+  box.append(el('div', {class: 'cwhere'}, [el('span', {text: t.what}),
+    el('span', {text: t.status + (t.at ? ', ' + t.at : '')})]));
+  const base = x.named ? ['explanations', x.mart, 'options'] : ['explanations', x.mart];
+  const info = {model: x.mart, test: t.test, base};
+  if ((t.rows || []).length) {
+    box.append(el('div', {class: 'lbl', text: 'the rows it caught: mark each one'}));
+    const m = /`([^`]+)`/.exec(t.what || '');
+    const {order, table} = rowsTable(t.rows, m ? m[1] : '');
+    t.rows.forEach((r, i) => {
+      table.append(el('tr', {}, order.map((c, j) => el('td', {class: 'mono' + (r[c] == null
+        ? ' null' : ''), text: (r[c] == null ? 'null' : r[c])
+          + (j === order.length - 1 && r.__n > 1 ? '   \u00d7' + r.__n : '')}))));
+      const k = [x.mart, t.test, i].join('\u001f');
+      table.append(el('tr', {class: 'rpickrow'}, [el('td', {colspan: order.length},
+        [pickRow(k, Object.assign({row: Object.fromEntries(Object.entries(r)
+          .filter(([c]) => !c.startsWith('__')))}, info))])]));
+    });
+    box.append(table);
+  } else {
+    box.append(el('div', {class: 'measured', text: t.why_no_rows || 'No failing rows were '
+      + 'read. Build the form with `assay review --emit ... --project-dir <your dbt project>` '
+      + 'to see a few of them here.'}));
+    box.append(el('div', {class: 'lbl', text: 'what does this test catch?'}));
+    box.append(pickRow([x.mart, t.test, 'test'].join('\u001f'), Object.assign({row: null}, info)));
+  }
+  if ((x.options || []).length) {
+    box.append(el('div', {class: 'lbl', text: 'kinds already named for ' + x.mart}));
+    if (x.named) box.append(el('div', {class: 'measured', text: 'covers ' + x.applies_to}));
+    for (const o of x.options) box.append(field(o.name, [...base, o.name], o.means, '', 1));
+  }
+  return box;
 }
 
 function waiversTab(host) {
@@ -2194,11 +2335,13 @@ function fixCard(fx) {
   const box = el('div', {class: 'card' + (a.verdict ? ' done' : '')});
   box.append(el('div', {class: 'pkind', text: fx.kind_title}));
   box.append(el('h2', {class: 'ctitle', text: fx.title}));
-  const n = fx.measured != null ? num(fx.measured) + ' resolved on a patched copy'
-    : fx.resolves ? 'resolves ~' + num(fx.resolves) : (fx.effect || 'resolves nothing open');
+  const n = fx.measured != null ? num(fx.measured) + ' cleared on a patched copy'
+    : 'clears ' + num(fx.resolves || 0) + (fx.resolves === 1 ? ' finding' : ' findings');
   box.append(el('div', {class: 'cwhere'}, [
     el('span', {text: n}),
-    el('span', {text: num(fx.decisions) + (fx.decisions === 1 ? ' decision' : ' decisions')}),
+    ...(fx.queued ? [el('span', {text: num(fx.queued) + ' queued'})] : []),
+    ...(fx.notes ? [el('span', {text: num(fx.notes) + (fx.notes === 1 ? ' note' : ' notes')})] : []),
+    ...(fx.decisions > 1 ? [el('span', {text: num(fx.decisions) + ' decisions'})] : []),
     ...(fx.status && fx.status !== 'proposed' ? [el('span', {text: fx.status})] : [])]));
   if ((fx.why || []).length) {
     box.append(el('div', {class: 'lbl', text: 'why it matters'}));
@@ -2206,6 +2349,12 @@ function fixCard(fx) {
   }
   box.append(el('div', {class: 'lbl', text: 'the change'}));
   box.append(el('p', {class: 'q', text: fx.how}));
+  if ((fx.pieces || []).length) {
+    box.append(el('div', {class: 'lbl', text: 'in it'}));
+    box.append(el('ul', {class: 'plain'}, fx.pieces.slice(0, 60).map(x => el('li', {text: x}))));
+    if (fx.pieces.length > 60) box.append(el('p', {class: 'q dim', text: 'and '
+      + num(fx.pieces.length - 60) + ' more, in the diff'}));
+  }
   if ((fx.refused || []).length)
     box.append(el('p', {class: 'q warn', text: 'Not placed: ' + fx.refused.join('; ')}));
   if (fx.diff) box.append(el('details', {}, [
@@ -2246,50 +2395,32 @@ function fixCard(fx) {
 function fixesPane(host) {
   const F = CTX.fixes || [];
   if (!F.length) {
-    host.replaceChildren(el('p', {class: 'measured', text: 'No fixes: nothing open is '
-      + 'attributed to a change assay can propose.'}));
+    host.replaceChildren(el('p', {class: 'measured', text: 'No changes: nothing open is '
+      + 'cleared by a change assay can propose.'}));
     return;
   }
-  /* *** THE HEADER COUNTED 47 CHANGES THE LIST HAD NO ENTRY FOR. *** (tester, 5c8fdd4) A fix
-     with no open finding attached sits in its own group under the header's word for it, and the
-     groups run in the fixes' order: most findings resolved per decision first. */
-  const by = {};
-  const structure = {id: '__structure', label: 'Structure', rows: []};
-  for (const f of F) {
-    if (f.kind !== 'review' && !f.resolves) { structure.rows.push(f); continue; }
-    (by[f.kind] = by[f.kind] || {id: f.kind, label: f.kind_title, rows: []}).rows.push(f);
-  }
-  const lev = g => g.rows.reduce((n, f) => n + (f.measured != null ? f.measured : f.resolves || 0), 0)
-    / Math.max(1, g.rows.reduce((n, f) => n + (f.decisions || 1), 0));
-  const groups = Object.values(by).sort((a, b) => lev(b) - lev(a) || a.rows[0].kind_rank
-    - b.rows[0].kind_rank).concat(structure.rows.length ? [structure] : []);
-  const resolved = F.filter(f => f.kind !== 'review').reduce((n, f) => n + (f.resolves || 0), 0);
-  const withF = F.filter(f => f.kind !== 'review' && f.resolves);
-  const structural = structure.rows;
+  /* *** ONE RANKED LIST, AND THE HEADER COUNTS THE LIST. *** (Ryan, on 5c8fdd4: "fixes 380 /
+     structure 47 / to read 56" over a list of kinds saying 207, 129 and 80.) One card per edit,
+     the most findings cleared per decision first; what a change is about is inside its card. */
+  const cleared = F.reduce((n, f) => n + (f.resolves || 0), 0);
+  const queued = F.reduce((n, f) => n + (f.queued || 0), 0);
+  const decided = F.filter(f => (answers['fix::' + f.id] || {}).verdict).length;
   const head = el('div', {class: 'tgrid'}, [
-    el('span', {class: 'tl', text: 'fixes'}),
-    el('span', {}, [el('b', {text: num(withF.length)}),
-      el('span', {class: 'tn', text: ' would resolve ~' + num(resolved) + ' of '
-        + num(CTX.open_findings || 0) + ' open findings'})]),
-    ...(structural.length ? [el('span', {class: 'tl', text: 'structure'}),
-      el('span', {}, [el('b', {text: num(structural.length)}),
-        el('span', {class: 'tn', text: ' changes to how the project is built, with no open '
-          + 'finding attached'})])] : []),
-    el('span', {class: 'tl', text: 'to read'}),
-    el('span', {}, [el('b', {text: num(F.filter(f => f.kind === 'review').length)}),
-      el('span', {class: 'tn', text: ' proposals that need reading'})])]);
+    el('span', {class: 'tl', text: 'changes'}),
+    el('span', {}, [el('b', {text: num(F.length)}),
+      el('span', {class: 'tn', text: ' clear ' + num(cleared) + ' findings'
+        + (queued ? ', ' + num(queued) + ' of them queued' : '')})]),
+    ...(decided ? [el('span', {class: 'tl', text: 'decided'}),
+                   el('span', {}, [el('b', {text: num(decided)})])] : [])]);
   host.replaceChildren(head, nav3(host, {
-    name: 'fixes', groups: groups, allLabel: 'every fix', filterText: 'filter by model or text...',
-    subOf: g => { const n = g.rows.filter(f => (answers['fix::' + f.id] || {}).verdict).length;
-                  const r = g.rows.reduce((x, f) => x + (f.resolves || 0), 0);
-                  return (r ? 'resolves ~' + num(r) : g.id === '__structure' ? 'nothing open attached'
-                    : '') + (n ? ' · ' + num(n) + ' decided' : ''); },
+    name: 'fixes', groups: [{id: 'all', label: 'every change', rows: F}], flat: true,
+    allLabel: 'every change', filterText: 'filter by model or text...',
     keyOf: f => 'fix::' + f.id,
     textOf: f => f.title + ' ' + (f.models || []).join(' '),
     doneOf: f => !!(answers['fix::' + f.id] || {}).verdict,
     cellsOf: f => [el('span', {class: 'fmain'}, [wb(f.title)]),
                    el('span', {class: 'fmeta', text: f.measured != null ? num(f.measured)
-                     : f.resolves ? '~' + num(f.resolves) : ''}),
+                     : num(f.resolves || 0)}),
                    el('span', {class: 'fstate', text: (answers['fix::' + f.id] || {}).verdict
                      || (f.status && f.status !== 'proposed' ? f.status : '')})],
     detailOf: f => fixCard(f),
@@ -2306,8 +2437,8 @@ function drawPane(name) {
 
 function openPane(name) {
   pane = name;
-  document.querySelector('main').classList.toggle('fill', name === 'findings' || name === 'words'
-                                                  || name === 'fixes');
+  document.querySelector('main').classList.toggle('fill', ['findings', 'words', 'fixes',
+                                                          'explanations'].includes(name));
   document.querySelectorAll('.tabs button').forEach(b =>
     b.classList.toggle('on', b.dataset.pane === name));
   document.querySelectorAll('.pane').forEach(p => { p.hidden = p.id !== 'p-' + name; });

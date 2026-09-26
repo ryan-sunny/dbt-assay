@@ -132,3 +132,29 @@ def of_many(items: list, ctx: Context | None = None) -> dict:
         return {"tier": TIERS[3], "key": (3,), "why": []}
     best = min(got, key=lambda p: p["key"])
     return {**best, "key": (best["key"][0], -len(items), *best["key"][1:])}
+
+
+# *** 2,202 NOTES ARE NOT 2,202 PROBLEMS. *** (Ryan: "telling me my 200 model warehouse is a sack
+# of shit is insane") What a surface leads with is what the policy queues for a person, split into
+# what is broken now and what is worth a look, the paid report first. The notes (annotate) are
+# counted once, on one line, and stay reachable. No verdict on the warehouse as a whole.
+BROKEN_NOW = frozenset(HARM) | {"values_lost_at_hop", "join_fans_out"}
+
+
+def triage(findings, queued: set, ctx: Context | None = None) -> dict:
+    """{queued, broken, broken_paid, look, look_paid, notes} over the open findings (objects or
+    dicts); `queued` is the ids the policy queues."""
+    ctx = ctx or Context()
+    out = {"queued": 0, "broken": 0, "broken_paid": 0, "look": 0, "look_paid": 0, "notes": 0}
+    for f in findings:
+        fid = _get(f, "id", "")
+        if fid not in queued:
+            out["notes"] += 1
+            continue
+        out["queued"] += 1
+        tier = _get(f, "tier", None) if isinstance(f, dict) else None
+        paid = (tier or of(f, ctx)["tier"]) == "customer-facing"
+        k = "broken" if str(_get(f, "check", "")) in BROKEN_NOW else "look"
+        out[k] += 1
+        out[k + "_paid"] += paid
+    return out
