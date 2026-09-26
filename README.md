@@ -244,7 +244,7 @@ wall clock, so a rerun that changes nothing writes an identical file.
 ## On the pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.54.0
+- uses: ryan-sunny/dbt-assay@v0.54.1
   with:
     target: target-head
     baseline: base/target
