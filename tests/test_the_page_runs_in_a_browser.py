@@ -1110,6 +1110,19 @@ def test_the_counts_are_on_the_overview_only_and_open_their_list_in_place(tmp_pa
             page.wait_for_timeout(300)
             models = page.locator("#p-findings tbody tr td:first-child").all_inner_texts()
             assert models and len(set(models)) == len(models), models
+            # the tab, the list's line and the dropdown count the same thing, and say what
+            import re as _re
+            tab = int(_re.sub(r"\D", "", page.locator('#subnav button[data-view="findings"]')
+                              .inner_text()))
+            line = page.locator("#p-findings .count").first.inner_text()
+            assert line.endswith(f"{tab:,} findings") and " models \u00b7 " in line, line
+            assert page.locator("#p-findings select option").first.inner_text() == \
+                f"every check ({tab:,} findings)"
+            # the worst first: no note above something worth a look
+            worst = page.locator("#p-findings tbody tr td:last-child").all_inner_texts()
+            order = {"broken now": 0, "worth a look": 1, "note": 2}
+            ranks = [order.get(w.strip(), 3) for w in worst]
+            assert ranks == sorted(ranks), worst
             assert not errors, errors
         finally:
             browser.close()

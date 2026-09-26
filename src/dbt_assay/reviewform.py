@@ -869,7 +869,7 @@ _CSS = """/* *** THE SAME PRESS AS THE REPORT. ***
 }
 *{box-sizing:border-box}
 html{background:var(--paper)}
-body{margin:0;background:var(--paper);color:var(--ink);
+body{margin:0;background:var(--paper);color:var(--ink);font-variant-numeric:lining-nums;
 font:15px/1.55 "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
 display:flex;flex-direction:column;height:100vh;overflow:hidden;
 -webkit-font-smoothing:antialiased}
@@ -1301,6 +1301,20 @@ const REASON_LABEL = {agree: 'anything to add (optional)', disagree: 'why it is 
    report's detail pane now -- what kind, which model, where, what was found, the reading -- and
    then the four verdicts, each with what it means. The reason box appears once a verdict is
    picked, labelled for that verdict; the date and the waiver appear only for accept. */
+/* What a card reaches, grouped by the name before its colon with a count, never 26 names in a
+   comma run (Ryan). */
+function reachLine(names) {
+  const by = {}, order = [];
+  for (const n of names) {
+    const i = String(n).indexOf(': ');
+    const k = i > 0 ? n.slice(0, i) : n;
+    if (!(k in by)) { by[k] = 0; order.push(k); }
+    by[k] += 1;
+  }
+  return 'reaches ' + num(names.length) + (names.length === 1 ? ' exposure' : ' exposures') + ': '
+    + order.map(k => by[k] > 1 ? k + ' ' + num(by[k]) : k).join(', ');
+}
+
 function card(c) {
   const a = answers[c.key] || {};
   const box = el('div', {class: 'card' + (a.verdict ? ' done' : '')});
@@ -1310,7 +1324,7 @@ function card(c) {
   box.append(el('div', {class: 'cwhere'}, [
     el('span', {class: 'mono', text: c.file}),
     el('span', {text: num(c.marts) + ' marts downstream'}),
-    ...((c.exposures || []).length ? [el('span', {text: 'reaches ' + c.exposures.join(', ')})] : []),
+    ...((c.exposures || []).length ? [el('span', {text: reachLine(c.exposures)})] : []),
   ]));
   /* *** THE SAME SENTENCE NINE TIMES, ONE PER COLUMN. *** A card is one (model, check), so its
      findings mostly share their reason and differ in the column or test they are about. Each

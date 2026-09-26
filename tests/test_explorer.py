@@ -325,6 +325,7 @@ def _tiny():
                                     "model_name": "a", "detail": "the grain"}], "raised": []}],
             "premise_moves": [{"id": "p1", "before": "holding", "after": "unchecked"}],
             "loop": {"agreed": 3, "fixed": 1, "still_open": 2, "regressed": 1, "retired": 0},
+            "exposure_meta": {},
             "proofs": [{"model": "m", "model_name": "a", "model_checksum": "c",
                         "property": "grain", "statement": "`a` is one row per (k)",
                         "theorem": "a__grain", "rule": "group_by_unique", "premises": [],

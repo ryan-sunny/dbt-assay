@@ -47,7 +47,7 @@ CSS = """/* *** A PRINTED ASSAY REPORT, NOT A DASHBOARD. ***
 }
 *{box-sizing:border-box}
 html{background:var(--paper)}
-body{margin:0;background:var(--paper);color:var(--ink);
+body{margin:0;background:var(--paper);color:var(--ink);font-variant-numeric:lining-nums;
 font:15px/1.55 "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
 display:flex;flex-direction:column;height:100vh;overflow:hidden;
 -webkit-font-smoothing:antialiased}
@@ -140,11 +140,16 @@ align-items:start}
 .counts tr:hover td{background:#f2efe7}
 .counts tr.on td{background:#efe9dc}
 .countlist{margin:14px 0 0}
+.reach .rg{margin:2px 0 0}
+.reach .rg summary{cursor:pointer;font-variant-numeric:lining-nums tabular-nums}
+.reach .rgi{color:var(--ash);font-size:13.5px;margin:2px 0 6px 14px}
 .countlist:empty{display:none}
 .clist{border-collapse:collapse;width:100%;font-size:14px}
 .clist td{padding:4px 8px 4px 0;border-bottom:1px solid var(--rule2);vertical-align:top}
 .clist td.cn{text-align:right;white-space:nowrap;font-variant-numeric:lining-nums tabular-nums}
 .clist td.sum{color:var(--ash)}
+.clist.changes td{padding:6px 10px 6px 0}
+.clist td.rank{color:var(--faint);width:1.5em}
 @media (max-width:820px){.nextgrid{display:block}.counts{margin-bottom:14px}}
 .fblock{border-top:1px solid var(--rule);padding-top:10px;margin-top:14px}
 .fbucket{font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
@@ -788,8 +793,9 @@ function grid(rows, cols, opts) {
       if (pg >= pages) pg = pages - 1;
       shown = view.slice(pg * opts.page, (pg + 1) * opts.page);
       const from = view.length ? pg * opts.page + 1 : 0, to = pg * opts.page + shown.length;
-      count.textContent = num(from) + '\u2013' + num(to) + ' of ' + num(view.length)
-        + (view.length === rows.length ? '' : ' (' + num(rows.length) + ' before the filter)');
+      count.textContent = opts.countLine ? opts.countLine(view, from, to)
+        : num(from) + '\u2013' + num(to) + ' of ' + num(view.length)
+          + (view.length === rows.length ? '' : ' (' + num(rows.length) + ' before the filter)');
       prev.disabled = pg === 0; next.disabled = pg >= pages - 1;
       pager.hidden = pages < 2;
     } else {
@@ -1383,11 +1389,15 @@ function drill(opts) {
     const sel = el('select', {title: 'Show only the rows of one ' + (opts.groupNoun || 'group')});
     const o = (g, t) => { const x = el('option', {text: t}); x._g = g;
                           if (g === pickedGroup) x.selected = true; return x; };
-    sel.append(o(ALL, 'every ' + (opts.groupNoun || 'group') + ' (' + num(rowsBefore(ALL).length)
-                      + ')'));
+    const on = toggles.filter(t => t.on).map(t => t.key);
+    const cnt = g => opts.countOf ? opts.countOf(rowsBefore(g).map(p => p[0]),
+                                                 g === ALL ? null : g, on)
+                                  : rowsBefore(g).length;
+    const unit = opts.countUnit ? ' ' + opts.countUnit : '';
+    sel.append(o(ALL, 'every ' + (opts.groupNoun || 'group') + ' (' + num(cnt(ALL)) + unit + ')'));
     for (const g of opts.groups) {
-      const n = rowsBefore(g).length;
-      if (n) sel.append(o(g, opts.chip(g) + ' (' + num(n) + ')'));
+      const n = cnt(g);
+      if (n) sel.append(o(g, opts.chip(g) + ' (' + num(n) + unit + ')'));
     }
     sel.onchange = () => { pickedGroup = sel.options[sel.selectedIndex]._g; facet = null;
                            pickSplit(pickedGroup); draw(); };
@@ -1399,10 +1409,14 @@ function drill(opts) {
       const base = pickedGroup === ALL
         ? (opts.allRows ? opts.allRows() : opts.groups.flatMap(x => opts.rowsOf(x)))
         : opts.rowsOf(pickedGroup);
-      const here = base.filter(t.where).length;
-      const u = opts.toggleUnit ? ' ' + opts.toggleUnit : '';
-      t.text.textContent = t.label + (pickedGroup === ALL ? ' (' + num(t.count) + u + ')'
-        : ' (' + num(here) + u + ' here \u00b7 ' + num(t.count) + ' in all)');
+      const g = pickedGroup === ALL ? null : pickedGroup;
+      const here = opts.countOf ? opts.countOf(base.filter(t.where), g, [t.key])
+                                : base.filter(t.where).length;
+      const all = opts.countOf && g ? opts.countOf((opts.allRows ? opts.allRows()
+        : opts.groups.flatMap(x => opts.rowsOf(x))).filter(t.where), null, [t.key]) : t.count;
+      const u = opts.countUnit ? ' ' + opts.countUnit : opts.toggleUnit ? ' ' + opts.toggleUnit : '';
+      t.text.textContent = t.label + (pickedGroup === ALL ? ' (' + num(here) + u + ')'
+        : ' (' + num(here) + u + ' here \u00b7 ' + num(all) + ' in all)');
     }
   }
 
@@ -1413,6 +1427,8 @@ function drill(opts) {
     list = grid(pairs, cs.map(c => ({...c,
       val: p => c.val(p[0]), cell: c.cell ? p => c.cell(p[0]) : null})), {
       placeholder: opts.rowFilter || 'filter...', page: opts.pageSize || 200,
+      countLine: opts.countLine ? (view, from, to) => opts.countLine(view.map(p => p[0]), from, to,
+        pickedGroup === ALL ? null : pickedGroup, toggles.filter(t => t.on).map(t => t.key)) : null,
       sort: (opts.sortFor ? opts.sortFor(pickedGroup) : null) || opts.rowSort,
       dir: (opts.dirFor ? opts.dirFor(pickedGroup) : null) || opts.rowDir || 1, scroll: 1,
       controls: [groupSelect(), splitControl(pickedGroup), facetSelect(pickedGroup),
@@ -2373,7 +2389,8 @@ function findingsTab(host) {
     m.findings.sort((a, b) => (ORDER[a.bucket] ?? 3) - (ORDER[b.bucket] ?? 3)
                               || RANK.get(a.id) - RANK.get(b.id));
     m.worst = m.findings[0].bucket || '';
-    m.rank = Math.min(...m.findings.map(f => RANK.get(f.id)));
+    // broken now first, then worth a look, then notes; within each, the one priority
+    m.rank = (ORDER[m.worst] ?? 3) * 1e7 + Math.min(...m.findings.map(f => RANK.get(f.id)));
   }
   const byCheck = {};
   for (const f of DATA.findings) {
@@ -2383,6 +2400,10 @@ function findingsTab(host) {
   }
   const groups = Object.values(byCheck).map(g => ({...g, rows: [...g.rows]}));
   const has = (m, pred) => m.findings.some(pred);
+  const FPRED = {broken: f => f.bucket === 'broken', look: f => f.bucket === 'look',
+                 note: f => f.bucket === 'note', paid: f => f.paid && f.bucket !== 'note'};
+  const fcount = (rows, g, keys) => rows.reduce((n, m) => n + m.findings.filter(f =>
+    (!g || f.check === g.check) && (keys || []).every(k => FPRED[k](f))).length, 0);
   const toggles = [
     {key: 'broken', label: 'broken now', where: m => has(m, f => f.bucket === 'broken')},
     {key: 'look', label: 'worth a look', where: m => has(m, f => f.bucket === 'look')},
@@ -2391,7 +2412,13 @@ function findingsTab(host) {
   ].map(t => ({...t, count: models.filter(t.where).length}));
   const d = drill({
     noun: 'models', groups: groups, chip: g => g.title, groupSelect: true, groupNoun: 'check',
-    toggleUnit: 'models',
+    /* *** EVERY COUNT ON THE SCREEN NAMES ITS UNIT. *** (Ryan: "findings shows 2183 but i can
+       only see 379") The rows are models; the dropdown, the filters and the tab count findings,
+       and the list's line says both. */
+    countUnit: 'findings', countOf: (rows, g, keys) => fcount(rows, g, keys),
+    countLine: (rows, from, to, g, keys) => num(from) + '\u2013' + num(to) + ' of '
+      + num(rows.length) + (rows.length === 1 ? ' model' : ' models') + ' \u00b7 '
+      + num(fcount(rows, g, keys)) + ' findings',
     groupText: g => g.check, allRows: () => models, toggles: toggles,
     rowsOf: g => g.rows,
     rowCols: [
@@ -2515,7 +2542,7 @@ function findingPane(f) {
       section((f.evidence || {}).asked ? 'why that is a finding' : 'what it means', md(f.detail || '')),
       section('how much it matters', kv([
         ['weight', weightBox(f)],
-        ['reaches', (f.exposures || []).length ? f.exposures.join(', ')
+        ['reaches', (f.exposures || []).length ? reachesBox(f.exposures)
           : el('span', {class: 'tot', text: 'no exposure'})],
         ['marts downstream', num(f.marts)],
         ['descendants', num(f.descendants)],
@@ -3009,6 +3036,34 @@ function tile(big, label, note, cls) {
    text at the top ... your eyes dont even notice it". So a section's explanation is its heading's
    tip, and only a FACT -- something that is true of this warehouse, like "2 of 3 monitors have
    stopped" -- is set as text, and it is set as a line of the content, in ink, not as a caption. */
+/* *** 26 NAMES IN ONE COMMA RUN. *** (Ryan) What a finding reaches, grouped by the name before
+   its colon ("CO commercial: ..."), one line per group with its count, and the names one click
+   away. The line above says how many, and how many of them customers pay for. */
+function reachGroups(names) {
+  const by = {}, order = [];
+  for (const n of names) {
+    const i = String(n).indexOf(': ');
+    const k = i > 0 ? n.slice(0, i) : n;
+    if (!by[k]) { by[k] = []; order.push(k); }
+    by[k].push(i > 0 ? n.slice(i + 2) : '');
+  }
+  return order.map(k => ({group: k, items: by[k].filter(Boolean), n: by[k].length}));
+}
+function reachesBox(names) {
+  const meta = DATA.exposure_meta || {};
+  const paid = names.filter(n => (meta[n] || {}).customer_facing).length;
+  const box = el('div', {class: 'reach'});
+  box.append(el('div', {text: num(names.length) + (names.length === 1 ? ' exposure' : ' exposures')
+    + (paid ? ', ' + num(paid) + ' customer-facing' : '')}));
+  for (const g of reachGroups(names)) {
+    if (!g.items.length) { box.append(el('div', {class: 'rg', text: g.group})); continue; }
+    box.append(el('details', {class: 'rg'}, [
+      el('summary', {text: g.group + ': ' + num(g.n)}),
+      el('div', {class: 'rgi', text: g.items.join(' \u00b7 ')})]));
+  }
+  return box;
+}
+
 function block(title, tipText, node, fact) {
   const b = el('div', {class: 'ovblock'});
   b.append(el('h3', {}, [el('span', {text: title, tip: tipText})]));
@@ -3222,8 +3277,12 @@ function understoodTab(host) {
     const cleared = FX.reduce((n, f) => n + (f.resolves || 0), 0);
     const toFix = el('button', {class: 'back', text: 'every change, ranked →'});
     toFix.onclick = () => open('fix');
-    const right = el('div', {}, FX.length ? [el('div', {class: 'tiles'}, FX.slice(0, 4).map(f =>
-        tile(num(f.resolves || 0), f.title, f.queued ? num(f.queued) + ' of them queued' : ''))),
+    /* the changes, ranked, as a plain list: what each one is, then how many findings it clears */
+    const right = el('div', {}, FX.length ? [
+      el('table', {class: 'clist changes'}, FX.slice(0, 12).map((f, i) => el('tr', {}, [
+        el('td', {class: 'cn rank', text: num(i + 1)}),
+        el('td', {text: f.title}),
+        el('td', {class: 'cn', text: 'clears ' + num(f.resolves || 0)})]))),
       el('p', {class: 'fact', text: num(FX.length) + (FX.length === 1 ? ' change clears '
         : ' changes clear ') + num(cleared) + ' findings.'}),
       toFix] : []);
@@ -3266,9 +3325,7 @@ function understoodTab(host) {
       };
       table.append(tr);
     }
-    bits.push(block('What to change next',
-      'The counts: click one to list it here. The changes clear the most findings per '
-      + 'decision; an agent applies an approved one in a branch.',
+    bits.push(block('What to change next', '',
       el('div', {}, [el('div', {class: 'nextgrid'}, [table, right]), listHost])));
   }
 

@@ -286,6 +286,9 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
         "loop": _loop(store, findings, project),
         # What to change next, and whether it is getting better: the Overview leads with both.
         "fixes": _fixes(fix_objs, store),
+        # which exposures customers pay for, by the title a finding names them with
+        "exposure_meta": {e.title: {"customer_facing": e.customer_facing}
+                          for e in (getattr(project, "exposures", None) or {}).values()},
         "trend": _trend(store, project),
     }
 
@@ -909,7 +912,8 @@ _LINES = ("models", "edges", "claims", "findings", "waived", "decisions", "quest
 # `areas` was missing, so `--from` rendered a page with no Areas tab and nothing said why: the
 # round-trip guard below compared the artifact against a fixture that lacked it too.
 _WHOLE = (("meta", dict), ("config", dict), ("unconfigured", list),
-          ("moved", dict), ("cost", dict), ("monitoring", dict), ("areas", dict), ("loop", dict))
+          ("moved", dict), ("cost", dict), ("monitoring", dict), ("areas", dict), ("loop", dict),
+          ("exposure_meta", dict))
 
 
 def write_data(data: dict, directory, record: str = "") -> list:
