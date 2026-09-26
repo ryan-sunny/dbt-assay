@@ -313,3 +313,43 @@ def test_triage_leads_with_what_is_broken_now_and_counts_notes_once():
     t = priority.triage(fs, {"a", "b", "d", "e"})
     # a count still to be read against the data is worth a look; a broken premise is broken
     assert t == {"queued": 4, "broken": 2, "broken_paid": 1, "look": 2, "look_paid": 1, "notes": 1}
+
+
+def test_run_the_tests_names_what_makes_them_run_and_lists_each_test():
+    """(Ryan: "a condensed table of 223") and "the selector includes them" named nothing. A tag
+    the job leaves out gets its selector; a model none of whose tests ever ran is named; a test on
+    a model whose other tests run is newer or excluded. And a mechanical change is not "judged"."""
+    nodes = {
+        "test.p.a": {"resource_type": "test", "name": "vol_a", "tags": ["elementary-tests"],
+                     "attached_node": "model.p.a", "depends_on": {"nodes": ["model.p.a"]}},
+        "test.p.b1": {"resource_type": "test", "name": "nn_b", "tags": [],
+                      "attached_node": "model.p.b", "depends_on": {"nodes": ["model.p.b"]}},
+        "test.p.c1": {"resource_type": "test", "name": "nn_c", "tags": [],
+                      "attached_node": "model.p.c", "depends_on": {"nodes": ["model.p.c"]}},
+        "test.p.c2": {"resource_type": "test", "name": "uq_c", "tags": [],     # this one ran
+                      "attached_node": "model.p.c", "depends_on": {"nodes": ["model.p.c"]}},
+        "test.p.r": {"resource_type": "test", "name": "rel_b_c", "tags": [],  # on b, refers to c
+                     "attached_node": "model.p.b",
+                     "depends_on": {"nodes": ["model.p.c", "model.p.b"]}},
+    }
+    project = SimpleNamespace(models={u: _m(u[-1], f"{u[-1]}.sql", []) for u in
+                                      ("model.p.a", "model.p.b", "model.p.c")},
+                              sources={}, exposures={}, raw={"nodes": nodes}, project_root=".",
+                              tests=[])
+    fs = []
+    for i, (test, model) in enumerate((("vol_a", "a"), ("nn_b", "b"), ("nn_c", "c"),
+                                       ("rel_b_c", "b"))):
+        f = _finding("test_never_ran_is_a_gap_or_a_leftover", f"model.p.{model}", model, f"t{i}")
+        f.evidence = {"context": test, "answer": "a_coverage_gap", "probability": 0.99}
+        fs.append(f)
+    fx = next(x for x in fixes.build(project, fs, led=SimpleNamespace(uses=[], premises={}),
+                                     root=Path("."))
+              if x.kind == "run_the_tests")
+    why = {r[1]: r[2] for r in fx.table["rows"]}
+    assert why == {"vol_a": "the job leaves out tag:elementary-tests",
+                   "nn_b": "no test on this model has ever run",
+                   "rel_b_c": "no test on this model has ever run",
+                   "nn_c": "newer than the last run, or excluded"}, why
+    assert fx.table["cols"] == ["model", "test", "why it never ran"]
+    assert "dbt test --select tag:elementary-tests" in fx.how and "(b)" in fx.how
+    assert not any(w.startswith("judged at") for w in fx.why), fx.why

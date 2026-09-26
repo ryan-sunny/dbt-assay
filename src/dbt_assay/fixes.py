@@ -76,6 +76,7 @@ class Fix:
     queued: int = 0                                     # of `findings`, the ones queued
     pieces: list = field(default_factory=list)          # a batch: one line per part
     items: list = field(default_factory=list)           # judged proposals, each excludable
+    table: dict = field(default_factory=dict)           # {cols, rows}: exactly what it clears
 
     @property
     def id(self) -> str:
@@ -93,6 +94,7 @@ class Fix:
                 "moves_logic": self.moves_logic, "refused": self.refused,
                 "queued": self.queued, "notes": len(self.findings) - self.queued,
                 "pieces": self.pieces, "items": self.items[:3000],
+                "table": self.table,
                 "effect": self.effect()}
 
     def effect(self) -> str:
@@ -752,6 +754,114 @@ def queued_ids(findings, acts: dict | None = None) -> set:
     return out
 
 
+JUDGED_KINDS = ("test_what_could_break", "review")
+
+
+def _why_never_ran(project, findings) -> dict:
+    """{test name: why it never produced a result}, from the manifest and which tests on the same
+    model did run: a tag a job leaves out, a model no test on has ever run (so the job does not
+    build or test it), or a test newer than the last run or excluded on its own."""
+    nodes = (getattr(project, "raw", None) or {}).get("nodes") or {}
+    tests = {n.get("name"): n for n in nodes.values() if n.get("resource_type") == "test"}
+    never = {str((f.evidence or {}).get("context") or "") for f in findings
+             if f.check == "test_never_ran_is_a_gap_or_a_leftover"}
+    on_model: dict = {}
+    for name, n in tests.items():
+        for dep in ((n.get("depends_on") or {}).get("nodes") or []):
+            if dep.startswith("model."):
+                on_model.setdefault(dep, set()).add(name)
+    out = {}
+    for name in never:
+        n = tests.get(name) or {}
+        tags = [t for t in (n.get("tags") or []) if t]
+        # the model the test is ON (a relationships test also depends on the one it refers to)
+        models = [m for m in [n.get("attached_node") or ""] if m.startswith("model.")] or [
+            d for d in ((n.get("depends_on") or {}).get("nodes") or []) if d.startswith("model.")]
+        if tags:
+            out[name] = ("tag", f"tag:{tags[0]}")
+        elif models and all(t in never for t in on_model.get(models[0], ())):
+            out[name] = ("model", models[0].split(".")[-1])
+        else:
+            out[name] = ("newer", "")
+    return out
+
+
+def _say_what_makes_them_run(fx: Fix, members: list, why_never: dict) -> None:
+    """Name the change: the selector for a tag a job leaves out, the models no job tests, and the
+    tests that are newer than the last run."""
+    by_tag: dict = {}
+    models: set = set()
+    newer = 0
+    for f in members:
+        w = why_never.get(str((f.evidence or {}).get("context") or ""))
+        if not w:
+            continue
+        if w[0] == "tag":
+            by_tag[w[1]] = by_tag.get(w[1], 0) + 1
+        elif w[0] == "model":
+            models.add(w[1])
+        else:
+            newer += 1
+    lines, recipe = [], []
+    for tag, n in sorted(by_tag.items(), key=lambda kv: -kv[1]):
+        lines.append(f"{n} test(s) tagged `{tag.split(':', 1)[1]}` never ran: the job's selector "
+                     f"leaves the tag out. `dbt test --select {tag}` runs them.")
+        recipe.append(f"dbt test --select {tag}")
+    if models:
+        ms = sorted(models)
+        lines.append(f"Tests on {len(ms)} model(s) where no test has ever produced a result, so "
+                     f"the job's test step does not select them ({', '.join(ms[:6])}"
+                     f"{', ...' if len(ms) > 6 else ''}). Add them to the job's selector.")
+        recipe.append("dbt build --select " + " ".join(ms[:40]))
+    if newer:
+        lines.append(f"{newer} test(s) on models whose other tests run: added since the last run, "
+                     f"or excluded one by one. The next full `dbt test` runs them unless an "
+                     f"`--exclude` names them.")
+    rest = [f for f in members if f.check != "test_never_ran_is_a_gap_or_a_leftover"]
+    for f in rest:
+        lines.append(f.summary + ".")
+    if lines:
+        fx.how = " ".join(lines)
+        fx.recipe = recipe + [("the scheduled job's selector includes them, and each produces a "
+                               "result on the next run")]
+
+
+def _cleared_table(fx: Fix, members: list, why_never: dict) -> dict:
+    """What a change clears, condensed per kind: every row names its model."""
+    from .titles import title as _title
+    rows = []
+    if fx.kind == "run_the_tests":
+        cols = ["model", "test", "why it never ran"]
+        for f in members:
+            test = str((f.evidence or {}).get("context") or "")
+            w = why_never.get(test)
+            why = ("the job leaves out " + w[1] if w and w[0] == "tag" else
+                   "no test on this model has ever run" if w and w[0] == "model" else
+                   "newer than the last run, or excluded" if w else f.summary)
+            rows.append([f.subject_name or "", test, why])
+    elif fx.kind == "document":
+        cols = ["model", "columns"]
+        for f in members:
+            ev = f.evidence or {}
+            miss = list(ev.get("missing") or [])
+            n = int(ev.get("missing_total") or len(miss))
+            rows.append([f.subject_name or "", f"{n}: " + ", ".join(miss[:8])
+                         + (", ..." if n > 8 else "")])
+    elif all(f.check == "values_lost_at_hop" for f in members):
+        cols = ["model", "column", "lost / present", "sample"]
+        for f in members:
+            ev = f.evidence or {}
+            rows.append([f.subject_name or "", str(ev.get("column") or ""),
+                         f"{int(ev.get('lost') or 0):,} / {int(ev.get('present') or 0):,}",
+                         ", ".join(str(x) for x in (ev.get("sample") or [])[:4])])
+    else:
+        cols = ["model", "check", "what"]
+        for f in members:
+            rows.append([f.subject_name or "", _title(f.check), f.summary or ""])
+    rows.sort(key=lambda r: (r[0], r[1:]))
+    return {"cols": cols, "rows": rows[:3000]}
+
+
 def split(findings, fixes: list, acts: dict | None = None) -> dict:
     """{"fix", "settled", "decide", "notes"}: the open findings' ids, each in exactly one. A
     change in the plan clears it; or a count settled it and a proposal says what to do; or a
@@ -879,10 +989,18 @@ def build(project, findings, *, entries=None, digests=None, schema=None, store=N
 
     ctx = priority.Context.of(project, led)
     by_id = {f.id: f for f in findings}
+    why_never = _why_never_ran(project, findings)
     for fx in fixes:
         members = [by_id[x] for x in fx.findings if x in by_id]
         pr = priority.of_many(members, ctx)
         fx.why, fx.tier = pr["why"], pr["tier"]
+        # "judged at 0.99" belongs to a change a judgment decided, not to a mechanical one
+        if fx.kind not in JUDGED_KINDS:
+            fx.why = [w for w in fx.why if not w.startswith("judged at")]
+        if len(members) > 1:
+            fx.table = _cleared_table(fx, members, why_never)
+        if fx.kind == "run_the_tests":
+            _say_what_makes_them_run(fx, members, why_never)
         fx.checks = {}
         for f in members:
             fx.checks[f.check] = fx.checks.get(f.check, 0) + 1

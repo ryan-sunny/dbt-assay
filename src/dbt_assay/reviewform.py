@@ -1085,6 +1085,10 @@ color:var(--ink);cursor:pointer;border-bottom:1px solid var(--rule2)}
 .gcard{padding:0 0 14px;margin:0 0 18px;border-bottom:1px solid var(--rule)}
 .gcard .rbtns{margin:2px 0 8px}
 .items{margin:4px 0 12px}
+.clearedbox{margin:6px 0 12px}
+.clearedbar input{width:100%;max-width:360px;margin:6px 0}
+.clearedscroll{max-height:320px;overflow:auto;border-top:1px solid var(--rule)}
+.rtab.cleared td{font-size:13px}
 .itemm{font-size:13px;color:var(--ash);margin:10px 0 2px}
 .item{display:grid;grid-template-columns:auto minmax(90px,max-content) minmax(0,1fr) minmax(0,1fr);
 gap:2px 10px;align-items:baseline;font-size:13.5px;padding:2px 0;cursor:pointer}
@@ -2386,6 +2390,25 @@ function fixCard(fx) {
   }
   box.append(el('div', {class: 'lbl', text: 'the change'}));
   box.append(el('p', {class: 'q', text: fx.how}));
+  if (((fx.table || {}).rows || []).length && !(fx.items || []).length) {
+    /* *** WHAT IT CLEARS, ONE ROW EACH. *** (Ryan: "a dropdown of the specific findings, a
+       condensed table of 223") Closed until opened; a filter and a bounded height inside. */
+    const T = fx.table;
+    const q = el('input', {type: 'text', placeholder: 'filter...'});
+    const tb = el('table', {class: 'rtab cleared'});
+    const paint = () => {
+      const t = q.value.trim().toLowerCase();
+      const rows = t ? T.rows.filter(r => r.join(' ').toLowerCase().includes(t)) : T.rows;
+      tb.replaceChildren(el('tr', {}, T.cols.map(c => el('th', {text: c}))),
+        ...rows.map(r => el('tr', {}, r.map((v, i) => el('td', {class: i ? '' : 'mono',
+                                                                 text: v})))));
+    };
+    q.oninput = paint;
+    paint();
+    box.append(el('details', {class: 'clearedbox'}, [
+      el('summary', {text: num(T.rows.length) + ' findings it clears'}),
+      el('div', {class: 'clearedbar'}, [q]), el('div', {class: 'clearedscroll'}, [tb])]));
+  }
   if ((fx.items || []).length) {
     /* *** EACH JUDGED GUESS IS ITS OWN CALL. *** (Ryan: "agree to like 500 things at once even
        if they're not ALL true") Every proposed test is listed with its column and why; untick

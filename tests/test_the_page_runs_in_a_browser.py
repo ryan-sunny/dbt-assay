@@ -926,7 +926,9 @@ def test_a_fix_is_approved_on_its_card_and_loads_back(tmp_path):
                     "test": "a range or a reconciliation test", "why": "an aggregate would be wrong"}]
     stage = dict(fx, id="st1", kind="stage_raw_source", kind_title="Stage a raw source",
                  kind_rank=8, title="Stage raw.p for 2 model(s) that read it raw", resolves=0,
-                 items=[])
+                 items=[], table={"cols": ["model", "check", "what"],
+                                  "rows": [["a", "Reads a raw source", "reads raw.p"],
+                                           ["b", "Reads a raw source", "reads raw.p"]]})
     ctx = {"words": [], "explanations": [], "waivers": [], "settings": [], "fixes": [fx, stage],
            "open_findings": 5}
     out = tmp_path / "review.html"
@@ -946,6 +948,16 @@ def test_a_fix_is_approved_on_its_card_and_loads_back(tmp_path):
             assert page.locator("#p-fixes .tgrid").count() == 0
             rows = page.locator("#p-fixes .frow").all_inner_texts()
             assert len(rows) == 2 and "clears 1" in rows[0], rows
+            # a change with several findings lists them, closed until opened, and filters them
+            page.locator("#p-fixes .frow").nth(1).click()
+            box = page.locator("#p-fixes .clearedbox")
+            assert box.locator("summary").inner_text() == "2 findings it clears"
+            assert not box.locator("table").is_visible()
+            box.locator("summary").click()
+            assert box.locator("tr").count() == 3
+            box.locator("input").fill("b")
+            assert box.locator("tr").count() == 2
+            page.locator("#p-fixes .frow").first.click()
             c = page.locator("#p-fixes .card").first
             assert "Document 2 column(s) of orders" in c.inner_text()
             assert "2 of 2 tests included" in c.inner_text()
