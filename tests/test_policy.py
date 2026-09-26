@@ -83,3 +83,35 @@ def test_with_no_config_severity_alone_decides(project_dir):
     p = Project.load(project_dir)
     kept, _ = apply_policy([_f("x", base=3), _f("y", base=1)], Config(), None, p)
     assert [a for _f_, a, _w in kept] == ["queue", "annotate"]
+
+
+def test_a_monitor_that_never_ran_on_a_customer_facing_model_is_worth_a_look():
+    """(sunny-data: Elementary's volume anomalies on every source ran once, by hand, and never
+    since; assay filed it as a note.) A declared monitor that never ran, on a model a paying
+    customer reaches, is queued; the same on a model nobody pays for, or a plain not_null, keeps
+    the default by severity."""
+    from types import SimpleNamespace
+
+    from dbt_assay import judged
+    from dbt_assay.checks.structural import Finding
+    nodes = {"test.p.v": {"resource_type": "test", "name": "vol_a",
+                          "test_metadata": {"namespace": "elementary", "name": "volume_anomalies"}},
+             "test.p.n": {"resource_type": "test", "name": "nn_a",
+                          "test_metadata": {"name": "not_null"}}}
+    paid = SimpleNamespace(customer_facing=True)
+    project = SimpleNamespace(raw={"nodes": nodes},
+                              exposures_of=lambda uid: [paid] if uid == "model.p.a" else [])
+    cfg = SimpleNamespace(for_question=lambda c: SimpleNamespace(
+        enabled=True, select=None, exposed_only=False, act=None,
+        action_for=lambda *a, **k: None),
+        waived=lambda *a: None, min_adjudications=20, min_agreement=None)
+
+    def f(test, subject):
+        return Finding(check="test_never_ran_is_a_gap_or_a_leftover", subject=subject,
+                       subject_name=subject.split(".")[-1], file="", summary=test, detail="",
+                       base=2, evidence={"context": test, "answer": "a_coverage_gap"})
+    kept, _w = judged.apply_policy([f("vol_a", "model.p.a"), f("vol_a", "model.p.b"),
+                                    f("nn_a", "model.p.a")], cfg, None, project)
+    acts = [(k.subject, k.summary, a) for k, a, _why in kept]
+    assert acts == [("model.p.a", "vol_a", "queue"), ("model.p.b", "vol_a", "annotate"),
+                    ("model.p.a", "nn_a", "annotate")], acts

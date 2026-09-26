@@ -142,6 +142,10 @@ align-items:stretch;margin:0 0 22px}
 .clist td.one{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .clist td.one.wide{white-space:normal}
 .changesbelow{margin-top:4px}
+.clist td.clears{white-space:nowrap;width:1%;padding-left:14px}
+.clist td.clears .dec{font-size:12.5px;color:var(--ash)}
+.clist td.ctitle2{overflow-wrap:anywhere}
+#p-understood{scrollbar-gutter:stable;padding-right:6px}
 .counts{border-collapse:collapse;width:100%;font-size:15px}
 .counts td{padding:5px 4px;border-bottom:1px solid var(--rule2);cursor:pointer}
 .counts td.cn{text-align:right;font-variant-numeric:lining-nums tabular-nums;font-feature-settings:"lnum","tnum"}
@@ -3288,13 +3292,17 @@ function understoodTab(host) {
     toFix.onclick = () => open('fix');
     /* the changes, ranked by findings cleared per decision, full width below the counts; a change
        whose items are each their own decision says so, since that is why it sits where it does */
-    const clears = f => 'clears ' + num(f.resolves || 0) + ((f.decisions || 1) > 1
-      ? ' \u00b7 ' + num(f.decisions) + ' decisions, one per item' : '');
+    /* "clears N" on one line in its own cell; why a change sits lower (each item its own
+       decision) is a small line under it, never a longer row */
+    const clears = f => el('td', {class: 'cn clears'}, [
+      el('div', {text: 'clears ' + num(f.resolves || 0)}),
+      ...((f.decisions || 1) > 1 ? [el('div', {class: 'dec', text: num(f.decisions)
+        + ' decisions, one per item'})] : [])]);
     const changes = FX.length ? el('div', {class: 'changesbelow'}, [
       el('table', {class: 'clist changes'}, FX.slice(0, 12).map((f, i) => el('tr', {}, [
         el('td', {class: 'cn rank', text: num(i + 1)}),
-        el('td', {text: f.title}),
-        el('td', {class: 'cn', text: clears(f)})]))),
+        el('td', {class: 'ctitle2', text: f.title}),
+        clears(f)]))),
       el('p', {class: 'fact', text: num(FX.length) + (FX.length === 1 ? ' change clears '
         : ' changes clear ') + num(cleared) + ' findings.'}),
       toFix]) : null;
@@ -3314,7 +3322,7 @@ function understoodTab(host) {
       look: () => fRows(F_.filter(f => f.bucket === 'look')),
       paid: () => fRows(F_.filter(f => f.paid && f.bucket !== 'note')),
       fix: () => FX.map(f => el('tr', {}, [el('td', {class: 'one wide', text: f.title, title: f.title}),
-                                           el('td', {class: 'cn', text: clears(f)})])),
+                                           clears(f)])),
       decide: () => fRows(F_.filter(f => f.decided_on === 'decide')),
       note: () => fRows(F_.filter(f => f.bucket === 'note')),
     };
@@ -3344,9 +3352,9 @@ function understoodTab(host) {
     }
     const start = (rowsDef.find(r => r[2]) || rowsDef[0] || [])[0];
     if (start) pick(start);
-    bits.push(block('What to change next', '',
-      el('div', {}, [el('div', {class: 'nextgrid'}, rowsDef.length ? [table, panel] : []),
-                     changes].filter(Boolean))));
+    if (rowsDef.length) bits.push(block('What to change next', '',
+      el('div', {class: 'nextgrid'}, [table, panel])));
+    if (changes) bits.push(block('Changes, ranked by what they clear', '', changes));
   }
 
   // ---- whether it is getting better: open findings over the full runs in the store

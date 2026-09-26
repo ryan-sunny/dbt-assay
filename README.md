@@ -221,7 +221,9 @@ Everything assay knows, as one file you double-click, in four sections and Setti
 or a count settled it (a failing test, a value lost at a hop) and a proposal says what to do; or it
 is a judgment call a person makes; or `audit.yml` only annotates it, and it is a note. What is
 **broken now** is only what the project's own evidence says is failing: a dbt test, a proven
-guarantee, a key that held, a premise a finding was held back on. What is **customer-facing** comes
+guarantee, a key that held, a premise a finding was held back on. A monitor (an Elementary or
+anomaly test) that is declared and has never run, on a customer-facing model, is worth a look by
+default rather than a note: it is the monitor that went dark. What is **customer-facing** comes
 from your exposures: mark the ones customers pay for with `meta: {paid: true}` (or
 `customer_facing: true`) and everything reaching them sorts first.
 

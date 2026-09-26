@@ -554,6 +554,7 @@ def apply_policy(findings, cfg, store, project=None) -> tuple[list, list]:
 
     kept, waived = [], []
     scope_cache: dict = {}
+    monitors = _monitor_tests(project) if project is not None else set()
 
     for f in findings:
         d = dismissed.get(f.id)
@@ -603,8 +604,40 @@ def apply_policy(findings, cfg, store, project=None) -> tuple[list, list]:
                            agreement=rate[0] if rate else None,
                            min_agreement=cfg.min_agreement)
         why = "audit.yml" if act else "default by severity"
+        if not act and _dark_monitor(f, project, monitors):
+            act, why = "queue", "a monitor that never ran, on a customer-facing model"
         kept.append((f, act or default_action(f), why))
     return kept, waived
+
+
+def _monitor_tests(project) -> set:
+    """Test names that are monitors: Elementary's, or any anomaly test."""
+    nodes = (getattr(project, "raw", None) or {}).get("nodes") or {}
+    out = set()
+    for n in nodes.values():
+        if n.get("resource_type") != "test":
+            continue
+        tm = n.get("test_metadata") or {}
+        tags = [str(t).lower() for t in (n.get("tags") or [])]
+        if (str(tm.get("namespace") or "").lower() == "elementary"
+                or "anomal" in str(tm.get("name") or "").lower()
+                or any("elementary" in t for t in tags)):
+            out.add(n.get("name"))
+    return out
+
+
+def _dark_monitor(f, project, monitors: set) -> bool:
+    """*** A MONITOR THAT NEVER RAN IS A MONITOR THAT WENT DARK. *** (sunny-data: Elementary's
+    volume anomalies on all 212 sources ran once, by hand, and nothing scheduled them; assay filed
+    it among 2,139 notes.) Declared, never run, on a model that reaches a customer: worth a look."""
+    if f.check != "test_never_ran_is_a_gap_or_a_leftover" or project is None:
+        return False
+    if str((f.evidence or {}).get("context") or "") not in monitors:
+        return False
+    try:
+        return any(getattr(e, "customer_facing", False) for e in project.exposures_of(f.subject))
+    except Exception:                                            # noqa: BLE001
+        return False
 
 
 # *** A NEW CHECK DEFAULTS TO `queue`, WHATEVER ITS BASE. *** (spec, 2026-09-24) A project opts
