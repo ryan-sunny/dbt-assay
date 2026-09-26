@@ -1094,14 +1094,19 @@ def test_the_counts_are_on_the_overview_only_and_open_their_list_in_place(tmp_pa
             assert page.locator("header .counts, #chips").count() == 0
             labels = page.locator("#p-understood table.counts td:first-child").all_inner_texts()
             assert labels[:2] == ["broken now", "worth a look"] and labels[-1] == "notes", labels
+            # one count is picked on arrival, so its panel is never empty
+            assert page.locator("#p-understood table.counts tr.on").count() == 1
+            assert page.locator("#p-understood .countpanel table.clist tr").count() > 0
+            height = page.evaluate("document.querySelector('#p-understood').scrollHeight")
             notes = page.locator("#p-understood table.counts tr", has_text="notes")
             n = int(notes.locator("td.cn").inner_text().replace(",", ""))
             notes.click()
             assert page.evaluate("location.hash") in ("", "#understood")      # it stayed here
-            listed = page.locator("#p-understood .countlist table.clist tr").count()
-            assert listed == min(n, 100) and listed > 0
-            notes.click()                                                     # and it closes
-            assert page.locator("#p-understood .countlist table").count() == 0
+            listed = page.locator("#p-understood .countpanel table.clist tr").count()
+            assert listed == min(n, 200) and listed > 0
+            # the panel swapped what it holds; the page did not grow
+            assert page.evaluate("document.querySelector('#p-understood').scrollHeight") == height
+            assert "on" in (notes.get_attribute("class") or "")
             for sec in ("fix", "decide", "explore"):
                 page.click(f'nav button[data-section="{sec}"]')
                 page.wait_for_timeout(200)

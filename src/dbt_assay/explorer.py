@@ -133,24 +133,32 @@ nav .setbtn{margin-left:auto;font-size:15px;color:var(--faint)}
    every tab ... it just jumps you all over the place") A label and its number per row, even
    numerals, no colour; a row opens its list in place, under the counts. */
 .nextgrid{display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:0 28px;
-align-items:start}
+align-items:stretch;margin:0 0 22px}
+.countpanel{position:relative;min-height:200px;border-left:1px solid var(--rule)}
+.countinner{position:absolute;inset:0;overflow-y:auto;padding:0 0 0 16px}
+.clist.fixed{table-layout:fixed}
+.clist.fixed td.one:nth-child(1){width:30%}
+.clist.fixed td.one:nth-child(2){width:28%}
+.clist td.one{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.clist td.one.wide{white-space:normal}
+.changesbelow{margin-top:4px}
 .counts{border-collapse:collapse;width:100%;font-size:15px}
 .counts td{padding:5px 4px;border-bottom:1px solid var(--rule2);cursor:pointer}
 .counts td.cn{text-align:right;font-variant-numeric:lining-nums tabular-nums;font-feature-settings:"lnum","tnum"}
 .counts tr:hover td{background:#f2efe7}
-.counts tr.on td{background:#efe9dc}
-.countlist{margin:14px 0 0}
+.counts tr.on td{background:#efe9dc;box-shadow:none}
+.counts tr.on td:first-child{box-shadow:inset 3px 0 0 var(--ink)}
 .reach .rg{margin:2px 0 0}
 .reach .rg summary{cursor:pointer;font-variant-numeric:lining-nums tabular-nums}
 .reach .rgi{color:var(--ash);font-size:13.5px;margin:2px 0 6px 14px}
-.countlist:empty{display:none}
 .clist{border-collapse:collapse;width:100%;font-size:14px}
 .clist td{padding:4px 8px 4px 0;border-bottom:1px solid var(--rule2);vertical-align:top}
 .clist td.cn{text-align:right;white-space:nowrap;font-variant-numeric:lining-nums tabular-nums}
 .clist td.sum{color:var(--ash)}
 .clist.changes td{padding:6px 10px 6px 0}
 .clist td.rank{color:var(--faint);width:1.5em}
-@media (max-width:820px){.nextgrid{display:block}.counts{margin-bottom:14px}}
+@media (max-width:820px){.nextgrid{display:block}.counts{margin-bottom:14px}
+.countpanel{height:320px;border-left:0}.countinner{padding:0}}
 .fblock{border-top:1px solid var(--rule);padding-top:10px;margin-top:14px}
 .fbucket{font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
 margin-bottom:4px}
@@ -250,6 +258,7 @@ td{padding:6px 8px;border-bottom:1px solid var(--rule2);vertical-align:top}
 tr.pick{cursor:pointer}
 tr.pick:hover td{background:#f2efe7}
 tr.on td{background:#efe9dc;box-shadow:inset 3px 0 0 var(--ink)}
+table.counts tr.on td:not(:first-child){box-shadow:none}
 .n{text-align:right;font-variant-numeric:tabular-nums}
 /* *** WRAPPED, NEVER CUT. *** A cell used to end in an ellipsis at 300px, which hid the part of a
    claim that said what it was about. It wraps now, and the row is as tall as what it holds. */
@@ -3277,26 +3286,35 @@ function understoodTab(host) {
     const cleared = FX.reduce((n, f) => n + (f.resolves || 0), 0);
     const toFix = el('button', {class: 'back', text: 'every change, ranked →'});
     toFix.onclick = () => open('fix');
-    /* the changes, ranked, as a plain list: what each one is, then how many findings it clears */
-    const right = el('div', {}, FX.length ? [
+    /* the changes, ranked by findings cleared per decision, full width below the counts; a change
+       whose items are each their own decision says so, since that is why it sits where it does */
+    const clears = f => 'clears ' + num(f.resolves || 0) + ((f.decisions || 1) > 1
+      ? ' \u00b7 ' + num(f.decisions) + ' decisions, one per item' : '');
+    const changes = FX.length ? el('div', {class: 'changesbelow'}, [
       el('table', {class: 'clist changes'}, FX.slice(0, 12).map((f, i) => el('tr', {}, [
         el('td', {class: 'cn rank', text: num(i + 1)}),
         el('td', {text: f.title}),
-        el('td', {class: 'cn', text: 'clears ' + num(f.resolves || 0)})]))),
+        el('td', {class: 'cn', text: clears(f)})]))),
       el('p', {class: 'fact', text: num(FX.length) + (FX.length === 1 ? ' change clears '
         : ' changes clear ') + num(cleared) + ' findings.'}),
-      toFix] : []);
-    const listHost = el('div', {class: 'countlist'});
+      toFix]) : null;
+    /* *** THE LIST FOR A COUNT OPENS BESIDE IT, IN A PANEL THAT DOES NOT GROW. *** (Ryan: "an
+       enormous scrolled render out of nowhere") One count is picked on arrival, so the panel is
+       never empty; picking another swaps what the panel holds, and the page never moves. */
+    const panel = el('div', {class: 'countpanel'});
+    const inner = el('div', {class: 'countinner'});
+    panel.append(inner);
     const F_ = DATA.findings;
-    const fRows = fs => fs.map(f => el('tr', {}, [el('td', {class: 'mono', text: f.model || ''}),
-      el('td', {text: f.title || f.check}), el('td', {class: 'sum', text: f.summary || ''})]));
-    const CAP = 100;
+    const cut = t => el('td', {class: 'one', text: t, title: t});
+    const fRows = fs => fs.map(f => el('tr', {}, [cut(f.model || ''), cut(f.title || f.check),
+      el('td', {class: 'sum', text: f.summary || ''})]));
+    const CAP = 200;
     const listOf = {
       broken: () => fRows(F_.filter(f => f.bucket === 'broken')),
       look: () => fRows(F_.filter(f => f.bucket === 'look')),
       paid: () => fRows(F_.filter(f => f.paid && f.bucket !== 'note')),
-      fix: () => FX.map(f => el('tr', {}, [el('td', {text: f.title}),
-                                           el('td', {class: 'cn', text: 'clears ' + num(f.resolves || 0)})])),
+      fix: () => FX.map(f => el('tr', {}, [el('td', {class: 'one wide', text: f.title, title: f.title}),
+                                           el('td', {class: 'cn', text: clears(f)})])),
       decide: () => fRows(F_.filter(f => f.decided_on === 'decide')),
       note: () => fRows(F_.filter(f => f.bucket === 'note')),
     };
@@ -3308,25 +3326,27 @@ function understoodTab(host) {
       ['decide', 'calls to decide', F_.filter(f => f.decided_on === 'decide').length],
       ['note', 'notes', T.notes]] : [];
     const table = el('table', {class: 'counts'});
-    let openKey = null;
+    function pick(key) {
+      table.querySelectorAll('tr').forEach(r => r.classList.toggle('on',
+        r.getAttribute('data-k') === key));
+      const rows = listOf[key]();
+      const t = el('table', {class: 'clist' + (key === 'fix' ? '' : ' fixed')}, rows.slice(0, CAP));
+      inner.replaceChildren(...(rows.length ? [t] : [el('p', {class: 'fact', text: 'none'})]),
+        ...(rows.length > CAP ? [el('p', {class: 'fact', text: 'and ' + num(rows.length - CAP)
+          + ' more, listed under Explore'})] : []));
+      inner.scrollTop = 0;
+    }
     for (const [key, label, n] of rowsDef) {
       const tr = el('tr', {'data-k': key}, [el('td', {text: label}),
                                             el('td', {class: 'cn', text: num(n || 0)})]);
-      tr.onclick = () => {
-        openKey = openKey === key ? null : key;
-        table.querySelectorAll('tr').forEach(r => r.classList.toggle('on',
-          r.getAttribute('data-k') === openKey));
-        if (!openKey) { listHost.replaceChildren(); return; }
-        const rows = listOf[key]();
-        listHost.replaceChildren(el('table', {class: 'clist'}, rows.slice(0, CAP)),
-          ...(rows.length > CAP ? [el('p', {class: 'fact', text: 'and ' + num(rows.length - CAP)
-            + ' more, listed under Explore'})] : []),
-          ...(rows.length ? [] : [el('p', {class: 'fact', text: 'none'})]));
-      };
+      tr.onclick = () => pick(key);
       table.append(tr);
     }
+    const start = (rowsDef.find(r => r[2]) || rowsDef[0] || [])[0];
+    if (start) pick(start);
     bits.push(block('What to change next', '',
-      el('div', {}, [el('div', {class: 'nextgrid'}, [table, right]), listHost])));
+      el('div', {}, [el('div', {class: 'nextgrid'}, rowsDef.length ? [table, panel] : []),
+                     changes].filter(Boolean))));
   }
 
   // ---- whether it is getting better: open findings over the full runs in the store
