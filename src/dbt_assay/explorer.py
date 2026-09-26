@@ -129,6 +129,21 @@ padding:5px 14px 7px}
 nav .setbtn{margin-left:auto;font-size:15px;color:var(--faint)}
 /* the row under them: the views of the section you are in */
 .subnav{display:flex;flex-wrap:wrap;gap:0;border-top:1px solid var(--rule);margin-top:3px}
+/* *** EVERY COUNT IS A FILTER, AND SAYS WHAT IT COUNTS. *** (Ryan) One row, no sentences. */
+.chips{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:baseline;padding:7px 0 2px;
+font-size:14px}
+.chips:empty{display:none}
+.chip{appearance:none;border:0;background:none;padding:0 2px;font:inherit;color:var(--ink);
+cursor:pointer;border-bottom:1px dotted var(--ash)}
+.chip:hover{border-bottom-color:var(--ink)}
+.chip.on{border-bottom:2px solid var(--ink)}
+.chipn{font-size:15px;font-weight:600;font-variant-numeric:lining-nums tabular-nums;
+vertical-align:baseline}
+.chip.bad .chipn{color:var(--rust)}
+.chipsep{color:var(--faint)}
+.fblock{border-top:1px solid var(--rule);padding-top:10px;margin-top:14px}
+.fbucket{font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
+margin-bottom:4px}
 .subnav[hidden]{display:none}
 .subnav button{appearance:none;border:0;border-bottom:2px solid transparent;background:none;
 font-family:Fell,Georgia,serif;font-size:14.5px;color:var(--ash);padding:5px 11px 5px;
@@ -239,6 +254,9 @@ td.mono.clip{overflow-wrap:anywhere}
 .wrap2{display:grid;grid-template-columns:minmax(300px,1fr) minmax(0,1.55fr);gap:0;
 align-items:stretch;height:100%}
 .wrap2.wide{grid-template-columns:minmax(400px,1.1fr) minmax(0,1.3fr)}
+.wrap2.narrow{grid-template-columns:minmax(300px,420px) minmax(0,1fr)}
+.wrap2.narrow > .pane{padding-right:14px;border-right:1px solid var(--rule)}
+.wrap2.narrow > .detail{padding-left:22px}
 .wrap2 > *{min-height:0}
 .drillhost{display:flex;flex-direction:column;height:100%;min-height:0;gap:8px}
 .drilltop{flex:0 0 auto}
@@ -1012,14 +1030,9 @@ def explorer_html(data: dict, record_html: str) -> str:
         ("config", "Config", None),
         ("spend", "Spend", None),
     ]
-    # *** THIS PAGE IS READ-ONLY AND THE FORM IS WHERE YOU CHANGE THINGS. ***
-    # Two artifacts that link, rather than one that half-does both: the report says WHAT, the form
-    # owns every box you type into. Without a link between them the split reads as a missing
-    # feature -- "it doesnt even offer the ability to configure anything?" -- rather than as a
-    # decision. A relative path, so the pair travels as two files in one directory.
-    form = str(data.get("meta", {}).get("form") or "")
-    form_link = (f' &middot; <a class="lk" href="{e(form)}">open the review form</a>'
-                 if form else "")
+    # Fix and Decide ARE the review form, embedded; a second way into it in the header was one
+    # more thing to read (Ryan).
+    form_link = ""
     # *** WHAT A TAB IS, ON THE TAB. ***
     # Each tab opened on a grey sentence saying what it was, and nobody read them ("its random
     # text at the top ... your eyes dont even notice it"). The sentence is the tab's tip now, where
@@ -1114,6 +1127,7 @@ manifest generated {e(str(meta['generated_at']))} &middot;
 <button class="navmenu" id="navmenu" aria-expanded="false"><span id="navcur">Overview</span> ▾</button>
 <nav role="tablist">{nav}</nav>
 <div class="subnav" id="subnav"></div>
+<div class="chips" id="chips"></div>
 </header>
 <main>{panels}</main>
 
@@ -1241,7 +1255,8 @@ function drill(opts) {
 
   function rowsBefore(g) {
     let out = g === ALL
-      ? opts.groups.flatMap(x => opts.rowsOf(x).map(r => [r, x]))
+      ? (opts.allRows ? opts.allRows().map(r => [r, ALL])
+                      : opts.groups.flatMap(x => opts.rowsOf(x).map(r => [r, x])))
       : opts.rowsOf(g).map(r => [r, g]);
     for (const t of toggles) if (t.on) out = out.filter(p => t.where(p[0]));
     return out;
@@ -1346,17 +1361,38 @@ function drill(opts) {
      project's after it, and a group with none says so in the list. */
   const toggleBoxes = toggles.map(t => {
     const cb = el('input', {type: 'checkbox'});
+    t.cb = cb;
     cb.onchange = () => { t.on = cb.checked; paintGroups(); draw(); };
     t.text = el('span');
     return el('label', {class: 'chk', title: t.title || t.label}, [cb, t.text]);
   });
+  /* *** TWO PANES. *** (Ryan: "not enough screen space") With `groupSelect`, the groups are a
+     dropdown in the rows' filter bar instead of a column of their own. */
+  function groupSelect() {
+    if (!opts.groupSelect) return null;
+    const sel = el('select', {title: 'Show only the rows of one ' + (opts.groupNoun || 'group')});
+    const o = (g, t) => { const x = el('option', {text: t}); x._g = g;
+                          if (g === pickedGroup) x.selected = true; return x; };
+    sel.append(o(ALL, 'every ' + (opts.groupNoun || 'group') + ' (' + num(rowsBefore(ALL).length)
+                      + ')'));
+    for (const g of opts.groups) {
+      const n = rowsBefore(g).length;
+      if (n) sel.append(o(g, opts.chip(g) + ' (' + num(n) + ')'));
+    }
+    sel.onchange = () => { pickedGroup = sel.options[sel.selectedIndex]._g; facet = null;
+                           pickSplit(pickedGroup); draw(); };
+    return sel;
+  }
   function paintToggles() {
     for (const t of toggles) {
+      if (t.cb) t.cb.checked = t.on;
       const base = pickedGroup === ALL
-        ? opts.groups.flatMap(x => opts.rowsOf(x)) : opts.rowsOf(pickedGroup);
+        ? (opts.allRows ? opts.allRows() : opts.groups.flatMap(x => opts.rowsOf(x)))
+        : opts.rowsOf(pickedGroup);
       const here = base.filter(t.where).length;
-      t.text.textContent = t.label + (pickedGroup === ALL ? ' (' + num(t.count) + ')'
-        : ' (' + num(here) + ' here \u00b7 ' + num(t.count) + ' in all)');
+      const u = opts.toggleUnit ? ' ' + opts.toggleUnit : '';
+      t.text.textContent = t.label + (pickedGroup === ALL ? ' (' + num(t.count) + u + ')'
+        : ' (' + num(here) + u + ' here \u00b7 ' + num(t.count) + ' in all)');
     }
   }
 
@@ -1369,8 +1405,8 @@ function drill(opts) {
       placeholder: opts.rowFilter || 'filter...', page: opts.pageSize || 200,
       sort: (opts.sortFor ? opts.sortFor(pickedGroup) : null) || opts.rowSort,
       dir: (opts.dirFor ? opts.dirFor(pickedGroup) : null) || opts.rowDir || 1, scroll: 1,
-      controls: [splitControl(pickedGroup), facetSelect(pickedGroup), ...toggleBoxes]
-        .filter(Boolean),
+      controls: [groupSelect(), splitControl(pickedGroup), facetSelect(pickedGroup),
+                 ...toggleBoxes].filter(Boolean),
       pick: p => showOne(p[0], p[1]),
       text: p => opts.rowText(p[0]) + ' ' + opts.chip(p[1]),
       emptyText: toggles.some(t => t.on)
@@ -1406,7 +1442,8 @@ function drill(opts) {
   }
 
   left.append(head, body);
-  cols.append(gnav, left, detail);
+  if (opts.groupSelect) { cols.className = 'wrap2 narrow'; cols.append(left, detail); }
+  else cols.append(gnav, left, detail);
   /* No sentence above the columns: what the tab is, is the tab's own tip, and what a column
      means is that column's. */
   host.append(cols);
@@ -1416,6 +1453,10 @@ function drill(opts) {
   /* Kept for the callers that flip a view from outside. */
   host.showGroups = () => { pickedGroup = withAll ? ALL : opts.groups[0]; facet = null; paintGroups(); draw(); };
   host.showRows = (g) => { pickedGroup = g; facet = null; paintGroups(); draw(); };
+  /* a count elsewhere on the page lands here with exactly its rows */
+  host.setToggles = keys => { for (const t of toggles) t.on = keys.includes(t.key);
+                              pickedGroup = withAll ? ALL : opts.groups[0]; facet = null;
+                              paintGroups(); draw(); };
   return host;
 }
 
@@ -2303,75 +2344,84 @@ function tallyGrid(T, onPage) {
 }
 
 function findingsTab(host) {
-  /* *** THE SAME THREE COLUMNS AS CLAIMS AND AREAS. *** (P2)
-     Findings was one flat list with a dropdown of checks. The checks are the groups now, each
-     with its count and how many a person has read; picking one lists the models it fired on, and
-     picking a model fills the pane. */
+  /* *** ONE ROW PER MODEL. *** (Ryan) A model with seven findings was seven rows, each repeating
+     its reason and its weight, marts and feeds. The list is the models now, with how many
+     findings each has and the worst of them; the findings, their reasons and their numbers are
+     in the detail. The checks are a dropdown in the filter bar, and the counts at the top of
+     the page switch the filters on. */
+  const RANK = new Map(DATA.findings.map((f, i) => [f.id, i]));
+  const ORDER = {broken: 0, look: 1, note: 2};
+  const LABEL = {broken: 'broken now', look: 'worth a look', note: 'note'};
+  const byModel = {};
+  for (const f of DATA.findings) {
+    const k = f.subject || f.model || f.check;
+    const m = byModel[k] = byModel[k] || {key: k, model: f.model || k, findings: []};
+    m.findings.push(f);
+  }
+  const models = Object.values(byModel);
+  for (const m of models) {
+    m.findings.sort((a, b) => (ORDER[a.bucket] ?? 3) - (ORDER[b.bucket] ?? 3)
+                              || RANK.get(a.id) - RANK.get(b.id));
+    m.worst = m.findings[0].bucket || '';
+    m.rank = Math.min(...m.findings.map(f => RANK.get(f.id)));
+  }
   const byCheck = {};
   for (const f of DATA.findings) {
     const g = byCheck[f.check] = byCheck[f.check] || {check: f.check, title: f.title || f.check,
-      rows: [], ruled: 0};
-    g.rows.push(f); g.ruled += f.ruled_finding ? 1 : 0;
+                                                      rows: new Set()};
+    g.rows.add(byModel[f.subject || f.model || f.check]);
   }
-  const groups = Object.values(byCheck);
-  const weightCol = {key: 'w', label: 'weight', n: 1, val: f => f.weight,
-    tip: 'The list is ranked by this: the check’s severity lifted by how far the model reaches.\n'
-      + 'weight = base × (1 + descendants ÷ 25 + marts ÷ 5 + 5 per exposure), '
-      + 'counting at most 50 descendants, 10 marts and 2 exposures. Hover a weight for its parts.',
-    cell: f => el('span', {text: f.weight.toFixed(1), title: weightLine(f)})};
-  const rest = [
-    {key: 'marts', label: 'marts', n: 1, val: f => f.marts,
-     tip: 'Marts downstream of the model.'},
-    {key: 'feeds', label: 'feeds', n: 1, val: f => (f.exposures || []).length,
-     tip: 'Exposures the model reaches: products outside the warehouse.',
-     cell: f => el('span', {class: (f.exposures || []).length ? '' : 'tot',
-                            title: (f.exposures || []).join(', '),
-                            text: num((f.exposures || []).length)})},
-  ];
-  const modelCol = {key: 'model', label: 'model', mono: 1, val: f => f.model,
-                    cell: f => link(f.model)};
-  /* Every finding at once carries its check, so it drops what the pane already says (marts and
-     exposures): five columns did not fit the middle column at 1100px. */
-  /* *** THE ONE ORDER. *** (priority.py) Findings arrive most urgent first, customer-facing and
-     happening now before reach; the first reason says why it is where it is. */
-  const RANK = new Map(DATA.findings.map((f, i) => [f.id, i]));
-  const whyCol = {key: 'p', label: 'why first', n: 1, val: f => RANK.get(f.id),
-    tip: 'Most important first: what customers see, then what is wrong now (a failing test, a '
-      + 'lost guarantee, a broken key), then how far it reaches, then how sure assay is.',
-    cell: f => el('span', {class: 'tot', text: (f.why || [])[0] || ''})};
-  const withCheck = [{key: 'check', label: 'check', mono: 1, val: f => f.check},
-                     modelCol, whyCol];
-  const perCheck = [modelCol, whyCol, weightCol, ...rest];
-
+  const groups = Object.values(byCheck).map(g => ({...g, rows: [...g.rows]}));
+  const has = (m, pred) => m.findings.some(pred);
+  const toggles = [
+    {key: 'broken', label: 'broken now', where: m => has(m, f => f.bucket === 'broken')},
+    {key: 'look', label: 'worth a look', where: m => has(m, f => f.bucket === 'look')},
+    {key: 'note', label: 'notes', where: m => has(m, f => f.bucket === 'note')},
+    {key: 'paid', label: 'customer-facing', where: m => has(m, f => f.paid && f.bucket !== 'note')},
+  ].map(t => ({...t, count: models.filter(t.where).length}));
   const d = drill({
-    noun: 'findings', groups: groups, chip: g => g.title, groupFilter: 'find a check...',
-    groupText: g => g.check,
-    /* U1: a check's findings, and the cards the review form makes of them (one per model). */
-    groupSub: g => {
-      const cards = new Set(g.rows.filter(f => !f.pair_ruled).map(f => f.subject)).size;
-      return g.check + ' · ' + num(cards) + ' card(s) on the form' + (g.ruled ? ' · ' + num(g.ruled)
-        + ' read by a person' : '');
-    },
-    rowsOf: g => g.rows, rowCols: withCheck,
-    colsFor: g => (g && g.__all) ? withCheck : perCheck,
+    noun: 'models', groups: groups, chip: g => g.title, groupSelect: true, groupNoun: 'check',
+    toggleUnit: 'models',
+    groupText: g => g.check, allRows: () => models, toggles: toggles,
+    rowsOf: g => g.rows,
+    rowCols: [
+      {key: 'model', label: 'model', mono: 1, val: m => m.model, cell: m => link(m.model)},
+      {key: 'n', label: 'findings', n: 1, val: m => m.findings.length},
+      {key: 'p', label: 'worst', val: m => m.rank,
+       tip: 'Broken now, then worth a look, then notes; within each, customer-facing and what '
+         + 'is wrong now before reach.',
+       cell: m => el('span', {class: 'tot', style: 'white-space:nowrap',
+                              text: LABEL[m.worst] || ''})}],
     rowSort: 'p', rowDir: 1, rowFilter: 'filter by model or text...',
-    rowText: f => [f.check, f.model, f.summary].join(' '),
-    detailOf: f => findingPane(f),
+    rowText: m => m.model + ' ' + m.findings.map(f => f.check + ' ' + f.summary).join(' '),
+    detailOf: m => {
+      const out = [el('h2', {class: 'dh mono', text: m.model})];
+      for (const f of m.findings) {
+        const box = el('div', {class: 'fblock', id: 'f-' + f.id});
+        box.append(el('div', {class: 'fbucket', text: (LABEL[f.bucket] || '')
+          + (f.paid ? ' \u00b7 customer-facing' : '')}));
+        box.append(...[].concat(findingPane(f)));
+        out.push(box);
+      }
+      return out;
+    },
   });
-  const RT = (DATA.meta || {}).review;
-  host.replaceChildren(...[tallyGrid(RT, true), d].filter(Boolean));
+  host.replaceChildren(d);
   GO.findings = id => {
     const f = FIND[id]; if (!f) return;
-    d.showRows(byCheck[f.check]);
-    /* By the row itself: two findings on one model with one weight (two hops into
-       `water_rights`) are two rows the text cannot tell apart. */
+    d.showRows(byCheck[f.check] ? groups.find(g => g.check === f.check) : undefined);
+    const key = f.subject || f.model || f.check;
     for (const tr of host.querySelectorAll('tbody tr')) {
-      const r = Array.isArray(tr._row) ? tr._row[0] : tr._row;   // drill rows are [row, group]
-      if (r && r.id === f.id) {
-        tr.click(); if (tr.scrollIntoView) tr.scrollIntoView({block: 'nearest'}); return;
+      const r = Array.isArray(tr._row) ? tr._row[0] : tr._row;
+      if (r && r.key === key) {
+        tr.click(); if (tr.scrollIntoView) tr.scrollIntoView({block: 'nearest'});
+        const b = document.getElementById('f-' + id);
+        if (b && b.scrollIntoView) b.scrollIntoView({block: 'start'});
+        return;
       }
     }
   };
+  GO.findingsFilter = keys => d.setToggles(keys);
 }
 
 /* *** A FINDING HELD BACK ON A PREMISE, AND RAISED WHEN IT BROKE. *** The premise, its badge,
@@ -4259,6 +4309,7 @@ function formView(pane) {
 }
 function open(name) {
   const sec = sectionOf(name);
+  if (name !== 'findings' && typeof paintChips === 'function') paintChips();
   LAST[sec] = name;
   document.querySelectorAll('nav button[data-section]').forEach(b =>
     b.setAttribute('aria-selected', String(b.dataset.section === sec)));
@@ -4295,6 +4346,34 @@ window.addEventListener('resize', () => dismissCards());
 
 document.querySelectorAll('nav button[data-section]').forEach(b => {
   b.onclick = () => { dismissCards(); open(LAST[b.dataset.section]); closeMenu(); }; });
+/* The counts, once, at the top of every section. Each one opens exactly what it counts. */
+function paintChips(on) {
+  const T = (DATA.meta || {}).review || {};
+  const host = document.getElementById('chips');
+  if (T.queued == null) { host.replaceChildren(); return; }
+  const FXN = (DATA.fixes || []).length;
+  const chip = (n, label, key, go, bad) => {
+    const b = el('button', {class: 'chip' + (on === key ? ' on' : '') + (bad && n ? ' bad' : '')},
+                 [el('span', {class: 'chipn', text: num(n)}),
+                  document.createTextNode(' ' + label)]);
+    b.onclick = () => { dismissCards(); go(); paintChips(key); };
+    return b;
+  };
+  const toFind = keys => () => { open('findings'); if (GO.findingsFilter) GO.findingsFilter(keys); };
+  const paid = (T.broken_paid || 0) + (T.look_paid || 0);
+  const items = [
+    chip(T.broken, 'broken now', 'broken', toFind(['broken']), true),
+    chip(T.look, 'worth a look', 'look', toFind(['look'])),
+    ...(paid ? [chip(paid, 'customer-facing', 'paid', toFind(['paid']))] : []),
+    chip(FXN, FXN === 1 ? 'change' : 'changes', 'fix', () => open('fix')),
+    chip(T.cards || 0, (T.cards === 1 ? 'call' : 'calls') + ' to decide', 'decide',
+         () => open('decide:findings')),
+    chip(T.notes, 'notes', 'note', toFind(['note'])),
+  ];
+  host.replaceChildren(...items.flatMap((x, i) => i ? [el('span', {class: 'chipsep',
+                                                                    text: '\u00b7'}), x] : [x]));
+}
+paintChips();
 /* *** ON A PHONE THE STRIP IS A MENU, NOT ROWS OF TABS. *** One button names the tab you are on,
    and opens the grouped list; picking a tab closes it. */
 const NAVM = document.getElementById('navmenu'), NAVEL = document.querySelector('nav');

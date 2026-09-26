@@ -373,8 +373,10 @@ def load_fixes(payload) -> tuple[list, list]:
             bad.append(f"fix {r['fix']} ({r.get('title', '')[:60]}): rejected with no reason, "
                        f"not recorded")
             continue
+        excl = [str(x) for x in (r.get("exclude") or []) if x]
         ok.append({"fix": str(r["fix"]), "status": FIX_STATUS[v], "note": note,
-                   "title": str(r.get("title") or ""), "kind": str(r.get("kind") or "")})
+                   "title": str(r.get("title") or ""), "kind": str(r.get("kind") or ""),
+                   "exclude": sorted(set(excl))})
     return sorted(ok, key=lambda x: x["fix"]), bad
 
 
@@ -926,9 +928,14 @@ main{padding:18px 34px 26px;flex:1 1 auto;min-height:0;overflow:auto;width:100%}
 .pane[hidden]{display:none}
 
 /* ---- the task slip that opens each tab */
-.task{border-top:1px solid var(--ink);border-bottom:1px solid var(--ink);
-padding:14px 0;margin:0 0 20px}
-.taskh{margin:0 0 6px;font-family:Fell,Georgia,serif;font-size:19px;font-weight:400}
+.task{border-bottom:1px solid var(--rule);padding:0 0 8px;margin:0 0 10px;flex:0 0 auto}
+.task summary{display:flex;align-items:baseline;gap:14px;cursor:pointer;list-style:none;
+text-transform:none;letter-spacing:0}
+.task summary::-webkit-details-marker{display:none}
+.taskh{font-family:Fell,Georgia,serif;font-size:18px;font-weight:400;color:var(--ink)}
+.taskhow{font-size:13px;color:var(--rust);border-bottom:1px dotted var(--rust)}
+.task[open] .taskhow{color:var(--ash);border-color:var(--ash)}
+.taskbody{padding:10px 0 4px;display:flow-root}
 .tasklab{font-family:Fell,Georgia,serif;font-size:12px;text-transform:uppercase;
 letter-spacing:.1em;color:var(--faint);margin:12px 0 4px}
 .taskex{margin:0;white-space:pre-wrap;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -992,7 +999,7 @@ text-transform:uppercase;margin:12px 0 3px}
 .claim{font-style:italic}
 pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;
 background:#f4f1e9;border:0;border-left:2px solid var(--rule);padding:9px 12px;
-max-height:340px;overflow:auto}
+overflow-x:auto}
 pre .n{color:var(--faint);user-select:none}
 pre.diff span{display:block}
 ul.plain{margin:2px 0 6px;padding-left:18px}
@@ -1057,11 +1064,11 @@ main.fill{overflow:hidden;display:flex;flex-direction:column;padding-bottom:12px
 .tally{margin:0 0 8px;flex:0 0 auto}.tgrid{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;margin:0 0 10px;font-size:13px;line-height:1.35}.tgrid .tl{color:var(--ash)}.tgrid .tn{color:var(--ash)}
 main.fill > .pane:not([hidden]){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
 .fnav{flex:1 1 auto;min-height:0;display:grid;
-grid-template-columns:minmax(180px,250px) minmax(260px,1fr) minmax(0,2.1fr);gap:0}
-.fgroups,.frowlist,.fdetail{overflow-y:auto;min-height:0}
-.fgroups{border-right:1px solid var(--rule);padding-right:10px}
-.frows{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--rule);
-padding:0 12px}
+grid-template-columns:minmax(240px,340px) minmax(0,1fr);gap:0}
+.frowlist,.fdetail{overflow-y:auto;min-height:0}
+.flist{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--rule);
+padding:0 12px 0 0}
+.frow.inner{padding-left:18px}
 .fdetail{padding:0 4px 20px 22px}
 .fbar{display:flex;gap:10px;align-items:center;margin-bottom:8px}
 .fbar input{flex:1;min-width:0}
@@ -1074,9 +1081,15 @@ color:var(--ink);cursor:pointer;border-bottom:1px solid var(--rule2)}
 .fgn{color:var(--ash);font-size:13px;font-variant-numeric:tabular-nums}
 .fgsub{grid-column:1 / -1;font-size:12.5px;color:var(--ash)}
 .fgmore .fgname{color:var(--ash)}
-.fnav.flat{grid-template-columns:minmax(260px,1fr) minmax(0,2.1fr)}
+
 .gcard{padding:0 0 14px;margin:0 0 18px;border-bottom:1px solid var(--rule)}
 .gcard .rbtns{margin:2px 0 8px}
+.items{margin:4px 0 12px}
+.itemm{font-size:13px;color:var(--ash);margin:10px 0 2px}
+.item{display:grid;grid-template-columns:auto minmax(90px,max-content) minmax(0,1fr) minmax(0,1fr);
+gap:2px 10px;align-items:baseline;font-size:13.5px;padding:2px 0;cursor:pointer}
+.item .dim{color:var(--ash)}
+.onetest{display:flex;align-items:baseline;gap:12px;margin:0 0 10px;flex-wrap:wrap}
 .frow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 10px;padding:7px 6px;
 border-bottom:1px solid var(--rule2);cursor:pointer;align-items:baseline}
 .frow:hover{background:#f2efe7}
@@ -1144,9 +1157,8 @@ color:var(--ash);margin:12px 0 4px}
 @media (max-width:820px){
   main.fill{overflow:auto;display:block}
   .fnav{display:block}
-  .fgroups{max-height:240px;border-right:0}
-  .frows{border-right:0;padding:0;max-height:50vh}
-  .frowlist{max-height:40vh}
+  .flist{border-right:0;padding:0}
+  .frowlist{max-height:45vh}
   .fdetail{padding:12px 0;border-top:1px solid var(--rule)}
   .vopt{grid-template-columns:auto minmax(0,1fr)}
   .vmean{grid-column:2}
@@ -1522,72 +1534,87 @@ function markRow(key, v) {
    The same three columns as the report: the groups on the left, their entries in the middle, the
    one being worked on the right. Findings group by check and Words by why each word is here. */
 const NAV = {};
+/* *** TWO PANES: A NARROW LIST AND THE DETAIL. *** (Ryan: "not enough screen space, so
+   cluttered") The groups are headers in the list and open in place to their rows; the detail
+   takes the rest of the width. A filter lists the matching rows of every group. Every count says
+   what it counts. */
 function nav3(host, o) {
-  const first = o.start === 'first' && o.groups.length ? o.groups[0].id : '__all';
-  const st = NAV[o.name] = NAV[o.name] || {g: first, key: null, q: '', more: false};
-  const all = {id: '__all', label: o.allLabel, rows: o.groups.flatMap(g => g.rows)};
-  const every = o.flat ? [all] : [all, ...o.groups];
-  if (!every.some(g => g.id === st.g)) st.g = o.flat ? '__all' : first;
-  const grid = el('div', {class: 'fnav' + (o.flat ? ' flat' : '')});
-  const left = el('div', {class: 'fgroups'}), mid = el('div', {class: 'frows'});
-  const right = el('div', {class: 'fdetail'});
+  const firstId = o.groups.length ? o.groups[0].id : null;
+  const st = NAV[o.name] = NAV[o.name] || {g: firstId, key: null, q: '', more: false};
+  if (st.g != null && !o.groups.some(g => g.id === st.g)) st.g = firstId;
+  const every = o.groups.flatMap(g => g.rows);
+  const grid = el('div', {class: 'fnav'});
+  const left = el('div', {class: 'flist'}), right = el('div', {class: 'fdetail'});
   const q = el('input', {type: 'text', placeholder: o.filterText || 'filter...'});
   q.value = st.q;
   const cnt = el('span', {class: 'count'});
   const list = el('div', {class: 'frowlist'});
-  mid.append(el('div', {class: 'fbar'}, [q, cnt]), list);
-  grid.append(...(o.flat ? [mid, right] : [left, mid, right]));
-  const group = () => every.find(g => g.id === st.g);
-  /* *** WHAT ONE SITTING CAN DO, AND A COUNT OF THE REST BEHIND IT. *** (Ryan: "the volume
-     being presented is insane") With `cap`, the first groups show and one line says how many
-     more there are. */
-  function shownGroups() {
-    if (!o.cap || st.more || every.length <= o.cap + 2) return every;
-    const head = every.slice(0, o.cap + 1);
-    const cur = group();
-    return head.includes(cur) ? head : [...head, cur];
+  left.append(el('div', {class: 'fbar'}, [q, cnt]), list);
+  grid.append(left, right);
+  function rowEl(x) {
+    const k = o.keyOf(x);
+    const d = el('div', {class: 'frow' + (k === st.key ? ' on' : '') + (o.doneOf(x) ? ' done' : '')
+                          + (o.flat ? '' : ' inner'), 'data-key': k}, o.cellsOf(x));
+    d.onclick = () => {
+      st.key = k;
+      list.querySelectorAll('.frow.on').forEach(e => e.classList.remove('on'));
+      d.classList.add('on'); paintRight(x);
+    };
+    return d;
   }
-  function paintLeft() {
-    const shown = shownGroups();
-    const rest = every.length - shown.length;
-    left.replaceChildren(...shown.map(g => {
-      const b = el('button', {class: 'fg' + (g.id === st.g ? ' on' : '')},
-                   [el('span', {class: 'fgname'}, [wb(g.label)]),
-                    el('span', {class: 'fgn', text: num(g.rows.length)})]);
-      const sub = o.subOf && o.subOf(g);
-      if (sub) b.append(el('span', {class: 'fgsub', text: sub}));
-      b.onclick = () => { st.g = g.id; st.key = null; paintLeft(); paintMid(); };
-      return b;
-    }), ...(rest > 0 ? [Object.assign(el('button', {class: 'fg fgmore'}, [
-      el('span', {class: 'fgname', text: num(rest) + ' more'}),
-      el('span', {class: 'fgn', text: num(every.slice(1).filter(g => !shown.includes(g))
-        .reduce((n, g) => n + g.rows.length, 0))})]),
-      {onclick: () => { st.more = true; paintLeft(); }})] : []));
+  function paintList() {
+    const t = st.q.trim().toLowerCase();
+    const kids = [];
+    let shown = [];
+    if (t || o.flat) {
+      shown = t ? every.filter(x => o.textOf(x).toLowerCase().includes(t)) : every;
+      cnt.textContent = t ? num(shown.length) + ' of ' + num(every.length) : '';
+      shown.forEach(x => kids.push(rowEl(x)));
+      if (!shown.length) kids.push(el('p', {class: 'measured', text: 'nothing matches'}));
+    } else {
+      cnt.textContent = '';
+      const capped = o.cap && !st.more && o.groups.length > o.cap + 1;
+      let gs = capped ? o.groups.slice(0, o.cap) : o.groups;
+      const cur = o.groups.find(g => g.id === st.g);
+      if (cur && !gs.includes(cur)) gs = [...gs, cur];
+      for (const g of gs) {
+        const open = g.id === st.g;
+        const b = el('button', {class: 'fg' + (open ? ' on' : '')},
+                     [el('span', {class: 'fgname'}, [wb(g.label)]),
+                      el('span', {class: 'fgn', text: o.unit ? o.unit(g)
+                        : num(g.rows.length)})]);
+        const sub = o.subOf && o.subOf(g);
+        if (sub) b.append(el('span', {class: 'fgsub', text: sub}));
+        b.onclick = () => { st.g = open ? null : g.id; paintAll(); };
+        kids.push(b);
+        if (open) { g.rows.forEach(x => kids.push(rowEl(x))); shown = g.rows; }
+      }
+      if (capped) {
+        const rest = o.groups.filter(g => !gs.includes(g));
+        kids.push(Object.assign(el('button', {class: 'fg fgmore'}, [
+          el('span', {class: 'fgname', text: num(rest.length) + ' more groups'})]),
+          {onclick: () => { st.more = true; paintList(); }}));
+      }
+    }
+    list.replaceChildren(...kids);
+    if (!every.some(x => o.keyOf(x) === st.key) || (shown.length
+        && !shown.some(x => o.keyOf(x) === st.key)))
+      st.key = shown.length ? o.keyOf(shown[0]) : (every.length ? o.keyOf(every[0]) : null);
+    list.querySelectorAll('.frow').forEach(r => r.classList.toggle('on',
+      r.getAttribute('data-key') === st.key));
   }
-  function paintMid() {
-    let rows = group().rows;
-    if (st.q) { const t = st.q.toLowerCase(); rows = rows.filter(x => o.textOf(x).toLowerCase().includes(t)); }
-    cnt.textContent = num(rows.length) + ' of ' + num(group().rows.length);
-    if (!rows.some(x => o.keyOf(x) === st.key)) st.key = rows.length ? o.keyOf(rows[0]) : null;
-    list.replaceChildren(...rows.map(x => {
-      const k = o.keyOf(x);
-      const d = el('div', {class: 'frow' + (k === st.key ? ' on' : '') + (o.doneOf(x) ? ' done' : ''),
-                           'data-key': k}, o.cellsOf(x));
-      d.onclick = () => {
-        st.key = k;
-        list.querySelectorAll('.frow.on').forEach(e => e.classList.remove('on'));
-        d.classList.add('on'); paintRight(x);
-      };
-      return d;
-    }));
-    if (!rows.length) list.append(el('p', {class: 'measured', text: 'nothing matches'}));
-    const cur = rows.find(x => o.keyOf(x) === st.key);
+  function paintRight(x) {
+    const g = o.groups.find(gr => gr.rows.includes(x));
+    right.replaceChildren(o.detailOf(x, g)); right.scrollTop = 0;
+  }
+  function paintAll() {
+    paintList();
+    const cur = every.find(x => o.keyOf(x) === st.key);
     if (cur) paintRight(cur); else right.replaceChildren();
   }
-  function paintRight(x) { right.replaceChildren(o.detailOf(x, group())); right.scrollTop = 0; }
-  q.oninput = () => { st.q = q.value; paintMid(); };
-  paintLeft(); paintMid();
-  grid._paintLeft = paintLeft;          // a group's line changes when its verdict does
+  q.oninput = () => { st.q = q.value; paintAll(); };
+  paintAll();
+  grid._paintLeft = paintList;          // a group's line changes when its verdict does
   return grid;
 }
 
@@ -1685,22 +1712,19 @@ function findingsPane(host) {
                                                        label: c.title || c.question, rows: []});
     by[c.question].rows.push(c);
   }
-  /* U1: the numbers name their unit. A group's count is cards; its findings are said under it,
-     and the line above says what the form leaves out, so it reconciles with the page. */
-  const intro = tallyGrid(CTX.tally, false);
   if (!D.cards.length) {
-    host.replaceChildren(...[intro, el('p', {class: 'measured', text: 'Nothing queued needs a '
-      + 'person\u2019s call. What a change clears is on the Fix tab.'})].filter(Boolean));
+    host.replaceChildren(el('p', {class: 'measured', text: 'Nothing queued needs a '
+      + 'person\u2019s call. What a change clears is on the Fix tab.'}));
     return;
   }
-  host.replaceChildren(...[intro, nav3(host, {
-    name: 'findings', groups: groups, allLabel: 'every card', filterText: 'filter by model...',
-    cap: 25, start: 'first',
+  /* *** EVERY NUMBER MEANS ONE THING, AND SAYS WHICH. *** (Ryan) A group counts the models in
+     its list; the findings are inside each card. */
+  host.replaceChildren(nav3(host, {
+    name: 'findings', groups: groups, filterText: 'filter by model...', cap: 25,
+    unit: g => num(g.rows.length) + (g.rows.length === 1 ? ' model' : ' models'),
     subOf: g => { const n = g.rows.filter(verdictOf).length;
                   const gv = (answers[groupKey(g.id)] || {}).verdict;
-                  const nf = g.rows.reduce((a, c) => a + (c.findings || []).length, 0);
-                  return num(nf) + ' finding(s)' + (gv ? ' · all ' + gv
-                    : n ? ' · ' + num(n) + ' answered' : ''); },
+                  return gv ? 'all: ' + gv : n ? num(n) + ' answered' : null; },
     keyOf: c => c.key, textOf: c => c.model + ' ' + c.question + ' ' + (c.title || '') + ' '
       + c.file,
     doneOf: c => !!verdictOf(c),
@@ -1709,7 +1733,7 @@ function findingsPane(host) {
                    el('span', {class: 'fstate', text: verdictOf(c)})],
     detailOf: c => by[c.question].rows.length > 1
       ? el('div', {}, [groupCard(by[c.question]), card(c)]) : card(c),
-  })].filter(Boolean));
+  }));
 }
 
 /* *** THE BAR BELONGED TO ONE PANE AND SAT OVER ALL OF THEM. ***
@@ -1778,8 +1802,10 @@ function download() {
      nothing to leave running -- the same delivery model every other page here has. */
   const out = [];
   const fixes = Object.entries(answers).filter(([k, a]) => k.startsWith('fix::') && a
-    && a.verdict).map(([k, a]) => ({fix: k.slice(5), verdict: a.verdict, note: a.note || '',
-                                     title: a.title || '', kind: a.kind || ''}));
+    && a.verdict).map(([k, a]) => Object.assign({fix: k.slice(5), verdict: a.verdict,
+                                     note: a.note || '', title: a.title || '',
+                                     kind: a.kind || ''},
+                                    (a.exclude || []).length ? {exclude: a.exclude} : {}));
   for (const c of D.cards) {
     const own = answers[c.key];
     const grp = answers[groupKey(c.question)];
@@ -1904,21 +1930,20 @@ function field(label, pathParts, current, placeholder, big) {
    already know the tool cannot get a task out of it. Imperative first, then one filled example,
    then why it matters. */
 function explainer(task, how, example, why, cut) {
-  const box = el('div', {class: 'task'});
-  /* The plate floats into the slip. A cut beside the instruction reads as the page being about
-     something, where the same cut in a row of its own reads as an ornament somebody added. */
+  /* *** THE WOODCUT AND THE EXAMPLE TOOK HALF THE SCREEN. *** (Ryan) The task stays as one line;
+     how it works, the worked example and the plate open from it when somebody wants them. */
+  const box = el('details', {class: 'task'});
+  box.append(el('summary', {}, [el('span', {class: 'taskh', text: task}),
+                                el('span', {class: 'taskhow', text: 'how this works'})]));
+  const body = el('div', {class: 'taskbody'});
   const src = cut && (D.cuts || {})[cut];
-  if (src) box.append(el('img', {class: 'taskcut', src: src, alt: ''}));
-  /* *** THE TASK AND ITS EXAMPLE ARE READ; THE PARAGRAPHS AROUND THEM WERE NOT. ***
-     "theyre all not being read its random text ... grey and your eyes dont even notice it". What
-     to do and one filled-in example stay on the page, because the example IS the instruction;
-     how it works and why it matters are the task's tip. */
-  box.append(el('h2', {class: 'taskh'}, [el('span', {text: task,
-    tip: [how, why].filter(Boolean).join('\n\n')})]));
+  if (src) body.append(el('img', {class: 'taskcut', src: src, alt: ''}));
+  for (const t of [how, why].filter(Boolean)) body.append(el('p', {class: 'q', text: t}));
   if (example) {
-    box.append(el('div', {class: 'tasklab', text: 'one filled in'}));
-    box.append(el('pre', {class: 'taskex', text: example}));
+    body.append(el('div', {class: 'tasklab', text: 'one filled in'}));
+    body.append(el('pre', {class: 'taskex', text: example}));
   }
+  box.append(body);
   return box;
 }
 
@@ -1960,7 +1985,8 @@ function wordsTab(host) {
     return;
   }
   bits.push(nav3(host, {
-    name: 'words', groups: groups, allLabel: 'every word', filterText: 'filter words...',
+    name: 'words', groups: groups, filterText: 'filter words...',
+    unit: g => num(g.rows.length) + (g.rows.length === 1 ? ' word' : ' words'),
     subOf: g => { const n = g.rows.filter(filled).length; return n ? num(n) + ' written' : null; },
     keyOf: w => w.term, textOf: w => w.term + ' ' + (w.means || ''),
     doneOf: w => !!filled(w),
@@ -2140,26 +2166,23 @@ function explanationsTab(host) {
     host.replaceChildren(...bits);
     return;
   }
-  /* *** THE SAME LAYOUT AS WORDS. *** (Ryan: organized, one thing at a time, with what to do)
-     The models on the left, their failing tests in the middle, one test and its rows on the
-     right. */
-  const groups = CTX.explanations.filter(x => (x.failing || []).length).map(x => ({
-    id: x.mart, label: x.mart, rows: (x.failing || []).map(t => ({t, x}))}));
+  /* *** ONE FAILING TEST AT A TIME. *** (Ryan) Its rows and the three buttons, then the next;
+     where you are is said in words, and nothing else competes for the screen. */
+  const tests = CTX.explanations.flatMap(x => (x.failing || []).map(t => ({x, t})));
   const marked = r => Object.entries(rowPicks).some(([k, v]) => v.pick
     && k.startsWith(r.x.mart + '\u001f' + r.t.test + '\u001f'));
-  bits.push(nav3(host, {
-    name: 'explanations', groups: groups, allLabel: 'every failing test', start: 'first',
-    filterText: 'filter by model or test...',
-    subOf: g => { const n = g.rows.filter(marked).length; return n ? num(n) + ' marked' : null; },
-    keyOf: r => r.x.mart + '\u001f' + r.t.test,
-    textOf: r => r.x.mart + ' ' + r.t.test + ' ' + (r.t.what || ''),
-    doneOf: marked,
-    cellsOf: r => [el('span', {class: 'mono fmain'}, [wb(r.t.test)]),
-                   el('span', {class: 'fmeta', text: (r.t.rows || []).length
-                     ? num(r.t.rows.length) + ' rows' : ''}),
-                   el('span', {class: 'fstate', text: marked(r) ? 'marked' : ''})],
-    detailOf: r => failingTest(r.x, r.t),
-  }));
+  const at = Math.min(Math.max(0, NAV.explanationsAt || 0), Math.max(0, tests.length - 1));
+  NAV.explanationsAt = at;
+  const go = d => { NAV.explanationsAt = at + d; explanationsTab(host); };
+  const prev = el('button', {type: 'button', text: '\u2190 previous test'});
+  const next = el('button', {type: 'button', text: 'next test \u2192'});
+  prev.disabled = at === 0; next.disabled = at >= tests.length - 1;
+  prev.onclick = () => go(-1); next.onclick = () => go(1);
+  const done = tests.filter(marked).length;
+  bits.push(el('div', {class: 'onetest'}, [prev,
+    el('span', {class: 'count', text: 'test ' + num(at + 1) + ' of ' + num(tests.length)
+      + (done ? ' \u00b7 ' + num(done) + ' marked' : '')}), next]));
+  if (tests.length) bits.push(failingTest(tests[at].x, tests[at].t));
   host.replaceChildren(...bits);
 }
 
@@ -2349,6 +2372,36 @@ function fixCard(fx) {
   }
   box.append(el('div', {class: 'lbl', text: 'the change'}));
   box.append(el('p', {class: 'q', text: fx.how}));
+  if ((fx.items || []).length) {
+    /* *** EACH JUDGED GUESS IS ITS OWN CALL. *** (Ryan: "agree to like 500 things at once even
+       if they're not ALL true") Every proposed test is listed with its column and why; untick
+       the wrong ones and approving adds the rest. */
+    const ex = () => new Set((answers[key] || {}).exclude || []);
+    const tally = el('div', {class: 'cwhere'});
+    const paintTally = () => tally.replaceChildren(el('span', {text: num(fx.items.length
+      - ex().size) + ' of ' + num(fx.items.length) + ' tests included'}));
+    box.append(el('div', {class: 'lbl', text: 'the tests: untick any that is wrong'}), tally);
+    const byModel = {};
+    for (const it of fx.items) (byModel[it.model] = byModel[it.model] || []).push(it);
+    const wrap = el('div', {class: 'items'});
+    for (const [m, its] of Object.entries(byModel)) {
+      wrap.append(el('div', {class: 'itemm mono', text: m}));
+      for (const it of its) {
+        const cb = el('input', {type: 'checkbox'});
+        cb.checked = !ex().has(it.id);
+        cb.onchange = () => {
+          const s2 = ex();
+          if (cb.checked) s2.delete(it.id); else s2.add(it.id);
+          answers[key] = Object.assign({}, answers[key], {exclude: [...s2]});
+          save(); paintTally();
+        };
+        wrap.append(el('label', {class: 'item'}, [cb, el('span', {class: 'mono', text: it.column}),
+          el('span', {text: it.test}), el('span', {class: 'dim', text: it.why})]));
+      }
+    }
+    box.append(wrap);
+    paintTally();
+  }
   if ((fx.pieces || []).length) {
     box.append(el('div', {class: 'lbl', text: 'in it'}));
     box.append(el('ul', {class: 'plain'}, fx.pieces.slice(0, 60).map(x => el('li', {text: x}))));
@@ -2402,25 +2455,15 @@ function fixesPane(host) {
   /* *** ONE RANKED LIST, AND THE HEADER COUNTS THE LIST. *** (Ryan, on 5c8fdd4: "fixes 380 /
      structure 47 / to read 56" over a list of kinds saying 207, 129 and 80.) One card per edit,
      the most findings cleared per decision first; what a change is about is inside its card. */
-  const cleared = F.reduce((n, f) => n + (f.resolves || 0), 0);
-  const queued = F.reduce((n, f) => n + (f.queued || 0), 0);
-  const decided = F.filter(f => (answers['fix::' + f.id] || {}).verdict).length;
-  const head = el('div', {class: 'tgrid'}, [
-    el('span', {class: 'tl', text: 'changes'}),
-    el('span', {}, [el('b', {text: num(F.length)}),
-      el('span', {class: 'tn', text: ' clear ' + num(cleared) + ' findings'
-        + (queued ? ', ' + num(queued) + ' of them queued' : '')})]),
-    ...(decided ? [el('span', {class: 'tl', text: 'decided'}),
-                   el('span', {}, [el('b', {text: num(decided)})])] : [])]);
-  host.replaceChildren(head, nav3(host, {
+  host.replaceChildren(nav3(host, {
     name: 'fixes', groups: [{id: 'all', label: 'every change', rows: F}], flat: true,
     allLabel: 'every change', filterText: 'filter by model or text...',
     keyOf: f => 'fix::' + f.id,
     textOf: f => f.title + ' ' + (f.models || []).join(' '),
     doneOf: f => !!(answers['fix::' + f.id] || {}).verdict,
     cellsOf: f => [el('span', {class: 'fmain'}, [wb(f.title)]),
-                   el('span', {class: 'fmeta', text: f.measured != null ? num(f.measured)
-                     : num(f.resolves || 0)}),
+                   el('span', {class: 'fmeta', text: 'clears ' + num(f.measured != null
+                     ? f.measured : f.resolves || 0)}),
                    el('span', {class: 'fstate', text: (answers['fix::' + f.id] || {}).verdict
                      || (f.status && f.status !== 'proposed' ? f.status : '')})],
     detailOf: f => fixCard(f),
@@ -2437,8 +2480,8 @@ function drawPane(name) {
 
 function openPane(name) {
   pane = name;
-  document.querySelector('main').classList.toggle('fill', ['findings', 'words', 'fixes',
-                                                          'explanations'].includes(name));
+  document.querySelector('main').classList.toggle('fill', ['findings', 'words', 'fixes']
+                                                          .includes(name));
   document.querySelectorAll('.tabs button').forEach(b =>
     b.classList.toggle('on', b.dataset.pane === name));
   document.querySelectorAll('.pane').forEach(p => { p.hidden = p.id !== 'p-' + name; });

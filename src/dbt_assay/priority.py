@@ -146,6 +146,16 @@ BROKEN_NOW = frozenset({"test_is_failing", "guarantee_lost", "guarantee_does_not
                         "key_stopped_holding"})
 
 
+def bucket(f, queued: set) -> str:
+    """"broken", "look" or "note": where a finding sits on every surface, and what each count
+    filters to."""
+    if _get(f, "id", "") not in queued:
+        return "note"
+    ev = _get(f, "evidence", None) or {}
+    return ("broken" if str(_get(f, "check", "")) in BROKEN_NOW
+            or isinstance(ev.get("why_it_is_back"), dict) else "look")
+
+
 def triage(findings, queued: set, ctx: Context | None = None) -> dict:
     """{queued, broken, broken_paid, look, look_paid, notes} over the open findings (objects or
     dicts); `queued` is the ids the policy queues."""
@@ -159,10 +169,7 @@ def triage(findings, queued: set, ctx: Context | None = None) -> dict:
         out["queued"] += 1
         tier = _get(f, "tier", None) if isinstance(f, dict) else None
         paid = (tier or of(f, ctx)["tier"]) == "customer-facing"
-        ev = _get(f, "evidence", None) or {}
-        broken = (str(_get(f, "check", "")) in BROKEN_NOW
-                  or isinstance(ev.get("why_it_is_back"), dict))
-        k = "broken" if broken else "look"
+        k = bucket(f, queued)
         out[k] += 1
         out[k + "_paid"] += paid
     return out

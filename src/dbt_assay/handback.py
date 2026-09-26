@@ -118,7 +118,9 @@ def record(store, payload, by: str = "") -> dict:
     fixed, fbad = reviewform.load_fixes(payload if isinstance(payload, dict) else {})
     for fx in fixed:
         fixes_mod.record(store, fx["fix"], fx["status"], kind=fx["kind"], title=fx["title"],
-                         note=fx["note"], by=who)
+                         note=fx["note"], by=who,
+                         detail=json.dumps({"excluded": fx["exclude"]}) if fx.get("exclude")
+                         else "")
     bad = bad + fbad
     return {"fixes_decided": {k: sum(1 for f in fixed if f["status"] == k)
                               for k in ("approved", "deferred", "rejected")},

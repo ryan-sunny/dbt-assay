@@ -75,6 +75,7 @@ class Fix:
     count: int = 0                                      # columns, tests or sources it adds
     queued: int = 0                                     # of `findings`, the ones queued
     pieces: list = field(default_factory=list)          # a batch: one line per part
+    items: list = field(default_factory=list)           # judged proposals, each excludable
 
     @property
     def id(self) -> str:
@@ -91,7 +92,7 @@ class Fix:
                 "recipe": self.recipe, "how": self.how, "why": self.why, "tier": self.tier,
                 "moves_logic": self.moves_logic, "refused": self.refused,
                 "queued": self.queued, "notes": len(self.findings) - self.queued,
-                "pieces": self.pieces,
+                "pieces": self.pieces, "items": self.items[:3000],
                 "effect": self.effect()}
 
     def effect(self) -> str:
@@ -622,15 +623,18 @@ def _test_what_could_break(project, findings) -> list[Fix]:
             per.setdefault(key, {}).setdefault(f.subject, []).append(f)
     out = []
     for key, by_model in sorted(per.items()):
-        lines, ids, names = [], [], []
+        lines, ids, names, items = [], [], [], []
         for uid, fs in sorted(by_model.items()):
             m = project.models[uid]
             names.append(m.name)
             for f in fs:
                 col = str((f.evidence or {}).get("context") or "").split(".")[-1]
-                test = _RISK_TEST.get(str((f.evidence or {}).get("answer") or ""), "a test")
+                answer = str((f.evidence or {}).get("answer") or "")
+                test = _RISK_TEST.get(answer, "a test")
                 lines.append(f"{m.name}.{col}: {test}" if len(by_model) > 1 else f"{col}: {test}")
                 ids.append(f.id)
+                items.append({"id": f.id, "model": m.name, "column": col, "test": test,
+                              "why": answer.replace("_", " ")})
         fx = Fix("test_what_could_break", key,
                  f"Test {len(ids)} column(s) of {names[0]} that could break silently"
                  if len(names) == 1 else
@@ -639,7 +643,11 @@ def _test_what_could_break(project, findings) -> list[Fix]:
         fx.findings = ids
         fx.models = names
         fx.count = len(ids)
-        fx.decisions = len(names)
+        fx.items = items
+        # *** A JUDGED GUESS IS NOT APPROVED IN BULK. *** (Ryan: "agree to like 500 things at
+        # once even if they're not ALL true") Each proposed test is its own decision, listed with
+        # its column and why, and any one can be left out.
+        fx.decisions = len(items)
         fx.how = ("Each column below was judged able to go wrong without any error, and the test "
                   "named is what would catch it: " + "; ".join(lines[:30])
                   + (f"; and {len(lines) - 30} more" if len(lines) > 30 else "")
@@ -665,10 +673,11 @@ BATCH_HOW = {
                  "passes through, else the judged role, what a NULL means, and the expression. "
                  "Read each and correct it; it is a draft, and it becomes the project's once you "
                  "accept it."),
-    "test_what_could_break": ("Each column was judged able to go wrong without any error, and the "
-                              "test named is what would catch it. `assay plan --verify` counts "
-                              "the key and value tests through your dbt and writes the ones that "
-                              "pass today."),
+    "test_what_could_break": ("Each column below was judged able to go wrong without an error, "
+                              "and the test beside it is the kind that would catch it. Leave out "
+                              "any that is wrong; approving adds the rest. `assay plan --verify` "
+                              "counts the key and value tests through your dbt and writes the "
+                              "ones that pass today."),
     "stage_raw_source": ("Each source gets a pass-through staging model (an existing one where it "
                          "has one), and every model that reads it raw points at it instead. It "
                          "changes no rows: the readers see the same columns."),
@@ -692,6 +701,9 @@ def _batch(fxs: list[Fix], kind: str) -> Fix:
     fx = Fix(kind, "all", BATCH[kind](n, len(models)))
     fx.count, fx.models, fx.decisions = n, models, 1
     fx.findings = [i for f in fxs for i in f.findings]
+    fx.items = [x for f in fxs for x in f.items]
+    if fx.items:
+        fx.decisions = len(fx.items)
     fx.parts = [p for f in fxs for p in f.parts]
     fx.moves_logic = any(f.moves_logic for f in fxs)
     fx.refused = [r for f in fxs for r in f.refused]
@@ -926,13 +938,22 @@ def statuses(store) -> dict:
     try:
         store.con.execute(DDL)
         rows = store.con.execute("""
-            select fix_id, status, note, decided_by, decided_at from (
+            select fix_id, status, note, decided_by, decided_at, detail from (
                 select *, row_number() over (partition by fix_id order by decided_at desc) rn
                 from fix_decisions) where rn = 1""").fetchall()
     except Exception:                                            # noqa: BLE001
         return {}
-    return {r[0]: {"status": r[1], "note": r[2] or "", "by": r[3] or "",
-                   "at": str(r[4])[:16]} for r in rows}
+    import json as _json
+    out = {}
+    for r in rows:
+        try:
+            excl = (_json.loads(r[5]) or {}).get("excluded") or [] if r[5] else []
+        except (ValueError, TypeError, AttributeError):
+            excl = []
+        # the items a person left out of an approval: an agent applies the rest only
+        out[r[0]] = {"status": r[1], "note": r[2] or "", "by": r[3] or "", "at": str(r[4])[:16],
+                     **({"excluded": excl} if excl else {})}
+    return out
 
 
 def diff(fx: Fix, root: Path) -> str:

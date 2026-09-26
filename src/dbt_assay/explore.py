@@ -147,6 +147,14 @@ def assemble(project, digests, schema, entries, findings, store, cfg,
                                      if r["id"] in sp["decide"]], _ruled,
                                     [r.get("action_why") or "" for r in waived_rows])
     review_tally.update(reviewform.split_counts(find_rows, sp, project))
+    # what each count filters to: every row says which bucket it is in and where it is decided
+    from . import priority as _prio
+    _q = fixes_mod.queued_ids(find_rows)
+    _where = {i: k for k, ids in sp.items() for i in ids}
+    for r in find_rows:
+        r["bucket"] = _prio.bucket(r, _q)
+        r["paid"] = r.get("tier") == "customer-facing"
+        r["decided_on"] = _where.get(r["id"], "")
     review_tally["line"] = reviewform.tally_line(review_tally)
     review_tally["tail"] = reviewform.tally_tail(review_tally)
     for r in find_rows:

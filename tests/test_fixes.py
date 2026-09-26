@@ -177,7 +177,11 @@ def test_what_could_break_is_one_fix_per_model_and_the_rest_one_per_check():
         f.evidence = {"answer": ans, "context": f"a.col{i}"}
         fs.append(f)
     got = fixes._test_what_could_break(project, fs)
-    assert len(got) == 1 and got[0].findings == ["w0", "w1"] and got[0].decisions == 1
+    # each judged test is its own decision, named with its column and why
+    assert len(got) == 1 and got[0].findings == ["w0", "w1"] and got[0].decisions == 2
+    assert [(i["column"], i["test"]) for i in got[0].items] == [
+        ("col0", "unique, or relationships to the model it joins"),
+        ("col1", "a range or a reconciliation test")]
     assert "col0: unique, or relationships" in got[0].how
 
 

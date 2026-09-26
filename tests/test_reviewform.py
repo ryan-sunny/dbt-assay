@@ -435,7 +435,8 @@ def test_the_form_opens_on_the_task_not_on_grey_paragraphs():
     js = reviewform._JS
     ex = js[js.index("function explainer("):]
     ex = ex[:ex.index("\n}")]
-    assert "tip: [how, why]" in ex, "how and why are paragraphs again"
+    # the task is one line; how, why, the example and the plate open from it when asked for
+    assert "el('details', {class: 'task'})" in ex and "'how this works'" in ex
     assert "class: 'measured', text: how" not in ex
     assert "assay asserts that a monitor EXISTS" not in js, "the monitoring intro is a paragraph"
     assert 'id="dl" data-tip="Answers are kept in this browser' in html

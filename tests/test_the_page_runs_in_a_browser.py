@@ -920,8 +920,13 @@ def test_a_fix_is_approved_on_its_card_and_loads_back(tmp_path):
           "why": ["3 marts downstream"], "how": "Drafted from what assay knows.",
           "recipe": ["dbt parse"], "refused": [], "effect": "", "status": "proposed",
           "diff": "--- a/models/schema.yml\n+++ b/models/schema.yml\n+  - name: id\n"}
+    fx["items"] = [{"id": "w1", "model": "orders", "column": "status",
+                    "test": "accepted_values on the input it classifies", "why": "a value would fall through"},
+                   {"id": "w2", "model": "orders", "column": "amount",
+                    "test": "a range or a reconciliation test", "why": "an aggregate would be wrong"}]
     stage = dict(fx, id="st1", kind="stage_raw_source", kind_title="Stage a raw source",
-                 kind_rank=8, title="Stage raw.p for 2 model(s) that read it raw", resolves=0)
+                 kind_rank=8, title="Stage raw.p for 2 model(s) that read it raw", resolves=0,
+                 items=[])
     ctx = {"words": [], "explanations": [], "waivers": [], "settings": [], "fixes": [fx, stage],
            "open_findings": 5}
     out = tmp_path / "review.html"
@@ -935,14 +940,17 @@ def test_a_fix_is_approved_on_its_card_and_loads_back(tmp_path):
             page.goto(out.as_uri() + "#embed&pane=fixes")
             assert page.evaluate("document.body.classList.contains('embed')")
             assert page.locator("nav.tabs").is_hidden()
-            # one ranked list, no column of kinds, and the header counts the list (Ryan: "fixes
-            # 380 / structure 47" over a list of kinds saying 207, 129 and 80)
-            assert page.locator("#p-fixes .fgroups").count() == 0
-            rows = page.locator("#p-fixes .frow").count()
-            head = page.locator("#p-fixes .tgrid").inner_text()
-            assert rows == 2 and head.split("\n")[1].startswith("2 clear"), head
+            # one ranked list and the detail: no column of kinds, no block of counts, and each
+            # row's number says what it counts (Ryan)
+            assert page.locator("#p-fixes .fg").count() == 0
+            assert page.locator("#p-fixes .tgrid").count() == 0
+            rows = page.locator("#p-fixes .frow").all_inner_texts()
+            assert len(rows) == 2 and "clears 1" in rows[0], rows
             c = page.locator("#p-fixes .card").first
             assert "Document 2 column(s) of orders" in c.inner_text()
+            assert "2 of 2 tests included" in c.inner_text()
+            c.locator(".item input").nth(1).uncheck()
+            assert "1 of 2 tests included" in c.inner_text()
             c.locator('input[value="approve"]').check()
             with page.expect_download() as dl:
                 page.click("#dl")
@@ -951,11 +959,13 @@ def test_a_fix_is_approved_on_its_card_and_loads_back(tmp_path):
         finally:
             browser.close()
     assert doc["fixes"] == [{"fix": "abc123", "verdict": "approve", "note": "",
-                             "title": "Document 2 column(s) of orders", "kind": "document"}]
+                             "title": "Document 2 column(s) of orders", "kind": "document",
+                             "exclude": ["w2"]}]
     s = Store(str(tmp_path / "s.duckdb"))
     got = handback.record(s, doc)
     assert got["fixes_decided"]["approved"] == 1
-    assert fixes.statuses(s)["abc123"]["status"] == "approved"
+    st = fixes.statuses(s)["abc123"]
+    assert st["status"] == "approved" and st["excluded"] == ["w2"]    # the agent leaves it out
     # a reject with no reason is refused, like an accept with none
     got = handback.record(s, {"fixes": [{"fix": "abc123", "verdict": "reject"}]})
     assert fixes.statuses(s)["abc123"]["status"] == "approved" and got["recorded_nothing"]
@@ -1041,9 +1051,11 @@ def test_a_group_verdict_answers_its_cards_and_the_view_is_capped(tmp_path):
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(out.as_uri() + "#pane=findings")
             names = page.locator("#p-findings .fg .fgname").all_inner_texts()
-            assert names[0] == "every card" and len(names) == 27 and names[-1] == "5 more", names
-            page.locator("#p-findings .fg", has_text="5 more").click()
-            assert page.locator("#p-findings .fg").count() == 31
+            assert len(names) == 26 and names[-1] == "5 more groups", names
+            # each group counts what its list shows: models
+            assert page.locator("#p-findings .fg .fgn").first.inner_text() == "3 models"
+            page.locator("#p-findings .fg", has_text="5 more groups").click()
+            assert page.locator("#p-findings .fg").count() == 30
             # the first group opens by itself; its verdict answers all three cards
             page.locator(".gcard .rbtns button", has_text="agree").first.click()
             page.locator("#p-findings .frow").nth(1).click()
@@ -1058,3 +1070,40 @@ def test_a_group_verdict_answers_its_cards_and_the_view_is_capped(tmp_path):
             browser.close()
     got = {(v["model"], v["verdict"]) for v in doc["verdicts"]}
     assert got == {("a", "agree"), ("b", "disagree"), ("c", "agree")}, doc["verdicts"]
+
+
+def test_every_count_is_a_filter_and_explore_lists_one_row_per_model(tmp_path, project_dir):
+    """(Ryan: "so many numbers it's impossible to tell what they mean", "I can't filter to just
+    those") The counts are one row of chips, each landing on exactly what it counts; Findings
+    lists each model once; the header has no second way into the form."""
+    import re
+
+    from playwright.sync_api import sync_playwright
+    store = str(tmp_path / "s.duckdb")
+    CliRunner().invoke(app, ["check", "--target", str(project_dir), "--store", store])
+    out = tmp_path / "assay.html"
+    r = CliRunner().invoke(app, ["page", str(out), "--target", str(project_dir), "--store", store])
+    assert r.exit_code == 0, r.output
+    assert "open the review form" not in out.read_text()
+    errors: list[str] = []
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(viewport={"width": 1500, "height": 900})
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(out.as_uri())
+            chips = [re.sub(r"\s+", " ", c).strip()
+                     for c in page.locator("#chips .chip").all_inner_texts()]
+            assert [re.sub(r"^[\d,]+ ", "", c) for c in chips][:2] == ["broken now",
+                                                                        "worth a look"], chips
+            assert chips[-1].endswith("notes"), chips
+            page.locator("#chips .chip", has_text="notes").click()
+            page.wait_for_timeout(300)
+            box = page.locator("#p-findings label.chk", has_text="notes")
+            assert box.locator("input").is_checked()
+            n = int(re.search(r"\((\d+) models\)", box.inner_text()).group(1))
+            models = page.locator("#p-findings tbody tr td:first-child").all_inner_texts()
+            assert len(models) == n and len(set(models)) == len(models), models
+            assert not errors, errors
+        finally:
+            browser.close()

@@ -1219,7 +1219,8 @@ def test_weight_is_shown_with_the_parts_it_is_computed_from():
     v = explorer._VIEWS
     fb = v[v.index("function findingsTab"):v.index("function answersTab")]
     assert "['weight', weightBox(f)]" in fb, "the finding shows a bare weight again"
-    assert "title: weightLine(f)" in fb, "the weight cell has no parts on hover"
+    # the list is one row per model now (Ryan), so the weight and its parts live in the detail
+    assert "label: 'weight'" not in fb, "the weight column is back in the list"
 
 
 def test_a_page_rendered_from_its_artifact_is_the_same_page(project_dir, tmp_path):

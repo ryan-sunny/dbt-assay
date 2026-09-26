@@ -144,7 +144,11 @@ def test_the_page_shows_both_commits_of_a_returned_finding(project_dir, tmp_path
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(out.as_uri() + "#findings")
             page.wait_for_timeout(300)
-            page.locator(".gitem", has_text="fixed_finding_returned").first.click()
+            # one row per model; the rows filter reads the checks the model's findings are of
+            page.locator("#p-findings input[type=search], #p-findings .pane input").first.fill(
+                "fixed_finding_returned")
+            page.wait_for_timeout(200)
+            page.locator("#p-findings tbody tr").first.click()
             pane = page.locator(".detail").first
             text = pane.inner_text()
             assert "what happened" in text.lower() and "ryan" in text
