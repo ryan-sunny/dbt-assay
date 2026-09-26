@@ -1266,7 +1266,7 @@ model. What is customer-facing comes from exposures marked `meta: {paid: true}` 
 ### Every pull request
 
 ```yaml
-- uses: ryan-sunny/dbt-assay@v0.53.1
+- uses: ryan-sunny/dbt-assay@v0.54.0
   with:
     target: target-head
     baseline: base/target
