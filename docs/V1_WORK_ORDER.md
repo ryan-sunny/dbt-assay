@@ -1,5 +1,7 @@
 # v1 work order
 
+> A record: the work order for v1. It describes assay as it was then; the [README](../README.md) and [OVERVIEW.md](OVERVIEW.md) describe it now.
+
 Everything in `FIELD_REPORT.md` closes before v1 is called. Ryan settled that, and three other
 scope questions, on 2026-09-22. This is the ordered list, with what a second session verified
 against the source and the store before any of it was planned.

@@ -1,5 +1,7 @@
 # Field report: the first production run, and everything wrong with what it produced
 
+> A record: a field report from the first production run. It describes assay as it was then; the [README](../README.md) and [OVERVIEW.md](OVERVIEW.md) describe it now.
+
 Written 2026-09-22 by the session that runs assay against `sunny_data`, for the session that builds assay.
 
 What produced this: `assay check` and `assay page` and `assay form` run on the Contabo box against the real

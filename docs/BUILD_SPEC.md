@@ -1,5 +1,7 @@
 # Build spec
 
+> A record: a build spec, written before the work it describes. It describes assay as it was then; the [README](../README.md) and [OVERVIEW.md](OVERVIEW.md) describe it now.
+
 Follows `VISIBILITY_SPEC.md`, which measured the gaps. This says what to build, with acceptance
 criteria you can check against. Written 2026-09-21 against `sunny_data` — 358 models, 329
 findings, 19,707 judged decisions, 617 tests.

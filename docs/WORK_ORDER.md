@@ -1,5 +1,7 @@
 # Work order: the package, the outcomes, and the confidence nobody can check
 
+> A record: a work order written from one session. It describes assay as it was then; the [README](../README.md) and [OVERVIEW.md](OVERVIEW.md) describe it now.
+
 Written 2026-09-21 from a session that used assay 0.28.1 on the sunny_data warehouse (358 models,
 236 findings) while that warehouse was in the middle of a real outage. Everything below is either a
 measurement from that store or a fact checked against the code. Where something is an opinion it

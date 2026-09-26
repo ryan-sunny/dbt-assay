@@ -68,7 +68,11 @@ def problems(line: str, inline: bool = False) -> list[str]:
     "`assay completeness` says ..." -- NAMES it rather than showing how to run it, so it must
     exist but need not carry a connection. Anything with arguments is an example, and is held to
     everything."""
-    parts = line.split()
+    import shlex
+    try:
+        parts = shlex.split(line)             # a quoted step (`assay run "check --verify"`) is one
+    except ValueError:                        # token, and its flags are the step's, not run's
+        parts = line.split()
     name = parts[1] if len(parts) > 1 else ""
     if name.startswith(("<", "-")) or name in ("...",):
         return []

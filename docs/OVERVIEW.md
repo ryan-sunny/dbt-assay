@@ -356,21 +356,23 @@ assay adjudicate          # triage the rows a dbt test already failed
 ```bash
 assay review --emit review.html -t target/   # the form, with everything in it
 assay review --emit review.html -t target/ --monitoring volume.json --report assay.html
-assay review --load verdicts.json            # every verdict at once
+assay review --load latest                   # every verdict at once, from the newest handback
 ```
 
-The form is not only findings. Five more tabs carry the parts of `audit.yml` that are pure domain
-knowledge, and **Words comes first**: a verdict settles one finding, while a vocabulary term
-reaches every judged answer about every model it applies to.
+The form is what the report's Fix and Decide sections embed. Besides the changes and the judgment
+calls it carries the parts of `audit.yml` that are pure domain knowledge, and **Words is worth doing
+first**: a verdict settles one finding, while a vocabulary term reaches every judged answer about
+every model it applies to.
 
 | tab | what it holds |
 |---|---|
+| **Fixes** | the changes, ranked by findings cleared per decision; approve, defer or reject each. A change built from judged guesses (the tests for what could break silently) lists every proposed test with its column and why, and any one can be left out: the agent applies the rest |
+| **Judgment calls** | the queued judgment calls, grouped by check, the most urgent group first and 25 groups before a count of the rest. One verdict answers a group; any card can say otherwise |
 | **Words** | their vocabulary, plus candidates ranked by how often this warehouse joins on them. assay fills in what it measured — how many models name the word, which directories they sit in, what the lint says, a scope that resolves — and leaves `means:` empty, because a definition written from a model name looks exactly like one they chose |
-| **Explanations** | the per-mart options for failing-row adjudication. `config.py` calls this "the part of the file worth maintaining" in its own comment, and nothing had ever let anybody maintain it |
+| **Explanations** | one failing test at a time, with a few of the rows it caught: mark each a real problem, normal here (name it, and it becomes a kind in `audit.yml`), or can't tell |
 | **Waivers** | findings somebody already called fine, carrying the reason *they* typed. assay never invents one |
 | **Monitoring** | the staleness threshold, DERIVED from how often this project actually builds rather than picked, with the cadence it came from set beside it, so changing it is a disagreement with a measurement. Needs `--monitoring volume.json` |
 | **Settings** | the rest of `audit.yml` a person acts on — the gating floors, the row-loss threshold, the spend cap, the rate card — each carrying what assay ships, what this project set, and what happens if it is wrong |
-| **Findings** | the cards, as before |
 
 What they write comes back as a **proposal**, never a write. `assay review --load handback.json`
 records the verdicts and prints the `audit.yml` changes as a diff; `--apply` writes them. It edits
@@ -405,10 +407,11 @@ shipped for most of this project's life. Ruling meant leaving the conversation y
 and one turn per finding is 159 turns.
 
 So the reading batches and the answering leaves the conversation. `--emit` writes one self-contained
-file that opens from `file://` with no server and nothing running: twenty cards at a time, highest
-blast radius first, each carrying what assay found, the claim it quotes, the model's own SQL with
-line numbers, and any reading an agent already recorded. Answers are kept in the browser as you go,
-so the tab can be closed. The download button writes `verdicts.json` and `--load` records the lot.
+file that opens from `file://` with no server and nothing running. It holds only the queued
+judgment calls (a change clears the rest, or they are notes), each card carrying what assay found,
+the claim it quotes, the model's own SQL with line numbers, and any reading an agent already
+recorded. Answers are kept in the browser as you go,
+so the tab can be closed. The download button writes `handback.json` and `--load latest` records the lot.
 
 The round trip is `probe --emit` / `--load`, which this project already has, for the same reason one
 layer over: assay never holds a credential, and it never holds a verdict it was not given. **A card
@@ -657,7 +660,8 @@ assay counts the source values that are non-null before the expression and NULL 
 sample of them: text a `try_cast` cannot parse, a pattern that does not match. It also catches a
 loader's type split, where a mixed-type column became `x` and `x__v_double` and the model reads
 only `x`. Every row still arrives, so nothing counting rows notices. One statement per source
-relation, through your dbt.
+relation, through your dbt, counted again only when the source's metadata says its data moved
+(see Every day below); a blank or a null token in the source is absent, not lost.
 
 **How the project is built, judged where intent decides it.** Eight families ask dbt Labs'
 own practices (from its "How we structure our dbt projects" and style guides), each only where a
@@ -1218,6 +1222,46 @@ came from, what a null means, and a warning banner above any description that no
 code. Every cell says whether it was **declared** by a human, **observed** by counting,
 **derived** from the SQL, or **judged** by a model — with the probability attached. A judgment is
 not a fact and nothing here pretends otherwise.
+
+### Every day
+
+```bash
+assay run practices "check --verify" ask verify prove volume digest \
+  -t target --store assay.duckdb --project-dir . --profiles-dir .
+assay page assay.html -t target --store assay.duckdb --form review.html
+assay review --emit review.html -t target --store assay.duckdb --report assay.html
+```
+
+`assay run` runs the steps in one process, with one dbt started for all of them, and a line per
+step. Every step runs even when one before it failed, and the exit code says whether any did. It
+refuses to start while another run holds the store, rather than failing halfway.
+
+A run that parsed fewer than half its models stops before it counts or spends anything, with the
+reason (usually a sqlglot older than the floor in `pyproject.toml`). `ASSAY_ALLOW_LOW_PARSE=1` runs
+anyway.
+
+`check --verify` counts what the SQL cannot settle, through your dbt. The value-loss count
+(`values_lost_at_hop`) is keyed on each source's own metadata (a dlt load id, the engine's row
+estimate or `last_altered`), so a source is counted again only when its data moved or its last
+count is a week old, inside a time budget (`completeness.value_loss_seconds`, 120 by default); the
+rest are read from the last count, and the run says why each source was counted. An empty string or
+a null token (`NA`, `N/A`, `NULL`, `None`) in the source is absent, not lost.
+
+`assay digest` says what changed since the previous full run that somebody should hear about: a
+guarantee lost, a test failing, a key that stopped holding, a premise that broke, a monitor that
+stopped, a fixed problem back, spend over a line. Customer-facing first, and nothing at all when
+nothing did.
+
+`assay prune` drops old runs of what a later `check` rebuilds for free; `assay prune --cache`
+removes what nothing uses from assay's cache folder (other Lean versions, old parses, dbt targets
+unused for 14 days). Neither touches anything that cost a call or a verdict.
+
+Then open the page. The Overview leads with what is **broken now** (a failing test, a lost
+guarantee, a key that stopped holding, a premise that broke), what is **worth a look**, and the
+**notes** counted once; Fix lists the changes by findings cleared per decision, one card per edit;
+Decide holds the queued judgment calls, one verdict per group; Explore has everything, one row per
+model. What is customer-facing comes from exposures marked `meta: {paid: true}` or
+`customer_facing: true`.
 
 ### Every pull request
 

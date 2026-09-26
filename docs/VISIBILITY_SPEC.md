@@ -1,5 +1,7 @@
 # Where assay is blind, and what to do about it
 
+> A record: a spec measuring where assay was blind. It describes assay as it was then; the [README](../README.md) and [OVERVIEW.md](OVERVIEW.md) describe it now.
+
 Written 2026-09-21 against `sunny_data` (358 models, 254 findings, 9,945 judged decisions). Every
 number below was measured on that store or read out of the code, and where something is an opinion
 it says so.

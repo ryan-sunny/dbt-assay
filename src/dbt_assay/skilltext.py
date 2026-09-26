@@ -295,8 +295,8 @@ The form is not only findings. It carries three more sections, and they are the 
 `audit.yml` that are pure domain knowledge: **Words** (their vocabulary, with what assay measured
 about where each one is used and a suggested scope), **Explanations** (the per-mart options for
 failing-row adjudication) and **Waivers** (findings somebody already called fine, with the reason
-they gave). Words is the first tab, because a term reaches every judged answer about every model
-it applies to, while a verdict settles one finding.
+they gave). Words is worth doing first, because a term reaches every judged answer about every
+model it applies to, while a verdict settles one finding.
 
 **Fill in what you measured and leave the sentence empty.** Same split as MY READ on a card: which
 models use the word, where they sit, what the lint says, a scope that resolves. Never the `means:`
@@ -308,7 +308,7 @@ and prints the `audit.yml` changes as a diff; `--apply` writes them, in place, w
 comment or reordering a key. Say what changed before you run it with `--apply`.
 
 `assay review --emit review.html -t target/` writes a form they fill in at their own pace, and
-`--load verdicts.json` records it. Do not start editing off the raw findings list; most of what is
+`--load latest` records it. Do not start editing off the raw findings list; most of what is
 in it has never been read by anyone, and on a real warehouse a judged family can run 12% agreement
 until somebody looks.
 
@@ -420,8 +420,9 @@ reads whatever `target/` holds at that moment. Run `dbt compile` first if you ha
   version, and how many disagreements are still open.
 - `assay disagreements` — group the findings people rejected. N rejections are usually far fewer
   than N bugs.
-- `assay page assay.html` — one self-contained page answering "is this warehouse understood, and
-  by whom". Deterministic, so it can be committed and diffed.
+- `assay page assay.html` — one self-contained page: what is broken now, what is worth a look,
+  the changes that clear the most, and the calls to decide. Deterministic, so it can be committed
+  and diffed.
 - `assay diff --baseline <main target>` — what changed about what models MEAN, for a review.
 - `assay version-check --baseline <main target>` — whether anything owes a version bump.
 - `practices(model)` / `assay practices --keys-only --project-dir <dbt project> --dbt "<dbt>"` —
@@ -617,12 +618,13 @@ assay review --emit review.html --target <target/> --store assay.duckdb \
   --report assay.html      # so the form and the report link to each other
 ```
 
-One self-contained file, opened from `file://`, no server and nothing left running. Twenty cards at
-a time, highest blast radius first, answers kept in the browser so the tab can be closed. The
-download button writes `verdicts.json`, and:
+One self-contained file, opened from `file://`, no server and nothing left running. It holds only
+the queued judgment calls, grouped by check with the most urgent group first: one verdict answers
+a whole group, and any card can say otherwise. Answers are kept in the browser so the tab can be
+closed. The download button writes `handback.json`, and:
 
 ```bash
-assay review --load verdicts.json --store assay.duckdb
+assay review --load latest --store assay.duckdb
 ```
 
 records every verdict at once. A card nobody answered is never submitted and never recorded, and

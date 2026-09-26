@@ -1,5 +1,7 @@
 # Review: what to fix, ranked
 
+> A record: a review of versions 0.5.0 to 0.11.0. It describes assay as it was then; the [README](../README.md) and [OVERVIEW.md](OVERVIEW.md) describe it now.
+
 From running assay 0.5.0 → 0.11.0 against a 357-model Colorado water-rights warehouse and ruling on
 every one of its 99 findings. Each item below is something measured, with the fix that follows from
 it. The narrative and the evidence are in `FIELD_NOTES.md`; this is the actionable list.

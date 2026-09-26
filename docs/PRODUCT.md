@@ -315,24 +315,22 @@ it.
 ## The page
 
 `assay page assay.html` writes **everything assay knows about your warehouse**, as one file you
-open by double-clicking. Ten tabs:
+open by double-clicking, in four sections and Settings:
 
-| tab | what is on it |
+| section | what is on it |
 |---|---|
-| **Models** | every model, and on one screen: what one row of it is and who settled that, every column with its role and where its value came from, every hop in and out, what the project claims about it, every finding, and every answer ever given |
-| **The chain** | every hop in the DAG, what it carries, what it **drops**, what it joined on, whether it drives, and how much of the parent survived |
-| **Claims** | every sentence the project says about itself, where it was written down to `path:line`, and what the code said back |
-| **Findings** | ranked by reach, each with its evidence and whether a person has read *this finding* or only its model |
-| **Monitoring** | whether anybody would notice if what this SQL produces changed tonight: how often the project actually builds, each monitor's own freshness, what the declared tests are doing, the tests whose last result was a FAILURE and which have not run since, and the models with a mart downstream and no row-count history. Needs `--monitoring volume.json`; without it the tab says the measurement was never taken rather than showing zeros |
-| **What to configure** | the join between a long findings list and four lines of YAML, each row carrying the measurement that produced it |
-| **Spend** | one row per call, what the thinking cost and what the warehouse cost, kept apart because they are priced by different people in different units |
-| **Answers** | the live answer to every question asked about this project, with its confidence and the runner-up |
-| **Questions** | all the question banks in full: the instructions and every option, exactly as they are sent |
-| **Config** | what was actually resolved, the vocab, the runs, and what assay could not read |
-| **Understood** | the record, unchanged |
+| **Overview** | what is broken now (a failing test, a lost guarantee, a key that stopped holding), what is worth a look, what is customer-facing, the changes and the calls to decide, and the notes counted once. Each count lists what it counts in place. Beside them, the changes that clear the most findings, and whether it is getting better run over run |
+| **Fix** | the changes, ranked by findings cleared per decision, one card per edit: its diff, why it matters, how it is verified. A person approves, defers or rejects; an agent applies an approved one in a branch |
+| **Decide** | the queued judgment calls, grouped by check, one verdict per group and any card can differ; the failing rows your tests catch, one test at a time; your vocabulary; the waivers |
+| **Explore** | every finding (one row per model), the areas, the guarantees and what they rest on, the monitoring, every model, every hop in the DAG, every claim the project makes about itself, every answer |
+| **Settings** | what to configure next, the resolved config, every question in full, and what each call cost |
 
-`--plain` writes **the record** on its own: the small report answering *is this warehouse
-understood, and by whom*, at about 15 KB. Those are two different jobs and conflating them was
+Every open finding is in exactly one place: a change clears it, a proposal covers what a count
+settled, a person decides it, or it is a **note** (`audit.yml` only annotates it), which sits inside
+the change that clears it and in Explore and is never an item of its own.
+
+`--plain` writes **the record** on its own: the small report of what was read, judged and found,
+and by whom, at about 15 KB. Those are two different jobs and conflating them was
 costing both. The record is small, committed, diffed across commits, and handed to a colleague;
 its whole argument is that it accrues, which needs it to stay small. The explorer is for the
 person who owns the warehouse.

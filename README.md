@@ -2,29 +2,42 @@
 
 <img src="docs/cuts/condensers.gif" align="right" width="260" alt="two condensing trains rising off a still, with the cooling barrel beside them">
 
-**Recover the semantics your warehouse never wrote down.**
+**An auditor for dbt projects and the warehouses they build.**
 
-Your dbt project has types nobody declared. Every model has a grain, every number has a unit, every
-nullable column has a meaning for null, and every model assumes something about what its parents
-already did. None of it is written anywhere, all of it is load-bearing, and the only copy lives in
-the head of whoever last debugged it.
+`assay` reads your dbt project the way a lead data engineer would: what one row of each model is,
+what each column means, what every model assumes about its parents, and where those assumptions
+contradict each other or the data. [sqlglot](https://github.com/tobymao/sqlglot) reads the
+structure, [TypeSafe's Jev](https://docs.typesafe.ai) reads the meaning, and SQL counts the rest.
 
-`assay` infers those semantics from the code, stores them as data, and finds the places where they
-contradict each other.
+What you do with it is three things, and the page it writes (`assay page`) is laid out the same way:
 
-[sqlglot](https://github.com/tobymao/sqlglot) reads the structure. [TypeSafe's
-Jev](https://docs.typesafe.ai) reads the meaning. SQL does the rest.
+- **See what is wrong, at its real size.** The Overview leads with what is **broken now** (a
+  failing test, a lost guarantee, a key that stopped holding), then what is **worth a look**, with
+  the customer-facing ones first. Everything else is a **note**, counted once and listed where you
+  can reach it, never presented as a problem of its own.
+- **Approve the changes.** Fix lists the **changes** that clear the most findings per decision:
+  one card per edit, each with its diff and how it is verified. An agent applies an approved one
+  in a branch; assay never writes into your project.
+- **Make the calls only a person can make.** Decide holds the queued judgment calls, grouped by
+  check: one verdict for a group, and any card can say otherwise.
 
-> Built while auditing a Colorado water rights warehouse, where a case number is only unique inside
-> a water division and nothing in the stack could tell me that.
+```bash
+uvx dbt-assay onboard --target path/to/dbt/target
+```
 
-**New here? [docs/PRODUCT.md](docs/PRODUCT.md) is the whole thing in plain words** — what it checks, how it works next to a coding agent, what it costs, and what it deliberately will not do.
+On a project `assay` has never seen: it reads your manifest, says what it can and cannot see, runs
+the structural checks, runs the judgment tier if a key is present, writes an `audit.yml` that gates
+nothing, and prints the next command. `--agent` also writes the skill file your coding agent
+follows.
+
+**New here? [docs/PRODUCT.md](docs/PRODUCT.md) is the whole thing in plain words** — what it checks,
+how it works next to a coding agent, what it costs, and what it deliberately will not do.
 
 <img src="docs/cuts/atwork.gif" align="right" width="150" alt="">
 
 ## What it finds
 
-A staging model in that warehouse described itself like this:
+A staging model in a production warehouse described itself like this:
 
 > *"Boulder commercial building permits (residential filtered out)."*
 
@@ -39,15 +52,6 @@ judgment that did cost $0.0026 across the whole 265-model project.
 The same run found a `join irr i on p.xmin <= i.xmax and p.xmax >= i.xmin` — a bounding-box
 *overlap* join feeding a mart, where one parcel matches many polygons and every count past it is
 inflated while each individual row stays valid.
-
-```bash
-uvx dbt-assay onboard --target path/to/dbt/target
-```
-
-On a project `assay` has never seen: it reads your manifest, says what it can and cannot see, runs
-the structural checks, runs the judgment tier if a key is present, writes an `audit.yml` that gates
-nothing, and prints the next command. `--agent` also writes the skill file your coding agent
-follows.
 
 <img src="docs/cuts/apparatus.gif" align="right" width="130" alt="">
 
@@ -199,28 +203,34 @@ dbt docs shows you lineage. This shows you meaning.
 
 ```bash
 assay page assay.html -t target/                            # everything assay knows
-assay page assay.html -t target/ --form review.html         # the two link to each other
+assay page assay.html -t target/ --form review.html         # Fix and Decide are the form, embedded
 assay page assay.html -t target/ --monitoring volume.json   # ...and what is watching it
 ```
 
-Everything assay knows, as one file you double-click. Ten tabs: the Overview, every model, every
-hop, every claim, every finding, what to configure, every answer ever given, what each call cost,
-every question in full, the resolved config — and **Monitoring**, which is the one that asks
-whether anybody would notice if what this SQL produces changed tonight:
+Everything assay knows, as one file you double-click, in four sections and Settings:
 
-- how often this project actually builds, which every threshold on the tab is derived from rather
-  than picked;
-- each monitor's own freshness, because a monitor that stopped reads exactly like one that finds
-  nothing;
-- what the declared tests are doing. On the warehouse this was built against: 1,291 declared,
-  1,098 that have ever produced a result, and 1,846 results that are `skipped` rather than passed;
-- tests whose last result was a **failure** and which have not run since — neither a live failure
-  nor a pass, and indistinguishable from a live failure in any view that sorts by status;
-- the models with a mart downstream and no row-count history at all.
+| section | what it is for |
+|---|---|
+| **Overview** | the counts (broken now, worth a look, customer-facing, changes, calls to decide, notes), each listing what it counts in place, beside the changes that clear the most, and whether the warehouse is getting better run over run |
+| **Fix** | the changes, ranked by findings cleared per decision, one card per edit with its diff, why it matters and how it is verified; approve, defer or reject each |
+| **Decide** | the queued judgment calls grouped by check, the failing rows your tests catch (one test at a time), your vocabulary, and the waivers you have written |
+| **Explore** | every finding (one row per model), the areas, the guarantees and what they rest on, the monitoring, every model, every hop, every claim, every answer |
+| **Settings** | what to configure next, the resolved config, every question in full, and what each call cost |
 
-Without `--monitoring` that tab says the measurement has not been taken and prints the command that
-takes it. **It never renders zeros**, because a zero there reads as *nothing is wrong* and means
-*nobody looked*.
+**Where a finding lands is decided once, and the counts add up.** A change in the plan clears it;
+or a count settled it (a failing test, a value lost at a hop) and a proposal says what to do; or it
+is a judgment call a person makes; or `audit.yml` only annotates it, and it is a note. What is
+**broken now** is only what the project's own evidence says is failing: a dbt test, a proven
+guarantee, a key that held, a premise a finding was held back on. What is **customer-facing** comes
+from your exposures: mark the ones customers pay for with `meta: {paid: true}` (or
+`customer_facing: true`) and everything reaching them sorts first.
+
+Monitoring asks whether anybody would notice if what this SQL produces changed tonight: how often
+this project actually builds, each monitor's own freshness, what the declared tests are doing,
+tests whose last result was a failure and which have not run since, and the models with a mart
+downstream and no row-count history. Without `--monitoring` it says the measurement has not been
+taken and prints the command that takes it. **It never renders zeros**, because a zero there reads
+as *nothing is wrong* and means *nobody looked*.
 
 It writes a data artifact beside the page — one JSONL line per entity — and that is the thing worth
 committing: a diff reads as *these 3 models changed*, and `assay page --from assay-data/` renders
@@ -305,21 +315,23 @@ months — not for want of the loop above, which has shipped for most of this pr
 
 ```bash
 assay review --emit review.html -t target/   # the form, with everything already in it
-assay review --load verdicts.json            # every verdict at once
+assay review --load latest                   # every verdict at once, from the newest handback
 ```
 
-The form is not only findings. Three more tabs carry the parts of `audit.yml` that are pure domain
-knowledge, and **Words comes first**: a verdict settles one finding, while a vocabulary term
-reaches every judged answer about every model it applies to.
+The form is what the report's Fix and Decide sections embed. Besides the changes and the judgment
+calls it carries the parts of `audit.yml` that are pure domain knowledge, and **Words is worth doing
+first**: a verdict settles one finding, while a vocabulary term reaches every judged answer about
+every model it applies to.
 
 | tab | what it holds |
 |---|---|
+| **Fixes** | the changes, ranked by findings cleared per decision; approve, defer or reject each. A change built from judged guesses (the tests for what could break silently) lists every proposed test with its column and why, and any one can be left out |
+| **Judgment calls** | the queued judgment calls, grouped by check, the most urgent group first and 25 groups before a count of the rest. One verdict answers a group; any card can say otherwise |
 | **Words** | their vocabulary, plus candidates ranked by how often this warehouse joins on them. assay fills in what it measured — how many models name the word, which directories they sit in, what the lint says, a scope that resolves — and leaves `means:` empty, because a definition written from a model name looks exactly like one they chose |
-| **Explanations** | the per-mart options for failing-row adjudication. `config.py` calls this "the part of the file worth maintaining" in its own comment, and nothing had ever let anybody maintain it |
+| **Explanations** | one failing test at a time, with a few of the rows it caught: mark each a real problem, normal here (name it, and it becomes a kind in `audit.yml`), or can't tell |
 | **Waivers** | findings somebody already called fine, carrying the reason *they* typed. assay never invents one |
 | **Monitoring** | the staleness threshold, derived from how often this project actually builds rather than picked, with the cadence it came from beside it. Needs `--monitoring volume.json` |
 | **Settings** | the rest of `audit.yml` a person acts on — gating floors, the row-loss threshold, the spend cap, the rate card — each with what assay ships beside what this project set |
-| **Findings** | the cards, as before |
 
 What they write comes back as a **proposal**, never a write. `assay review --load handback.json`
 records the verdicts and prints the `audit.yml` changes as a diff; `--apply` writes them. It edits
@@ -332,11 +344,10 @@ It writes `vocab`, `explanations` and `waivers` and nothing else. Gating thresho
 measured agreement rate in front of you, and `assay effectiveness` is that surface.
 
 
-One self-contained file that opens from `file://` — no server, no port, nothing left running.
-Twenty cards at a time, highest blast radius first, each carrying what assay found, the claim it
-quotes, the model's own SQL with line numbers, and any reading an agent already recorded. Answers
-are kept in the browser as you go, so the tab can be closed and come back to. The download button
-writes `verdicts.json`.
+One self-contained file that opens from `file://` — no server, no port, nothing left running. Each
+card carries what assay found, the claim it quotes, the model's own SQL with line numbers, and any
+reading an agent already recorded. Answers are kept in the browser as you go, so the tab can be
+closed and come back to. The download button writes `handback.json`.
 
 **A card nobody answered is never submitted and never recorded**, and `--load` names every row it
 did not record rather than printing a total that hides them. One card per `(model, check)`, because
@@ -1096,7 +1107,9 @@ break and staging raw sources are one change each, with their parts inside; a ch
 nothing open is left out. A fix carries its files: descriptions drafted from what assay already
 knows (a parent's description where the value passes through, else the judged role and what a NULL
 means), key tests on grains assay counted unique, a pass-through staging model with the readers of
-a raw source repointed to it, a premise many things rest on declared as a test.
+a raw source repointed to it, a premise many things rest on declared as a test. A change built from
+judged guesses is never approved in bulk: the tests for what could break silently are listed one by
+one, each with its column and why, and any one left out stays out when an agent applies the rest.
 
 What is left splits three ways, and the four parts add up to the open findings. A queued finding a
 count settled is a proposal with its fix shape. A queued judgment call is decided in `review`, one
@@ -1131,6 +1144,39 @@ of the 12 finding(s) a person agreed with, 5 are gone and 7 are still here.
 "N resolved" could never answer that — four fewer findings might be the four you agreed about or
 four unrelated ones that moved while those sat there. A release cannot move this number and neither
 can an agent. Agreeing and later dismissing does not count as fixed; that is a retraction.
+
+## Every day
+
+```bash
+assay run practices "check --verify" ask verify prove volume digest \
+  -t target --store assay.duckdb --project-dir . --profiles-dir .
+assay page assay.html -t target --store assay.duckdb --form review.html
+assay review --emit review.html -t target --store assay.duckdb --report assay.html
+```
+
+`assay run` runs the steps in one process, with one dbt started for all of them, and a line per
+step. Every step runs even when one before it failed, and the exit code says whether any did. It
+refuses to start while another run holds the store, rather than failing halfway.
+
+A run that parsed fewer than half its models stops before it counts or spends anything, with the
+reason (usually a sqlglot older than the floor in `pyproject.toml`). `ASSAY_ALLOW_LOW_PARSE=1` runs
+anyway.
+
+`check --verify` counts what the SQL cannot settle, through your dbt. The value-loss count
+(`values_lost_at_hop`) is keyed on each source's own metadata (a dlt load id, the engine's row
+estimate or `last_altered`), so a source is counted again only when its data moved or its last
+count is a week old, inside a time budget (`completeness.value_loss_seconds`, 120 by default); the
+rest are read from the last count, and the run says why each source was counted. An empty string or
+a null token (`NA`, `N/A`, `NULL`, `None`) in the source is absent, not lost.
+
+`assay digest` says what changed since the previous full run that somebody should hear about: a
+guarantee lost, a test failing, a key that stopped holding, a premise that broke, a monitor that
+stopped, a fixed problem back, spend over a line. Customer-facing first, and nothing at all when
+nothing did.
+
+`assay prune` drops old runs of what a later `check` rebuilds for free; `assay prune --cache`
+removes what nothing uses from assay's cache folder (other Lean versions, old parses, dbt targets
+unused for 14 days). Neither touches anything that cost a call or a verdict.
 
 ## Keeping the store from growing forever
 

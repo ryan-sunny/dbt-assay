@@ -129,7 +129,11 @@ def test_every_command_and_flag_in_the_docs_actually_exists():
             if not line.startswith("assay "):
                 continue
             seen += 1
-            parts = line.split()
+            import shlex
+            try:
+                parts = shlex.split(line.rstrip("\\"))    # a quoted step is one token
+            except ValueError:
+                parts = line.split()
             cmd = by_name.get(parts[1])
             if cmd is None:
                 bad.append(f"{parts[1]}: no such command")

@@ -55,12 +55,13 @@ assay review --emit review.html --target <target/> --store assay.duckdb \
   --report assay.html      # so the form and the report link to each other
 ```
 
-One self-contained file, opened from `file://`, no server and nothing left running. Twenty cards at
-a time, highest blast radius first, answers kept in the browser so the tab can be closed. The
-download button writes `verdicts.json`, and:
+One self-contained file, opened from `file://`, no server and nothing left running. It holds only
+the queued judgment calls, grouped by check with the most urgent group first: one verdict answers
+a whole group, and any card can say otherwise. Answers are kept in the browser so the tab can be
+closed. The download button writes `handback.json`, and:
 
 ```bash
-assay review --load verdicts.json --store assay.duckdb
+assay review --load latest --store assay.duckdb
 ```
 
 records every verdict at once. A card nobody answered is never submitted and never recorded, and

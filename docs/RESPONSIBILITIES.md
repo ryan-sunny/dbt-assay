@@ -1,5 +1,7 @@
 # What a data engineer in this warehouse owns, and which of it assay covers
 
+> A record: what a data engineer in one warehouse owns, written from a night of using assay as that engineer. It describes assay as it was then; the [README](../README.md) and [OVERVIEW.md](OVERVIEW.md) describe it now.
+
 Written from a night of using assay as that engineer on a 357-model warehouse. The question is not
 "what else could assay do" — it is "what is this job, and where does the tool stop". A tool that
 covers eight of nine responsibilities and says which one it does not is more useful than one that

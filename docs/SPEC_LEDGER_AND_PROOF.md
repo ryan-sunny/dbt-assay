@@ -1,5 +1,7 @@
 # Spec: the premise ledger, four gaps, and Lean
 
+> A record: the spec for the premise ledger and Lean, agreed before they were built. It describes assay as it was then; the [README](../README.md) and [OVERVIEW.md](OVERVIEW.md) describe it now.
+
 Status: agreed in conversation 2026-09-24, not built. Build order at the end.
 
 ## The principle

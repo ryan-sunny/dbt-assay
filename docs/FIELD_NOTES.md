@@ -1,5 +1,7 @@
 # Field notes: one night on a 357-model warehouse
 
+> A record: field notes from one night on a 357-model warehouse. It describes assay as it was then; the [README](../README.md) and [OVERVIEW.md](OVERVIEW.md) describe it now.
+
 **Status: 1, 2, 3, 6 and 7 are fixed in 0.6.0; 4 and 5 were fixed in 0.5.1.** What each fix was is
 noted inline. The notes are kept as written, because the report is the evidence.
 

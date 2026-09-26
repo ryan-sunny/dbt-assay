@@ -1,5 +1,7 @@
 ## Next: the premise ledger, four gaps, and Lean (NOT built yet)
 
+> A record: the build queue as it stood while the ledger and Lean were built. It describes assay as it was then; the [README](../README.md) and [OVERVIEW.md](OVERVIEW.md) describe it now.
+
 Full spec: `docs/SPEC_LEDGER_AND_PROOF.md` (agreed 2026-09-24). Build order is at its end: ledger
 core, declared keys joined to test results, suppressions registering premises, ledger surfaces,
 fixed_finding_returned, float_sum_is_not_reproducible, Snowflake incremental checks, then Lean in

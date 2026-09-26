@@ -9161,7 +9161,7 @@ def run_steps(
 ):
     """Several commands in one process: one dbt for all of them, and a line per step.
 
-    *** ELEVEN INVOCATIONS, ELEVEN dbt STARTS. *** (sunny-data, RC 62c18a6) The daily run called
+    *** ELEVEN INVOCATIONS, ELEVEN dbt STARTS. *** A daily run that called
     `assay` once per step, so every step paid Python start, the project load and its own dbt
     start. Here the steps run in order in one process: the project's dbt is started once
     (`dbtsession`) and answers every step's queries, and the parse cache is warm after the
