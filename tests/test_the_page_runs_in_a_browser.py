@@ -1072,12 +1072,11 @@ def test_a_group_verdict_answers_its_cards_and_the_view_is_capped(tmp_path):
     assert got == {("a", "agree"), ("b", "disagree"), ("c", "agree")}, doc["verdicts"]
 
 
-def test_every_count_is_a_filter_and_explore_lists_one_row_per_model(tmp_path, project_dir):
-    """(Ryan: "so many numbers it's impossible to tell what they mean", "I can't filter to just
-    those") The counts are one row of chips, each landing on exactly what it counts; Findings
-    lists each model once; the header has no second way into the form."""
-    import re
-
+def test_the_counts_are_on_the_overview_only_and_open_their_list_in_place(tmp_path, project_dir):
+    """(Ryan: "i dont want those there at all theyre on every tab ... it just jumps you all over
+    the place") The counts sit on the Overview beside what to change next; a count lists its
+    findings right there; Findings in Explore lists each model once; the header has no second way
+    into the form."""
     from playwright.sync_api import sync_playwright
     store = str(tmp_path / "s.duckdb")
     CliRunner().invoke(app, ["check", "--target", str(project_dir), "--store", store])
@@ -1092,18 +1091,25 @@ def test_every_count_is_a_filter_and_explore_lists_one_row_per_model(tmp_path, p
             page = browser.new_page(viewport={"width": 1500, "height": 900})
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(out.as_uri())
-            chips = [re.sub(r"\s+", " ", c).strip()
-                     for c in page.locator("#chips .chip").all_inner_texts()]
-            assert [re.sub(r"^[\d,]+ ", "", c) for c in chips][:2] == ["broken now",
-                                                                        "worth a look"], chips
-            assert chips[-1].endswith("notes"), chips
-            page.locator("#chips .chip", has_text="notes").click()
+            assert page.locator("header .counts, #chips").count() == 0
+            labels = page.locator("#p-understood table.counts td:first-child").all_inner_texts()
+            assert labels[:2] == ["broken now", "worth a look"] and labels[-1] == "notes", labels
+            notes = page.locator("#p-understood table.counts tr", has_text="notes")
+            n = int(notes.locator("td.cn").inner_text().replace(",", ""))
+            notes.click()
+            assert page.evaluate("location.hash") in ("", "#understood")      # it stayed here
+            listed = page.locator("#p-understood .countlist table.clist tr").count()
+            assert listed == min(n, 100) and listed > 0
+            notes.click()                                                     # and it closes
+            assert page.locator("#p-understood .countlist table").count() == 0
+            for sec in ("fix", "decide", "explore"):
+                page.click(f'nav button[data-section="{sec}"]')
+                page.wait_for_timeout(200)
+                assert page.locator("table.counts:visible").count() == 0, sec
+            page.click('#subnav button[data-view="findings"]')
             page.wait_for_timeout(300)
-            box = page.locator("#p-findings label.chk", has_text="notes")
-            assert box.locator("input").is_checked()
-            n = int(re.search(r"\((\d+) models\)", box.inner_text()).group(1))
             models = page.locator("#p-findings tbody tr td:first-child").all_inner_texts()
-            assert len(models) == n and len(set(models)) == len(models), models
+            assert models and len(set(models)) == len(models), models
             assert not errors, errors
         finally:
             browser.close()

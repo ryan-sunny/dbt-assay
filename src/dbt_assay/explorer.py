@@ -129,18 +129,23 @@ padding:5px 14px 7px}
 nav .setbtn{margin-left:auto;font-size:15px;color:var(--faint)}
 /* the row under them: the views of the section you are in */
 .subnav{display:flex;flex-wrap:wrap;gap:0;border-top:1px solid var(--rule);margin-top:3px}
-/* *** EVERY COUNT IS A FILTER, AND SAYS WHAT IT COUNTS. *** (Ryan) One row, no sentences. */
-.chips{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:baseline;padding:7px 0 2px;
-font-size:14px}
-.chips:empty{display:none}
-.chip{appearance:none;border:0;background:none;padding:0 2px;font:inherit;color:var(--ink);
-cursor:pointer;border-bottom:1px dotted var(--ash)}
-.chip:hover{border-bottom-color:var(--ink)}
-.chip.on{border-bottom:2px solid var(--ink)}
-.chipn{font-size:15px;font-weight:600;font-variant-numeric:lining-nums tabular-nums;
-vertical-align:baseline}
-.chip.bad .chipn{color:var(--rust)}
-.chipsep{color:var(--faint)}
+/* *** THE COUNTS, ONCE, ON THE OVERVIEW. *** (Ryan: "i dont want those there at all theyre on
+   every tab ... it just jumps you all over the place") A label and its number per row, even
+   numerals, no colour; a row opens its list in place, under the counts. */
+.nextgrid{display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:0 28px;
+align-items:start}
+.counts{border-collapse:collapse;width:100%;font-size:15px}
+.counts td{padding:5px 4px;border-bottom:1px solid var(--rule2);cursor:pointer}
+.counts td.cn{text-align:right;font-variant-numeric:lining-nums tabular-nums;font-feature-settings:"lnum","tnum"}
+.counts tr:hover td{background:#f2efe7}
+.counts tr.on td{background:#efe9dc}
+.countlist{margin:14px 0 0}
+.countlist:empty{display:none}
+.clist{border-collapse:collapse;width:100%;font-size:14px}
+.clist td{padding:4px 8px 4px 0;border-bottom:1px solid var(--rule2);vertical-align:top}
+.clist td.cn{text-align:right;white-space:nowrap;font-variant-numeric:lining-nums tabular-nums}
+.clist td.sum{color:var(--ash)}
+@media (max-width:820px){.nextgrid{display:block}.counts{margin-bottom:14px}}
 .fblock{border-top:1px solid var(--rule);padding-top:10px;margin-top:14px}
 .fbucket{font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
 margin-bottom:4px}
@@ -634,6 +639,12 @@ outline:none;background:#fbf9f4}
   font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint)}
   tr.on td{box-shadow:none}
   tr.on{box-shadow:inset 3px 0 0 var(--ink);background:#efe9dc}
+  /* a label and its number stay on one line */
+  table.counts{display:table}
+  table.counts tbody{display:table-row-group}
+  table.counts tr{display:table-row;padding:0;box-shadow:none}
+  table.counts td{display:table-cell;width:auto;padding:5px 4px;border-bottom:1px solid var(--rule2)}
+  table.counts td.cn{text-align:right}
 }
 footer{color:var(--faint);font-size:12px;padding:14px 26px;border-top:3px double var(--ink);
 font-family:Fell,Georgia,serif;font-style:italic}
@@ -1127,7 +1138,6 @@ manifest generated {e(str(meta['generated_at']))} &middot;
 <button class="navmenu" id="navmenu" aria-expanded="false"><span id="navcur">Overview</span> ▾</button>
 <nav role="tablist">{nav}</nav>
 <div class="subnav" id="subnav"></div>
-<div class="chips" id="chips"></div>
 </header>
 <main>{panels}</main>
 
@@ -3206,20 +3216,60 @@ function understoodTab(host) {
     cut ? el('img', {class: 'cut ticketcut', src: cut, alt: ''}) : el('div'),
   ]));
 
-  // ---- what to change next: the changes that clear the most, one card per edit (the Fix section)
+  // ---- what is open, and what to change next: the counts beside the changes (the Fix section)
   const FX = DATA.fixes || [];
-  if (FX.length) {
+  if (FX.length || T.queued != null) {
     const cleared = FX.reduce((n, f) => n + (f.resolves || 0), 0);
     const toFix = el('button', {class: 'back', text: 'every change, ranked →'});
     toFix.onclick = () => open('fix');
+    const right = el('div', {}, FX.length ? [el('div', {class: 'tiles'}, FX.slice(0, 4).map(f =>
+        tile(num(f.resolves || 0), f.title, f.queued ? num(f.queued) + ' of them queued' : ''))),
+      el('p', {class: 'fact', text: num(FX.length) + (FX.length === 1 ? ' change clears '
+        : ' changes clear ') + num(cleared) + ' findings.'}),
+      toFix] : []);
+    const listHost = el('div', {class: 'countlist'});
+    const F_ = DATA.findings;
+    const fRows = fs => fs.map(f => el('tr', {}, [el('td', {class: 'mono', text: f.model || ''}),
+      el('td', {text: f.title || f.check}), el('td', {class: 'sum', text: f.summary || ''})]));
+    const CAP = 100;
+    const listOf = {
+      broken: () => fRows(F_.filter(f => f.bucket === 'broken')),
+      look: () => fRows(F_.filter(f => f.bucket === 'look')),
+      paid: () => fRows(F_.filter(f => f.paid && f.bucket !== 'note')),
+      fix: () => FX.map(f => el('tr', {}, [el('td', {text: f.title}),
+                                           el('td', {class: 'cn', text: 'clears ' + num(f.resolves || 0)})])),
+      decide: () => fRows(F_.filter(f => f.decided_on === 'decide')),
+      note: () => fRows(F_.filter(f => f.bucket === 'note')),
+    };
+    const paidN = (T.broken_paid || 0) + (T.look_paid || 0);
+    const rowsDef = T.queued != null ? [
+      ['broken', 'broken now', T.broken], ['look', 'worth a look', T.look],
+      ...(paidN ? [['paid', 'customer-facing', paidN]] : []),
+      ['fix', FX.length === 1 ? 'change' : 'changes', FX.length],
+      ['decide', 'calls to decide', F_.filter(f => f.decided_on === 'decide').length],
+      ['note', 'notes', T.notes]] : [];
+    const table = el('table', {class: 'counts'});
+    let openKey = null;
+    for (const [key, label, n] of rowsDef) {
+      const tr = el('tr', {'data-k': key}, [el('td', {text: label}),
+                                            el('td', {class: 'cn', text: num(n || 0)})]);
+      tr.onclick = () => {
+        openKey = openKey === key ? null : key;
+        table.querySelectorAll('tr').forEach(r => r.classList.toggle('on',
+          r.getAttribute('data-k') === openKey));
+        if (!openKey) { listHost.replaceChildren(); return; }
+        const rows = listOf[key]();
+        listHost.replaceChildren(el('table', {class: 'clist'}, rows.slice(0, CAP)),
+          ...(rows.length > CAP ? [el('p', {class: 'fact', text: 'and ' + num(rows.length - CAP)
+            + ' more, listed under Explore'})] : []),
+          ...(rows.length ? [] : [el('p', {class: 'fact', text: 'none'})]));
+      };
+      table.append(tr);
+    }
     bits.push(block('What to change next',
-      'The changes that clear the most findings per decision. An agent applies an approved one '
-      + 'in a branch.',
-      el('div', {}, [el('div', {class: 'tiles'}, FX.slice(0, 4).map(f => tile(
-        num(f.resolves || 0), f.title, f.queued ? num(f.queued) + ' of them queued' : ''))),
-        el('p', {class: 'fact', text: num(FX.length) + (FX.length === 1 ? ' change clears '
-          : ' changes clear ') + num(cleared) + ' findings.'}),
-        toFix])));
+      'The counts: click one to list it here. The changes clear the most findings per '
+      + 'decision; an agent applies an approved one in a branch.',
+      el('div', {}, [el('div', {class: 'nextgrid'}, [table, right]), listHost])));
   }
 
   // ---- whether it is getting better: open findings over the full runs in the store
@@ -4309,7 +4359,6 @@ function formView(pane) {
 }
 function open(name) {
   const sec = sectionOf(name);
-  if (name !== 'findings' && typeof paintChips === 'function') paintChips();
   LAST[sec] = name;
   document.querySelectorAll('nav button[data-section]').forEach(b =>
     b.setAttribute('aria-selected', String(b.dataset.section === sec)));
@@ -4346,34 +4395,6 @@ window.addEventListener('resize', () => dismissCards());
 
 document.querySelectorAll('nav button[data-section]').forEach(b => {
   b.onclick = () => { dismissCards(); open(LAST[b.dataset.section]); closeMenu(); }; });
-/* The counts, once, at the top of every section. Each one opens exactly what it counts. */
-function paintChips(on) {
-  const T = (DATA.meta || {}).review || {};
-  const host = document.getElementById('chips');
-  if (T.queued == null) { host.replaceChildren(); return; }
-  const FXN = (DATA.fixes || []).length;
-  const chip = (n, label, key, go, bad) => {
-    const b = el('button', {class: 'chip' + (on === key ? ' on' : '') + (bad && n ? ' bad' : '')},
-                 [el('span', {class: 'chipn', text: num(n)}),
-                  document.createTextNode(' ' + label)]);
-    b.onclick = () => { dismissCards(); go(); paintChips(key); };
-    return b;
-  };
-  const toFind = keys => () => { open('findings'); if (GO.findingsFilter) GO.findingsFilter(keys); };
-  const paid = (T.broken_paid || 0) + (T.look_paid || 0);
-  const items = [
-    chip(T.broken, 'broken now', 'broken', toFind(['broken']), true),
-    chip(T.look, 'worth a look', 'look', toFind(['look'])),
-    ...(paid ? [chip(paid, 'customer-facing', 'paid', toFind(['paid']))] : []),
-    chip(FXN, FXN === 1 ? 'change' : 'changes', 'fix', () => open('fix')),
-    chip(T.cards || 0, (T.cards === 1 ? 'call' : 'calls') + ' to decide', 'decide',
-         () => open('decide:findings')),
-    chip(T.notes, 'notes', 'note', toFind(['note'])),
-  ];
-  host.replaceChildren(...items.flatMap((x, i) => i ? [el('span', {class: 'chipsep',
-                                                                    text: '\u00b7'}), x] : [x]));
-}
-paintChips();
 /* *** ON A PHONE THE STRIP IS A MENU, NOT ROWS OF TABS. *** One button names the tab you are on,
    and opens the grouped list; picking a tab closes it. */
 const NAVM = document.getElementById('navmenu'), NAVEL = document.querySelector('nav');
