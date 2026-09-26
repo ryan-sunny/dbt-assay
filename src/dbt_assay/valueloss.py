@@ -95,21 +95,38 @@ def candidates(project, digests, schema=None) -> list[Candidate]:
     return out
 
 
-def _lost_expr(c: Candidate) -> str:
+# *** AN EMPTY STRING IS ABSENT, NOT LOST. *** (RC box, b571fc9: 31 of 61 queued hits had only
+# '' in their sample; `TRY_CAST(const_year AS INT)` "lost" 118,145 values, every one blank.) A
+# source value that is empty or whitespace after trimming, or a usual null token, carried nothing
+# for the expression to lose, so it counts as neither present nor lost.
+NULL_TOKENS = ("", "NA", "N/A", "NULL", "NONE", "NAN")
+
+
+def _has_value(col: str, dialect: str = "duckdb") -> str:
+    text = "string" if dialect == "bigquery" else "varchar"
+    toks = ", ".join(f"'{t}'" for t in NULL_TOKENS)
+    return f"({col} is not null and upper(trim(cast({col} as {text}))) not in ({toks}))"
+
+
+def _lost_expr(c: Candidate, dialect: str = "duckdb") -> str:
     """Portable: no FILTER clause (Snowflake and BigQuery have none)."""
+    has = _has_value(c.source_column, dialect)
     if c.cause == "variant":
-        return f"sum(case when {c.source_column} is not null then 1 else 0 end)"
-    return (f"sum(case when {c.source_column} is not null and ({c.expression}) is null "
-            f"then 1 else 0 end)")
+        return f"sum(case when {has} then 1 else 0 end)"
+    return f"sum(case when {has} and ({c.expression}) is null then 1 else 0 end)"
 
 
-def _present_expr(c: Candidate) -> str:
-    return "count(*)" if c.cause == "variant" else f"count({c.source_column})"
+def _present_expr(c: Candidate, dialect: str = "duckdb") -> str:
+    """A variant's share is of every row (the base column is what readers see); a transform's is
+    of the source values that carry something."""
+    if c.cause == "variant":
+        return "count(*)"
+    return f"sum(case when {_has_value(c.source_column, dialect)} then 1 else 0 end)"
 
 
 def _sample_sql(c: Candidate, dialect: str = "duckdb") -> str:
-    cond = (f"{c.source_column} is not null" if c.cause == "variant" else
-            f"{c.source_column} is not null and ({c.expression}) is null")
+    has = _has_value(c.source_column, dialect)
+    cond = has if c.cause == "variant" else f"{has} and ({c.expression}) is null"
     text = "string" if dialect == "bigquery" else "varchar"
     return (f"select distinct cast({c.source_column} as {text}) as v from {c.relation} "
             f"where {cond} limit {SAMPLE}")
@@ -143,7 +160,8 @@ create table if not exists value_loss_tries (
 
 
 def _key(c: Candidate) -> str:
-    return f"{c.cause}|{c.source_column}|{c.expression}"
+    # v2: blanks are absent. A count made before that is not reused.
+    return f"v2|{c.cause}|{c.source_column}|{c.expression}"
 
 
 def _norm(rel: str) -> tuple:
@@ -325,7 +343,8 @@ def measure(cands: list[Candidate], project, probe_mod, project_dir: str,
         # hard: no statement may run past what is left of the budget
         remaining = max(5, int(max_seconds - (_t.monotonic() - started)))
         stmts = [probe_mod.Statement(
-            "select " + ", ".join(f"{_lost_expr(c)} as l{i}, {_present_expr(c)} as p{i}"
+            "select " + ", ".join(f"{_lost_expr(c, dialect)} as l{i}, "
+                                  f"{_present_expr(c, dialect)} as p{i}"
                                   for i, c in enumerate(by_rel[r])) + f" from {r}",
             caller="assay.valueloss", kind="count", limit=1, relation=r,
             columns=sorted({c.source_column for c in by_rel[r]}),

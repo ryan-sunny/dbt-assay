@@ -98,3 +98,20 @@ def test_counted_once_then_read_from_the_last_count_until_the_data_moves(tmp_pat
     assert "left for the next run" in said[0]
     assert got[0].evidence.get("data_changed_since") is True
     s.close()
+
+
+def test_a_blank_or_a_null_token_is_absent_not_lost():
+    """RC box, b571fc9: `TRY_CAST(const_year AS INT)` "lost" 118,145 values and every one was ''.
+    The SQL runs on DuckDB here, so the rule is tested where it is counted."""
+    import duckdb
+    con = duckdb.connect()
+    con.execute("create table t (v varchar)")
+    con.execute("insert into t values ('1990'), (''), ('   '), ('NA'), ('n/a'), ('Null'), "
+                "(null), ('abc'), ('19x')")
+    c = valueloss.Candidate(model="model.p.m", model_name="m", column="y", relation="t",
+                            source_column="v", expression="TRY_CAST(v AS INT)", cause="transform")
+    lost, present = con.execute(f"select {valueloss._lost_expr(c)}, {valueloss._present_expr(c)} "
+                                f"from t").fetchone()
+    assert (lost, present) == (2, 3)                      # 'abc' and '19x' lost, of three values
+    got = sorted(r[0] for r in con.execute(valueloss._sample_sql(c)).fetchall())
+    assert got == ["19x", "abc"]

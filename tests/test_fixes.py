@@ -303,5 +303,9 @@ def test_triage_leads_with_what_is_broken_now_and_counts_notes_once():
     fs = [{"id": "a", "check": "test_is_failing", "tier": "customer-facing"},
           {"id": "b", "check": "code_contradicts_a_claim", "tier": "the rest"},
           {"id": "c", "check": "column_has_no_description", "tier": "the rest"}]
-    t = priority.triage(fs, {"a", "b"})
-    assert t == {"queued": 2, "broken": 1, "broken_paid": 1, "look": 1, "look_paid": 0, "notes": 1}
+    fs.append({"id": "d", "check": "values_lost_at_hop", "tier": "customer-facing"})
+    fs.append({"id": "e", "check": "arbitrary_pick", "tier": "the rest",
+               "evidence": {"why_it_is_back": {"premise": "k"}}})
+    t = priority.triage(fs, {"a", "b", "d", "e"})
+    # a count still to be read against the data is worth a look; a broken premise is broken
+    assert t == {"queued": 4, "broken": 2, "broken_paid": 1, "look": 2, "look_paid": 1, "notes": 1}

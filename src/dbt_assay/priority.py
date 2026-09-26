@@ -138,7 +138,12 @@ def of_many(items: list, ctx: Context | None = None) -> dict:
 # of shit is insane") What a surface leads with is what the policy queues for a person, split into
 # what is broken now and what is worth a look, the paid report first. The notes (annotate) are
 # counted once, on one line, and stay reachable. No verdict on the warehouse as a whole.
-BROKEN_NOW = frozenset(HARM) | {"values_lost_at_hop", "join_fans_out"}
+# Broken now is only what the project's own evidence says is failing: a dbt test, a proven
+# guarantee, a key that held, a premise a finding was held back on. A count that still needs
+# reading against the data (values lost at a hop, half of them blanks on the first box run) is
+# worth a look, however loud it is.
+BROKEN_NOW = frozenset({"test_is_failing", "guarantee_lost", "guarantee_does_not_hold",
+                        "key_stopped_holding"})
 
 
 def triage(findings, queued: set, ctx: Context | None = None) -> dict:
@@ -154,7 +159,10 @@ def triage(findings, queued: set, ctx: Context | None = None) -> dict:
         out["queued"] += 1
         tier = _get(f, "tier", None) if isinstance(f, dict) else None
         paid = (tier or of(f, ctx)["tier"]) == "customer-facing"
-        k = "broken" if str(_get(f, "check", "")) in BROKEN_NOW else "look"
+        ev = _get(f, "evidence", None) or {}
+        broken = (str(_get(f, "check", "")) in BROKEN_NOW
+                  or isinstance(ev.get("why_it_is_back"), dict))
+        k = "broken" if broken else "look"
         out[k] += 1
         out[k + "_paid"] += paid
     return out
