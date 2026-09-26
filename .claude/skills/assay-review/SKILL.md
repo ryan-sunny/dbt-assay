@@ -67,14 +67,14 @@ assay review --load latest --store assay.duckdb
 records every verdict at once. A card nobody answered is never submitted and never recorded, and
 `--load` names each row it did not record rather than reporting a total that hides them.
 
-**Do not end the turn on "open this file".** The download writes `handback.json` and NOTHING
-happens until it is loaded — the most valuable work in this whole system, sitting in a downloads
-folder. Load it the moment they say they have filled it in: `load_handback()` over MCP finds the
-newest one in the handback folder (`~/Downloads` unless `review.handbacks` or `--handbacks` says
-otherwise), or `assay review --load`. On a server, `assay serve` receives the handback from the
-form directly and applies verdicts only; pass `verdicts_only=True` there too, because that
-`audit.yml` comes from git. It is the only path that files
-`human` verdicts, and it files only what the file carries.
+**Do not end the turn on "open this file".** The download writes a `decisions-*.json` file and
+NOTHING happens until it is loaded — the most valuable work in this whole system, sitting in a
+downloads folder. Load it the moment they say they have filled it in: `load_handback()` over MCP
+finds the newest one in the decisions folder (`~/Downloads` unless `review.handbacks` or
+`--handbacks` says otherwise), or `assay review --load`. On a server, `assay serve` records the
+form's save directly (verdicts only, because that `audit.yml` comes from git) and keeps it as a
+decisions file; `decisions(name)` says what to apply and where to commit it. It is the only path
+that files `human` verdicts, and it files only what the file carries.
 
 **The expensive half is what makes each card cheap, and the judged tier does it.** `assay read`
 reads every unruled card once and writes the file the form takes -- a verdict in the form's own

@@ -335,7 +335,7 @@ every model it applies to.
 | **Monitoring** | the staleness threshold, derived from how often this project actually builds rather than picked, with the cadence it came from beside it. Needs `--monitoring volume.json` |
 | **Settings** | the rest of `audit.yml` a person acts on — gating floors, the row-loss threshold, the spend cap, the rate card — each with what assay ships beside what this project set |
 
-What they write comes back as a **proposal**, never a write. `assay review --load handback.json`
+What they write comes back as a **proposal**, never a write. `assay review --load <the file>`
 records the verdicts and prints the `audit.yml` changes as a diff; `--apply` writes them. It edits
 lines rather than re-serialising, so comments, key order, blank lines and quoting all survive —
 measured on a real 253-line file: 53 comment lines, identical before and after. A path it cannot
@@ -349,7 +349,7 @@ measured agreement rate in front of you, and `assay effectiveness` is that surfa
 One self-contained file that opens from `file://` — no server, no port, nothing left running. Each
 card carries what assay found, the claim it quotes, the model's own SQL with line numbers, and any
 reading an agent already recorded. Answers are kept in the browser as you go, so the tab can be
-closed and come back to. The download button writes `handback.json`.
+closed and come back to. The download button writes `decisions-<when>-<who>.json`.
 
 **A card nobody answered is never submitted and never recorded**, and `--load` names every row it
 did not record rather than printing a total that hides them. One card per `(model, check)`, because

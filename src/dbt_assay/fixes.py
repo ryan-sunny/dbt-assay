@@ -1030,14 +1030,15 @@ create table if not exists fix_decisions (
     kind        varchar,
     fix_key     varchar,
     title       varchar,
-    status      varchar,      -- approved | deferred | rejected | applied | verified
+    status      varchar,      -- approved | deferred | rejected | applied | verified | proposed
     note        varchar,
     decided_by  varchar,
     decided_at  timestamp,
     detail      varchar       -- what verify found, as JSON
 );
 """
-STATUSES = ("approved", "deferred", "rejected", "applied", "verified")
+# `proposed` is what a fix is before anyone decides; a row saying so is a withdrawn decision
+STATUSES = ("approved", "deferred", "rejected", "applied", "verified", "proposed")
 
 
 def record(store, fix_id: str, status: str, *, kind: str = "", key: str = "", title: str = "",
@@ -1045,8 +1046,17 @@ def record(store, fix_id: str, status: str, *, kind: str = "", key: str = "", ti
     if status not in STATUSES:
         raise ValueError(f"a fix is {', '.join(STATUSES)}, not {status!r}")
     store.con.execute(DDL)
+    journal = getattr(store, "journal", None)
+    before = statuses(store).get(fix_id) if journal is not None else None
     store.con.execute("insert into fix_decisions values (?, ?, ?, ?, ?, ?, ?, now(), ?)",
                       [fix_id, kind, key, title, status, note, by, detail])
+    if journal is not None:
+        # what this decision replaced, so a withdrawn save puts it back (handback.withdraw)
+        at = store.con.execute("select max(decided_at) from fix_decisions where fix_id = ?",
+                               [fix_id]).fetchone()[0]
+        journal.append({"table": "fix_decisions", "fix_id": fix_id, "kind": kind, "key": key,
+                        "title": title, "before": before,
+                        "after": {"status": status, "by": by, "at": str(at)}})
 
 
 def statuses(store) -> dict:

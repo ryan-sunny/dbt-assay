@@ -1849,44 +1849,61 @@ function download() {
   const saved = document.getElementById('saved');
   const close = () => Object.assign(el('button', {text: 'close'}),
                                     {onclick: () => { saved.hidden = true; }});
-  /* *** SERVED, IT SENDS; OPENED FROM DISK, IT DOWNLOADS. *** (S1) A browser cannot save into a
-     chosen folder, so on a server the download landed where nothing could pick it up. Over
-     http(s) the handback goes to the server that served this form, which keeps it for the
-     handbacks page to apply. */
-  if (SERVED) {
-    fetch(new URL('api/handback', location.href), {method: 'POST',
-      headers: {'content-type': 'application/json'}, body: body})
-      .then(r => r.json().then(d => ({ok: r.ok, d})))
-      .then(({ok, d}) => {
-        saved.replaceChildren(...(ok
-          ? [el('b', {text: 'Sent to the server'}),
-             el('span', {text: ' with ' + n + ' verdict(s)' + (e ? ' and ' + e + ' config '
-               + 'change(s), which the server will not apply (audit.yml there comes from git): '
-               + 'apply them from a checkout with `assay review --load ' + d.saved + ' --apply` '
-               + 'and commit audit.yml' : '')
-               + '. It is saved as ' + d.saved + ' and nothing is recorded until it is applied: '}),
-             el('a', {href: new URL(d.view || 'handbacks', location.href).href,
-                      text: 'review and apply it'})]
-          : [el('b', {text: 'The server did not take it: '}), el('span', {text: d.error || ''})]),
-          close());
-        saved.hidden = false;
-      })
-      .catch(err => { saved.replaceChildren(el('b', {text: 'Could not reach the server: '}),
-                                             el('span', {text: String(err)}), close());
-                      saved.hidden = false; });
+  /* *** SERVED, SAVE RECORDS; OPENED FROM DISK, IT DOWNLOADS. *** (D14) Served, the decisions
+     go to the server that served this form, which records them and keeps them as a file; the
+     agent that applies the approved fixes commits that file with them. Opened from disk, the
+     same file downloads, for `assay review --load` or the agent's `load_handback`. */
+  const by = (document.getElementById('by').value || '').trim();
+  /* the file is the record of who decided, so it does not leave without a name */
+  if (!by) {
+    saved.replaceChildren(el('b', {text: 'Put your name in first:'}),
+      el('span', {text: ' the file records who made these decisions.'}), close());
+    saved.hidden = false;
+    document.getElementById('by').focus();
     return;
   }
+  if (SERVED) {
+    const show = (...parts) => { saved.replaceChildren(...parts, close()); saved.hidden = false; };
+    const next = name => [el('span', {text: ' Next, ask your agent to apply what you approved: '
+      + 'it opens one pull request with the fixes, the audit.yml changes and '}),
+      el('code', {text: name}), el('span', {text: ', so git records who decided what.'})];
+    const poll = (name, tries) => fetch(new URL('api/decisions/' + name, location.href))
+      .then(r => r.json()).then(d => {
+        if (d.state === 'applied')
+          show(el('b', {text: 'Saved.'}), el('span', {text: ' ' + (d.detail || '').charAt(0)
+               .toUpperCase() + (d.detail || '').slice(1) + '.'}), ...next(name));
+        else if (d.state === 'failed')
+          show(el('b', {text: 'Not recorded: '}), el('span', {text: d.detail || ''}));
+        else if (tries > 0) setTimeout(() => poll(name, tries - 1), 1000);
+        else show(el('b', {text: 'Saved as ' + name + ', not recorded yet: '}),
+                  el('span', {text: (d.detail || 'the store is busy')
+                    + '. The server keeps trying; nothing needs doing here.'}), ...next(name));
+      });
+    show(el('b', {text: 'Saving…'}));
+    fetch(new URL('api/decisions', location.href), {method: 'POST',
+      headers: {'content-type': 'application/json'}, body: body})
+      .then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => ok ? poll(d.saved, 30)
+                            : show(el('b', {text: 'The server did not take it: '}),
+                                   el('span', {text: d.error || ''})))
+      .catch(err => show(el('b', {text: 'Could not reach the server: '}),
+                         el('span', {text: String(err)})));
+    return;
+  }
+  const stamp = new Date().toISOString().slice(0, 16).replace('T', '-').replace(':', '');
+  const fname = 'decisions-' + stamp + '-'
+    + ((by.replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32)) || 'anonymous') + '.json';
   const url = URL.createObjectURL(new Blob([body], {type: 'application/json'}));
-  const a = el('a', {href: url, download: 'handback.json'});
+  const a = el('a', {href: url, download: fname});
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   /* *** NOTHING SAID WHERE THE FILE WENT OR WHAT TO DO WITH IT. *** (W1) */
   saved.replaceChildren(
-    el('b', {text: 'handback.json saved'}),
+    el('b', {text: fname + ' saved'}),
     el('span', {text: ' to your browser’s download folder (usually Downloads), with '
       + n + ' verdict(s)' + (e ? ' and ' + e + ' config change(s)' : '') + '. Next, run '}),
     el('code', {text: 'assay review --load latest'}),
-    el('span', {text: ' or ask your agent to load the handback. Nothing is recorded until then.'}),
+    el('span', {text: ' or ask your agent to load it. Nothing is recorded until then.'}),
     close());
   saved.hidden = false;
 }
@@ -2543,11 +2560,9 @@ document.getElementById('next').onclick = () => step(1);
 document.getElementById('dl').onclick = download;
 if (SERVED) {
   const b = document.getElementById('dl');
-  b.textContent = 'send to the server';
-  b.setAttribute('data-tip', 'Sends your verdicts to the server that served this form. It keeps '
-    + 'them on its handbacks page, where they are applied. Config edits (words, kinds of failing '
-    + 'row, settings) are listed there and not applied, because audit.yml on the server comes '
-    + 'from git: apply them from a checkout with `assay review --load <the saved file> --apply`.');
+  b.textContent = 'save';
+  b.setAttribute('data-tip', 'Records your decisions on this server and keeps them as a file; '
+    + 'your agent applies what you approved in one pull request that commits that file.');
 }
 document.getElementById('clear').onclick = () => {
   if (!confirm('Clear every answer on this form? This cannot be undone.')) return;
@@ -2625,7 +2640,7 @@ def form_html(card_list: list, sql: dict, project: str, generated_at: str, versi
 <span class="ident">
   <span class="count" id="count"></span>
   <input type="text" id="by" placeholder="your name" style="width:140px">
-  <button class="go hint" id="dl" data-tip="Answers are kept in this browser as you go, so you can close the tab and come back. Nothing is recorded until you download this file and run: assay review --load handback.json&#10;&#10;Verdicts are recorded then. What you wrote under Words, Explanations, Waivers or Settings is shown as a diff against audit.yml and written only with --apply. A card you did not answer is never submitted.">download handback.json</button>
+  <button class="go hint" id="dl" data-tip="Answers are kept in this browser as you go. This downloads them as a file, and nothing is recorded until you or your agent loads it (assay review --load latest).">download decisions</button>
   <button id="clear">clear</button>
 </span></h1>
 <!-- *** WHAT YOU DO WITH THE WHOLE FORM SITS WITH THE TAB STRIP, NOT INSIDE A TAB. ***

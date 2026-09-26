@@ -93,6 +93,33 @@ def test_apply_is_refused_until_a_person_approved(tmp_path, monkeypatch):
     assert json.dumps(v)
 
 
+def test_on_the_box_apply_returns_the_files_and_writes_nothing(tmp_path, monkeypatch):
+    """D14: the box's MCP server (--verdicts-only) runs a project that comes from git, so the
+    agent gets the files and the diff to write in its own branch, and the items the person left
+    out of the approval come back as excluded."""
+    from dbt_assay.mcp_server import Backend
+    fx = fixes.Fix("document", "model.p.a", "Document a", findings=["f1"],
+                   files={"models/_a.yml": "version: 2\n"}, new_files=["models/_a.yml"],
+                   items=[{"id": "i1", "model": "a"}, {"id": "i2", "model": "a"}])
+    s = Store(str(tmp_path / "s.duckdb"))
+    fixes.record(s, fx.id, "approved", by="ryan", detail=json.dumps({"excluded": ["i2"]}))
+    s.close()
+    be = Backend(str(tmp_path), store_path=str(tmp_path / "s.duckdb"), verdicts_only=True)
+    monkeypatch.setattr(be, "_fixes", lambda: ([fx], [], Store(str(tmp_path / "s.duckdb"))))
+    monkeypatch.setattr(be, "state", lambda: SimpleNamespace(
+        project=SimpleNamespace(project_root=tmp_path)))
+    got = be.apply_plan_item(fx.id)
+    assert got["wrote"] == [] and not (tmp_path / "models/_a.yml").exists()
+    assert got["files"] == {"models/_a.yml": "version: 2\n"} and "+version: 2" in got["diff"]
+    assert [i["id"] for i in got["items"]] == ["i1"]
+    assert [i["id"] for i in got["excluded"]] == ["i2"]
+    assert fixes.statuses(Store(str(tmp_path / "s.duckdb")))[fx.id]["status"] == "approved", \
+        "a fix nobody wrote in a branch was recorded as applied"
+    assert [i["id"] for i in be.plan_item(fx.id)["excluded"]] == ["i2"]
+    assert [r["id"] for r in be.plan_items(status="approved")["fixes"]] == [fx.id]
+    assert be.plan_items(status="rejected")["fixes"] == []
+
+
 def test_judged_roles_become_tests_only_when_counted_to_pass(tmp_path):
     """Graduation (assay-loops.md): a judged foreign key becomes a relationships test to the
     model whose key it is, a status flag an accepted_values test, and only after a count says

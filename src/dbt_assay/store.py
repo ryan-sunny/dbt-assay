@@ -1016,6 +1016,21 @@ class Store:
             _valid_date(until)
         if source not in ("human", "label", "replay", "agent"):
             raise ValueError("source must be human, label, replay or agent")
+        # *** A SAVE THAT CANNOT BE UNDONE IS NOT ONE A PERSON CAN TAKE BACK. ***
+        # A verdict replaces the row under its key, so whatever it replaced is gone unless it is
+        # kept here first. `journal` is set by `handback.record`; the decisions file carries it,
+        # and `handback.withdraw` puts each row back.
+        journal = getattr(self, "journal", None)
+        before = None
+        if journal is not None:
+            cur = self.con.execute(
+                "select * from adjudications where subject = ? and question = ? "
+                "and prompt_version = ?", [subject, question, prompt_version or ""])
+            got = cur.fetchone()
+            if got is not None:
+                before = {d[0]: (str(v) if isinstance(v, datetime) else v)
+                          for d, v in zip(cur.description, got)}
+        at = datetime.now(timezone.utc)
         # *** NAME THE COLUMNS. ***
         # A positional insert assumes an order, and a migration appends new columns at the END, so
         # the two disagree the moment a store is upgraded -- writing "label" into a timestamp.
@@ -1027,7 +1042,17 @@ class Store:
                values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [subject, question, family, answered, verdict, correction, note,
              who or "unknown", source, prompt_version or "", model_version or "",
-             decision_key or "", datetime.now(timezone.utc), until or ""])
+             decision_key or "", at, until or ""])
+        if journal is not None:
+            # read back rather than formatted here: the column is a plain timestamp, and the
+            # stored value is the one a later withdraw compares against
+            wrote = self.con.execute(
+                "select decided_at from adjudications where subject = ? and question = ? "
+                "and prompt_version = ?", [subject, question, prompt_version or ""]).fetchone()
+            journal.append({"table": "adjudications", "subject": subject, "question": question,
+                            "prompt_version": prompt_version or "", "before": before,
+                            "after": {"verdict": verdict, "decided_by": who or "unknown",
+                                      "decided_at": str(wrote[0]) if wrote else ""}})
 
     def save_claims(self, rows: list) -> None:
         """Named columns, never positional. Positional inserts broke twice after a migration."""

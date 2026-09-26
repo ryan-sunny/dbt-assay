@@ -1,23 +1,24 @@
-"""`assay serve`: the report and the review form over http, and handbacks into the store.
+"""`assay serve`: the report and the review form over http, and a person's decisions into the store.
 
-*** THE PAGE ALWAYS SAID A SERVER WAS THE NEXT RUNG. ***
-Opened from disk, the form can only download its handback, and a browser cannot be told which
-folder to save into, so on a server nothing could pick the file up. Served, the form posts the
-handback here instead (S1), it lands in the handback folder, and a person applies it from the
-handbacks page without a terminal (S2).
+*** SAVE RECORDS, AND KEEPS THE FILE. *** (D14) Served, the form's save posts here; the decisions
+are recorded in the store straight away (the served report is what the person just read, so there
+is nothing to review twice) and kept as `decisions-<when>-<who>.json` in the decisions folder. That
+file is the record: the agent that applies the approved fixes fetches it through the server's MCP
+(`decisions`), commits it with them, and `withdraw_decisions` reads it to take the save back.
+Opened from disk, the form downloads the same file instead.
 
 *** WHAT IT DOES AND DOES NOT DO. ***
 - It serves the files the scheduled run already built (assay.html, review.html and their data).
   It never renders a page on request.
-- Applying a handback records its VERDICTS ONLY. The config section is refused and listed, because
-  on a server audit.yml comes from git (S3).
-- DuckDB has one writer. If the scheduled run holds the store, the handback waits and is retried
+- It records VERDICTS and fix decisions only. Config edits stay in the file, as edits for the
+  repository, because on a server audit.yml comes from git (S3).
+- DuckDB has one writer. If the scheduled run holds the store, the save waits and is retried
   every minute until it can be recorded.
-- After a handback is applied, the pages are rebuilt in the background when `--target` is given,
-  so the served report shows the new verdicts.
+- After a save is recorded, the pages are rebuilt in the background when `--target` is given,
+  so the served report shows the new decisions.
 - It has no authentication. Bind it to an address only trusted people can reach (a tailnet).
 
-uvicorn serves it, Starlette routes it; one worker thread for applies, one for rebuilds.
+uvicorn serves it, Starlette routes it; one worker thread for recording, one for rebuilds.
 """
 from __future__ import annotations
 
@@ -36,7 +37,7 @@ from . import handback as hb
 
 MAX_BODY = 20 * 1024 * 1024
 RETRY_SECONDS = 60
-_NAME = re.compile(r"^handback[\w.-]*\.json$")
+_NAME = re.compile(r"^(decisions-|handback)[\w.-]*\.json$")
 
 
 class Server:
@@ -59,7 +60,7 @@ class Server:
         self._rebuild_wanted = threading.Event()
         self._stop = threading.Event()
 
-    # ------------------------------------------------------------------ handback files and state
+    # ------------------------------------------------------------------ decisions files and state
     def _status_path(self, name: str) -> Path:
         return self.handbacks / (name + ".status")
 
@@ -79,44 +80,35 @@ class Server:
             return st
 
     def names(self) -> list[str]:
-        return sorted((p.name for p in self.handbacks.glob("handback*.json")), reverse=True)
+        return sorted((p.name for p in hb._found(self.handbacks)), reverse=True)
 
     def save(self, payload: dict) -> str:
-        """Keep a handback under a name nobody else's can collide with."""
-        by = re.sub(r"[^\w-]+", "-", str(payload.get("by") or "anonymous"))[:32].strip("-")
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        base = f"handback-{stamp}-{by or 'anonymous'}"
-        name, n = base + ".json", 1
-        while (self.handbacks / name).exists():
-            n += 1
-            name = f"{base}-{n}.json"
-        (self.handbacks / name).write_text(json.dumps(payload, indent=2, default=str))
-        self.set_status(name, state="new", detail="saved; not applied yet")
+        """Keep a save under a name nobody else's can collide with, and queue it to be recorded."""
+        with self.lock:
+            name = hb.decisions_name(self.handbacks, payload.get("by") or "")
+            (self.handbacks / name).write_text(json.dumps(payload, indent=2, default=str))
+        self.set_status(name, state="queued", detail="recording")
+        self.wake.set()
         return name
 
     def entry(self, name: str) -> dict:
-        p = self.handbacks / name
+        if not _NAME.match(name) or not (self.handbacks / name).exists():
+            return {"name": name, "error": f"no decisions file called {name}"}
         try:
-            payload = json.loads(p.read_text())
+            payload = json.loads((self.handbacks / name).read_text())
         except (OSError, ValueError) as e:
             return {"name": name, "error": f"cannot be read: {e}", **self.status(name)}
         return {"name": name, "preview": hb.preview(payload), **self.status(name)}
 
-    # ------------------------------------------------------------------ applying, with the lock
-    def apply(self, name: str) -> dict:
-        """Queue one handback. The worker records it, retrying while the store is busy."""
-        if not _NAME.match(name) or not (self.handbacks / name).exists():
-            return {"error": f"no handback called {name}"}
-        st = self.status(name)
-        if st.get("state") == "applied":
-            return {"name": name, **st, "note": "already applied; nothing recorded twice"}
-        st = self.set_status(name, state="queued", detail="waiting for the worker")
-        self.wake.set()
-        return {"name": name, **st}
-
+    # ------------------------------------------------------------------ recording, with the lock
     def _apply_one(self, name: str) -> None:
         from .store import Store, StoreLocked
-        payload = json.loads((self.handbacks / name).read_text())
+        path = self.handbacks / name
+        payload = json.loads(path.read_text())
+        if hb.is_saved(payload):
+            # recorded already (a restart between the write and the status): never twice
+            self.set_status(name, state="applied", detail="recorded")
+            return
         try:
             store = Store(self.store)
         except StoreLocked as e:
@@ -129,15 +121,21 @@ class Server:
             return
         try:
             got = hb.record(store, payload)
+            hb.write_decisions(path, payload, got)
         except Exception as e:                                   # noqa: BLE001
             self.set_status(name, state="failed", detail=f"recording failed: {e}")
             return
         finally:
             store.close()
-        refused = hb.refused_config(payload)
-        self.set_status(name, state="applied", result=got, refused=refused,
-                        detail=f"recorded {got['recorded']} verdict(s) as {got['by']}"
-                               + (f"; refused {len(refused)} config edit(s)" if refused else ""))
+        edits = hb.refused_config(payload)
+        fd = got.get("fixes_decided") or {}
+        self.set_status(name, state="applied",
+                        result={k: v for k, v in got.items() if k != "undo"},
+                        config_edits=edits,
+                        detail=f"recorded {got['recorded']} verdict(s) and "
+                               f"{sum(fd.values())} fix decision(s) as {got['by']}"
+                               + (f"; {len(edits)} config edit(s) are in the file, for the "
+                                  f"repository" if edits else ""))
         self._rebuild_wanted.set()
 
     def _worker(self) -> None:
@@ -210,106 +208,6 @@ class Server:
         self._rebuild_wanted.set()
 
 
-# ---------------------------------------------------------------------- the handbacks page
-CSS = """
-:root{--paper:#faf8f3;--ink:#1a1714;--ash:#615a52;--faint:#948c81;--rule:#cec5b6;
---rule2:#e3dbcd;--rust:#a8491a}
-*{box-sizing:border-box}
-body{margin:0;background:var(--paper);color:var(--ink);
-font:15px/1.55 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif}
-header{padding:16px 26px 10px;border-bottom:3px double var(--ink);display:flex;gap:18px;
-align-items:baseline;flex-wrap:wrap}
-header h1{margin:0;font-size:24px;font-weight:400}
-header a{color:var(--rust)}
-main{padding:18px 26px;max-width:none}
-.up{border:1px solid var(--rule);background:#f1ede4;padding:12px 14px;margin:0 0 18px;
-display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-.hb{border-top:1px solid var(--rule);padding:12px 0}
-.hbh{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
-.name{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
-.state{font-size:13px;border:1px solid var(--rule);padding:0 7px}
-.state.applied{border-color:var(--ink)}
-.state.waiting,.state.failed{border-color:var(--rust);color:var(--rust)}
-.detail{color:var(--ash);font-size:14px;margin:4px 0}
-dl{display:grid;grid-template-columns:auto 1fr;gap:2px 16px;margin:6px 0;font-size:14px}
-dt{color:var(--ash)}dd{margin:0}
-button{font:inherit;font-size:14px;border:1px solid var(--rust);color:var(--rust);
-background:none;padding:3px 12px;cursor:pointer}
-button:hover{background:var(--rust);color:var(--paper)}
-button:disabled{border-color:var(--rule);color:var(--faint);background:none;cursor:default}
-.refused{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
-color:var(--ash);margin:2px 0 0 0;padding-left:14px;border-left:2px solid var(--rule)}
-.empty{color:var(--faint);font-style:italic}
-.rb{font-size:13.5px;color:var(--ash)}
-"""
-
-JS = r"""
-const $ = s => document.querySelector(s);
-async function refresh() {
-  const r = await fetch('api/handbacks'); const d = await r.json();
-  $('#rb').textContent = d.rebuild.state === 'idle' ? '' :
-    'pages: ' + d.rebuild.state + (d.rebuild.detail ? ' (' + d.rebuild.detail + ')' : '')
-    + (d.rebuild.at ? ', ' + d.rebuild.at : '');
-  const host = $('#list'); host.replaceChildren();
-  if (!d.handbacks.length) { const p = document.createElement('p'); p.className = 'empty';
-    p.textContent = 'No handbacks yet. Send one from the review form, or upload a file above.';
-    host.append(p); return; }
-  for (const h of d.handbacks) host.append(row(h));
-}
-function el(t, cls, text) { const n = document.createElement(t); if (cls) n.className = cls;
-  if (text != null) n.textContent = text; return n; }
-function row(h) {
-  const box = el('div', 'hb'); const head = el('div', 'hbh');
-  head.append(el('span', 'name', h.name), el('span', 'state ' + h.state, h.state));
-  const b = el('button', null, h.state === 'applied' ? 'applied' : 'apply the verdicts');
-  b.disabled = ['applied', 'queued'].includes(h.state) || !!h.error;
-  b.onclick = async () => { b.disabled = true;
-    await fetch('api/apply', {method: 'POST', headers: {'content-type': 'application/json'},
-                              body: JSON.stringify({name: h.name})});
-    setTimeout(refresh, 800); };
-  head.append(b); box.append(head);
-  if (h.detail) box.append(el('div', 'detail', h.detail));
-  if (h.error) { box.append(el('div', 'detail', h.error)); return box; }
-  const p = h.preview, dl = el('dl');
-  const kv = (k, v) => { dl.append(el('dt', null, k), el('dd', null, v)); };
-  kv('by', p.by);
-  kv('verdicts', p.verdicts + ' (' + Object.entries(p.by_verdict).map(([k, n]) => n + ' ' + k)
-                                        .join(', ') + ')');
-  kv('questions', Object.entries(p.by_question).map(([k, n]) => k + ' ' + n).join(', ') || 'none');
-  if (p.recorded_nothing) kv('not recorded', p.recorded_nothing + ' row(s) with no verdict');
-  box.append(dl);
-  if (p.config_edits.length) {
-    box.append(el('div', 'detail', p.config_edits.length + ' config edit(s) '
-      + (h.state === 'applied' ? 'were refused' : 'will be refused')
-      + '. audit.yml on this server comes from git: apply them from a checkout of the repository '
-      + 'with `assay review --load ' + h.name + ' --apply`, then commit audit.yml:'));
-    for (const e of p.config_edits) box.append(el('div', 'refused', e));
-  }
-  return box;
-}
-$('#file').onchange = async ev => {
-  const f = ev.target.files[0]; if (!f) return;
-  const r = await fetch('api/handback', {method: 'POST', headers: {'content-type': 'application/json'},
-                                         body: await f.text()});
-  const d = await r.json(); $('#upmsg').textContent = d.error ? d.error : 'saved as ' + d.saved;
-  ev.target.value = ''; refresh();
-};
-refresh(); setInterval(refresh, 5000);
-"""
-
-
-def handbacks_page() -> str:
-    return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-            f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            f"<title>assay handbacks</title><style>{CSS}</style></head><body>"
-            f"<header><h1>Handbacks</h1><a href='assay.html'>the report</a>"
-            f"<a href='review.html'>the review form</a><span class='rb' id='rb'></span></header>"
-            f"<main><div class='up'><label>upload a handback made elsewhere "
-            f"<input type='file' id='file' accept='.json,application/json'></label>"
-            f"<span id='upmsg' class='detail'></span></div><div id='list'></div></main>"
-            f"<script>{JS}</script></body></html>")
-
-
 # ---------------------------------------------------------------------- http
 # *** UVICORN RUNS IT, STARLETTE ROUTES IT. *** Both come with the `serve` extra (and with `mcp`),
 # so the http layer is a list of routes rather than a request parser written here.
@@ -337,43 +235,41 @@ def server_modules():
 
 def build_app(srv: Server):
     """The Starlette app for one Server. Separate from `run`, so a test can call it."""
-    (Starlette, _Request, FileResponse, HTMLResponse, JSONResponse, RedirectResponse,
+    (Starlette, _Request, FileResponse, _HTMLResponse, JSONResponse, RedirectResponse,
      Response, Route), _uv = server_modules()
 
     async def home(_req):
-        return RedirectResponse("/assay.html" if (srv.pages / "assay.html").exists()
-                                else "/handbacks", status_code=302)
-
-    async def page(_req):
-        return HTMLResponse(handbacks_page(), headers={"Cache-Control": "no-store"})
+        if (srv.pages / "assay.html").exists():
+            return RedirectResponse("/assay.html", status_code=302)
+        return Response("the daily run has not built the report yet", status_code=404,
+                        media_type="text/plain")
 
     async def listing(_req):
-        return JSONResponse({"handbacks": [srv.entry(n) for n in srv.names()],
+        return JSONResponse({"decisions": [srv.entry(n) for n in srv.names()],
                              "rebuild": srv.rebuild})
+
+    async def one(req):
+        out = srv.entry(req.path_params["name"])
+        return JSONResponse(out, status_code=404 if "error" in out and "state" not in out
+                            else 200)
 
     async def body_of(req):
         if int(req.headers.get("content-length") or 0) > MAX_BODY:
-            return None, "the handback is larger than 20 MB"
+            return None, "the decisions are larger than 20 MB"
         try:
             return await req.json(), ""
         except ValueError as e:
             return None, f"not JSON: {e}"
 
-    async def post_handback(req):
+    async def post(req):
         body, why = await body_of(req)
         if body is None:
             return JSONResponse({"error": why}, status_code=400)
         if not isinstance(body, dict) or not isinstance(body.get("verdicts"), list):
-            return JSONResponse({"error": "this is not a handback the review form wrote: it has "
-                                          "no `verdicts` list"}, status_code=400)
+            return JSONResponse({"error": "these are not decisions the review form wrote: there "
+                                          "is no `verdicts` list"}, status_code=400)
         name = srv.save(body)
-        return JSONResponse({"saved": name, "preview": hb.preview(body), "view": "handbacks"})
-
-    async def apply(req):
-        body, why = await body_of(req)
-        out = srv.apply(str((body or {}).get("name") or "")) if body is not None \
-            else {"error": why}
-        return JSONResponse(out, status_code=400 if "error" in out else 200)
+        return JSONResponse({"saved": name, "preview": hb.preview(body), **srv.status(name)})
 
     async def static(req):
         # A file the scheduled run built, and nothing outside that folder.
@@ -390,9 +286,12 @@ def build_app(srv: Server):
         srv.stop()
 
     return Starlette(routes=[
-        Route("/", home), Route("/handbacks", page),
-        Route("/api/handbacks", listing), Route("/api/handback", post_handback, methods=["POST"]),
-        Route("/api/apply", apply, methods=["POST"]), Route("/{path:path}", static),
+        Route("/", home),
+        Route("/api/decisions", listing), Route("/api/decisions", post, methods=["POST"]),
+        Route("/api/decisions/{name}", one),
+        # a form built before 0.54.1 posts here; the daily run rebuilds it, until then it works
+        Route("/api/handback", post, methods=["POST"]),
+        Route("/{path:path}", static),
     ], lifespan=lifespan)
 
 

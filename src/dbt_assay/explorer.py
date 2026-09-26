@@ -186,7 +186,7 @@ cursor:pointer;margin-bottom:-3px}
   nav .secbtns button[aria-selected=true],nav .setbtn[aria-selected=true]{
   border-left-color:var(--ink)}
 }
-main{padding:20px 26px 22px;max-width:1560px;width:100%;flex:1 1 auto;min-height:0}
+main{padding:20px 26px 22px;width:100%;flex:1 1 auto;min-height:0}
 .panel{height:100%;overflow:auto}
 .panel[hidden]{display:none}
 @media (max-height:640px){:root{--lin-h:320px}}

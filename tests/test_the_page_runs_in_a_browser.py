@@ -393,6 +393,7 @@ def test_accept_on_a_card_and_a_waiver_from_the_tab_reach_the_handback(tmp_path,
 
             page.click('button[data-pane="waivers"]')
             page.locator("label.write input[type=checkbox]").first.check()
+            page.fill("#by", "ryan")  # the file records who decided
             with page.expect_download() as dl:
                 page.click("#dl")
             doc = json.loads(dl.value.path().read_text())
@@ -429,6 +430,7 @@ def test_a_waiver_is_written_from_the_card_it_was_decided_on(tmp_path, project_d
     assert r.exit_code == 0, r.output
 
     def handback(page):
+        page.fill("#by", "ryan")  # the file records who decided
         with page.expect_download() as dl:
             page.click("#dl")
         return json.loads(dl.value.path().read_text())
@@ -889,6 +891,7 @@ def test_a_card_can_be_ruled_finding_by_finding_and_loads_back(tmp_path):
             each.locator("summary").click()
             each.locator("select").nth(1).select_option("disagree")
             assert "1 of 3" in each.locator("summary").inner_text()
+            page.fill("#by", "ryan")  # the file records who decided
             with page.expect_download() as dl:
                 page.click("#dl")
             doc = json.loads(dl.value.path().read_text())
@@ -964,6 +967,7 @@ def test_a_fix_is_approved_on_its_card_and_loads_back(tmp_path):
             c.locator(".item input").nth(1).uncheck()
             assert "1 of 2 tests included" in c.inner_text()
             c.locator('input[value="approve"]').check()
+            page.fill("#by", "ryan")  # the file records who decided
             with page.expect_download() as dl:
                 page.click("#dl")
             doc = json.loads(dl.value.path().read_text())
@@ -1074,6 +1078,7 @@ def test_a_group_verdict_answers_its_cards_and_the_view_is_capped(tmp_path):
             page.locator('#p-findings .card input[value="disagree"]').check()
             page.locator("#p-findings .card textarea.note").first.fill("b is fine")
             assert page.locator("#count").inner_text() == "3 of 32 answered"
+            page.fill("#by", "ryan")  # the file records who decided
             with page.expect_download() as dl:
                 page.click("#dl")
             doc = json.loads(dl.value.path().read_text())
@@ -1143,3 +1148,98 @@ def test_the_counts_are_on_the_overview_only_and_open_their_list_in_place(tmp_pa
             assert not errors, errors
         finally:
             browser.close()
+
+
+def _answered_form(tmp_path, project_dir):
+    store = str(tmp_path / "s.duckdb")
+    CliRunner().invoke(app, ["check", "-t", str(project_dir), "--store", store])
+    pages = tmp_path / "pages"
+    pages.mkdir()
+    out = pages / "review.html"
+    r = CliRunner().invoke(app, ["review", "--emit", str(out), "--target", str(project_dir),
+                                 "--store", store])
+    assert r.exit_code == 0, r.output
+    return store, pages, out
+
+
+def test_the_downloaded_decisions_file_is_named_for_who_decided_and_needs_a_name(tmp_path,
+                                                                              project_dir):
+    from playwright.sync_api import sync_playwright
+    _store, _pages, out = _answered_form(tmp_path, project_dir)
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page(accept_downloads=True)
+            got: list = []
+            page.on("download", lambda d: got.append(d))
+            page.goto(out.as_uri())
+            page.click('button[data-pane="findings"]')
+            page.locator("#p-findings .card").first.locator('input[value="agree"]').check()
+            assert page.inner_text("#dl") == "download decisions"
+            page.click("#dl")
+            page.wait_for_timeout(800)
+            assert not got, "it downloaded a file that records nobody"
+            assert "Put your name in first" in page.inner_text("#saved")
+            page.fill("#by", "ryan")
+            with page.expect_download() as dl:
+                page.click("#dl")
+            name = dl.value.suggested_filename
+            assert name.startswith("decisions-") and name.endswith("-ryan.json"), name
+        finally:
+            browser.close()
+
+
+def test_served_the_save_is_recorded_and_the_form_says_what_happens_next(tmp_path, project_dir):
+    """D14 end to end: the served form's save reaches the store and a decisions file, and the
+    form says to ask the agent to apply it."""
+    import json
+    import socket
+    import threading
+    import time
+
+    import uvicorn
+    from playwright.sync_api import sync_playwright
+
+    from dbt_assay import serve
+    store, pages, _out = _answered_form(tmp_path, project_dir)
+    srv = serve.Server(pages, tmp_path / "decisions", store, str(tmp_path), retry_seconds=1)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(serve.build_app(srv), host="127.0.0.1", port=port,
+                                           log_level="warning"))
+    t = threading.Thread(target=server.run, daemon=True)
+    t.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(0.05)
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch()
+            try:
+                page = browser.new_page()
+                page.goto(f"http://127.0.0.1:{port}/review.html")
+                page.click('button[data-pane="findings"]')
+                page.locator("#p-findings .card").first.locator('input[value="agree"]').check()
+                assert page.inner_text("#dl") == "save"
+                page.fill("#by", "ryan")
+                page.click("#dl")
+                page.wait_for_function(
+                    "document.getElementById('saved').innerText.startsWith('Saved.')",
+                    timeout=20000)
+                text = page.inner_text("#saved")
+                assert "ask your agent to apply what you approved" in text, text
+            finally:
+                browser.close()
+    finally:
+        server.should_exit = True
+        t.join(timeout=10)
+    files = list((tmp_path / "decisions").glob("decisions-*-ryan.json"))
+    assert len(files) == 1 and files[0].name in text
+    doc = json.loads(files[0].read_text())
+    assert doc["recorded"]["recorded"] >= 1 and doc["undo"]
+    import duckdb
+    con = duckdb.connect(store, read_only=True)
+    assert con.execute("select count(*) from adjudications where decided_by = 'ryan'"
+                       ).fetchone()[0] >= 1

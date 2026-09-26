@@ -144,7 +144,17 @@ calls are decided in `review`, one verdict per check.
 with `assay fix <id> --approve`. Then, in a branch: `apply_plan_item(id)`, `dbt parse` (or
 `compile` when SQL moved), `verify_plan_item(id)`, one pull request per batch. `plan_item(id)`
 shows the diff first. Never approve one yourself, and never hand-edit what a fix would write
-instead of applying it: the fix carries the recipe that proves it safe.
+instead of applying it: the fix carries the recipe that proves it safe. A batch's `excluded`
+items are the ones the person left out: never add them.
+
+**"Apply what I approved", when the form is served from a server.** The form's save records the
+decisions on the server and keeps them as a decisions file. Through that server's MCP:
+`decisions()` lists the saves, `decisions(name)` gives one in full. Then, in one branch:
+`apply_plan_item(id)` for each id in `approved` (the server writes nothing: write the `files`
+it returns), apply `config.diff` to `audit.yml`, copy the file to `assay_decisions/<name>`, and
+commit all three in one pull request, so git records who decided what. **To roll it back:**
+`withdraw_decisions(name, by=...)` puts the store back, and reverting that pull request takes the
+fixes, `audit.yml` and the file back with it. Do both, only when the person asks.
 
 ## If the project has not been set up yet
 
@@ -271,12 +281,13 @@ question does. Those are different files, and without the state you are guessing
     on this question" is being asked to do the reading you were there to do. Rule on everything
     in `review_queue()` first, then emit.
 
-13. `load_handback()` — **the moment they say they have filled the form in.** The form
-    downloads `handback.json` and nothing happens until it is loaded; a form that is downloaded
-    and never loaded is the most valuable work in this system sitting in a folder. With no path
-    it loads the newest `handback*.json` in `~/Downloads`, and says which file it read; if they
-    saved it elsewhere, pass the path. This is the only tool that files `human` verdicts and it
-    can only file what the file carries — you are the courier, not the reviewer.
+13. `load_handback()` — **the moment they say they have filled the form in.** Opened from disk,
+    the form downloads a `decisions-*.json` file and nothing happens until it is loaded; a form
+    that is downloaded and never loaded is the most valuable work in this system sitting in a
+    folder. With no path it loads the newest one in `~/Downloads`, and says which file it read;
+    if they saved it elsewhere, pass the path. This is the only tool that files `human` verdicts
+    and it can only file what the file carries — you are the courier, not the reviewer. Served
+    by `assay serve`, the save is recorded already: use `decisions()` instead.
 
 ## When they have agreed with findings and want them fixed
 
@@ -391,7 +402,9 @@ and nothing is lost:
 | `rule(finding, …)` | `assay review --subject <s> --question <q> --verdict <v> --note <why>` |
 | `review_queue()` | `assay review` |
 | `load_handback(path?)` | `assay review --load latest` or `--load <path>` (add `--apply` to write audit.yml) |
-| `plan_items(limit, kind)` | `assay plan -t target/` (writes `assay_fixes.json`) |
+| `decisions(name?)` | `assay decisions [<name>] --handbacks <folder>` |
+| `withdraw_decisions(name, by)` | `assay decisions <name> --withdraw --by <who>` |
+| `plan_items(limit, kind, status)` | `assay plan -t target/` (writes `assay_fixes.json`) |
 | `plan_item(fix_id)` | `assay fix <fix_id> -t target/` |
 | `apply_plan_item(fix_id)` | write the files from `assay_fixes.json` for that fix, once approved |
 | `verify_plan_item(fix_id)` | `dbt parse`, then `assay fix <fix_id> -t target/` (the diff is empty once applied) |
@@ -630,14 +643,14 @@ assay review --load latest --store assay.duckdb
 records every verdict at once. A card nobody answered is never submitted and never recorded, and
 `--load` names each row it did not record rather than reporting a total that hides them.
 
-**Do not end the turn on "open this file".** The download writes `handback.json` and NOTHING
-happens until it is loaded — the most valuable work in this whole system, sitting in a downloads
-folder. Load it the moment they say they have filled it in: `load_handback()` over MCP finds the
-newest one in the handback folder (`~/Downloads` unless `review.handbacks` or `--handbacks` says
-otherwise), or `assay review --load`. On a server, `assay serve` receives the handback from the
-form directly and applies verdicts only; pass `verdicts_only=True` there too, because that
-`audit.yml` comes from git. It is the only path that files
-`human` verdicts, and it files only what the file carries.
+**Do not end the turn on "open this file".** The download writes a `decisions-*.json` file and
+NOTHING happens until it is loaded — the most valuable work in this whole system, sitting in a
+downloads folder. Load it the moment they say they have filled it in: `load_handback()` over MCP
+finds the newest one in the decisions folder (`~/Downloads` unless `review.handbacks` or
+`--handbacks` says otherwise), or `assay review --load`. On a server, `assay serve` records the
+form's save directly (verdicts only, because that `audit.yml` comes from git) and keeps it as a
+decisions file; `decisions(name)` says what to apply and where to commit it. It is the only path
+that files `human` verdicts, and it files only what the file carries.
 
 **The expensive half is what makes each card cheap, and the judged tier does it.** `assay read`
 reads every unruled card once and writes the file the form takes -- a verdict in the form's own

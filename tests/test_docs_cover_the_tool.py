@@ -428,7 +428,8 @@ def test_the_mcp_tool_count_in_the_docs_is_the_real_one():
              19: "Nineteen", 20: "Twenty", 21: "Twenty-one", 22: "Twenty-two",
              23: "Twenty-three", 24: "Twenty-four", 25: "Twenty-five", 26: "Twenty-six",
              27: "Twenty-seven", 28: "Twenty-eight", 29: "Twenty-nine", 30: "Thirty",
-             31: "Thirty-one", 32: "Thirty-two"}
+             31: "Thirty-one", 32: "Thirty-two", 33: "Thirty-three", 34: "Thirty-four",
+             35: "Thirty-five", 36: "Thirty-six"}
     said = re.search(r"\b(" + "|".join(sorted(words.values(), key=len, reverse=True))
                      + r") tools\b", docs)
     assert said, "the tool count sentence is gone; keep it or drop this test deliberately"

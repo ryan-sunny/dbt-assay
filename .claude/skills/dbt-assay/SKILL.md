@@ -136,7 +136,17 @@ calls are decided in `review`, one verdict per check.
 with `assay fix <id> --approve`. Then, in a branch: `apply_plan_item(id)`, `dbt parse` (or
 `compile` when SQL moved), `verify_plan_item(id)`, one pull request per batch. `plan_item(id)`
 shows the diff first. Never approve one yourself, and never hand-edit what a fix would write
-instead of applying it: the fix carries the recipe that proves it safe.
+instead of applying it: the fix carries the recipe that proves it safe. A batch's `excluded`
+items are the ones the person left out: never add them.
+
+**"Apply what I approved", when the form is served from a server.** The form's save records the
+decisions on the server and keeps them as a decisions file. Through that server's MCP:
+`decisions()` lists the saves, `decisions(name)` gives one in full. Then, in one branch:
+`apply_plan_item(id)` for each id in `approved` (the server writes nothing: write the `files`
+it returns), apply `config.diff` to `audit.yml`, copy the file to `assay_decisions/<name>`, and
+commit all three in one pull request, so git records who decided what. **To roll it back:**
+`withdraw_decisions(name, by=...)` puts the store back, and reverting that pull request takes the
+fixes, `audit.yml` and the file back with it. Do both, only when the person asks.
 
 ## If the project has not been set up yet
 
@@ -263,12 +273,13 @@ question does. Those are different files, and without the state you are guessing
     on this question" is being asked to do the reading you were there to do. Rule on everything
     in `review_queue()` first, then emit.
 
-13. `load_handback()` — **the moment they say they have filled the form in.** The form
-    downloads `handback.json` and nothing happens until it is loaded; a form that is downloaded
-    and never loaded is the most valuable work in this system sitting in a folder. With no path
-    it loads the newest `handback*.json` in `~/Downloads`, and says which file it read; if they
-    saved it elsewhere, pass the path. This is the only tool that files `human` verdicts and it
-    can only file what the file carries — you are the courier, not the reviewer.
+13. `load_handback()` — **the moment they say they have filled the form in.** Opened from disk,
+    the form downloads a `decisions-*.json` file and nothing happens until it is loaded; a form
+    that is downloaded and never loaded is the most valuable work in this system sitting in a
+    folder. With no path it loads the newest one in `~/Downloads`, and says which file it read;
+    if they saved it elsewhere, pass the path. This is the only tool that files `human` verdicts
+    and it can only file what the file carries — you are the courier, not the reviewer. Served
+    by `assay serve`, the save is recorded already: use `decisions()` instead.
 
 ## When they have agreed with findings and want them fixed
 
@@ -383,7 +394,9 @@ and nothing is lost:
 | `rule(finding, …)` | `assay review --subject <s> --question <q> --verdict <v> --note <why>` |
 | `review_queue()` | `assay review` |
 | `load_handback(path?)` | `assay review --load latest` or `--load <path>` (add `--apply` to write audit.yml) |
-| `plan_items(limit, kind)` | `assay plan -t target/` (writes `assay_fixes.json`) |
+| `decisions(name?)` | `assay decisions [<name>] --handbacks <folder>` |
+| `withdraw_decisions(name, by)` | `assay decisions <name> --withdraw --by <who>` |
+| `plan_items(limit, kind, status)` | `assay plan -t target/` (writes `assay_fixes.json`) |
 | `plan_item(fix_id)` | `assay fix <fix_id> -t target/` |
 | `apply_plan_item(fix_id)` | write the files from `assay_fixes.json` for that fix, once approved |
 | `verify_plan_item(fix_id)` | `dbt parse`, then `assay fix <fix_id> -t target/` (the diff is empty once applied) |
@@ -567,6 +580,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay completeness` | `assay_completeness` | Do we have all of it? Coverage of what this project itself declares. | `--target/-t` `--store` `--config` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` `--verify` `--dialect` `--json` |
 | `assay config` | `assay_config` | What assay resolved: the config file, the provider, where the key came from, the cap. | `--config` `--store` `--check` `--target/-t` `--strict` |
 | `assay cost` | `assay_cost` | What the judged tier has cost, by caller, by family and by day. | `--store` `--since` `--json` |
+| `assay decisions <name>` | `assay_decisions` | What a person saved in the review form, one file per save: who, when, what to apply. | `--withdraw` `--by` `--handbacks` `--store` `--config` `--json` |
 | `assay diff` | `assay_diff` | What changed about what your models MEAN. | `--baseline/-b` `--target/-t` `--store` `--markdown` `--limit/-n` |
 | `assay digest` | `assay_digest` | What changed since the previous full run that somebody should hear about: a guarantee lost, a test failing, a key that stopped holding, a premise that broke, a monitor that stopped, a fixed problem back, spend over a line, and how many findings came and went. | `--store` `--project` `--spend-over` `--json` |
 | `assay disagreements` | `assay_disagreements` | Group the open disagreements. | `--store` `--config` `--source` `--judge` `--json` |
@@ -600,7 +614,7 @@ lists them. Only `review -i` has no tool form: it waits for keypresses.
 | `assay run <steps>` | `assay_run` | Several commands in one process: one dbt for all of them, and a line per step. | `--target/-t` `--store` `--config` `--project-dir` `--profiles-dir` `--dbt/--dbt-bin` |
 | `assay scan` | `assay_scan` | Read the project and report what can and cannot be audited. | `--target/-t` `--dialect` |
 | `assay semantics` | `assay_semantics` | Why is that filter there, and does the description still describe the code? | `--target/-t` `--select/-s` `--families` `--print-state` `--limit/-n` `--store` `--config` `--dry-run` |
-| `assay serve` | `assay_serve` | The report and the review form over http, and handbacks into the store without a terminal. | `--pages` `--handbacks` `--store` `--config` `--target/-t` `--monitoring` `--host` `--port` |
+| `assay serve` | `assay_serve` | The report and the review form over http; the form's save goes straight into the store. | `--pages` `--handbacks` `--store` `--config` `--target/-t` `--monitoring` `--host` `--port` |
 | `assay skill <which>` | `assay_skill` | Emit an agent procedure. | `--write` |
 | `assay stale` | `assay_stale` | Judged answers that are about SQL which has since changed. | `--target/-t` `--store` `--config` `--dialect` `--exact` `--cost` `--limit/-n` `--json` |
 | `assay suggest` | `assay_suggest` | What this project should configure, drawn from what the checks actually found. | `--target/-t` `--config` `--store` `--section` `--limit/-n` `--out` `--json` |

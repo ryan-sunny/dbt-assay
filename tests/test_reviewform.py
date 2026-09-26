@@ -175,10 +175,13 @@ def test_the_page_reaches_out_to_nothing():
     # An `xmlns` is an identifier, not a request: the inline mark declares the SVG namespace and
     # no browser has ever fetched it.
     html = html.replace('xmlns="http://www.w3.org/2000/svg"', "")
-    # *** ONE REQUEST, AND ONLY TO THE SERVER THAT SERVED IT. *** (S1) Served by `assay serve`,
-    # the form posts its handback to its own origin; opened from disk it never reaches out.
-    assert html.count("fetch(") == 1, "the form makes a request other than sending its handback"
-    assert "if (SERVED) {\n    fetch(new URL('api/handback', location.href)" in html
+    # *** ONLY TO THE SERVER THAT SERVED IT. *** (S1, D14) Served by `assay serve`, the form
+    # posts its decisions to its own origin and asks that origin whether they were recorded;
+    # opened from disk it never reaches out.
+    assert html.count("fetch(") == 2, "the form makes a request other than saving its decisions"
+    assert "fetch(new URL('api/decisions', location.href), {method: 'POST'" in html
+    assert "fetch(new URL('api/decisions/' + name, location.href))" in html
+    assert html.index("if (SERVED) {") < html.index("fetch(new URL('api/decisions'")
     for bad in ("http://", "https://", "XMLHttpRequest"):
         assert bad not in html, bad
     # *** THE GUARD IS ABOUT THE WIRE, NOT ABOUT THE TAG. ***
@@ -263,9 +266,9 @@ def test_the_page_renders_the_context_and_stays_one_file(project_dir, tmp_path):
     ctx = reviewform.context(None, Project.load(project_dir), cfg, [])
     page = reviewform.form_html([], {}, "p", "now", "0.0", ctx)
     for needed in ("data-pane=\"words\"", "wordsTab", "explanationsTab", "waiversTab",
-                   "handback.json"):
+                   "download decisions"):
         assert needed in page, needed
-    assert page.count("fetch(") == 1 and "<script src" not in page, "the form reached the network"
+    assert page.count("fetch(") == 2 and "<script src" not in page, "the form reached the network"
 
 
 # ------------------------------------------------------------------- the handback
@@ -495,8 +498,12 @@ def test_feedback_w1_the_newest_handback_is_found(tmp_path):
     newer.write_text("{}")
     t = time.time()
     os.utime(old, (t - 100, t - 100))
-    os.utime(newer, (t, t))
+    os.utime(newer, (t, t - 50))
     assert reviewform.newest_handback([tmp_path]) == newer
+    # what the form downloads since 0.54.1, a second copy renamed by the browser included
+    now = tmp_path / "decisions-2026-09-26-1432-ryan (1).json"
+    now.write_text("{}")
+    assert reviewform.newest_handback([tmp_path]) == now
     js = reviewform._JS
     assert "assay review --load latest" in js, "the form does not say what to do next"
 

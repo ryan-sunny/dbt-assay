@@ -658,8 +658,12 @@ class Backend:
         *** THIS IS THE ONE PLACE AN AGENT MAY CAUSE A `human` ROW TO EXIST. ***
         Every verdict here came from a keypress in the form. The agent is a courier: it did not
         decide any of these and cannot add one, because `load` reads only what the file carries
-        and a card nobody answered is not in it. That is why the tool takes a PATH and has no
-        parameter for a verdict -- there is no shape of this call that invents an opinion.
+        and a card nobody answered is not in it. That is why the tool takes a PATH on this
+        server's machine and has no parameter for a verdict, or for a file's text -- there is no
+        shape of this call that invents an opinion.
+
+        With `--handbacks` set, the load is kept there as a decisions file, the same as a save on
+        the served form, so it can be committed and withdrawn.
 
         `apply` also writes the Words, Explanations and Waivers boxes into `audit.yml`. Off by
         default: the verdicts are a record of what somebody said, and editing their config is a
@@ -668,34 +672,51 @@ class Backend:
         from pathlib import Path as _P
 
         from . import handback as hb
-        # No path means the newest handback in the handback folder: `--handbacks` on `assay mcp`,
-        # then `review.handbacks` in audit.yml, then ~/Downloads, where the form's download goes.
-        # On a server the first two point at the folder `assay serve` saves into. (W1, S4)
+        # No path means the newest file in the decisions folder: `--handbacks` on `assay mcp`,
+        # then `review.handbacks` in audit.yml, then ~/Downloads, where the form's download
+        # goes. (W1, S4)
         if not path or path == "latest":
             from .config import Config
             where = hb.folder(Config.load(self.config_path), self.handbacks)
             found = hb.newest(where)
             if found is None:
-                return {"error": f"no handback*.json in {where}. Ask the person where it was "
+                return {"error": f"no decisions file in {where}. Ask the person where it was "
                                  f"saved."}
             path = str(found)
         src = _P(path).expanduser()
         if not src.exists():
             return {"error": f"no file at {src}; ask for the path rather than guessing.",
                     "recorded": 0}
+        payload = json.loads(src.read_text())
+        if hb.is_saved(payload):
+            return {"error": f"{src.name} was recorded when it was saved "
+                             f"({payload.get('saved_at', '')}, by {payload.get('by') or 'unknown'}); "
+                             f"it is not recorded twice. `decisions(\"{src.name}\")` says what "
+                             f"to apply, `withdraw_decisions` takes it back.", "recorded": 0}
         store, why = self._store_or_why()
         if store is None:
             return {"error": why, "recorded": 0}
         try:
-            payload = json.loads(src.read_text())
-            out = {"file": str(src), **hb.record(store, payload, by)}
+            got = hb.record(store, payload, by)
+            out = {"file": str(src), **{k: v for k, v in got.items() if k != "undo"}}
+            if getattr(self, "handbacks", None):
+                folder = _P(self.handbacks).expanduser()
+                folder.mkdir(parents=True, exist_ok=True)
+                kept = hb.write_decisions(folder / hb.decisions_name(folder, got["by"]),
+                                          payload, got)
+                out["decisions_file"] = kept.name
+                out["commit_as"] = f"{hb.COMMIT_DIR}/{kept.name}"
             edits = hb.refused_config(payload)
             if verdicts_only:
                 # (S3) A server's audit.yml comes from git: refuse the edits, and name them.
                 out["config_refused"] = edits
-                out["config_note"] = ("verdicts only: audit.yml was not touched. Apply these "
-                                      "from a checkout of the repository with `assay review "
-                                      f"--load {src.name} --apply`, then commit audit.yml.")
+                if edits:
+                    out["config_note"] = (
+                        "verdicts only: audit.yml here was not touched. "
+                        + (f"`decisions(\"{out['decisions_file']}\")` returns them as a diff for "
+                           "the repository." if "decisions_file" in out else
+                           "Apply them from a checkout of the repository with `assay review "
+                           "--load <the file> --apply`, then commit audit.yml."))
             elif apply or edits:
                 out["config_changes"] = len(edits)
                 out["config_edits"] = edits[:12]
@@ -705,6 +726,53 @@ class Backend:
             return out
         finally:
             store.close()
+
+    def decisions(self, name: str = "") -> dict:
+        """The saves kept in the decisions folder, newest first; with a name, that one in full:
+        the fixes approved, the audit.yml diff, and where to commit the file."""
+        from pathlib import Path as _P
+
+        from . import handback as hb
+        from .config import Config
+        folder = hb.folder(Config.load(self.config_path), self.handbacks)
+        if not name:
+            rows = hb.listing(folder)
+            return {"folder": str(folder), "decisions": rows[:50], "total": len(rows),
+                    "next": "decisions(<name>) for one in full"}
+        f = _P(folder) / _P(name).name
+        if not f.exists():
+            return {"error": f"no decisions file {name} in {folder}; decisions() lists them"}
+        return hb.describe(f, self.config_path)
+
+    def withdraw_decisions(self, name: str, by: str = "") -> dict:
+        """Take a save back: each verdict and fix decision it recorded returns to what it replaced,
+        unless somebody decided it again since. The file is kept, marked withdrawn.
+
+        By NAME, from the decisions folder this server wrote, never from text an agent passes:
+        the file says what to put back, so it has to be the one the save wrote."""
+        from pathlib import Path as _P
+
+        from . import handback as hb
+        from .config import Config
+        if not by:
+            return {"error": "say who is withdrawing it (`by`): a withdrawal is a decision too"}
+        path = _P(hb.folder(Config.load(self.config_path), self.handbacks)) / _P(name).name
+        if not name or not path.exists():
+            return {"error": f"no decisions file {name!r}; decisions() lists them"}
+        doc = json.loads(path.read_text())
+        label = path.name
+        if doc.get("withdrawn"):
+            return {"error": f"{label} was withdrawn already: {doc['withdrawn']}"}
+        store, why = self._store_or_why()
+        if store is None:
+            return {"error": why}
+        try:
+            out = hb.withdraw(store, doc, by, label)
+        finally:
+            store.close()
+        if "error" not in out:
+            hb.mark_withdrawn(path, out)
+        return {"file": label, **out}
 
     def review_queue(self, limit: int = 20) -> dict:
         """What is waiting for a PERSON, with the agent's reading already attached.
@@ -916,13 +984,16 @@ class Backend:
                              root=st.project.project_root)
         return fx, fs, store
 
-    def plan_items(self, limit: int = 25, kind: str = "") -> dict:
-        """The fixes, ranked: what to change next and how much each resolves."""
+    def plan_items(self, limit: int = 25, kind: str = "", status: str = "") -> dict:
+        """The fixes, ranked: what to change next and how much each resolves. `status="approved"`
+        lists only what a person approved, which is what an agent applies."""
         from . import fixes as fixes_mod
         fx, fs, store = self._fixes()
         st = fixes_mod.statuses(store)
         rows = [{**f.as_dict(), "status": st.get(f.id, {}).get("status", "proposed")}
                 for f in fx if not kind or f.kind == kind]
+        if status:
+            rows = [r for r in rows if r["status"] == status]
         for r in rows:
             r.pop("findings", None)
         return {"open_findings": len(fs), "fixes": rows[:limit], "total": len(rows),
@@ -930,6 +1001,15 @@ class Backend:
                          "fix <id> --approve`). You apply only an approved one, in a branch, "
                          "with apply_plan_item, then run dbt parse/compile and "
                          "verify_plan_item.")}
+
+    @staticmethod
+    def _chosen(f, decided: dict) -> dict:
+        """The items of a batch the person kept, and the ones they left out of the approval."""
+        out = set(decided.get("excluded") or [])
+        if not f.items:
+            return {}
+        return {"items": [i for i in f.items if i.get("id") not in out],
+                "excluded": [i for i in f.items if i.get("id") in out]}
 
     def plan_item(self, fix_id: str) -> dict:
         """One fix in full: its diff, its recipe, the findings it resolves, where it stands."""
@@ -939,18 +1019,24 @@ class Backend:
         if f is None:
             return {"error": f"no fix {fix_id} in the current plan (plan_items lists them)"}
         root = self.state().project.project_root
+        decided = fixes_mod.statuses(store).get(f.id, {})
         return {**f.as_dict(), "diff": fixes_mod.diff(f, root),
-                "status": fixes_mod.statuses(store).get(f.id, {}).get("status", "proposed"),
-                "pending_files": fixes_mod.applied(f, root)}
+                "status": decided.get("status", "proposed"),
+                "pending_files": fixes_mod.applied(f, root), **self._chosen(f, decided)}
 
     def apply_plan_item(self, fix_id: str) -> dict:
-        """Write an APPROVED fix's files into the working tree (your branch). Refused otherwise."""
+        """Write an APPROVED fix's files into the working tree (your branch). Refused otherwise.
+
+        *** ON A SERVER, THE BRANCH IS NOT HERE. *** With `--verdicts-only` this server's project
+        comes from git, so nothing is written: the files and the diff come back for the agent to
+        write in its own checkout, and the fix stays approved until that branch is verified."""
         from . import fixes as fixes_mod
         fx, _fs, store = self._fixes()
         f = next((x for x in fx if x.id == fix_id), None)
         if f is None:
             return {"error": f"no fix {fix_id} in the current plan"}
-        status = fixes_mod.statuses(store).get(f.id, {}).get("status")
+        decided = fixes_mod.statuses(store).get(f.id, {})
+        status = decided.get("status")
         if status not in ("approved", "applied"):
             return {"refused": (f"fix {fix_id} is {status or 'proposed'}, not approved. A person "
                                 f"approves it on the Fix card in the review form or with "
@@ -958,6 +1044,16 @@ class Backend:
         if f.refused:
             return {"refused": "parts of this fix could not be placed: " + "; ".join(f.refused)}
         root = Path(self.state().project.project_root)
+        then = f.recipe + ["verify_plan_item(" + fix_id + ") after dbt parse or compile"]
+        chosen = self._chosen(f, decided)
+        if self.verdicts_only:
+            return {"wrote": [], "files": dict(sorted(f.files.items())),
+                    "new_files": f.new_files, "diff": fixes_mod.diff(f, root), **chosen,
+                    "note": ("nothing was written: this server's project comes from git. Write "
+                             "`files` (whole files, paths from the project root) in your branch, "
+                             "or `git apply` the diff; the diff is against the checkout this "
+                             "server runs, so it fails loudly where your branch has moved."),
+                    "then": then}
         wrote = []
         for path, text in sorted(f.files.items()):
             p = root / path
@@ -968,8 +1064,7 @@ class Backend:
         if wstore is not None:
             fixes_mod.record(wstore, f.id, "applied", kind=f.kind, key=f.key, title=f.title,
                              by="agent")
-        return {"wrote": wrote, "then": f.recipe + ["verify_plan_item(" + fix_id + ") after "
-                                                    "dbt parse or compile"]}
+        return {"wrote": wrote, **chosen, "then": then}
 
     def verify_plan_item(self, fix_id: str) -> dict:
         """Is the fix in the working tree, and are the findings it resolves gone from the manifest
@@ -1340,12 +1435,24 @@ TOOLS = [
     ("traversal", ("How a model's parents reach it, and whether any hop multiplies rows without "
                    "declaring it. The defect class no single-model check can see.")),
     ("load_handback", ("Record the verdicts a PERSON wrote in the review form, from the "
-                       "`handback.json` the form downloads. Call it the moment they say they "
-                       "have filled the form in -- ask for the path rather than guessing at a "
-                       "downloads directory. This is the ONLY tool that files `human` verdicts, "
-                       "and it can only file what the file carries: you are the courier, not "
-                       "the reviewer. A form that is downloaded and never loaded is the most "
-                       "valuable work in this system sitting in a folder.")),
+                       "decisions file the form downloads when it is opened from disk. Call it "
+                       "the moment they say they have filled the form in -- ask for the path "
+                       "rather than guessing at a downloads directory. This is the ONLY tool that "
+                       "files `human` verdicts, and it can only file what the file carries: you "
+                       "are the courier, not the reviewer. The served form's save is recorded "
+                       "already; use `decisions` for that.")),
+    ("decisions", ("WHAT A PERSON SAVED IN THE REVIEW FORM, as files: who, when, the fixes "
+                   "approved, the audit.yml diff. With no name, the saves newest first; with a "
+                   "name, one in full with the steps to turn it into one PR (apply_plan_item for "
+                   "each approved fix, the audit.yml diff, and the file itself committed to "
+                   "`assay_decisions/`). Call it when the person says to apply what they "
+                   "approved.")),
+    ("withdraw_decisions", ("TAKE A SAVE BACK: every verdict and fix decision the decisions "
+                            "file recorded returns to what it replaced, except any decided "
+                            "again since (listed). Call it only when the person asks to roll "
+                            "decisions back, with `by` naming them; revert the PR that "
+                            "committed the file too, so the fixes and audit.yml go back with "
+                            "it.")),
     ("review_queue", ("What is waiting for a PERSON to rule on, agent-read items first, with the "
                       "reason already attached. Call it before `rule` to see whether a subject "
                       "has been read, and after, to see the queue you are building.")),
@@ -1375,11 +1482,15 @@ TOOLS = [
     ("plan_items", ("WHAT TO CHANGE NEXT: the findings grouped into the fixes that resolve "
                     "them, ranked by findings resolved per decision (customer-facing and "
                     "happening now break ties). Each has a kind, a title, how "
-                    "many it resolves and its status. Call it before findings.")),
+                    "many it resolves and its status; `status=\"approved\"` lists only "
+                    "what a person approved. Call it before findings.")),
     ("plan_item", ("One fix in full: the diff it would make, the recipe that verifies it, and "
                    "whether a person approved it.")),
     ("apply_plan_item", ("Write an APPROVED fix's files into the working tree (your branch). "
-                         "Refused unless a person approved it. Then dbt parse/compile and "
+                         "Refused unless a person approved it. On a server whose project comes "
+                         "from git (--verdicts-only) nothing is written: the files and diff come "
+                         "back for you to write in your checkout. A batch's `excluded` items are "
+                         "ones the person left out: never add them. Then dbt parse/compile and "
                          "verify_plan_item.")),
     ("verify_plan_item", ("After applying and parsing: are the fix's files in place, and are "
                           "the findings it resolves gone? Records it verified when both hold.")),
@@ -1609,6 +1720,14 @@ def build_app(target: str, store_path: str | None = None, handbacks: str | None 
         return _out(be.load_handback(path, apply, by, verdicts_only or be.verdicts_only))
 
     @tool()
+    def decisions(name: str = "") -> str:
+        return _out(be.decisions(name))
+
+    @tool()
+    def withdraw_decisions(name: str, by: str = "") -> str:
+        return _out(be.withdraw_decisions(name, by))
+
+    @tool()
     def rebase() -> str:
         return _out(be.rebase())
 
@@ -1617,8 +1736,8 @@ def build_app(target: str, store_path: str | None = None, handbacks: str | None 
         return _out(be.plan(limit))
 
     @tool()
-    def plan_items(limit: int = 25, kind: str = "") -> str:
-        return _out(be.plan_items(limit, kind))
+    def plan_items(limit: int = 25, kind: str = "", status: str = "") -> str:
+        return _out(be.plan_items(limit, kind, status))
 
     @tool()
     def plan_item(fix_id: str) -> str:

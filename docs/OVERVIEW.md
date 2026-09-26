@@ -374,28 +374,36 @@ every model it applies to.
 | **Monitoring** | the staleness threshold, DERIVED from how often this project actually builds rather than picked, with the cadence it came from set beside it, so changing it is a disagreement with a measurement. Needs `--monitoring volume.json` |
 | **Settings** | the rest of `audit.yml` a person acts on — the gating floors, the row-loss threshold, the spend cap, the rate card — each carrying what assay ships, what this project set, and what happens if it is wrong |
 
-What they write comes back as a **proposal**, never a write. `assay review --load handback.json`
+What they write comes back as a **proposal**, never a write. `assay review --load <the file>`
 records the verdicts and prints the `audit.yml` changes as a diff; `--apply` writes them. It edits
 lines rather than re-serialising, so comments, key order, blank lines and quoting all survive —
 measured on a real 253-line file: 53 comment lines, identical before and after. A path it cannot
 place unambiguously is refused with the YAML to paste, because a config editor that writes
 something approximately where it belongs is worse than one that says it could not.
 
-**On a server, `assay serve`.** Opened from disk the form can only download its handback, and a
-browser cannot save into a chosen folder, so on a box nothing could pick the file up. `assay serve
---pages <dir>` serves the report and the form that the scheduled run already built. Served, the
-form's button sends the handback to the server, which keeps it in the handback folder; the
-`/handbacks` page previews each one, takes uploads of handbacks made elsewhere, and applies them.
-Applying records the **verdicts only**: the config section is refused and listed, because a
-server's `audit.yml` comes from git. If a scheduled run holds the store, the handback waits and is
-retried every minute. With `--target`, the pages are rebuilt after each apply. uvicorn serves it
-and Starlette routes it (`pip install 'dbt-assay[serve]'`; the `mcp` extra brings both). There is
-no authentication, so bind `--host` to an address only trusted people can reach, such as a tailnet.
+**On a server, `assay serve`.** `assay serve --pages <dir>` serves the report and the form that the
+scheduled run already built. Served, the form's **save** records the decisions in the store at once
+(verdicts and fix decisions; the config section is kept for the repository, because a server's
+`audit.yml` comes from git) and keeps them as `decisions-<when>-<who>.json` in the `--handbacks`
+folder. If a scheduled run holds the store, the save waits and is retried every minute. With
+`--target`, the pages are rebuilt after each save. uvicorn serves it and Starlette routes it
+(`pip install 'dbt-assay[serve]'`; the `mcp` extra brings both). There is no authentication, so bind
+`--host` to an address only trusted people can reach, such as a tailnet.
 
-`assay review --load --verdicts-only` and `load_handback(verdicts_only=True)` do the same from a
-terminal or an agent. `--load` with no path, and `load_handback()` with none, take the newest
-`handback*.json` in the handback folder: `--handbacks`, then `review.handbacks` in `audit.yml`,
-then `~/Downloads`.
+**The decisions file is the record, in git.** The agent that applies the approved fixes works
+through the server's own MCP (`assay mcp --handbacks <folder> --verdicts-only`): `decisions(name)`
+gives the fixes approved, the items left out of each, the config edits as a diff against
+`audit.yml`, and `commit_as: assay_decisions/<name>`. `apply_plan_item` on that server writes
+nothing and returns the files. One pull request carries the fixes, the `audit.yml` change and the
+file, so `git log` says who decided what. `withdraw_decisions(name, by)` (or `assay decisions <name>
+--withdraw --by <who>`) takes a save back: each verdict and fix decision returns to what it
+replaced, except one decided again since, and the file is marked withdrawn. Reverting the pull
+request takes the rest back.
+
+`assay review --load --verdicts-only` and `load_handback(verdicts_only=True)` record a downloaded
+file from a terminal or an agent, once: a file a save already recorded is refused. `--load` with no
+path, and `load_handback()` with none, take the newest `decisions-*.json` (or older `handback*.json`)
+in the decisions folder: `--handbacks`, then `review.handbacks` in `audit.yml`, then `~/Downloads`.
 
 It writes `vocab`, `explanations` and `waivers` and nothing else. Gating thresholds want the
 measured agreement rate in front of you, and `assay effectiveness` is that surface.
@@ -411,7 +419,7 @@ file that opens from `file://` with no server and nothing running. It holds only
 judgment calls (a change clears the rest, or they are notes), each card carrying what assay found,
 the claim it quotes, the model's own SQL with line numbers, and any reading an agent already
 recorded. Answers are kept in the browser as you go,
-so the tab can be closed. The download button writes `handback.json` and `--load latest` records the lot.
+so the tab can be closed. The download button writes `decisions-<when>-<who>.json` and `--load latest` records the lot.
 
 The round trip is `probe --emit` / `--load`, which this project already has, for the same reason one
 layer over: assay never holds a credential, and it never holds a verdict it was not given. **A card
@@ -1342,7 +1350,7 @@ a column is, what the grain is, and what would break before it writes a line. Th
 it the **obligation** — without it an agent checks when it remembers, and with it, checking is the
 procedure.
 
-Thirty-two tools, and beside them every command as a tool of its own: `assay_<command>` takes the
+Thirty-four tools, and beside them every command as a tool of its own: `assay_<command>` takes the
 command's flags as one string and runs the real command, so an agent with no shell can run all of
 assay. A run longer than its wait comes back as a job, which `job_status`, `job_stop` and `jobs`
 follow. Of the thirty-two, most report; thirteen do something else:
@@ -1350,9 +1358,9 @@ follow. Of the thirty-two, most report; thirteen do something else:
 | tool | what it is for |
 |---|---|
 | `guide(topic)` | how to SET assay up — vocabulary, questions, waivers, policy. Read before writing anything into someone's `audit.yml` |
-| `plan_items(limit, kind)` | **what to change next**: the findings grouped into the fixes that resolve them, ranked, each with how many it resolves and whether a person approved it |
+| `plan_items(limit, kind, status)` | **what to change next**: the findings grouped into the fixes that resolve them, ranked, each with how many it resolves and whether a person approved it |
 | `plan_item(fix_id)` | one fix in full: the diff it makes and the recipe that verifies it |
-| `apply_plan_item(fix_id)` | write an **approved** fix's files into the working tree (a branch); refused until a person approves it |
+| `apply_plan_item(fix_id)` | write an **approved** fix's files into the working tree (a branch); refused until a person approves it. On a `--verdicts-only` server it writes nothing and returns the files |
 | `verify_plan_item(fix_id)` | after `dbt parse`: are the files in place, and are the findings it resolves gone |
 | `plan(limit)` | the older list: what to change for the findings a person agreed with. `fix_shape` is the KIND of change, looked up from the check name; the words are not in it |
 | `suggestions(section)` | **what to put in their `audit.yml`**, derived from what the checks found, each row carrying its measurement. Every `means:` and `implies:` comes back empty and must stay empty |
@@ -1360,6 +1368,8 @@ follow. Of the thirty-two, most report; thirteen do something else:
 | `vocabulary()` | their words, **where each one is true**, and everything wrong with the list. A term goes into every judged question's state, so one asserted outside where it holds is wrong in every answer about that part of the project at once — measured at 25% of one real warehouse's answers. Call it before writing or editing a term |
 | `spend()` | what the judged tier has **cost** here, by caller and by day. Put it in front of somebody before proposing a judged run |
 | `load_handback(path)` | record the verdicts a **person** wrote in the review form. The only tool that files `human` verdicts, and it can only file what the file carries — the agent is the courier, not the reviewer. Without it the form downloads and the most valuable work in the system sits in a folder |
+| `decisions(name)` | what a person **saved** in the served form: with no name the saves, newest first; with a name the fixes approved, the `audit.yml` diff, and where to commit the file |
+| `withdraw_decisions(name, by)` | take a save back in the store, except what was decided again since; revert its pull request for the rest |
 | `stale(exact)` | judged answers about SQL that has **since changed**, so an agent knows whether an answer it is about to rely on is still about the code in front of it. `exact=true` rebuilds the state and catches a change to a *parent*; neither form makes an API call |
 | `monitoring(volume_json)` | **is anything watching this warehouse** — build cadence, whether each monitor is still being written to, how many declared tests have ever produced a result, tests whose last result was a FAILURE and which have not run since, and the models with a mart downstream and no row-count history. It reads a file from `assay volume --json` and never a warehouse; with no path it returns the command, because a zero here reads as *nothing is wrong* and means *nobody looked* |
 

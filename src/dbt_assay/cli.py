@@ -5483,7 +5483,14 @@ def review(
                 raise typer.Exit(1)
             console.print(f"[dim]loading the newest handback: {found}[/]")
             load = str(found)
-        _load_verdicts(store, load, who)
+        from . import handback as hb
+        if hb.is_saved(_json.loads(Path(load).read_text())):
+            console.print(f"[yellow]{Path(load).name} was recorded when it was saved;[/] it is "
+                          f"not recorded twice. [dim]`assay decisions {Path(load).name}` says "
+                          f"what to apply, and --withdraw takes it back.[/]")
+            store.close()
+            raise typer.Exit(1)
+        _load_verdicts(store, load, who, keep_in=handbacks_dir)
         if verdicts_only:
             from . import handback as hb
             refused = hb.refused_config(_json.loads(Path(load).read_text()))
@@ -5760,12 +5767,18 @@ def _load_config(path: str, config_path: str, do_write: bool) -> None:
                       "you spend it.[/]")
 
 
-def _load_verdicts(store, path: str, who: str) -> None:
+def _load_verdicts(store, path: str, who: str, keep_in: str | None = None) -> None:
     """Record every verdict the form handed back, and nothing it did not. The recording is
-    `handback.record`, the one path the MCP tool and `assay serve` use too."""
+    `handback.record`, the one path the MCP tool and `assay serve` use too. With `keep_in` (the
+    --handbacks flag) the load is kept there as a decisions file, the same as a served save."""
     from . import handback as hb
     payload = _json.loads(Path(path).read_text())
     got = hb.record(store, payload, who)
+    if keep_in:
+        folder = Path(keep_in).expanduser()
+        folder.mkdir(parents=True, exist_ok=True)
+        kept = hb.write_decisions(folder / hb.decisions_name(folder, got["by"]), payload, got)
+        console.print(f"[dim]kept as {kept}; commit it as {hb.COMMIT_DIR}/{kept.name}[/]")
     rows = range(got["recorded"])
     by = got["by"]
     agreed, accepted_n, dismissed = (got["findings_agreed"], got["findings_accepted"],
@@ -7150,14 +7163,14 @@ def serve(
     pages: str = typer.Option(..., "--pages",
                               help="the folder holding the built assay.html and review.html"),
     handbacks_dir: str = typer.Option(None, "--handbacks",
-                                      help="where posted and uploaded handbacks are kept. "
+                                      help="where each save is kept as a decisions file. "
                                            "Default: review.handbacks in audit.yml, then "
                                            "<pages>/handbacks"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     config_path: str = typer.Option(".", "--config"),
     target: str = typer.Option(None, "--target", "-t",
                                help="the dbt target. With it, the pages are rebuilt after a "
-                                    "handback is applied; without it they update on the next "
+                                    "save is recorded; without it they update on the next "
                                     "scheduled run"),
     monitoring_json: str = typer.Option(None, "--monitoring",
                                         help="an `assay volume --json` file, used when the "
@@ -7167,13 +7180,14 @@ def serve(
                                   "an address only trusted people can reach, such as a tailnet"),
     port: int = typer.Option(8765, "--port"),
 ):
-    """The report and the review form over http, and handbacks into the store without a terminal.
+    """The report and the review form over http; the form's save goes straight into the store.
 
-    Served, the form sends its handback here instead of downloading it. It is kept in the
-    handback folder, and the handbacks page shows what loading it would do and applies it.
-    Applying records the VERDICTS ONLY: the config section is refused and listed, because on a
-    server audit.yml comes from git. If a scheduled run holds the store, the handback waits and is
-    retried every minute. With --target, the pages are rebuilt after each apply.
+    Served, the form's save is recorded here (verdicts and fix decisions) and kept as a decisions
+    file in the --handbacks folder. Config edits stay in the file for the repository, because on a
+    server audit.yml comes from git. The agent that applies the approved fixes reads the file
+    through this box's MCP server (`decisions`) and commits it with them. If a scheduled run holds
+    the store, the save waits and is retried every minute. With --target, the pages are rebuilt
+    after each save.
     """
     from . import serve as serve_mod
     cfg = Config.load(config_path)
@@ -7191,9 +7205,103 @@ def serve(
     srv = serve_mod.Server(Path(pages), folder, store_path, config_path,
                            str(_find_target(target)) if target else None, monitoring_json)
     console.print(f"serving [bold]{Path(pages).resolve()}[/] at http://{host}:{port}/  "
-                  f"[dim]handbacks in {folder.resolve()}; verdicts only; "
-                  f"{'rebuilds after apply' if target else 'no --target, so no rebuild'}[/]")
+                  f"[dim]decisions kept in {folder.resolve()}; verdicts only; "
+                  f"{'rebuilds after a save' if target else 'no --target, so no rebuild'}[/]")
     serve_mod.run(srv, host, port)
+
+
+@app.command()
+def decisions(
+    name: str = typer.Argument(None, help="one decisions file, by name; none lists them"),
+    withdraw: bool = typer.Option(False, "--withdraw",
+                                  help="take this save back: each verdict and fix decision it "
+                                       "recorded returns to what it replaced, unless decided "
+                                       "again since"),
+    by: str = typer.Option("", "--by", help="with --withdraw: who is taking it back"),
+    handbacks_dir: str = typer.Option(None, "--handbacks",
+                                      help="the decisions folder. Default: review.handbacks in "
+                                           "audit.yml, then ~/Downloads"),
+    store_path: str = typer.Option("assay.duckdb", "--store"),
+    config_path: str = typer.Option(".", "--config",
+                                    help="where audit.yml lives: the config edits are shown as "
+                                         "a diff against it"),
+    json_out: bool = typer.Option(False, "--json"),
+):
+    """What a person saved in the review form, one file per save: who, when, what to apply.
+
+    Each save on the served form (and each load kept with --handbacks) is a decisions file. With
+    no name this lists them; with a name it shows the fixes approved, the audit.yml diff, and
+    where to commit the file (assay_decisions/), which is how git records who decided what.
+    --withdraw takes a save back in the store; revert the PR that committed it for the rest.
+    """
+    from . import handback as hb
+    folder = hb.folder(Config.load(config_path), handbacks_dir)
+    if not name:
+        rows = hb.listing(folder)
+        if json_out:
+            print(_json.dumps({"folder": str(folder), "decisions": rows}, indent=2, default=str))
+            return
+        if not rows:
+            console.print(f"[dim]no decisions files in {folder}[/]")
+            return
+        for r in rows:
+            if r.get("error"):
+                console.print(f"{r['name']}  [yellow]{r['error']}[/]")
+                continue
+            console.print(f"{r['name']}  [dim]{r['by']} · {r['verdicts']} verdict(s) · "
+                          f"{r['fixes_approved']} fix(es) approved · {r['config_edits']} config "
+                          f"edit(s)" + (" · withdrawn" if r["withdrawn"] else "")
+                          + ("" if r["recorded"] else " · not recorded") + "[/]")
+        return
+    path = folder / Path(name).name
+    if not path.exists() and Path(name).exists():
+        path = Path(name)
+    if not path.exists():
+        console.print(f"[red]no decisions file {name} in {folder}.[/] [dim]`assay decisions` "
+                      f"lists them.[/]")
+        raise typer.Exit(1)
+    if withdraw:
+        if not by:
+            console.print("[red]--withdraw needs --by:[/] a withdrawal is a decision too.")
+            raise typer.Exit(2)
+        doc = _json.loads(path.read_text())
+        if doc.get("withdrawn"):
+            console.print(f"[yellow]{path.name} was withdrawn already[/] [dim]{doc['withdrawn']}[/]")
+            raise typer.Exit(1)
+        st = Store(store_path)
+        try:
+            out = hb.withdraw(st, doc, by, path.name)
+        finally:
+            st.close()
+        if "error" in out:
+            console.print(f"[red]{out['error']}[/]")
+            raise typer.Exit(1)
+        hb.mark_withdrawn(path, out)
+        if json_out:
+            print(_json.dumps({"file": path.name, **out}, indent=2, default=str))
+            return
+        console.print(f"withdrew [bold]{path.name}[/]: {out['restored']} decision(s) put back"
+                      + (f", {len(out['skipped'])} left as they are (decided again since)"
+                         if out["skipped"] else ""))
+        for s_ in out["skipped"][:20]:
+            console.print(f"   [dim]{s_}[/]")
+        return
+    d = hb.describe(path, config_path)
+    if json_out:
+        print(_json.dumps(d, indent=2, default=str))
+        return
+    console.print(f"[bold]{d['name']}[/] [dim]{d['by']} · {d['saved_at'] or 'not recorded'}"
+                  + (" · withdrawn" if d["withdrawn"] else "") + "[/]")
+    console.print(f"   {d['verdicts']['verdicts']} verdict(s), {len(d['approved'])} fix(es) "
+                  f"approved, {len(d['config']['edits'])} config edit(s)")
+    for f in d["fixes"]:
+        console.print(f"   [dim]{f['status']:<9}[/] {f['fix']} {f['title'][:80]}"
+                      + (f" [dim](left out: {len(f['exclude'])})[/]" if f.get("exclude") else ""))
+    if d["config"]["diff"]:
+        console.print(d["config"]["diff"], markup=False, highlight=False)
+    for n_ in d["config"]["not_placed"]:
+        console.print(f"   [yellow]not placed[/] {n_}", markup=False, highlight=False)
+    console.print(f"[dim]commit it as {d['commit_as']} with the fixes and audit.yml.[/]")
 
 
 @app.command()
@@ -7201,12 +7309,16 @@ def mcp(
     target: str = typer.Option(None, "--target", "-t"),
     store_path: str = typer.Option("assay.duckdb", "--store"),
     handbacks_dir: str = typer.Option(None, "--handbacks",
-                                      help="where load_handback() with no path looks. Default: "
-                                           "review.handbacks in audit.yml, then ~/Downloads"),
+                                      help="the decisions folder: where load_handback() with "
+                                           "no path looks, where a load is kept as a decisions "
+                                           "file, and what `decisions` lists. Default: "
+                                           "review.handbacks in audit.yml, then ~/Downloads "
+                                           "(looked in, never written to)"),
     verdicts_only: bool = typer.Option(False, "--verdicts-only",
-                                       help="load_handback records verdicts and refuses every "
-                                            "config edit. For a server whose audit.yml is in "
-                                            "git."),
+                                       help="this server's project comes from git: "
+                                            "load_handback records verdicts and never writes "
+                                            "audit.yml, and apply_plan_item returns the files "
+                                            "for a checkout instead of writing them"),
 ):
     """Serve assay as tools an agent can call instead of reading your SQL.
 
